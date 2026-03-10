@@ -98,4 +98,15 @@ internal static partial class CompactionLogMessages
         this ILogger logger,
         int summaryLength,
         int insertIndex);
+
+    /// <summary>
+    /// Logs when a summarization LLM call fails and groups are restored.
+    /// </summary>
+    [LoggerMessage(
+        Level = LogLevel.Warning,
+        Message = "Summarization failed for {GroupCount} groups; restoring excluded groups and continuing without compaction. Error: {ErrorMessage}")]
+    public static partial void LogSummarizationFailed(
+        this ILogger logger,
+        int groupCount,
+        string errorMessage);
 }

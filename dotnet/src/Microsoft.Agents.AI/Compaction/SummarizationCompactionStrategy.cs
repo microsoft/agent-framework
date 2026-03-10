@@ -121,12 +121,14 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             return false;
         }
 
-        // Mark oldest non-system groups for summarization one at a time until the target is met
+        // Mark oldest non-system groups for summarization one at a time until the target is met.
+        // Track which groups were excluded so we can restore them if the LLM call fails.
         List<ChatMessage> summarizationMessages = [new ChatMessage(ChatRole.System, this.SummarizationPrompt)];
-        int summarized = 0;
+        List<MessageGroup> excludedGroups = [];
+        List<int> excludedGroupIndices = [];
         int insertIndex = -1;
 
-        for (int i = 0; i < index.Groups.Count && summarized < maxSummarizable; i++)
+        for (int i = 0; i < index.Groups.Count && excludedGroups.Count < maxSummarizable; i++)
         {
             MessageGroup group = index.Groups[i];
             if (group.IsExcluded || group.Kind == MessageGroupKind.System)
@@ -144,7 +146,8 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
 
             group.IsExcluded = true;
             group.ExcludeReason = $"Summarized by {nameof(SummarizationCompactionStrategy)}";
-            summarized++;
+            excludedGroups.Add(group);
+            excludedGroupIndices.Add(i);
 
             // Stop marking when target condition is met
             if (this.Target(index))
@@ -154,14 +157,32 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         }
 
         // Generate summary using the chat client (single LLM call for all marked groups)
+        int summarized = excludedGroups.Count;
         logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 1, this.ChatClient.GetType().Name);
 
         using Activity? summarizeActivity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.Summarize);
         summarizeActivity?.SetTag(CompactionTelemetry.Tags.GroupsSummarized, summarized);
 
-        ChatResponse response = await this.ChatClient.GetResponseAsync(
-            summarizationMessages,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        ChatResponse response;
+        try
+        {
+            response = await this.ChatClient.GetResponseAsync(
+                summarizationMessages,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Restore excluded groups so the conversation is not left in an inconsistent state
+            for (int i = 0; i < excludedGroups.Count; i++)
+            {
+                excludedGroups[i].IsExcluded = false;
+                excludedGroups[i].ExcludeReason = null;
+            }
+
+            logger.LogSummarizationFailed(summarized, ex.Message);
+
+            return false;
+        }
 
         string summaryText = string.IsNullOrWhiteSpace(response.Text) ? "[Summary unavailable]" : response.Text;
 

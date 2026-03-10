@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
@@ -411,4 +413,201 @@ public class SummarizationCompactionStrategyTests
         // Assert — compaction succeeded despite null text
         Assert.True(result);
     }
+
+    #region Error resilience
+
+    [Fact]
+    public async Task CompactAsyncLlmFailureRestoresGroupsAsync()
+    {
+        // Arrange — chat client throws a non-cancellation exception
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Service unavailable"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        int originalGroupCount = index.Groups.Count;
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — returns false, all groups restored to non-excluded
+        Assert.False(result);
+        Assert.Equal(originalGroupCount, index.Groups.Count);
+        Assert.All(index.Groups, g => Assert.False(g.IsExcluded));
+        Assert.All(index.Groups, g => Assert.Null(g.ExcludeReason));
+    }
+
+    [Fact]
+    public async Task CompactAsyncLlmFailurePreservesAllOriginalMessagesAsync()
+    {
+        // Arrange — verify that after failure, GetIncludedMessages returns all original messages
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Timeout"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+        ]);
+
+        List<ChatMessage> originalIncluded = [.. index.GetIncludedMessages()];
+
+        // Act
+        await strategy.CompactAsync(index);
+
+        // Assert — all original messages still included
+        List<ChatMessage> afterIncluded = [.. index.GetIncludedMessages()];
+        Assert.Equal(originalIncluded.Count, afterIncluded.Count);
+        for (int i = 0; i < originalIncluded.Count; i++)
+        {
+            Assert.Same(originalIncluded[i], afterIncluded[i]);
+        }
+    }
+
+    [Fact]
+    public async Task CompactAsyncLlmFailureDoesNotInsertSummaryGroupAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API error"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        await strategy.CompactAsync(index);
+
+        // Assert — no Summary group was inserted
+        Assert.DoesNotContain(index.Groups, g => g.Kind == MessageGroupKind.Summary);
+    }
+
+    [Fact]
+    public async Task CompactAsyncCancellationPropagatesAsync()
+    {
+        // Arrange — OperationCanceledException should NOT be caught
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException("Cancelled"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act & Assert — OperationCanceledException propagates
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => strategy.CompactAsync(index).AsTask());
+    }
+
+    [Fact]
+    public async Task CompactAsyncTaskCancellationPropagatesAsync()
+    {
+        // Arrange — TaskCanceledException (subclass of OperationCanceledException) should also propagate
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("Task cancelled"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1);
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act & Assert — TaskCanceledException propagates (inherits from OperationCanceledException)
+        await Assert.ThrowsAsync<TaskCanceledException>(
+            () => strategy.CompactAsync(index).AsTask());
+    }
+
+    [Fact]
+    public async Task CompactAsyncLlmFailureWithMultipleExcludedGroupsRestoresAllAsync()
+    {
+        // Arrange — multiple groups excluded before failure, all must be restored
+        Mock<IChatClient> mockClient = new();
+        mockClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Rate limited"));
+
+        SummarizationCompactionStrategy strategy = new(
+            mockClient.Object,
+            CompactionTriggers.Always,
+            minimumPreserved: 1,
+            target: _ => false); // Never stop — exclude as many as possible
+
+        MessageIndex index = MessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.System, "System prompt"),
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+            new ChatMessage(ChatRole.Assistant, "A2"),
+            new ChatMessage(ChatRole.User, "Q3"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — all non-system groups restored
+        Assert.False(result);
+        Assert.All(index.Groups, g => Assert.False(g.IsExcluded));
+        Assert.All(index.Groups, g => Assert.Null(g.ExcludeReason));
+        Assert.Equal(6, index.IncludedGroupCount);
+    }
+
+    #endregion
 }

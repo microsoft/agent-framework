@@ -197,8 +197,10 @@ public sealed class MessageIndex
                 List<ChatMessage> groupMessages = [message];
                 index++;
 
-                // Collect all subsequent tool result messages
-                while (index < messages.Count && messages[index].Role == ChatRole.Tool)
+                // Collect all subsequent tool result messages and reasoning-only assistant messages
+                while (index < messages.Count &&
+                       (messages[index].Role == ChatRole.Tool ||
+                        (messages[index].Role == ChatRole.Assistant && HasOnlyReasoning(messages[index]))))
                 {
                     groupMessages.Add(messages[index]);
                     index++;
@@ -210,6 +212,47 @@ public sealed class MessageIndex
             {
                 this.Groups.Add(CreateGroup(MessageGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
                 index++;
+            }
+            else if (message.Role == ChatRole.Assistant && HasOnlyReasoning(message))
+            {
+                // Reasoning-only assistant messages that precede a tool-call assistant message
+                // are part of the same atomic tool-call group. Look ahead past consecutive
+                // reasoning messages to find a possible tool-call message.
+                int lookahead = index + 1;
+                while (lookahead < messages.Count &&
+                       messages[lookahead].Role == ChatRole.Assistant &&
+                       HasOnlyReasoning(messages[lookahead]))
+                {
+                    lookahead++;
+                }
+
+                if (lookahead < messages.Count && messages[lookahead].Role == ChatRole.Assistant && HasToolCalls(messages[lookahead]))
+                {
+                    // Group all reasoning messages + the tool-call message together
+                    List<ChatMessage> groupMessages = [];
+                    for (int j = index; j <= lookahead; j++)
+                    {
+                        groupMessages.Add(messages[j]);
+                    }
+
+                    index = lookahead + 1;
+
+                    // Collect all subsequent tool result messages and reasoning-only assistant messages
+                    while (index < messages.Count &&
+                           (messages[index].Role == ChatRole.Tool ||
+                            (messages[index].Role == ChatRole.Assistant && HasOnlyReasoning(messages[index]))))
+                    {
+                        groupMessages.Add(messages[index]);
+                        index++;
+                    }
+
+                    this.Groups.Add(CreateGroup(MessageGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
+                }
+                else
+                {
+                    this.Groups.Add(CreateGroup(MessageGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
+                    index++;
+                }
             }
             else
             {
@@ -476,9 +519,10 @@ public sealed class MessageIndex
         return false;
     }
 
-    private static bool IsSummaryMessage(ChatMessage message)
-    {
-        return message.AdditionalProperties?.TryGetValue(MessageGroup.SummaryPropertyKey, out object? value) is true
+    private static bool HasOnlyReasoning(ChatMessage message) =>
+        message.Contents.All(content => content is TextReasoningContent);
+
+    private static bool IsSummaryMessage(ChatMessage message) =>
+        message.AdditionalProperties?.TryGetValue(MessageGroup.SummaryPropertyKey, out object? value) is true
             && value is true;
-    }
 }
