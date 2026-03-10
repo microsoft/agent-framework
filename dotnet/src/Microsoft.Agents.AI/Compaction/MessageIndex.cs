@@ -311,7 +311,7 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the total number of user turns across all groups (including those with excluded groups).
     /// </summary>
-    public int TotalTurnCount => this.Groups.Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null);
+    public int TotalTurnCount => this.Groups.Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null && turnIndex > 0);
 
     /// <summary>
     /// Gets the number of user turns that have at least one non-excluded group.
