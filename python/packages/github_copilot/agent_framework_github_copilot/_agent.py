@@ -26,6 +26,7 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
 from copilot.types import (
@@ -42,9 +43,9 @@ from copilot.types import (
 from copilot.types import Tool as CopilotTool
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import Self, TypeVar
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import Self, TypeVar
 
 
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
@@ -243,7 +244,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> RawGitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -655,8 +656,9 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
 
 class GitHubCopilotAgent(
+    AgentTelemetryLayer,
     AgentMiddlewareLayer,
     RawGitHubCopilotAgent[OptionsT],
     Generic[OptionsT],
 ):
-    """GitHub Copilot agent with AgentMiddleware support."""
+    """GitHub Copilot agent with middleware and telemetry support."""
