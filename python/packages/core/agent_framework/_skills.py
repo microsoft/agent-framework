@@ -791,7 +791,8 @@ class SkillsProvider(BaseContextProvider):
                                     "Arguments to pass to the script as key-value pairs. "
                                     "Use parameter names as keys without leading dashes "
                                     '(e.g. {"length": 24, "uppercase": true}). '
-                                    "The runner converts them to CLI flags automatically."
+                                    "How these values are mapped to the underlying script "
+                                    "is determined by the script implementation or configured runner."
                                 ),
                             },
                         },
