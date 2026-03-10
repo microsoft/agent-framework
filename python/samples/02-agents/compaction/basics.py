@@ -106,7 +106,7 @@ async def main() -> None:
     selected_strategy_name = "SelectiveToolCallCompactionStrategy"
     selected_strategy = SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0)
 
-    # Collapse older tool-call groups into short "[Tool calls: tool_name]" summaries
+    # Collapse older tool-call groups into short "[Tool results: tool_name]" summaries
     # while keeping the most recent group verbatim. Unlike SelectiveToolCallCompactionStrategy
     # which fully excludes groups, this preserves a readable trace of tool usage.
     # selected_strategy_name = "ToolResultCompactionStrategy"
@@ -212,7 +212,7 @@ Message count: 6
 --- After compaction (ToolResultCompactionStrategy) ---
 Message count: 7
 01. [system] You are a helpful assistant.
-02. [assistant] [Tool calls: list_tables]
+02. [assistant] [Tool results: list_tables]
 03. [user] Plan a data migration.
 04. [assistant] I will gather requirements.
 05. [assistant] I found three core tables.

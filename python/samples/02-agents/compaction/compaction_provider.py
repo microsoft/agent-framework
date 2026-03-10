@@ -33,7 +33,7 @@ The compaction provider uses two separate strategies:
   older turns get dropped as the conversation grows.
 - ``after_strategy``: Applied to the stored history after each turn.
   Here a ``ToolResultCompactionStrategy`` collapses all but the most recent
-  tool-call group into short ``[Tool calls: ...]`` summaries.
+  tool-call group into short ``[Tool results: ...]`` summaries.
 
 A chat middleware logs the messages the model actually receives (after context
 providers and compaction have run) so you can see the effect of compaction.
@@ -85,7 +85,7 @@ async def main() -> None:
         before_strategy=SlidingWindowStrategy(keep_last_groups=3, preserve_system=True),
         # AFTER each turn: ToolResultCompaction marks older tool-call groups
         # (assistant function_call + tool result messages) as excluded and
-        # inserts a short "[Tool calls: ...]" summary. The original messages
+        # inserts a short "[Tool results: ...]" summary. The original messages
         # stay in storage with _excluded=True; skip_excluded on the history
         # provider ensures they won't be loaded on the next turn.
         after_strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
@@ -132,7 +132,7 @@ async def main() -> None:
                 reason = m.additional_properties.get("_exclude_reason", "")
                 if excluded:
                     marker = f" ✗ ({reason})"
-                elif (m.text or "").startswith("[Tool calls:"):
+                elif (m.text or "").startswith("[Tool results:"):
                     marker = " ← summary"
                 else:
                     marker = ""
@@ -168,7 +168,7 @@ Turn 1 — User: What is the weather in London?
   Model receives 1 messages:
     01. [user] What is the weather in London?
 
-  Agent: The weather in London is currently cloudy with a temperature of 12°C.
+  Agent: The weather in London is cloudy with a temperature of 12°C.
 
 ============================================================
 Turn 2 — User: How about Paris?
@@ -177,16 +177,16 @@ Turn 2 — User: How about Paris?
     01. [user] What is the weather in London?
     02. [assistant] function_call
     03. [tool] function_result
-    04. [assistant] The weather in London is currently cloudy with a temperature of 1
+    04. [assistant] The weather in London is cloudy with a temperature of 12°C.
 
   Model receives 5 messages:
     01. [user] What is the weather in London?
     02. [assistant] function_call
     03. [tool] function_result
-    04. [assistant] The weather in London is currently cloudy with a temperature of 12°C.
+    04. [assistant] The weather in London is cloudy with a temperature of 12°C.
     05. [user] How about Paris?
 
-  Agent: The weather in Paris is currently sunny with a temperature of 18°C.
+  Agent: The weather in Paris is sunny with a temperature of 18°C.
 
 ============================================================
 Turn 3 — User: And Tokyo?
@@ -195,50 +195,50 @@ Turn 3 — User: And Tokyo?
     01. [user] What is the weather in London?
     02. [assistant] function_call
     03. [tool] function_result
-    04. [assistant] The weather in London is currently cloudy with a temperature of 1
+    04. [assistant] The weather in London is cloudy with a temperature of 12°C.
     05. [user] How about Paris?
     06. [assistant] function_call
     07. [tool] function_result
-    08. [assistant] The weather in Paris is currently sunny with a temperature of 18°
+    08. [assistant] The weather in Paris is sunny with a temperature of 18°C.
 
   Model receives 5 messages:
-    01. [assistant] The weather in London is currently cloudy with a temperature of 12°C.
+    01. [assistant] The weather in London is cloudy with a temperature of 12°C.
     02. [assistant] function_call
     03. [tool] function_result
-    04. [assistant] The weather in Paris is currently sunny with a temperature of 18°C.
+    04. [assistant] The weather in Paris is sunny with a temperature of 18°C.
     05. [user] And Tokyo?
 
-  Agent: The weather in Tokyo is currently rainy with a temperature of 22°C.
+  Agent: The weather in Tokyo is rainy with a temperature of 22°C.
 
 ============================================================
 Turn 4 — User: Which city is the warmest?
 
   Stored history: 13 messages (3 excluded)
     01. [user] What is the weather in London?
-    02. [assistant] ← summary [Tool calls: get_weather]
+    02. [assistant] ← summary [Tool results: get_weather: cloudy, 12°C]
     03. [assistant] ✗ (tool_result_compaction) function_call
     04. [tool] ✗ (tool_result_compaction) function_result
-    05. [assistant] The weather in London is currently cloudy with a temperature of 1
+    05. [assistant] The weather in London is cloudy with a temperature of 12°C.
     06. [user] ✗ (tool_result_compaction) How about Paris?
     07. [assistant] function_call
     08. [tool] function_result
-    09. [assistant] The weather in Paris is currently sunny with a temperature of 18°
+    09. [assistant] The weather in Paris is sunny with a temperature of 18°C.
     10. [user] And Tokyo?
     11. [assistant] function_call
     12. [tool] function_result
-    13. [assistant] The weather in Tokyo is currently rainy with a temperature of 22°
+    13. [assistant] The weather in Tokyo is rainy with a temperature of 22°C.
 
   Model receives 8 messages:
     01. [assistant] function_call
     02. [tool] function_result
-    03. [assistant] The weather in Paris is currently sunny with a temperature of 18°C.
+    03. [assistant] The weather in Paris is sunny with a temperature of 18°C.
     04. [user] And Tokyo?
     05. [assistant] function_call
     06. [tool] function_result
-    07. [assistant] The weather in Tokyo is currently rainy with a temperature of 22°C.
+    07. [assistant] The weather in Tokyo is rainy with a temperature of 22°C.
     08. [user] Which city is the warmest?
 
-  Agent: Tokyo is the warmest city right now, with a temperature of 22°C, compared to Paris, which is at 18°C.
+  Agent: Tokyo is the warmest city with a temperature of 22°C, compared to Paris, which is at 18°C.
 
 ============================================================
 Done.

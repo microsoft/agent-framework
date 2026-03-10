@@ -801,9 +801,10 @@ class ToolResultCompactionStrategy:
 
     Unlike ``SelectiveToolCallCompactionStrategy`` which fully excludes old
     tool-call groups, this strategy *replaces* them with a compact summary
-    message of the form ``[Tool calls: tool_a, tool_b]``. This preserves a
-    readable trace of which tools were called while reclaiming the token
-    overhead of verbose tool results.
+    message containing the tool results (e.g.
+    ``[Tool results: get_weather: sunny, 18°C]``). This preserves a readable
+    trace of what tools returned while reclaiming the token overhead of the
+    full function-call/result message structure.
 
     The most recent ``keep_last_tool_call_groups`` tool-call groups are left
     untouched; older ones are collapsed.
@@ -848,27 +849,48 @@ class ToolResultCompactionStrategy:
             if group_id in keep_ids:
                 continue
             group_msgs = grouped.get(group_id, [])
-            tool_names: list[str] = []
+            # Build a call_id → function_name map from function_call contents.
+            call_id_to_name: dict[str, str] = {}
             for msg in group_msgs:
                 for content in msg.contents:
-                    if content.type == "function_call" and content.name:
-                        tool_names.append(content.name)
-            summary_label = ", ".join(tool_names) if tool_names else "unknown"
-            summary_text = f"[Tool calls: {summary_label}]"
-
+                    if content.type == "function_call" and content.call_id and content.name:
+                        call_id_to_name[content.call_id] = content.name
+            # Collect tool results with the function name for context.
+            tool_results: list[str] = []
             for msg in group_msgs:
+                for content in msg.contents:
+                    if content.type == "function_result":
+                        result_text = content.result if isinstance(content.result, str) else str(content.result)
+                        func_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{func_name}: {result_text}" if func_name else result_text
+                        tool_results.append(label.strip())
+            summary_label = "; ".join(tool_results) if tool_results else "no results"
+            summary_text = f"[Tool results: {summary_label}]"
+
+            summary_id = f"tool_summary_{group_id}"
+            original_message_ids = [msg.message_id for msg in group_msgs if msg.message_id]
+
+            # Mark originals as excluded with back-link to the summary.
+            for msg in group_msgs:
+                _set_group_summarized_by_summary_id(msg, summary_id)
                 changed = set_excluded(msg, excluded=True, reason="tool_result_compaction") or changed
 
+            # Insert summary with forward links to the originals.
+            summary_annotation = {
+                SUMMARY_OF_MESSAGE_IDS_KEY: original_message_ids,
+                SUMMARY_OF_GROUP_IDS_KEY: [group_id],
+            }
             insertion_index = starts.get(group_id, 0)
             summary_message = Message(
                 role="assistant",
                 text=summary_text,
-                message_id=f"tool_summary_{group_id}",
+                message_id=summary_id,
+                additional_properties={
+                    GROUP_ANNOTATION_KEY: summary_annotation,
+                },
             )
             messages.insert(insertion_index, summary_message)
-            # Re-annotate the new summary message with the same group metadata.
             annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
-            # Refresh index positions after insertion.
             starts = _group_start_indices(messages)
             grouped = _group_messages_by_id(messages)
 

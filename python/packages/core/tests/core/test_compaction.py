@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agent_framework import ChatResponse, Content, Message
-from agent_framework._compaction import (
+from agent_framework import (
     EXCLUDED_KEY,
     GROUP_ANNOTATION_KEY,
     GROUP_HAS_REASONING_KEY,
@@ -17,15 +16,25 @@ from agent_framework._compaction import (
     SUMMARY_OF_GROUP_IDS_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
     CharacterEstimatorTokenizer,
+    ChatResponse,
+    CompactionProvider,
+    Content,
+    Message,
     SelectiveToolCallCompactionStrategy,
     SlidingWindowStrategy,
     SummarizationStrategy,
     TokenBudgetComposedStrategy,
+    ToolResultCompactionStrategy,
     TruncationStrategy,
     annotate_message_groups,
-    append_compaction_message,
     apply_compaction,
+    included_messages,
+    included_token_count,
+)
+from agent_framework._compaction import (
+    append_compaction_message,
     extend_compaction_messages,
+)
     included_messages,
     included_token_count,
 )
@@ -452,11 +461,6 @@ async def test_apply_compaction_projects_included_messages_only() -> None:
 
 # --- ToolResultCompactionStrategy tests ---
 
-from agent_framework._compaction import (
-    CompactionProvider,
-    ToolResultCompactionStrategy,
-)
-
 
 async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:
     """Old tool-call groups are collapsed into summary messages, newest kept."""
@@ -476,9 +480,9 @@ async def test_tool_result_compaction_collapses_old_groups_into_summary() -> Non
     assert changed is True
     projected = included_messages(messages)
     texts = [m.text or "" for m in projected]
-    summary_msgs = [t for t in texts if t.startswith("[Tool calls:")]
+    summary_msgs = [t for t in texts if t.startswith("[Tool results:")]
     assert len(summary_msgs) == 1
-    assert "tool" in summary_msgs[0]
+    assert "r1" in summary_msgs[0]
     assert any(m.role == "tool" for m in projected)
 
 
@@ -499,7 +503,7 @@ async def test_tool_result_compaction_zero_collapses_all() -> None:
 
     assert changed is True
     projected = included_messages(messages)
-    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool calls:")]
+    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool results:")]
     assert len(summary_msgs) == 2
     assert not any(m.role == "tool" for m in projected)
 
@@ -528,8 +532,8 @@ def test_tool_result_compaction_rejects_negative() -> None:
         raise AssertionError("Expected ValueError for negative keep_last_tool_call_groups.")
 
 
-async def test_tool_result_compaction_preserves_tool_names_in_summary() -> None:
-    """Summary text should include all tool names from the collapsed group."""
+async def test_tool_result_compaction_preserves_tool_results_in_summary() -> None:
+    """Summary text should include the tool results from the collapsed group."""
     messages = [
         Message(role="user", text="u"),
         Message(
@@ -549,10 +553,123 @@ async def test_tool_result_compaction_preserves_tool_names_in_summary() -> None:
     await strategy(messages)
 
     projected = included_messages(messages)
-    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool calls:")]
+    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool results:")]
     assert len(summary_msgs) == 1
-    assert "get_weather" in summary_msgs[0].text  # type: ignore[operator]
-    assert "search_docs" in summary_msgs[0].text  # type: ignore[operator]
+    assert "sunny" in summary_msgs[0].text  # type: ignore[operator]
+    assert "found 3 docs" in summary_msgs[0].text  # type: ignore[operator]
+
+
+async def test_tool_result_compaction_bidirectional_tracing() -> None:
+    """Summary and originals should link to each other like SummarizationStrategy does."""
+    messages = [
+        Message(role="user", text="u"),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+        Message(role="assistant", text="done"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+
+    await strategy(messages)
+
+    # Find the summary message.
+    summary_msgs = [m for m in messages if _group_unknown_value(m, SUMMARY_OF_MESSAGE_IDS_KEY) is not None]
+    assert len(summary_msgs) == 1
+    summary = summary_msgs[0]
+    summary_id = summary.message_id
+    assert summary_id is not None
+
+    # Forward link: summary knows which messages/groups it replaces.
+    assert isinstance(_group_unknown_value(summary, SUMMARY_OF_MESSAGE_IDS_KEY), list)
+    assert isinstance(_group_unknown_value(summary, SUMMARY_OF_GROUP_IDS_KEY), list)
+
+    # Back link: excluded originals know which summary replaced them.
+    for m in messages:
+        if m.additional_properties.get(EXCLUDED_KEY):
+            assert _group_unknown_value(m, SUMMARIZED_BY_SUMMARY_ID_KEY) == summary_id
+
+
+async def test_tool_result_compaction_multiple_groups_combined() -> None:
+    """Multiple tool-call groups collapsed independently, each with its own summary.
+
+    Scenario: 3 tool-call groups, keep_last=1 → groups 1 and 2 each get a
+    separate summary, group 3 stays verbatim.
+    """
+    messages = [
+        Message(role="user", text="Compare weather in London, Paris, and Tokyo"),
+        # Group 1: get_weather for London
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments='{"city":"London"}')],
+        ),
+        _tool_result("c1", '{"temp":12,"condition":"cloudy","wind":"NW 15km/h"}'),
+        Message(role="assistant", text="London is cloudy at 12°C."),
+        # Group 2: get_weather for Paris + search_hotels
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c2", name="get_weather", arguments='{"city":"Paris"}'),
+                Content.from_function_call(call_id="c3", name="search_hotels", arguments='{"city":"Paris"}'),
+            ],
+        ),
+        _tool_result("c2", '{"temp":18,"condition":"sunny"}'),
+        _tool_result("c3", "Grand Hotel (€120), Le Petit (€85)"),
+        Message(role="assistant", text="Paris is sunny at 18°C. Found 2 hotels."),
+        # Group 3: get_weather for Tokyo (most recent — should be kept)
+        Message(
+            role="assistant",
+            contents=[Content.from_function_call(call_id="c4", name="get_weather", arguments='{"city":"Tokyo"}')],
+        ),
+        _tool_result("c4", '{"temp":22,"condition":"rainy"}'),
+        Message(role="assistant", text="Tokyo is rainy at 22°C."),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool results:")]
+
+    # Two summaries: one for group 1, one for group 2.
+    assert len(summary_msgs) == 2
+
+    # Group 1 summary: London weather result.
+    g1_text = summary_msgs[0].text or ""
+    assert "12" in g1_text
+    assert "cloudy" in g1_text
+
+    # Group 2 summary: Paris weather + hotel results combined.
+    g2_text = summary_msgs[1].text or ""
+    assert "18" in g2_text
+    assert "Grand Hotel" in g2_text
+
+    # Group 3 (Tokyo) stays verbatim — tool role messages still present.
+    verbatim_tool_msgs = [m for m in projected if m.role == "tool"]
+    assert len(verbatim_tool_msgs) == 1
+    assert "rainy" in (verbatim_tool_msgs[0].contents[0].result or "")
+
+    # All text assistant messages should still be present.
+    text_msgs = [m for m in projected if m.role == "assistant" and m.text and not m.text.startswith("[Tool results:")]
+    texts = [m.text for m in text_msgs]
+    assert "London is cloudy at 12°C." in texts
+    assert "Paris is sunny at 18°C. Found 2 hotels." in texts
+    assert "Tokyo is rainy at 22°C." in texts
+
+    # Final projected shape: 8 messages in order.
+    assert len(projected) == 8
+    assert projected[0].role == "user"  # original user message
+    assert projected[1].text == '[Tool results: get_weather: {"temp":12,"condition":"cloudy","wind":"NW 15km/h"}]'
+    assert projected[2].text == "London is cloudy at 12°C."
+    assert (
+        projected[3].text
+        == '[Tool results: get_weather: {"temp":18,"condition":"sunny"}; search_hotels: Grand Hotel (€120), Le Petit (€85)]'
+    )
+    assert projected[4].text == "Paris is sunny at 18°C. Found 2 hotels."  # group 2 assistant text
+    assert projected[5].role == "assistant"  # group 3 function_call (verbatim)
+    assert projected[6].role == "tool"  # group 3 tool result (verbatim)
+    assert projected[7].text == "Tokyo is rainy at 22°C."  # group 3 assistant text
 
 
 # --- CompactionProvider tests ---
