@@ -19,6 +19,8 @@ namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantClientExtensionsTests
 {
+    private const string SkipCodeInterpreterReason = "OpenAI Assistant Code Interpreter intermittently fails in CI";
+
     private readonly AssistantClient _assistantClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetAssistantClient();
     private readonly OpenAIFileClient _fileClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetOpenAIFileClient();
 
@@ -81,7 +83,7 @@ public class OpenAIAssistantClientExtensionsTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = SkipCodeInterpreterReason)]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithParamsAsync")]
