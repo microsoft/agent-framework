@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -89,7 +90,6 @@ builder.Services.AddSingleton<AIAgent>(sp =>
 
     return new OpenAIClient(apiKey)
         .GetChatClient(model)
-        .AsIChatClient()
         .AsAIAgent(
             name: "ExpenseApprovalAgent",
             instructions: "You are an expense approval assistant. You can list pending expenses "
