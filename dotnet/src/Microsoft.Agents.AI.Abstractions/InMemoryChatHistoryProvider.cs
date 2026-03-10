@@ -118,7 +118,6 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     private static async Task ReduceMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
     {
         state.Messages = [.. await reducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
-        return;
     }
 
     /// <summary>
