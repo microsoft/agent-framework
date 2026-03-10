@@ -544,19 +544,19 @@ class TestFunctionExecutor:
         static_wrapped = staticmethod(my_async_func)
 
         # Direct check on descriptor object fails (this is the bug)
-        assert not asyncio.iscoroutinefunction(static_wrapped)
+        assert not asyncio.iscoroutinefunction(static_wrapped)  # type: ignore[reportDeprecated]
         assert isinstance(static_wrapped, staticmethod)
 
         # But unwrapping __func__ reveals the async function
         unwrapped = static_wrapped.__func__
-        assert asyncio.iscoroutinefunction(unwrapped)
+        assert asyncio.iscoroutinefunction(unwrapped)  # type: ignore[reportDeprecated]
 
         # When accessed via class attribute, Python's descriptor protocol
         # automatically unwraps it, so it works:
         class C:
             async_static = static_wrapped
 
-        assert asyncio.iscoroutinefunction(C.async_static)  # Works via descriptor protocol
+        assert asyncio.iscoroutinefunction(C.async_static)  # type: ignore[reportDeprecated]  # Works via descriptor protocol
 
 
 class TestExecutorExplicitTypes:

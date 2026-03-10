@@ -112,9 +112,7 @@ class SkillResource:
         self._accepts_kwargs: bool = False
         if function is not None:
             sig = inspect.signature(function)
-            self._accepts_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            )
+            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
 class Skill:
@@ -563,10 +561,10 @@ class SkillsProvider(BaseContextProvider):
             try:
                 if inspect.iscoroutinefunction(resource.function):
                     result = (
-                        await resource.function(**kwargs) if resource._accepts_kwargs else await resource.function()
+                        await resource.function(**kwargs) if resource._accepts_kwargs else await resource.function()  # pyright: ignore[reportPrivateUsage]
                     )
                 else:
-                    result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()
+                    result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()  # pyright: ignore[reportPrivateUsage]
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)

@@ -42,17 +42,19 @@ public static class HostedAgentBuilderExtensions
     /// <param name="builder">The host agent builder to configure.</param>
     /// <param name="createAgentSessionStore">A factory function that creates an agent session store instance using the provided service provider and agent
     /// name.</param>
+    /// <param name="lifetime">The DI service lifetime for the session store registration. Defaults to <see cref="ServiceLifetime.Singleton"/>
+    /// because session stores persist conversation state across requests and are consumed independently of the agent's lifetime.</param>
     /// <returns>The same host agent builder instance, enabling further configuration.</returns>
-    public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, AgentSessionStore> createAgentSessionStore)
+    public static IHostedAgentBuilder WithSessionStore(this IHostedAgentBuilder builder, Func<IServiceProvider, string, AgentSessionStore> createAgentSessionStore, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
-        builder.ServiceCollection.AddKeyedSingleton(builder.Name, (sp, key) =>
+        builder.ServiceCollection.AddKeyedService(builder.Name, (sp, key) =>
         {
             Throw.IfNull(key);
             var keyString = key as string;
             Throw.IfNullOrEmpty(keyString);
             return createAgentSessionStore(sp, keyString) ??
                 throw new InvalidOperationException($"The agent session store factory did not return a valid {nameof(AgentSessionStore)} instance for key '{keyString}'.");
-        });
+        }, lifetime);
         return builder;
     }
 
@@ -98,13 +100,39 @@ public static class HostedAgentBuilderExtensions
     /// </summary>
     /// <param name="builder">The hosted agent builder.</param>
     /// <param name="factory">A factory function that creates a AI tool using the provided service provider.</param>
-    public static IHostedAgentBuilder WithAITool(this IHostedAgentBuilder builder, Func<IServiceProvider, AITool> factory)
+    /// <param name="lifetime">The DI service lifetime for the tool registration. If <see langword="null"/>, the agent's lifetime is used.</param>
+    /// <returns>The same <see cref="IHostedAgentBuilder"/> instance so that additional calls can be chained.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/> or <paramref name="factory"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when the effective tool lifetime is shorter than the agent's lifetime, which would cause a captive dependency.
+    /// For example, a singleton agent cannot use scoped or transient tools.
+    /// </exception>
+    public static IHostedAgentBuilder WithAITool(this IHostedAgentBuilder builder, Func<IServiceProvider, AITool> factory, ServiceLifetime? lifetime = null)
     {
         Throw.IfNull(builder);
         Throw.IfNull(factory);
 
-        builder.ServiceCollection.AddKeyedSingleton(builder.Name, (sp, name) => factory(sp));
+        var effectiveLifetime = lifetime ?? builder.Lifetime;
+        ValidateToolLifetime(builder.Lifetime, effectiveLifetime);
+
+        builder.ServiceCollection.AddKeyedService(builder.Name, (sp, name) => factory(sp), effectiveLifetime);
 
         return builder;
+    }
+
+    /// <summary>
+    /// Validates that the tool lifetime is compatible with the agent lifetime.
+    /// A tool's lifetime must be at least as long as the agent's lifetime to prevent captive dependency issues.
+    /// </summary>
+    internal static void ValidateToolLifetime(ServiceLifetime agentLifetime, ServiceLifetime toolLifetime)
+    {
+        // ServiceLifetime enum: Singleton=0, Scoped=1, Transient=2
+        // A higher value means a shorter lifetime.
+        if (toolLifetime > agentLifetime)
+        {
+            throw new InvalidOperationException(
+                $"A tool with lifetime '{toolLifetime}' cannot be registered for an agent with lifetime '{agentLifetime}'. " +
+                "The tool's lifetime must be at least as long as the agent's lifetime to avoid captive dependency issues.");
+        }
     }
 }
