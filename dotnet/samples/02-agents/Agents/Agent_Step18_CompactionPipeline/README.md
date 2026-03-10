@@ -127,4 +127,4 @@ AIAgent agent = agentChatClient
 
 This places the compaction provider at the agent level instead of the chat client level, which allows you to use different compaction strategies for different agents that share the same chat client.
 
-> Note: In this mode the `CompactionProvider` is not engaged during the tool calling loop.
+> Note: In this mode the `CompactionProvider` is not engaged during the tool calling loop. Agent-level `AIContextProviders` run before chat history is stored, so any synthetic summary messages produced by `CompactionProvider` can become part of the persisted history when using `ChatHistoryProvider`. If you want to compact only the request context while preserving the original stored history, register `CompactionProvider` on the `ChatClientBuilder` via `UseAIContextProviders(...)` instead of on `ChatClientAgentOptions`.
