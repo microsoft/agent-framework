@@ -778,9 +778,9 @@ class SkillsProvider(BaseContextProvider):
                             "script_name": {
                                 "type": "string",
                                 "description": (
-                                    "The exact name of the script to run as listed in the skill, "
+                                    "The name of the script to run as listed in the skill, "
                                     "preserving any directory prefix exactly as shown. "
-                                    "Must match exactly — do not add or remove path prefixes."
+                                    "Do not add or remove path prefixes."
                                 ),
                             },
                             "args": {
