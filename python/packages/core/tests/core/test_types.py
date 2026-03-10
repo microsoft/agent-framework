@@ -2666,6 +2666,58 @@ class TestResponseStreamBasicIteration:
         assert stream.updates[0].text == "update_0"
         assert stream.updates[1].text == "update_1"
 
+    async def test_auto_finalize_on_iteration_completion(self) -> None:
+        """Stream auto-finalizes when async iteration completes."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._finalized is True
+        assert stream._final_result is not None
+        assert stream._final_result.text == "update_0update_1"
+
+    async def test_auto_finalize_runs_result_hooks(self) -> None:
+        """Result hooks run automatically when iteration completes."""
+        hook_called = {"value": False}
+
+        def tracking_hook(response: ChatResponse) -> ChatResponse:
+            hook_called["value"] = True
+            response.additional_properties["auto_finalized"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[tracking_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_called["value"] is True
+        final = await stream.get_final_response()
+        assert final.additional_properties["auto_finalized"] is True
+
+    async def test_get_final_response_idempotent_after_auto_finalize(self) -> None:
+        """get_final_response returns cached result after auto-finalization."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return _combine_updates(updates)
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        async for _ in stream:
+            pass
+
+        final1 = await stream.get_final_response()
+        final2 = await stream.get_final_response()
+
+        assert call_count["value"] == 1
+        assert final1.text == final2.text
+
 
 class TestResponseStreamTransformHooks:
     """Tests for transform hooks (per-update processing)."""
