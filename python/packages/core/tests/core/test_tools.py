@@ -1170,4 +1170,26 @@ def test_resolve_refs_deep_copies() -> None:
     assert schema["properties"]["nested"]["type"] == "object"
 
 
+def test_sanitize_schema_both_defs_and_definitions() -> None:
+    """Schemas with both $defs and definitions should resolve refs from either."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "a": {"$ref": "#/$defs/TypeA"},
+            "b": {"$ref": "#/definitions/TypeB"},
+        },
+        "$defs": {
+            "TypeA": {"type": "string"},
+        },
+        "definitions": {
+            "TypeB": {"type": "integer"},
+        },
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$defs" not in result
+    assert "definitions" not in result
+    assert result["properties"]["a"] == {"type": "string"}
+    assert result["properties"]["b"] == {"type": "integer"}
+
+
 # endregion

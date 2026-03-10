@@ -713,7 +713,7 @@ def _resolve_refs(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any
         elif isinstance(value, list):
             result[key] = [
                 _resolve_refs(cast(dict[str, Any], item), defs) if isinstance(item, dict) else item
-                for item in cast(list[Any], value)
+                for item in value  # type: ignore[union-attr]
             ]
         else:
             result[key] = value
@@ -741,8 +741,17 @@ def sanitize_schema_for_api(schema: dict[str, Any]) -> dict[str, Any]:
     if not schema:
         return {"type": "object", "properties": {}}
 
-    # Collect $defs / definitions before deep-copying the whole tree
-    defs: dict[str, Any] = schema.get("$defs", schema.get("definitions", {}))
+    # Collect $defs / definitions before traversing the tree.
+    # Combine both if present so that refs using either prefix can be resolved.
+    defs: dict[str, Any] = {}
+    raw_defs = schema.get("$defs")
+    if isinstance(raw_defs, Mapping):
+        defs.update(raw_defs)  # type: ignore[reportUnknownArgumentType]
+    raw_definitions = schema.get("definitions")
+    if isinstance(raw_definitions, Mapping):
+        for def_name, def_value in raw_definitions.items():  # type: ignore[reportUnknownVariableType]
+            if def_name not in defs:
+                defs[def_name] = def_value
 
     # Resolve $ref pointers inline (also deep-copies while traversing)
     sanitized = _resolve_refs(schema, defs)
