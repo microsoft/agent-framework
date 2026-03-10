@@ -105,7 +105,7 @@ public sealed class CompactionProviderTests
     public async Task InvokingAsyncAppliesCompactionWhenTriggeredAsync()
     {
         // Arrange — strategy that always triggers and keeps only 1 group
-        TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(_ => true, minimumPreservedGroups: 1);
         CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
@@ -194,7 +194,7 @@ public sealed class CompactionProviderTests
     public async Task InvokingAsyncWithExistingIndexUpdatesAsync()
     {
         // Arrange — call twice to exercise the "existing index" path
-        TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(_ => true, minimumPreservedGroups: 1);
         CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
@@ -299,7 +299,7 @@ public sealed class CompactionProviderTests
     public async Task CompactAsyncReducesMessagesWhenTriggeredAsync()
     {
         // Arrange — strategy that always triggers and keeps only 1 group
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         List<ChatMessage> messages =
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -319,7 +319,7 @@ public sealed class CompactionProviderTests
     public async Task CompactAsyncHandlesEmptyMessageListAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         List<ChatMessage> messages = [];
 
         // Act

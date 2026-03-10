@@ -16,7 +16,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncAlwaysTriggerCompactsToPreserveRecentAsync()
     {
         // Arrange — always-trigger means always compact
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
@@ -37,7 +37,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange — trigger requires > 1000 tokens, conversation is tiny
         TruncationCompactionStrategy strategy = new(
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             trigger: CompactionTriggers.TokensExceed(1000));
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
@@ -59,7 +59,7 @@ public class TruncationCompactionStrategyTests
     {
         // Arrange — trigger on groups > 2
         TruncationCompactionStrategy strategy = new(
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             trigger: CompactionTriggers.GroupsExceed(2));
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
@@ -87,7 +87,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncPreservesSystemMessagesAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
@@ -115,7 +115,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncPreservesToolCallGroupAtomicityAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
 
         ChatMessage assistantToolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
@@ -139,7 +139,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncSetsExcludeReasonAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Old"),
@@ -158,7 +158,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncSkipsAlreadyExcludedGroupsAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Already excluded"),
@@ -181,7 +181,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncMinimumPreservedKeepsMultipleAsync()
     {
         // Arrange — keep 2 most recent
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 2);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 2);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -205,7 +205,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncNothingToRemoveReturnsFalseAsync()
     {
         // Arrange — preserve 5 but only 2 groups
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 5);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 5);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
@@ -228,7 +228,7 @@ public class TruncationCompactionStrategyTests
 
         TruncationCompactionStrategy strategy = new(
             CompactionTriggers.Always,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             target: TargetAfterOne);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
@@ -256,7 +256,7 @@ public class TruncationCompactionStrategyTests
         // Arrange — trigger on groups > 2, target is default (inverse of trigger: groups <= 2)
         TruncationCompactionStrategy strategy = new(
             CompactionTriggers.GroupsExceed(2),
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -279,7 +279,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncLoopExitsWhenMaxRemovableReachedAsync()
     {
         // Arrange — target never stops (always false), so the loop must exit via removed >= maxRemovable
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 2, target: CompactionTriggers.Never);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 2, target: CompactionTriggers.Never);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -304,7 +304,7 @@ public class TruncationCompactionStrategyTests
     public async Task CompactAsyncSkipsPreExcludedAndSystemGroupsAsync()
     {
         // Arrange — has excluded + system groups that the loop must skip
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System"),

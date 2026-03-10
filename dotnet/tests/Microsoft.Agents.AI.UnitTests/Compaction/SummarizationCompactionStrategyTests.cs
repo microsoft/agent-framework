@@ -36,7 +36,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
             CompactionTriggers.TokensExceed(100000),
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -59,7 +59,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Key facts from earlier."),
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -90,7 +90,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -117,7 +117,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Summary text."),
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -144,7 +144,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("   "),
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -167,7 +167,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
             CompactionTriggers.Always,
-            minimumPreserved: 5);
+            minimumPreservedGroups: 5);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -200,7 +200,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             summarizationPrompt: CustomPrompt);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
@@ -228,7 +228,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient(),
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -255,7 +255,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Partial summary."),
             CompactionTriggers.Always,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             target: TargetAfterOne);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
@@ -281,7 +281,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Summary."),
             CompactionTriggers.Always,
-            minimumPreserved: 2);
+            minimumPreservedGroups: 2);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -310,7 +310,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -338,7 +338,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient,
             CompactionTriggers.Always,
-            minimumPreserved: 3,
+            minimumPreservedGroups: 3,
             target: _ => false);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
@@ -367,7 +367,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
@@ -394,7 +394,7 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         List<ChatMessage> messages =
         [

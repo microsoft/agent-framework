@@ -23,8 +23,8 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <c>[Tool calls: get_weather, search_docs]</c>.
 /// </para>
 /// <para>
-/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
-/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
+/// <see cref="MinimumPreservedGroups"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreservedGroups"/> non-system groups.
 /// </para>
 /// <para>
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds. Use
@@ -37,7 +37,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// <summary>
     /// The default minimum number of most-recent non-system groups to preserve.
     /// </summary>
-    public const int DefaultMinimumPreserved = 2;
+    public const int DefaultMinimumPreserved = 16;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToolResultCompactionStrategy"/> class.
@@ -45,7 +45,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="minimumPreserved">
+    /// <param name="minimumPreservedGroups">
     /// The minimum number of most-recent non-system message groups to preserve.
     /// This is a hard floor — compaction will not collapse groups beyond this limit,
     /// regardless of the target condition.
@@ -55,17 +55,17 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
+    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreservedGroups = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.MinimumPreserved = EnsureNonNegative(minimumPreserved);
+        this.MinimumPreservedGroups = EnsureNonNegative(minimumPreservedGroups);
     }
 
     /// <summary>
     /// Gets the minimum number of most-recent non-system groups that are always preserved.
     /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int MinimumPreserved { get; }
+    public int MinimumPreservedGroups { get; }
 
     /// <inheritdoc/>
     protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
@@ -81,7 +81,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             }
         }
 
-        int protectedStart = EnsureNonNegative(nonSystemIncludedIndices.Count - this.MinimumPreserved);
+        int protectedStart = EnsureNonNegative(nonSystemIncludedIndices.Count - this.MinimumPreservedGroups);
         HashSet<int> protectedGroupIndices = [];
         for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
         {

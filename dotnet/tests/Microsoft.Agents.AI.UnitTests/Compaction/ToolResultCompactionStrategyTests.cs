@@ -41,7 +41,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange — always trigger
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -71,7 +71,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange — protect 2 recent non-system groups (the tool group + Q2)
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 3);
+            minimumPreservedGroups: 3);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -94,7 +94,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -119,7 +119,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange — assistant calls two tools
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         ChatMessage multiToolCall = new(ChatRole.Assistant,
         [
@@ -152,7 +152,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange — trigger fires but no tool groups to collapse
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 0);
+            minimumPreservedGroups: 0);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -175,7 +175,7 @@ public class ToolResultCompactionStrategyTests
             CompactionTriggers.All(
                 CompactionTriggers.TokensExceed(0),
                 CompactionTriggers.HasToolCalls()),
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -201,7 +201,7 @@ public class ToolResultCompactionStrategyTests
 
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             target: TargetAfterOne);
 
         CompactionMessageIndex index = CompactionMessageIndex.Create(
@@ -238,7 +238,7 @@ public class ToolResultCompactionStrategyTests
     public async Task CompactAsyncSkipsPreExcludedAndSystemGroupsAsync()
     {
         // Arrange — pre-excluded and system groups in the enumeration
-        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 0);
+        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 0);
 
         List<ChatMessage> messages =
         [
