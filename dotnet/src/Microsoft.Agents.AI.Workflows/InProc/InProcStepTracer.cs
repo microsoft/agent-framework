@@ -31,7 +31,7 @@ internal sealed class InProcStepTracer : IStepTracer
     /// <param name="lastStepNumber">The Step Number of the last SuperStep. Note that Step Numbers are 0-indexed.</param>
     public void Reload(int lastStepNumber = 0) => this._nextStepNumber = lastStepNumber + 1;
 
-    public SuperStepStartedEvent Advance(StepContext step)
+    public SuperStepStartedEvent Advance(StepContext step, CheckpointInfo? startCheckpoint = null)
     {
         this._nextStepNumber++;
         this.Activated.Clear();
@@ -57,7 +57,8 @@ internal sealed class InProcStepTracer : IStepTracer
 
         return new SuperStepStartedEvent(this.StepNumber, new SuperStepStartInfo(sendingExecutors)
         {
-            HasExternalMessages = hasExternalMessages
+            HasExternalMessages = hasExternalMessages,
+            Checkpoint = startCheckpoint
         });
     }
 

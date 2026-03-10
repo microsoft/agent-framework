@@ -244,7 +244,11 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     private async ValueTask RunSuperstepAsync(StepContext currentStep, CancellationToken cancellationToken)
     {
-        await this.RaiseWorkflowEventAsync(this.StepTracer.Advance(currentStep)).ConfigureAwait(false);
+        // Save a checkpoint before the superstep executes, capturing the pre-delivery state.
+        await this.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        CheckpointInfo? startCheckpoint = this.StepTracer.Checkpoint;
+
+        await this.RaiseWorkflowEventAsync(this.StepTracer.Advance(currentStep, startCheckpoint)).ConfigureAwait(false);
 
         // Deliver the messages and queue the next step
         List<Task> receiverTasks =

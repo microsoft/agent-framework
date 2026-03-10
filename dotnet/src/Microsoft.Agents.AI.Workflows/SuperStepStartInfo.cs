@@ -24,5 +24,4 @@ public sealed class SuperStepStartInfo(HashSet<string>? sendingExecutors = null)
     /// <see langword="null"/> if checkpointing was not enabled when the run was started.
     /// </summary>
     public CheckpointInfo? Checkpoint { get; init; }
-
 }
