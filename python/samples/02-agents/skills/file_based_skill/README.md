@@ -9,7 +9,7 @@ Agent Skills are modular packages of instructions and resources that enable AI a
 1. **Advertise**: Skills are advertised with name + description (~100 tokens per skill)
 2. **Load**: Full instructions are loaded on-demand via `load_skill` tool
 3. **Resources**: References and other files loaded via `read_skill_resource` tool
-4. **Scripts**: Executable scripts run via `execute_skill_script` tool
+4. **Scripts**: Executable scripts run via `run_skill_script` tool
 
 ## Skills Included
 
@@ -21,8 +21,7 @@ Converts between common units (miles↔km, pounds↔kg) using a multiplication f
 ## Key Components
 
 - **`SkillsProvider`** — Discovers skills from `SKILL.md` files in a directory and registers tools for the agent
-- **`CallbackSkillScriptExecutor`** — Wraps a callback function as a script executor, enabling the `execute_skill_script` tool
-- **`subprocess_script_runner`** — Sample callback that runs scripts as local Python subprocesses, converting argument dicts to CLI flags (e.g. `{"value": 26.2, "factor": 1.60934}` → `--value 26.2 --factor 1.60934`). Shared across samples in [`../subprocess_script_runner.py`](../subprocess_script_runner.py).
+- **`subprocess_script_runner`** — A `SkillScriptRunner` callback that runs scripts as local Python subprocesses, enabling the `run_skill_script` tool. Converts argument dicts to CLI flags (e.g. `{"value": 26.2, "factor": 1.60934}` → `--value 26.2 --factor 1.60934`). Shared across samples in [`../subprocess_script_runner.py`](../subprocess_script_runner.py).
 
 ## Project Structure
 

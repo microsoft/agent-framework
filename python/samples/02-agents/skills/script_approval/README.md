@@ -6,7 +6,7 @@ This sample demonstrates how to require **human approval** before executing skil
 
 When `require_script_approval=True` is set, the agent pauses before executing any skill script and returns approval requests instead:
 
-1. The agent tries to call `execute_skill_script` — execution is paused
+1. The agent tries to call `run_skill_script` — execution is paused
 2. `result.user_input_requests` contains approval request(s) with function name and arguments
 3. The application inspects each request and decides to approve or reject
 4. `request.to_function_approval_response(approved=True|False)` creates the response

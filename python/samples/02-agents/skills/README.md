@@ -21,7 +21,7 @@ Skills use a three-step interaction model to minimize token usage:
 
 1. **Advertise** — Skill names and descriptions (~100 tokens each) are injected into the system prompt
 2. **Load** — Full instructions are loaded on-demand via the `load_skill` tool
-3. **Access** — Resources are read via `read_skill_resource`; scripts are executed via `execute_skill_script`
+3. **Access** — Resources are read via `read_skill_resource`; scripts are executed via `run_skill_script`
 
 ### File-Based vs Code-Defined Skills
 
@@ -42,10 +42,10 @@ Skills can include executable scripts. How a script runs depends on how it was d
 | | Code-Defined Scripts | File-Based Scripts |
 |---|---|---|
 | **Defined via** | `@skill.script` decorator | `.py` files in `scripts/` directory |
-| **Execution** | In-process (direct function call) | Delegated to a `script_executor` |
-| **`script_executor` needed?** | No — runs in-process automatically | **Yes** — required |
+| **Execution** | In-process (direct function call) | Delegated to a `script_runner` |
+| **`script_runner` needed?** | No — runs in-process automatically | **Yes** — required |
 
-The `script_executor` parameter on `SkillsProvider` is only applicable to **file-based** scripts. Code-defined scripts are always executed in-process regardless of this setting. See [file_based_skill](file_based_skill/) for an example using `CallbackSkillScriptExecutor` with a subprocess runner, and [code_defined_skill](code_defined_skill/) for in-process scripts that need no executor.
+The `script_runner` parameter on `SkillsProvider` is only applicable to **file-based** scripts. Code-defined scripts are always executed in-process regardless of this setting. See [file_based_skill](file_based_skill/) for an example using a `SkillScriptRunner` callable with a subprocess runner, and [code_defined_skill](code_defined_skill/) for in-process scripts that need no runner.
 
 ## Prerequisites
 

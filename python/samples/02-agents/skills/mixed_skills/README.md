@@ -1,7 +1,7 @@
 # Mixed Skills — Code Skills and File Skills
 
 This sample demonstrates how to combine **code-defined skills** and
-**file-based skills** in a single agent using `CallbackSkillScriptExecutor`
+**file-based skills** in a single agent using a `SkillScriptRunner` callable
 and `SkillsProvider`.
 
 ## Concepts
@@ -10,7 +10,7 @@ and `SkillsProvider`.
 |---------|-------------|
 | **Code skill** | A `Skill` created in Python with `@skill.script` decorators for in-process callable functions and `@skill.resource` for dynamic content |
 | **File skill** | A skill discovered from a `SKILL.md` file on disk, with reference documents and executable script files |
-| **`CallbackSkillScriptExecutor`** | Routes script execution through a user-provided callback — required when combining code and file skills |
+| **`script_runner`** | An async callable satisfying the `SkillScriptRunner` protocol — required when file skills have scripts |
 | **`SkillsProvider`** | Registers both code-defined and file-based skills in a single provider |
 
 ## Skills in This Sample
@@ -22,7 +22,7 @@ Defined entirely in Python code using decorators:
 - **`@skill.resource`** — `conversion-table`: gallons↔liters conversion factors
 - **`@skill.script`** — `convert`: converts a value using a multiplication factor
 
-Code scripts run **in-process** — no subprocess or external executor needed.
+Code scripts run **in-process** — no subprocess or external runner needed.
 
 ### unit-converter (file skill)
 
@@ -32,7 +32,7 @@ Discovered from `skills/unit-converter/SKILL.md`:
 - **Script**: `scripts/convert.py` — converts a value using a multiplication factor (e.g. miles to kilometers)
 
 File scripts are executed as **local Python subprocesses** via the
-`CallbackSkillScriptExecutor` callback.
+`script_runner` callback.
 
 ## How It Works
 
@@ -41,13 +41,13 @@ File scripts are executed as **local Python subprocesses** via the
 │  SkillsProvider(                                             │
 │      skill_paths="./skills",              # file skills      │
 │      skills=[volume_converter_skill],    # code skills      │
-│      script_executor=executor,                               │
+│      script_runner=runner,                                    │
 │  )                                                           │
 └─────────────┬───────────────────────────────────────────────┘
               │
               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  CallbackSkillScriptExecutor(callback=...)                  │
+│  script_runner(skill, script, args)                          │
 │                                                             │
 │  • Code scripts (@skill.script) → in-process call           │
 │  • File scripts (scripts/*.py) → subprocess via             │

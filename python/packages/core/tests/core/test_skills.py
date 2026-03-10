@@ -33,6 +33,11 @@ from agent_framework._skills import (
 )
 
 
+async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None:
+    """No-op script runner for tests that need a SkillScriptRunner."""
+    return None
+
+
 def _symlinks_supported(tmp: Path) -> bool:
     """Return True if the current platform/environment supports symlinks."""
     test_target = tmp / "_symlink_test_target"
@@ -1609,14 +1614,14 @@ class TestCreateInstructionsEdgeCases:
         charlie_pos = result.index("charlie")
         assert alpha_pos < bravo_pos < charlie_pos
 
-    def test_custom_template_missing_executor_instructions_raises(self) -> None:
-        """Custom template without {executor_instructions} raises when scripts are enabled."""
+    def test_custom_template_missing_runner_instructions_raises(self) -> None:
+        """Custom template without {runner_instructions} raises when scripts are enabled."""
         skills = {
             "my-skill": Skill(name="my-skill", description="Skill.", content="Body"),
         }
         template = "Skills: {skills}"
-        with pytest.raises(ValueError, match="executor_instructions"):
-            _create_instructions(template, skills, include_script_execution_instructions=True)
+        with pytest.raises(ValueError, match="runner_instructions"):
+            _create_instructions(template, skills, include_script_runner_instructions=True)
 
     def test_custom_template_with_unknown_placeholder_raises(self) -> None:
         """Template with an unknown placeholder raises ValueError."""
@@ -1945,98 +1950,77 @@ class TestSkillWithScripts:
 
 
 # ---------------------------------------------------------------------------
-# Executor tests
+# Runner tests
 # ---------------------------------------------------------------------------
 
 
-class TestCallbackSkillScriptExecutor:
-    """Tests for CallbackSkillScriptExecutor."""
-
-    def test_requires_callback(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor
-
-        with pytest.raises(ValueError, match="callback cannot be None"):
-            CallbackSkillScriptExecutor(None)  # type: ignore[arg-type]
+class TestSkillScriptRunnerProtocol:
+    """Tests for the SkillScriptRunner protocol."""
 
     @pytest.mark.asyncio
-    async def test_calls_callback_with_skill_and_script(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+    async def test_async_callable_satisfies_protocol(self) -> None:
+        from agent_framework import SkillScriptRunner, SkillScript
 
         results: list[tuple] = []
 
-        def my_callback(skill, script, args):
+        async def my_runner(skill, script, args=None):
             results.append((skill.name, script.name, args))
             return "executed"
+
+        assert isinstance(my_runner, SkillScriptRunner)
 
         skill = Skill(name="test-skill", description="test", content="body")
         script = SkillScript(name="my-script", path="scripts/run.py")
         skill.scripts.append(script)
 
-        executor = CallbackSkillScriptExecutor(callback=my_callback)
-        result = await executor.execute(skill, script, args={"key": "val"})
+        result = await my_runner(skill, script, args={"key": "val"})
 
         assert result == "executed"
         assert len(results) == 1
         assert results[0] == ("test-skill", "my-script", {"key": "val"})
 
     @pytest.mark.asyncio
-    async def test_always_delegates_to_callback(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+    async def test_callable_class_satisfies_protocol(self) -> None:
+        from agent_framework import SkillScriptRunner, SkillScript
 
-        callback_called = False
+        class _CustomRunner:
+            async def __call__(self, skill, script, args=None):
+                return "custom result"
 
-        def my_callback(skill, script, args):
-            nonlocal callback_called
-            callback_called = True
-            return "from callback"
-
-        def my_function(key: str = "") -> str:
-            return f"from function: {key}"
+        runner = _CustomRunner()
+        assert isinstance(runner, SkillScriptRunner)
 
         skill = Skill(name="test-skill", description="test", content="body")
-        script = SkillScript(name="my-script", function=my_function)
+        script = SkillScript(name="my-script", function=lambda: None)
         skill.scripts.append(script)
 
-        executor = CallbackSkillScriptExecutor(callback=my_callback)
-        result = await executor.execute(skill, script, args={"key": "val"})
-
-        assert result == "from callback"
-        assert callback_called
+        result = await runner(skill, script, args={"key": "val"})
+        assert result == "custom result"
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_none_result(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+    async def test_runner_returns_none(self) -> None:
+        from agent_framework import SkillScript
 
-        executor = CallbackSkillScriptExecutor(callback=lambda skill, script, args: None)
+        async def noop_runner(skill, script, args=None):
+            return None
+
         skill = Skill(name="test-skill", description="test", content="body")
         script = SkillScript(name="s1", function=lambda: None)
 
-        result = await executor.execute(skill, script)
+        result = await noop_runner(skill, script)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_supports_async_callback(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+    async def test_runner_returns_object(self) -> None:
+        from agent_framework import SkillScript
 
-        async def async_callback(skill, script, args):
-            return "async result"
+        async def dict_runner(skill, script, args=None):
+            return {"exit_code": 0, "output": "ok"}
 
-        executor = CallbackSkillScriptExecutor(callback=async_callback)
-        skill = Skill(name="test-skill", description="test", content="body")
-        script = SkillScript(name="s1", function=lambda: None)
-
-        result = await executor.execute(skill, script)
-        assert result == "async result"
-
-    @pytest.mark.asyncio
-    async def test_returns_object_from_callback(self) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
-
-        executor = CallbackSkillScriptExecutor(callback=lambda skill, script, args: {"exit_code": 0, "output": "ok"})
         skill = Skill(name="test-skill", description="test", content="body")
         script = SkillScript(name="s1", path="scripts/run.py")
 
-        result = await executor.execute(skill, script)
+        result = await dict_runner(skill, script)
         assert result == {"exit_code": 0, "output": "ok"}
 # ---------------------------------------------------------------------------
 # SkillsProvider static factory tests
@@ -2054,18 +2038,18 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider(skills=[skill])
         assert len(provider._skills) == 1
-        # Default executor auto-wired: base tools + execute_skill_script
-        assert any(hasattr(t, "name") and t.name == "execute_skill_script" for t in provider._tools)
+        # Default runner auto-wired: base tools + run_skill_script
+        assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
 
     def test_code_skills_no_scripts(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
         provider = SkillsProvider(skills=[skill])
-        # No scripts with functions, no executor — only base tools
+        # No scripts with functions, no runner — only base tools
         assert len(provider._tools) == 2
-        assert not any(hasattr(t, "name") and t.name == "execute_skill_script" for t in provider._tools)
+        assert not any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
 
     @pytest.mark.asyncio
-    async def test_code_script_executes_directly(self) -> None:
+    async def test_code_script_runs_directly(self) -> None:
         from agent_framework import SkillScript
 
         def my_function(key: str = "") -> str:
@@ -2075,40 +2059,25 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=my_function))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="s1", args={"key": "hello"})
 
         assert result == "executed: hello"
 
     def test_no_scripts_no_tool(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
-        # No scripts at all — no execute_skill_script tool
+        # No scripts at all — no run_skill_script tool
         provider = SkillsProvider(skills=[skill])
-        assert not any(hasattr(t, "name") and t.name == "execute_skill_script" for t in provider._tools)
+        assert not any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
 
-    def test_file_skills_with_custom_executor(self, tmp_path: Path) -> None:
-        from agent_framework import SkillScriptExecutor
+    def test_file_skills_with_custom_runner(self, tmp_path: Path) -> None:
+        from agent_framework import SkillScriptRunner
 
-        class _CustomExecutor(SkillScriptExecutor):
-            async def execute(self, skill, script, args=None):
+        class _CustomRunner:
+            async def __call__(self, skill, script, args=None):
                 return "custom result"
 
-        skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            "---\nname: my-skill\ndescription: test\n---\nBody",
-            encoding="utf-8",
-        )
-        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
-
-        provider = SkillsProvider(
-            skill_paths=str(tmp_path),
-            script_executor=_CustomExecutor(),
-        )
-        assert any(hasattr(t, "name") and t.name == "execute_skill_script" for t in provider._tools)
-
-    def test_file_skills_with_callback_executor(self, tmp_path: Path) -> None:
-        from agent_framework import CallbackSkillScriptExecutor
+        assert isinstance(_CustomRunner(), SkillScriptRunner)
 
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
@@ -2120,12 +2089,27 @@ class TestSkillsProviderFactories:
 
         provider = SkillsProvider(
             skill_paths=str(tmp_path),
-            script_executor=CallbackSkillScriptExecutor(callback=lambda sk, s, a: None),
+            script_runner=_CustomRunner(),
         )
-        assert any(hasattr(t, "name") and t.name == "execute_skill_script" for t in provider._tools)
+        assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
+
+    def test_file_skills_with_callback_runner(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+
+        provider = SkillsProvider(
+            skill_paths=str(tmp_path),
+            script_runner=_noop_script_runner,
+        )
+        assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
 
     def test_combined_skills(self, tmp_path: Path) -> None:
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+        from agent_framework import SkillScript
 
         skill_dir = tmp_path / "file-skill"
         skill_dir.mkdir()
@@ -2140,12 +2124,12 @@ class TestSkillsProviderFactories:
         provider = SkillsProvider(
             skill_paths=str(tmp_path),
             skills=[code_skill],
-            script_executor=CallbackSkillScriptExecutor(callback=lambda sk, s, a: None),
+            script_runner=_noop_script_runner,
         )
         assert "file-skill" in provider._skills
         assert "code-skill" in provider._skills
 
-    def test_file_scripts_without_executor_raises(self, tmp_path: Path) -> None:
+    def test_file_scripts_without_runner_raises(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -2154,11 +2138,11 @@ class TestSkillsProviderFactories:
         )
         (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
 
-        with pytest.raises(ValueError, match="script_executor"):
+        with pytest.raises(ValueError, match="script_runner"):
             SkillsProvider(skill_paths=str(tmp_path))
 
     @pytest.mark.asyncio
-    async def test_file_script_error_without_executor(self) -> None:
+    async def test_file_script_error_without_runner(self) -> None:
         from agent_framework import SkillScript
 
         # A skill with both a code script and a file-based script
@@ -2167,19 +2151,19 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="file-s", path="scripts/s1.py"))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
 
         # Code script works
         result = await run_tool.func(skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
-        # File script without executor returns error
+        # File script without runner returns error
         result = await run_tool.func(skill_name="my-skill", script_name="file-s")
         assert "Error" in result
-        assert "script_executor" in result
+        assert "script_runner" in result
 
     @pytest.mark.asyncio
-    async def test_async_code_script_executes_directly(self) -> None:
+    async def test_async_code_script_runs_directly(self) -> None:
         from agent_framework import SkillScript
 
         async def async_func(x: int = 0) -> str:
@@ -2189,7 +2173,7 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=async_func))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="s1", args={"x": 42})
         assert result == "async: 42"
 
@@ -2205,7 +2189,7 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=returns_dict))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="s1")
         assert result == {"status": "ok", "value": 42}
 
@@ -2218,7 +2202,7 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="s1")
         assert result is None
 
@@ -2231,8 +2215,8 @@ class TestSkillsProviderFactories:
             SkillScript(name="s1", function=lambda: "direct", path="scripts/s1.py")
 
     @pytest.mark.asyncio
-    async def test_script_with_path_errors_without_executor(self) -> None:
-        """A file-based script without an executor should return an error."""
+    async def test_script_with_path_errors_without_runner(self) -> None:
+        """A file-based script without a runner should return an error."""
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
@@ -2240,32 +2224,32 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="path-s", path="scripts/s1.py"))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
 
         # Code-only script still works
         result = await run_tool.func(skill_name="my-skill", script_name="code-s")
         assert result == "ok"
 
-        # Path+function script without executor returns error
+        # Path+function script without runner returns error
         result = await run_tool.func(skill_name="my-skill", script_name="path-s")
         assert "Error" in result
-        assert "script_executor" in result
+        assert "script_runner" in result
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_error_on_missing_skill(self) -> None:
+    async def test_run_skill_script_error_on_missing_skill(self) -> None:
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="nonexistent", script_name="s1")
         assert "Error" in result
         assert "nonexistent" in result
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_sync_with_kwargs(self) -> None:
+    async def test_run_skill_script_sync_with_kwargs(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
 
         @skill.script
@@ -2274,11 +2258,11 @@ class TestSkillsProviderFactories:
             return f"Hello {name} (user={user_id})"
 
         provider = SkillsProvider(skills=[skill])
-        result = await provider._execute_skill_script("my-skill", "greet", args={"name": "Alice"}, user_id="u42")
+        result = await provider._run_skill_script("my-skill", "greet", args={"name": "Alice"}, user_id="u42")
         assert result == "Hello Alice (user=u42)"
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_async_with_kwargs(self) -> None:
+    async def test_run_skill_script_async_with_kwargs(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
 
         @skill.script
@@ -2287,11 +2271,11 @@ class TestSkillsProviderFactories:
             return f"fetched {url} with token={token}"
 
         provider = SkillsProvider(skills=[skill])
-        result = await provider._execute_skill_script("my-skill", "fetch", args={"url": "http://x"}, auth_token="abc")
+        result = await provider._run_skill_script("my-skill", "fetch", args={"url": "http://x"}, auth_token="abc")
         assert result == "fetched http://x with token=abc"
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_without_kwargs_ignores_extra_args(self) -> None:
+    async def test_run_skill_script_without_kwargs_ignores_extra_args(self) -> None:
         """Script functions without **kwargs should still work when runtime kwargs are passed."""
         skill = Skill(name="my-skill", description="test", content="body")
 
@@ -2300,11 +2284,11 @@ class TestSkillsProviderFactories:
             return f"result: {query}"
 
         provider = SkillsProvider(skills=[skill])
-        result = await provider._execute_skill_script("my-skill", "simple", args={"query": "test"}, user_id="ignored")
+        result = await provider._run_skill_script("my-skill", "simple", args={"query": "test"}, user_id="ignored")
         assert result == "result: test"
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_conflicting_args_and_kwargs_raises(self) -> None:
+    async def test_run_skill_script_conflicting_args_and_kwargs_raises(self) -> None:
         """Conflicting keys in args and kwargs should raise TypeError."""
         skill = Skill(name="my-skill", description="test", content="body")
 
@@ -2313,33 +2297,33 @@ class TestSkillsProviderFactories:
             return f"mode={kwargs.get('mode', 'default')}"
 
         provider = SkillsProvider(skills=[skill])
-        result = await provider._execute_skill_script(
+        result = await provider._run_skill_script(
             "my-skill", "process", args={"mode": "llm-value"}, mode="runtime-value"
         )
         assert "Error" in result
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_error_on_missing_script(self) -> None:
+    async def test_run_skill_script_error_on_missing_script(self) -> None:
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="nonexistent")
         assert "Error" in result
         assert "nonexistent" in result
 
     @pytest.mark.asyncio
-    async def test_execute_skill_script_error_on_empty_names(self) -> None:
+    async def test_run_skill_script_error_on_empty_names(self) -> None:
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
 
         result = await run_tool.func(skill_name="", script_name="s1")
         assert "Error" in result
@@ -2347,21 +2331,21 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="")
         assert "Error" in result
 
-    def test_instructions_include_script_executor_hints(self) -> None:
+    def test_instructions_include_script_runner_hints(self) -> None:
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        assert "execute_skill_script" in provider._instructions
+        assert "run_skill_script" in provider._instructions
         assert "not as top-level tool parameters" in provider._instructions
 
-    def test_no_scripts_no_executor_no_script_instructions(self) -> None:
+    def test_no_scripts_no_runner_no_script_instructions(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
         provider = SkillsProvider(skills=[skill])
-        # No scripts and no executor — instructions should not mention execute_skill_script
-        assert "execute_skill_script" not in (provider._instructions or "")
+        # No scripts and no runner — instructions should not mention run_skill_script
+        assert "run_skill_script" not in (provider._instructions or "")
 
     def test_tool_schema_args_description_mentions_key_format(self) -> None:
         from agent_framework import SkillScript
@@ -2370,31 +2354,31 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         args_desc = run_tool.parameters()["properties"]["args"]["description"]
         assert "without leading dashes" in args_desc
         assert "CLI flags automatically" in args_desc
 
     def test_require_script_approval_sets_approval_mode(self) -> None:
-        """When require_script_approval=True, the execute_skill_script tool has approval_mode='always_require'."""
+        """When require_script_approval=True, the run_skill_script tool has approval_mode='always_require'."""
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill], require_script_approval=True)
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         assert run_tool.approval_mode == "always_require"
 
     def test_require_script_approval_false_by_default(self) -> None:
-        """By default, the execute_skill_script tool has approval_mode='never_require'."""
+        """By default, the run_skill_script tool has approval_mode='never_require'."""
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         assert run_tool.approval_mode == "never_require"
 
     def test_require_script_approval_does_not_affect_other_tools(self) -> None:
@@ -2405,7 +2389,7 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
         provider = SkillsProvider(skills=[skill], require_script_approval=True)
-        other_tools = [t for t in provider._tools if hasattr(t, "name") and t.name != "execute_skill_script"]
+        other_tools = [t for t in provider._tools if hasattr(t, "name") and t.name != "run_skill_script"]
         assert len(other_tools) == 2
         for t in other_tools:
             assert t.approval_mode == "never_require"
@@ -2422,20 +2406,20 @@ class TestSkillsProviderFactories:
         skill.scripts.append(SkillScript(name="boom", function=failing_script))
 
         provider = SkillsProvider(skills=[skill])
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
         result = await run_tool.func(skill_name="my-skill", script_name="boom")
         assert "Error" in result
         assert "boom" in result
         assert "Something went wrong" not in result
 
-    def test_custom_template_without_executor_placeholder_raises(self) -> None:
-        """Provider with code scripts and custom template missing {executor_instructions} raises."""
+    def test_custom_template_without_runner_placeholder_raises(self) -> None:
+        """Provider with code scripts and custom template missing {runner_instructions} raises."""
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="s1", function=lambda: None))
 
-        with pytest.raises(ValueError, match="executor_instructions"):
+        with pytest.raises(ValueError, match="runner_instructions"):
             SkillsProvider(
                 skills=[skill],
                 instruction_template="Skills: {skills}",
@@ -2535,8 +2519,6 @@ class TestCustomScriptExtensions:
 
     def test_custom_script_extensions_via_provider(self, tmp_path: Path) -> None:
         """SkillsProvider accepts custom script_extensions."""
-        from agent_framework import CallbackSkillScriptExecutor
-
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -2550,7 +2532,7 @@ class TestCustomScriptExtensions:
         provider = SkillsProvider(
             str(tmp_path),
             script_extensions=(".sh",),
-            script_executor=CallbackSkillScriptExecutor(callback=lambda sk, s, a: None),
+            script_runner=_noop_script_runner,
         )
         skill = provider._skills["my-skill"]
         script_names = [s.name for s in skill.scripts]
@@ -2559,8 +2541,6 @@ class TestCustomScriptExtensions:
 
     def test_multiple_script_extensions(self, tmp_path: Path) -> None:
         """Multiple script extensions can be specified."""
-        from agent_framework import CallbackSkillScriptExecutor
-
         skill_dir = tmp_path / "my-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(
@@ -2574,7 +2554,7 @@ class TestCustomScriptExtensions:
         provider = SkillsProvider(
             str(tmp_path),
             script_extensions=(".py", ".sh"),
-            script_executor=CallbackSkillScriptExecutor(callback=lambda sk, s, a: None),
+            script_runner=_noop_script_runner,
         )
         skill = provider._skills["my-skill"]
         script_names = [s.name for s in skill.scripts]

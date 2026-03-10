@@ -9,7 +9,6 @@ from textwrap import dedent
 
 from agent_framework import (
     Agent,
-    CallbackSkillScriptExecutor,
     Skill,
     SkillsProvider,
 )
@@ -30,7 +29,7 @@ Mixed Skills — Code skills and file skills in a single agent
 This sample demonstrates how to combine **code-defined skills** (with
 ``@skill.script`` and ``@skill.resource`` decorators) and **file-based skills**
 (discovered from ``SKILL.md`` files on disk) in a single agent using
-``SkillsProvider`` and a ``CallbackSkillScriptExecutor``.
+``SkillsProvider`` and a ``SkillScriptRunner`` callable.
 
 Key concepts shown:
 - Code skills with ``@skill.script``: executable Python functions the agent
@@ -39,7 +38,7 @@ Key concepts shown:
   on demand.
 - File skills from disk: ``SKILL.md`` files with reference documents and
   executable script files.
-- ``CallbackSkillScriptExecutor``: routes **file-based** script execution
+- ``script_runner``: routes **file-based** script execution
   through a callback, enabling custom handling (e.g. subprocess calls).
   Code-defined scripts (``@skill.script``) run in-process automatically.
 
@@ -117,17 +116,14 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the CallbackSkillScriptExecutor
-    # Handles file-based scripts via the callback.  Code-defined
-    # scripts (@skill.script) are executed in-process automatically.
-    executor = CallbackSkillScriptExecutor(callback=subprocess_script_runner)
-
-    # Create the SkillsProvider with both code and file skills
+    # Create the SkillsProvider with both code and file skills.
+    # The script_runner handles file-based scripts; code-defined scripts
+    # (@skill.script) run in-process automatically.
     skills_dir = Path(__file__).parent / "skills"
     skills_provider = SkillsProvider(
         skill_paths=str(skills_dir),
         skills=[volume_converter_skill],
-        script_executor=executor,
+        script_runner=subprocess_script_runner,
     )
 
     # Run the agent

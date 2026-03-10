@@ -60,11 +60,10 @@ from ._sessions import (
 )
 from ._settings import SecretString, load_settings
 from ._skills import (
-    CallbackSkillScriptExecutor,
     Skill,
     SkillResource,
     SkillScript,
-    SkillScriptExecutor,
+    SkillScriptRunner,
     SkillsProvider,
 )
 from ._telemetry import (
@@ -218,7 +217,6 @@ __all__ = [
     "BaseContextProvider",
     "BaseEmbeddingClient",
     "BaseHistoryProvider",
-    "CallbackSkillScriptExecutor",
     "Case",
     "ChatAndFunctionMiddlewareTypes",
     "ChatContext",
@@ -280,7 +278,7 @@ __all__ = [
     "Skill",
     "SkillResource",
     "SkillScript",
-    "SkillScriptExecutor",
+    "SkillScriptRunner",
     "SkillsProvider",
     "SubWorkflowRequestMessage",
     "SubWorkflowResponseMessage",

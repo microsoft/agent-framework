@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from agent_framework import Agent, CallbackSkillScriptExecutor, SkillsProvider
+from agent_framework import Agent, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -27,7 +27,7 @@ capabilities. They follow progressive disclosure:
 1. Advertise — skill names and descriptions are injected into the system prompt
 2. Load — full instructions are loaded on-demand via the load_skill tool
 3. Read resources — supplementary files are read via the read_skill_resource tool
-4. Execute scripts — skill scripts are executed via the execute_skill_script tool
+4. Run scripts — skill scripts are run via the run_skill_script tool
 
 This sample includes the unit-converter skill which demonstrates all three
 file-based capabilities: instructions (SKILL.md), resources (CONVERSION_TABLES.md),
@@ -50,17 +50,13 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the script executor
-    # Wraps the subprocess_script_runner callback so the SkillsProvider can
-    # register an execute_skill_script tool for the LLM.
-    executor = CallbackSkillScriptExecutor(callback=subprocess_script_runner)
-
     # Create the skills provider
-    # Discovers skills from the 'skills' directory and makes them available to the agent
+    # Discovers skills from the 'skills' directory and configures the
+    # subprocess_script_runner to run file-based scripts.
     skills_dir = Path(__file__).parent / "skills"
     skills_provider = SkillsProvider(
         skill_paths=str(skills_dir),
-        script_executor=executor,
+        script_runner=subprocess_script_runner,
     )
 
     # Create the agent with skills

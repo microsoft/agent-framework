@@ -30,11 +30,10 @@ import json
 import logging
 import os
 import re
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, runtime_checkable
 
 from ._sessions import BaseContextProvider
 from ._tools import FunctionTool
@@ -135,7 +134,7 @@ class SkillScript:
     When ``function`` is set the script is treated as **code-based**
     and the function is invoked directly in-process.  When ``path`` is
     set the script is treated as **file-based** and delegated to the
-    configured :class:`SkillScriptExecutor`.
+    configured :class:`SkillScriptRunner`.
 
     Attributes:
         name: Script identifier.
@@ -181,6 +180,8 @@ class SkillScript:
         """
         if not name or not name.strip():
             raise ValueError("Script name cannot be empty.")
+        if function is None and path is None:
+            raise ValueError(f"Script '{name}' must have either function or path.")
         if function is not None and path is not None:
             raise ValueError(f"Script '{name}' must have either function or path, not both.")
 
@@ -428,33 +429,34 @@ class Skill:
 
 # endregion
 
-# region Script Executors
+# region Script Runners
 
 
-class SkillScriptExecutor(ABC):
-    """Abstract base class for skill script executors.
+@runtime_checkable
+class SkillScriptRunner(Protocol):
+    """Protocol for skill script runners.
 
     .. warning:: Experimental
 
         This API is experimental and subject to change or removal
         in future versions without notice.
 
-    A script executor determines how **file-based** skill scripts are
-    executed. Concrete implementations decide the execution strategy
+    A script runner determines how **file-based** skill scripts are
+    run. Implementations decide the execution strategy
     (e.g., local subprocess, hosted code execution environment,
-    user-provided callback).
+    user-provided callable).
 
     Code-defined scripts (registered via the ``@skill.script`` decorator)
-    are always executed **in-process** and do not use a script executor.
+    are always executed **in-process** and do not use a script runner.
 
-    Subclasses must implement :meth:`execute`.
+    Any callable (sync or async) matching the ``__call__`` signature
+    satisfies this protocol.
     """
 
-    @abstractmethod
-    async def execute(
+    def __call__(
         self, skill: Skill, script: SkillScript, args: dict[str, Any] | None = None
     ) -> Any:
-        """Execute a skill script.
+        """Run a skill script.
 
         The :class:`SkillsProvider` resolves skill and script names
         before calling this method, so implementations receive fully
@@ -462,77 +464,15 @@ class SkillScriptExecutor(ABC):
 
         Args:
             skill: The skill that owns the script.
-            script: The script to execute.
+            script: The script to run.
             args: Optional keyword arguments for the script.
 
         Returns:
-            The execution result. May be any type; the framework
+            The result. May be any type; the framework
             serialises it automatically via
             :meth:`~FunctionTool.parse_result`.
         """
         ...
-
-
-class CallbackSkillScriptExecutor(SkillScriptExecutor):
-    """Script executor that delegates to a user-provided callback.
-
-    This executor is intended for **file-based** skill scripts (those
-    discovered from disk via ``skill_paths``). Code-defined scripts
-    (registered via ``@skill.script``) are executed in-process
-    and do not use this executor.
-
-    When the :class:`SkillsProvider` invokes :meth:`execute`,
-    this executor forwards the resolved :class:`Skill` and
-    :class:`SkillScript` to the configured callback function.
-
-    The callback receives the :class:`Skill`, its :class:`SkillScript` and an optional
-    arguments dictionary, and should return the execution result.
-
-    Examples:
-        .. code-block:: python
-
-            async def my_runner(skill: Skill, script: SkillScript, args: dict | None) -> Any:
-                return subprocess.run(["python", script.name], capture_output=True).stdout
-
-            provider = SkillsProvider(
-                skill_paths="./skills",
-                script_executor=CallbackSkillScriptExecutor(callback=my_runner),
-            )
-    """
-
-    def __init__(self, callback: Callable[..., Any]) -> None:
-        """Initialize a CallbackSkillScriptExecutor.
-
-        Args:
-            callback: Callable (sync or async) that executes a script.
-                Signature: ``(skill: Skill, script: SkillScript, args: dict[str, Any] | None) -> Any``.
-        """
-        if callback is None:
-            raise ValueError("CallbackSkillScriptExecutor callback cannot be None.")
-        self._callback = callback
-
-    async def execute(
-        self, skill: Skill, script: SkillScript, args: dict[str, Any] | None = None
-    ) -> Any:
-        """Execute a skill script via the configured callback.
-
-        .. warning:: Experimental
-
-            This API is experimental and subject to change or removal
-            in future versions without notice.
-
-        Args:
-            skill: The skill that owns the script.
-            script: The script to execute.
-            args: Optional keyword arguments for the script.
-
-        Returns:
-            The execution result.
-        """
-        result = self._callback(skill, script, args)  # type: ignore[arg-type]
-        if inspect.isawaitable(result):
-            result = await result
-        return result
 
 
 # endregion
@@ -587,11 +527,11 @@ When a task aligns with a skill's domain, follow these steps in exact order:
 - Follow the provided guidance.
 - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
    (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-{executor_instructions}
+{runner_instructions}
 Only load what is needed, when it is needed."""
 
-SCRIPT_EXECUTOR_INSTRUCTIONS: Final[str] = (
-    "\n- Use `execute_skill_script` to run referenced scripts, using the name exactly as listed."
+SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
+    "\n- Use `run_skill_script` to run referenced scripts, using the name exactly as listed."
     "\n- Pass script arguments inside `args` as a JSON object"
     ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n'
 )
@@ -663,7 +603,7 @@ class SkillsProvider(BaseContextProvider):
         skill_paths: str | Path | Sequence[str | Path] | None = None,
         *,
         skills: Sequence[Skill] | None = None,
-        script_executor: SkillScriptExecutor | None = None,
+        script_runner: SkillScriptRunner | None = None,
         instruction_template: str | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         script_extensions: tuple[str, ...] | None = None,
@@ -680,10 +620,9 @@ class SkillsProvider(BaseContextProvider):
 
         Keyword Args:
             skills: Code-defined :class:`Skill` instances to register.
-            script_executor: Strategy for running **file-based** skill
+            script_runner: Strategy for running **file-based** skill
                 scripts. The provider resolves skill and script names, then
-                delegates execution to the executor's
-                :meth:`~SkillScriptExecutor.execute`. This parameter only
+                calls the runner directly. This parameter only
                 affects scripts discovered from disk (via *skill_paths*);
                 code-defined scripts (registered with ``@skill.script``) are
                 always executed in-process and ignore this setting.
@@ -726,22 +665,22 @@ class SkillsProvider(BaseContextProvider):
         # Code-defined skills (skill.path is None) have scripts with callable functions
         has_code_scripts = any(s.scripts for s in self._skills.values() if s.path is None)
 
-        if has_file_scripts and script_executor is None:
+        if has_file_scripts and script_runner is None:
             raise ValueError(
-                "File-based skills with scripts were provided but no 'script_executor' was provided. "
-                "Pass a SkillScriptExecutor instance (e.g. CallbackSkillScriptExecutor) to SkillsProvider."
+                "File-based skills with scripts were provided but no 'script_runner' was provided. "
+                "Pass a SkillScriptRunner callable to SkillsProvider."
             )
 
-        self._script_executor = script_executor
+        self._script_runner = script_runner
 
         self._instructions = _create_instructions(
             prompt_template=instruction_template,
             skills=self._skills,
-            include_script_execution_instructions=has_file_scripts or has_code_scripts
+            include_script_runner_instructions=has_file_scripts or has_code_scripts
         )
 
         self._tools = self._create_tools(
-            include_script_execution_tool=has_file_scripts or has_code_scripts,
+            include_script_runner_tool=has_file_scripts or has_code_scripts,
             require_script_approval=require_script_approval,
         )
 
@@ -759,10 +698,10 @@ class SkillsProvider(BaseContextProvider):
         skill is registered, appends the skill-list system prompt and the
         ``load_skill`` / ``read_skill_resource`` tools to *context*.
 
-        When a script executor is provided, or a skill defines a code-based
-        script, the system prompt also includes script-execution instructions
-        (embedded via the ``{executor_instructions}`` placeholder), and the
-        ``execute_skill_script`` tool is included alongside the base tools.
+        When a script runner is provided, or a skill defines a code-based
+        script, the system prompt also includes script-runner instructions
+        (embedded via the ``{runner_instructions}`` placeholder), and the
+        ``run_skill_script`` tool is included alongside the base tools.
 
         Args:
             agent: The agent instance about to run.
@@ -778,19 +717,19 @@ class SkillsProvider(BaseContextProvider):
 
     def _create_tools(
         self,
-        include_script_execution_tool: bool,
+        include_script_runner_tool: bool,
         require_script_approval: bool = False,
     ) -> list[FunctionTool]:
         """Create the ``load_skill`` and ``read_skill_resource`` tool definitions.
 
-        When *include_script_execution_tool* is ``True``, also creates
-        ``execute_skill_script``.
+        When *include_script_runner_tool* is ``True``, also creates
+        ``run_skill_script``.
 
         Args:
-            include_script_execution_tool: Whether to include the
-                ``execute_skill_script`` tool in the returned list.
+            include_script_runner_tool: Whether to include the
+                ``run_skill_script`` tool in the returned list.
             require_script_approval: When ``True``, the
-                ``execute_skill_script`` tool pauses for user approval
+                ``run_skill_script`` tool pauses for user approval
                 before each invocation.
 
         Returns:
@@ -827,12 +766,12 @@ class SkillsProvider(BaseContextProvider):
             ),
         ]
 
-        if include_script_execution_tool:
+        if include_script_runner_tool:
             tools.append(
                 FunctionTool(
-                    name="execute_skill_script",
-                    description="Executes a script associated with a skill.",
-                    func=self._execute_skill_script,
+                    name="run_skill_script",
+                    description="Runs a script associated with a skill.",
+                    func=self._run_skill_script,
                     approval_mode="always_require" if require_script_approval else "never_require",
                     input_model={
                         "type": "object",
@@ -841,7 +780,7 @@ class SkillsProvider(BaseContextProvider):
                             "script_name": {
                                 "type": "string",
                                 "description": (
-                                    "The exact name of the script to execute as listed in the skill, "
+                                    "The exact name of the script to run as listed in the skill, "
                                     "preserving any directory prefix exactly as shown. "
                                     "Must match exactly — do not add or remove path prefixes."
                                 ),
@@ -856,7 +795,7 @@ class SkillsProvider(BaseContextProvider):
                                     "Arguments to pass to the script as key-value pairs. "
                                     "Use parameter names as keys without leading dashes "
                                     '(e.g. {"length": 24, "uppercase": true}). '
-                                    "The executor converts them to CLI flags automatically."
+                                    "The runner converts them to CLI flags automatically."
                                 ),
                             },
                         },
@@ -914,14 +853,14 @@ class SkillsProvider(BaseContextProvider):
 
         return content
 
-    async def _execute_skill_script(
+    async def _run_skill_script(
         self, skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
     ) -> Any:
-        """Execute a named script from a skill.
+        """Run a named script from a skill.
 
         For code-defined scripts (those with a ``function`` and no ``path``),
         the function is invoked directly in-process.  For file-based scripts
-        the configured :class:`SkillScriptExecutor` is used.
+        the configured :class:`SkillScriptRunner` is used.
 
         Args:
             skill_name: The name of the owning skill.
@@ -931,12 +870,10 @@ class SkillsProvider(BaseContextProvider):
                 parameters.
             **kwargs: Runtime keyword arguments forwarded only to script
                 functions that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).  These are **not** merged with
-                *args*; if a key appears in both *args* and *kwargs* a
-                ``TypeError`` is raised.
+                ``agent.run(user_id="123")``).
 
         Returns:
-            The execution result, or a user-facing error message on
+            The result, or a user-facing error message on
             failure.
         """
         if not skill_name or not skill_name.strip():
@@ -953,7 +890,7 @@ class SkillsProvider(BaseContextProvider):
         if not script:
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
-        # Code-defined scripts: execute the function directly
+        # Code-defined scripts: run the function directly
         if script.function is not None:
             try:
                 if script._accepts_kwargs:  # pyright: ignore[reportPrivateUsage]
@@ -964,20 +901,23 @@ class SkillsProvider(BaseContextProvider):
                     result = await result
                 return result
             except Exception:
-                logger.exception("Error executing code-defined script '%s' in skill '%s'", script_name, skill_name)
-                return f"Error: Failed to execute script '{script_name}' in skill '{skill_name}'."
+                logger.exception("Error running code-defined script '%s' in skill '%s'", script_name, skill_name)
+                return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
 
-        # File-based scripts: delegate to the executor
-        if self._script_executor is None:
+        # File-based scripts: delegate to the runner
+        if self._script_runner is None:
             return (
-                f"Error: Script '{script_name}' in skill '{skill_name}' requires an executor. "
-                "Provide a script_executor for file-based scripts."
+                f"Error: Script '{script_name}' in skill '{skill_name}' requires a runner. "
+                "Provide a script_runner for file-based scripts."
             )
         try:
-            return await self._script_executor.execute(skill, script, args)
+            result = self._script_runner(skill, script, args)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
         except Exception:
-            logger.exception("Error executing file-based script '%s' in skill '%s'", script_name, skill_name)
-            return f"Error: Failed to execute script '{script_name}' in skill '{skill_name}'."
+            logger.exception("Error running file-based script '%s' in skill '%s'", script_name, skill_name)
+            return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
 
     async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
         """Read a named resource from a skill.
@@ -1567,22 +1507,22 @@ def _create_script_element(script: SkillScript) -> str:
 def _create_instructions(
     prompt_template: str | None,
     skills: dict[str, Skill],
-    include_script_execution_instructions: bool = False,
+    include_script_runner_instructions: bool = False,
 ) -> str | None:
     """Create the system-prompt text that advertises available skills.
 
     Generates an XML list of ``<skill>`` elements (sorted by name) and
     inserts it into *prompt_template* at the ``{skills}`` placeholder.
-    When *include_script_execution_instructions* is ``True``, executor-provided
-    instructions are inserted at the ``{executor_instructions}`` placeholder.
+    When *include_script_runner_instructions* is ``True``, executor-provided
+    instructions are inserted at the ``{runner_instructions}`` placeholder.
 
     Args:
         prompt_template: Custom template string with ``{skills}`` and
-            optional ``{executor_instructions}`` placeholders,
+            optional ``{runner_instructions}`` placeholders,
             or ``None`` to use the built-in default.
         skills: Registered skills keyed by name.
-        include_script_execution_instructions: When ``True``, include
-            script-executor instructions in the generated prompt.
+        include_script_runner_instructions: When ``True``, include
+            script-runner instructions in the generated prompt.
             Defaults to ``False``.
 
     Returns:
@@ -1592,13 +1532,13 @@ def _create_instructions(
         ValueError: If *prompt_template* is not a valid format string
             (e.g. missing ``{skills}`` placeholder).
     """
-    executor_instructions = SCRIPT_EXECUTOR_INSTRUCTIONS if include_script_execution_instructions else None
+    runner_instructions = SCRIPT_RUNNER_INSTRUCTIONS if include_script_runner_instructions else None
     template = DEFAULT_SKILLS_INSTRUCTION_PROMPT
 
     if prompt_template is not None:
         # Validate that the custom template contains a valid {skills} placeholder
         try:
-            result = prompt_template.format(skills="__PROBE__", executor_instructions="__EXEC_PROBE__")
+            result = prompt_template.format(skills="__PROBE__", runner_instructions="__EXEC_PROBE__")
         except (KeyError, IndexError, ValueError) as exc:
             raise ValueError(
                 "The provided instruction_template is not a valid format string. "
@@ -1610,10 +1550,10 @@ def _create_instructions(
             raise ValueError(
                 "The provided instruction_template must contain a '{skills}' placeholder."  # noqa: RUF027
             )
-        if executor_instructions and "__EXEC_PROBE__" not in result:
+        if runner_instructions and "__EXEC_PROBE__" not in result:
             raise ValueError(
-                "The provided instruction_template must contain an '{executor_instructions}' placeholder "  # noqa: RUF027
-                "when a script executor is configured."
+                "The provided instruction_template must contain an '{runner_instructions}' placeholder "  # noqa: RUF027
+                "when a script runner is configured."
             )
         template = prompt_template
 
@@ -1630,7 +1570,7 @@ def _create_instructions(
 
     return template.format(
         skills="\n".join(lines),
-        executor_instructions=executor_instructions or "",
+        runner_instructions=runner_instructions or "",
     )
 
 

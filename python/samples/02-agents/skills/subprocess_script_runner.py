@@ -2,18 +2,17 @@
 
 """Subprocess-based skill script runner.
 
-Provides a sample callback for :class:`~agent_framework.CallbackSkillScriptExecutor`
-that executes skill scripts as **local Python subprocesses** via
-:func:`subprocess.run`.
+Provides a sample :class:`~agent_framework.SkillScriptRunner` callback for
+:class:`~agent_framework.SkillsProvider` that executes skill scripts as
+**local Python subprocesses** via :func:`subprocess.run`.
 
 Usage::
 
     from subprocess_script_runner import subprocess_script_runner
 
-    executor = CallbackSkillScriptExecutor(callback=subprocess_script_runner)
     provider = SkillsProvider(
         skill_paths="./skills",
-        script_executor=executor,
+        script_runner=subprocess_script_runner,
     )
 
 The runner resolves the script's absolute path from the owning skill directory,

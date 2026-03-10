@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 Skill Script Approval — Require human approval before executing skill scripts
 
 This sample demonstrates how to use ``require_script_approval=True`` on
-:class:`SkillsProvider` so that every call to ``execute_skill_script`` is
+:class:`SkillsProvider` so that every call to ``run_skill_script`` is
 gated by a human-in-the-loop approval step.
 
 How it works:
@@ -116,7 +116,7 @@ Starting agent with skill script approval enabled...
 User: Deploy version 2.5.0 to production
 
 Approval needed:
-  Function: execute_skill_script
+  Function: run_skill_script
   Arguments: {"skill_name": "deployment", "script_name": "deploy", ...}
   Decision: Approved
 
