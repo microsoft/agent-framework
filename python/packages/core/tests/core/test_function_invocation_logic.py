@@ -3651,3 +3651,44 @@ class TestUpdateConversationId:
 
 
 # endregion
+async def test_user_input_request_propagates_through_as_tool(chat_client_base: SupportsChatGetResponse):
+    """Test that user_input_request content from a sub-agent wrapped as a tool propagates to the parent response."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    @tool(name="delegate_agent", approval_mode="never_require")
+    def delegate_tool(task: str) -> str:
+        del task
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(
+                    consent_link="https://login.microsoftonline.com/consent",
+                )
+            ]
+        )
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="delegate_agent", arguments='{"task": "do it"}'),
+                ],
+            )
+        )
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="delegate this")],
+        options={"tool_choice": "auto", "tools": [delegate_tool]},
+    )
+
+    user_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, Content) and content.user_input_request
+    ]
+    assert len(user_requests) == 1
+    assert user_requests[0].type == "oauth_consent_request"
+    assert user_requests[0].consent_link == "https://login.microsoftonline.com/consent"
+    assert user_requests[0].user_input_request is True

@@ -133,16 +133,26 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             session=session,
         )
 
-    def create_session(self, **kwargs: Any) -> DurableAgentSession:
+    def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> DurableAgentSession:
         """Create a new agent session via the provider."""
-        return self._executor.get_new_session(self.name, **kwargs)
+        return self._executor.get_new_session(self.name)
 
-    def get_session(self, **kwargs: Any) -> AgentSession:
+    def get_session(self, service_session_id: str, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
         """Retrieve an existing session via the provider.
 
         For durable agents, sessions do not use `service_session_id` so this is not used.
         """
-        return self._executor.get_new_session(self.name, **kwargs)
+        session = self._executor.get_new_session(self.name)
+        if service_session_id == session.service_session_id and session_id is None:
+            return session
+
+        cloned_session = DurableAgentSession(
+            durable_session_id=session.durable_session_id,
+            session_id=session_id or session.session_id,
+            service_session_id=service_session_id,
+        )
+        cloned_session.state.update(session.state)
+        return cloned_session
 
     def _normalize_messages(self, messages: AgentRunInputs | None) -> str:
         """Convert supported message inputs to a single string.

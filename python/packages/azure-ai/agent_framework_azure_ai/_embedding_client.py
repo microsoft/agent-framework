@@ -124,9 +124,9 @@ class RawAzureAIInferenceEmbeddingClient(
         text_client: EmbeddingsClient | None = None,
         image_client: ImageEmbeddingsClient | None = None,
         credential: AzureKeyCredential | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw Azure AI Inference embedding client."""
         settings = load_settings(
@@ -160,7 +160,7 @@ class RawAzureAIInferenceEmbeddingClient(
             credential=credential,  # type: ignore[arg-type]
         )
         self._endpoint = resolved_endpoint
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     async def close(self) -> None:
         """Close the underlying SDK clients and release resources."""
@@ -376,9 +376,9 @@ class AzureAIInferenceEmbeddingClient(
         image_client: ImageEmbeddingsClient | None = None,
         credential: AzureKeyCredential | None = None,
         otel_provider_name: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure AI Inference embedding client."""
         super().__init__(
@@ -389,8 +389,8 @@ class AzureAIInferenceEmbeddingClient(
             text_client=text_client,
             image_client=image_client,
             credential=credential,
+            additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )

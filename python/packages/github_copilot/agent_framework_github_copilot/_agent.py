@@ -303,7 +303,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[False] = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -314,7 +313,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[True],
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -324,7 +322,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -339,7 +336,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -354,10 +350,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options, **kwargs),
+                self._stream_updates(messages=messages, session=session, options=options),
                 finalizer=_finalize,
             )
-        return self._run_impl(messages=messages, session=session, options=options, **kwargs)
+        return self._run_impl(messages=messages, session=session, options=options)
 
     async def _run_impl(
         self,
@@ -365,7 +361,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
         if not self._started:
@@ -414,7 +409,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.
 
@@ -424,7 +418,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
 
         Yields:
             AgentResponseUpdate items.

@@ -127,7 +127,12 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
 Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
 
 - **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
+- **Prefer purpose-specific buckets over generic kwargs**: If a flexible payload is still needed, use an explicit named parameter such as `additional_properties`, `function_invocation_kwargs`, or `client_kwargs` rather than a blanket `**kwargs`
 - **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
+- **Make known flows explicit first**: For abstract hooks, move known data flows into explicit parameters before leaving `**kwargs` behind for subclass extensibility (for example, prefer `state=` explicitly instead of passing it through kwargs)
+- **Prefer explicit metadata containers**: For constructors that expose metadata, prefer an explicit `additional_properties` parameter.
+- **Keep SDK passthroughs narrow and documented**: A kwargs escape hatch may be acceptable for provider helper APIs that pass through to a large or unstable external SDK surface, but it should be documented as SDK passthrough and revisited regularly
+- **Do not keep passthrough kwargs on wrappers that do not use them**: Convenience wrappers and session helpers should not accept generic kwargs merely to forward or ignore them
 - **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
 - **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
 - **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose

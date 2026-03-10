@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import re
 import sys
+import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
@@ -27,12 +27,13 @@ from uuid import uuid4
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel
 
 from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
 from ._clients import BaseChatClient, SupportsChatGetResponse
+from ._docstrings import apply_layered_docstring
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
-from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
+from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes
 from ._serialization import SerializationMixin
 from ._sessions import (
     AgentSession,
@@ -53,7 +54,7 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidResponseException
+from .exceptions import AgentInvalidResponseException, UserInputRequiredException
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -169,8 +170,8 @@ class _RunContext(TypedDict):
     chat_options: MutableMapping[str, Any]
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
-    filtered_kwargs: Mapping[str, Any]
-    finalize_kwargs: Mapping[str, Any]
+    client_kwargs: Mapping[str, Any]
+    function_invocation_kwargs: Mapping[str, Any]
 
 
 # region Agent Protocol
@@ -218,15 +219,15 @@ class SupportsAgentRun(Protocol):
 
                         return AgentResponse(messages=[], response_id="custom-response")
 
-                def create_session(self, **kwargs):
+                def create_session(self, *, session_id: str | None = None):
                     from agent_framework import AgentSession
 
-                    return AgentSession(**kwargs)
+                    return AgentSession(session_id=session_id)
 
-                def get_session(self, *, service_session_id, **kwargs):
+                def get_session(self, service_session_id: str, *, session_id: str | None = None):
                     from agent_framework import AgentSession
 
-                    return AgentSession(service_session_id=service_session_id, **kwargs)
+                    return AgentSession(service_session_id=service_session_id, session_id=session_id)
 
 
             # Verify the instance satisfies the protocol
@@ -245,6 +246,8 @@ class SupportsAgentRun(Protocol):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]:
         """Get a response from the agent (non-streaming)."""
@@ -257,6 +260,8 @@ class SupportsAgentRun(Protocol):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a streaming response from the agent."""
@@ -268,6 +273,8 @@ class SupportsAgentRun(Protocol):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
@@ -282,6 +289,8 @@ class SupportsAgentRun(Protocol):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
+            client_kwargs: Additional client-specific keyword arguments.
             kwargs: Additional keyword arguments.
 
         Returns:
@@ -291,11 +300,11 @@ class SupportsAgentRun(Protocol):
         """
         ...
 
-    def create_session(self, **kwargs: Any) -> AgentSession:
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Creates a new conversation session."""
         ...
 
-    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
         """Gets or creates a session for a service-managed session ID."""
         ...
 
@@ -378,6 +387,13 @@ class BaseAgent(SerializationMixin):
             additional_properties: Additional properties set on the agent.
             kwargs: Additional keyword arguments (merged into additional_properties).
         """
+        if kwargs:
+            warnings.warn(
+                "Passing additional properties as direct keyword arguments to BaseAgent is deprecated; "
+                "pass them via additional_properties instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
         if id is None:
             id = str(uuid4())
         self.id = id
@@ -392,27 +408,40 @@ class BaseAgent(SerializationMixin):
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
         self.additional_properties.update(kwargs)
 
-    def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
+    def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create a new lightweight session.
+
+        This will be used by a agent to hold the persisted session.
+        This depends on the service used, in some cases, or with store=True
+        this will add the `service_session_id` based on the response,
+        which is then fed back to the API on the next call.
+
+        In other cases, if there is a HistoryProvider setup in the agent,
+        that is used and it can store state in the session.
+
+        If there is no HistoryProvider and store=False or the default of a service is False.
+        Then a ``InMemoryHistoryProvider`` is added to the agent and used with the session automatically.
+        The ``InMemoryHistoryProvider`` stores the messages as `state` in the session by default.
 
         Keyword Args:
             session_id: Optional session ID (generated if not provided).
-            kwargs: Additional keyword arguments.
 
         Returns:
             A new AgentSession instance.
         """
         return AgentSession(session_id=session_id)
 
-    def get_session(self, *, service_session_id: str, session_id: str | None = None, **kwargs: Any) -> AgentSession:
-        """Get or create a session for a service-managed session ID.
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
+        """Get a session for a service-managed session ID.
+
+        Only use this to create a session continuing that session id from a service.
+        Otherwise use ``create_session``.
 
         Args:
             service_session_id: The service-managed session ID.
 
         Keyword Args:
             session_id: Optional local session ID (generated if not provided).
-            kwargs: Additional keyword arguments.
 
         Returns:
             A new AgentSession instance with service_session_id set.
@@ -452,9 +481,8 @@ class BaseAgent(SerializationMixin):
         description: str | None = None,
         arg_name: str = "task",
         arg_description: str | None = None,
-        stream_callback: Callable[[AgentResponseUpdate], None]
-        | Callable[[AgentResponseUpdate], Awaitable[None]]
-        | None = None,
+        approval_mode: Literal["always_require", "never_require"] = "never_require",
+        stream_callback: Callable[[AgentResponseUpdate], Awaitable[None] | None] | None = None,
         propagate_session: bool = False,
     ) -> FunctionTool:
         """Create a FunctionTool that wraps this agent.
@@ -465,20 +493,17 @@ class BaseAgent(SerializationMixin):
             arg_name: The name of the function argument (default: "task").
             arg_description: The description for the function argument.
                 If None, defaults to "Task for {tool_name}".
+            approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
-            propagate_session: If True, the parent agent's ``AgentSession`` is
-                forwarded to this sub-agent's ``run()`` call, so both agents
-                operate within the same logical session (sharing the same
-                ``session_id`` and provider-managed state, such as any stored
-                conversation history or metadata). Defaults to False, meaning
-                the sub-agent runs with a new, independent session.
+            propagate_session: If True, the sub-agent's ``run()`` call receives
+                the ``session`` value from ``FunctionInvocationContext.kwargs``
+                when one is supplied explicitly (for example via
+                ``function_invocation_kwargs={"session": session}``). Defaults
+                to False, meaning the sub-agent runs with a new, independent
+                session.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
-
-        Raises:
-            TypeError: If the agent does not implement SupportsAgentRun.
-            ValueError: If the agent tool name cannot be determined.
 
         Examples:
             .. code-block:: python
@@ -491,7 +516,8 @@ class BaseAgent(SerializationMixin):
                 # Convert the agent to a tool (independent session)
                 research_tool = agent.as_tool()
 
-                # Convert the agent to a tool (shared session with parent)
+                # Convert the agent to a tool (shared session when the caller
+                # passes ``function_invocation_kwargs={"session": session}``)
                 research_tool = agent.as_tool(propagate_session=True)
 
                 # Use the tool with another agent
@@ -507,59 +533,54 @@ class BaseAgent(SerializationMixin):
         tool_description = description or self.description or ""
         argument_description = arg_description or f"Task for {tool_name}"
 
-        # Create dynamic input model with the specified argument name
-        field_info = Field(..., description=argument_description)
-        model_name = f"{name or _sanitize_agent_name(self.name) or 'agent'}_task"
-        input_model = create_model(model_name, **{arg_name: (str, field_info)})  # type: ignore[call-overload]
+        input_schema = {
+            "type": "object",
+            "properties": {
+                arg_name: {
+                    "type": "string",
+                    "description": argument_description,
+                }
+            },
+            "required": [arg_name],
+            "additionalProperties": False,
+        }
 
-        # Check if callback is async once, outside the wrapper
-        is_async_callback = stream_callback is not None and inspect.iscoroutinefunction(stream_callback)
+        async def _agent_wrapper(ctx: FunctionInvocationContext, **kwargs: Any) -> str:
+            """Wrapper function that calls the agent.
 
-        async def agent_wrapper(**kwargs: Any) -> str:
-            """Wrapper function that calls the agent."""
-            # Extract the input from kwargs using the specified arg_name
-            input_text = kwargs.get(arg_name, "")
-
-            # Extract parent session when propagate_session is enabled
-            parent_session = kwargs.get("session") if propagate_session else None
-
-            # Forward runtime context kwargs, excluding framework-internal keys.
-            forwarded_kwargs = {
-                k: v for k, v in kwargs.items() if k not in (arg_name, "conversation_id", "options", "session")
-            }
-
-            if stream_callback is None:
-                # Use non-streaming mode
-                return (
-                    await self.run(
-                        input_text,
-                        stream=False,
-                        session=parent_session,
-                        **forwarded_kwargs,
+            Args:
+                ctx: the function invocation context used
+                **kwargs: only used to dynamically load the argument that is defined for this tool.
+            """
+            session = None
+            if propagate_session:
+                session = ctx.kwargs.get("session")
+                if session and not isinstance(session, AgentSession):
+                    raise TypeError(
+                        "The provided session is not a AgentSession object, please make sure to "
+                        "pass it through the function_invocation_kwargs."
                     )
-                ).text
+            stream = self.run(
+                str(kwargs.get(arg_name, "")),
+                stream=True,
+                session=session,
+                function_invocation_kwargs=dict(ctx.kwargs),
+            )
+            if stream_callback is not None:
+                stream.with_transform_hook(stream_callback)
+            final_response = await stream.get_final_response()
+            if final_response.user_input_requests:
+                raise UserInputRequiredException(contents=final_response.user_input_requests)
+            # TODO(Copilot): update once #4331 merges
+            return final_response.text
 
-            # Use streaming mode - accumulate updates and create final response
-            response_updates: list[AgentResponseUpdate] = []
-            async for update in self.run(input_text, stream=True, session=parent_session, **forwarded_kwargs):
-                response_updates.append(update)
-                if is_async_callback:
-                    await stream_callback(update)  # type: ignore[misc]
-                else:
-                    stream_callback(update)
-
-            # Create final text from accumulated updates
-            return AgentResponse.from_updates(response_updates).text
-
-        agent_tool: FunctionTool = FunctionTool(
+        return FunctionTool(
             name=tool_name,
             description=tool_description,
-            func=agent_wrapper,
-            input_model=input_model,  # type: ignore
-            approval_mode="never_require",
+            func=_agent_wrapper,
+            input_model=input_schema,
+            approval_mode=approval_mode,
         )
-        agent_tool._forward_runtime_kwargs = True  # type: ignore
-        return agent_tool
 
 
 # region Agent
@@ -801,6 +822,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
@@ -815,6 +838,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -829,6 +854,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -842,6 +869,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
@@ -871,14 +900,23 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             tokenizer: Optional per-run tokenizer override passed to
                 ``client.get_response()``. When omitted, the agent-level override
                 is used, falling back to the client default.
-            kwargs: Additional keyword arguments for the agent. These are only
-                passed to functions that are called.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
+            client_kwargs: Additional client-specific keyword arguments for the chat client.
+            kwargs: Deprecated additional keyword arguments for the agent.
+                They are forwarded to both tool invocation and the chat client for compatibility.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse] containing the agent's response.
             When stream=True: A ResponseStream of AgentResponseUpdate items with
                 ``get_final_response()`` for the final AgentResponse.
         """
+        if kwargs:
+            warnings.warn(
+                "Passing runtime keyword arguments directly to run() is deprecated; pass tool values via "
+                "function_invocation_kwargs and client-specific values via client_kwargs instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if not stream:
 
             async def _run_non_streaming() -> AgentResponse[Any]:
@@ -889,7 +927,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     options=options,
                     compaction_strategy=compaction_strategy,
                     tokenizer=tokenizer,
-                    kwargs=kwargs,
+                    legacy_kwargs=kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 )
                 response = cast(
                     ChatResponse[Any],
@@ -899,7 +939,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                         options=ctx["chat_options"],  # type: ignore[reportArgumentType]
                         compaction_strategy=ctx["compaction_strategy"],
                         tokenizer=ctx["tokenizer"],
-                        **ctx["filtered_kwargs"],
+                        function_invocation_kwargs=ctx["function_invocation_kwargs"],
+                        client_kwargs=ctx["client_kwargs"],
                     ),
                 )
 
@@ -974,7 +1015,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                kwargs=kwargs,
+                legacy_kwargs=kwargs,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
             )
             ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
             return self.client.get_response(  # type: ignore[call-overload, no-any-return]
@@ -983,7 +1026,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 options=ctx["chat_options"],  # type: ignore[reportArgumentType]
                 compaction_strategy=ctx["compaction_strategy"],
                 tokenizer=ctx["tokenizer"],
-                **ctx["filtered_kwargs"],
+                function_invocation_kwargs=ctx["function_invocation_kwargs"],
+                client_kwargs=ctx["client_kwargs"],
             )
 
         def _propagate_conversation_id(
@@ -1071,9 +1115,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: Mapping[str, Any] | None,
         compaction_strategy: CompactionStrategy | None,
         tokenizer: TokenizerProtocol | None,
-        kwargs: dict[str, Any],
+        legacy_kwargs: Mapping[str, Any],
+        function_invocation_kwargs: Mapping[str, Any] | None,
+        client_kwargs: Mapping[str, Any] | None,
     ) -> _RunContext:
         opts = dict(options) if options else {}
+        existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -1104,6 +1151,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             input_messages=input_messages,
             options=opts,
         )
+        default_additional_args = chat_options.pop("additional_function_arguments", None)
+        if isinstance(default_additional_args, Mapping):
+            existing_additional_args = {
+                **dict(cast(Mapping[str, Any], default_additional_args)),
+                **existing_additional_args,
+            }
 
         agent_name = self._get_agent_name()
         base_tools = normalize_tools(chat_options.pop("tools", None))
@@ -1135,13 +1188,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 duplicate_error_message=mcp_duplicate_message,
             )
 
-        # Merge runtime kwargs into additional_function_arguments so they're available
-        # in function middleware context and tool invocation.
-        existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
-        additional_function_arguments = {**kwargs, **existing_additional_args}
-        # Include session so as_tool() wrappers with propagate_session=True can access it.
-        if active_session is not None:
-            additional_function_arguments["session"] = active_session
+        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
+        # Legacy compatibility still fans out direct run kwargs into tool runtime kwargs.
+        effective_function_invocation_kwargs = {
+            **dict(legacy_kwargs),
+            **(dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}),
+        }
+        additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
@@ -1150,7 +1203,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if active_session
             else opts.pop("conversation_id", None),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
-            "additional_function_arguments": additional_function_arguments or None,
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
             "max_tokens": opts.pop("max_tokens", None),
@@ -1174,11 +1226,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
-        # Ensure session is forwarded in kwargs for tool invocation
-        finalize_kwargs = dict(kwargs)
-        finalize_kwargs["session"] = active_session
-        # Filter chat_options from kwargs to prevent duplicate keyword argument
-        filtered_kwargs = {k: v for k, v in finalize_kwargs.items() if k != "chat_options"}
+        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
+        # Legacy compatibility still fans out direct run kwargs into client kwargs.
+        effective_client_kwargs = {
+            **dict(legacy_kwargs),
+            **(dict(client_kwargs) if client_kwargs is not None else {}),
+        }
 
         return {
             "session": active_session,
@@ -1189,8 +1242,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "chat_options": co,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
-            "filtered_kwargs": filtered_kwargs,
-            "finalize_kwargs": finalize_kwargs,
+            "client_kwargs": effective_client_kwargs,
+            "function_invocation_kwargs": additional_function_arguments,
         }
 
     async def _finalize_response(
@@ -1440,6 +1493,58 @@ class Agent(
     For a minimal implementation without these features, use :class:`RawAgent`.
     """
 
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the agent."""
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,  # type: ignore[misc]
+        )
+        return super_run(  # type: ignore[no-any-return]
+            messages=messages,
+            stream=stream,
+            session=session,
+            middleware=middleware,
+            options=options,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **kwargs,
+        )
+
     def __init__(
         self,
         client: SupportsChatGetResponse[OptionsCoT],
@@ -1471,3 +1576,34 @@ class Agent(
             tokenizer=tokenizer,
             **kwargs,
         )
+
+
+def _apply_agent_docstrings() -> None:
+    """Align public agent docstrings with the raw implementation."""
+    apply_layered_docstring(
+        AgentMiddlewareLayer.run,
+        RawAgent.run,
+        extra_keyword_args={
+            "middleware": """
+                Optional per-run agent, chat, and function middleware.
+                Agent middleware wraps the run itself, while chat and function middleware are forwarded to the
+                underlying chat-client stack for this call.
+            """,
+        },
+    )
+    apply_layered_docstring(AgentTelemetryLayer.run, AgentMiddlewareLayer.run)
+    apply_layered_docstring(
+        Agent.run,
+        RawAgent.run,
+        extra_keyword_args={
+            "middleware": """
+                Optional per-run agent, chat, and function middleware.
+                Agent middleware wraps the run itself, while chat and function middleware are forwarded to the
+                underlying chat-client stack for this call.
+            """,
+        },
+    )
+    apply_layered_docstring(Agent.__init__, RawAgent.__init__)
+
+
+_apply_agent_docstrings()

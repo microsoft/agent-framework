@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import contextlib
+import inspect
 from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -31,6 +32,7 @@ from agent_framework import (
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
+from agent_framework._middleware import FunctionInvocationContext
 
 
 class _FixedTokenizer:
@@ -101,6 +103,30 @@ def test_chat_client_agent_type(client: SupportsChatGetResponse) -> None:
     assert isinstance(chat_client_agent, SupportsAgentRun)
 
 
+def test_agent_init_docstring_surfaces_raw_agent_constructor_docs() -> None:
+    docstring = inspect.getdoc(Agent.__init__)
+
+    assert docstring is not None
+    assert "client: The chat client to use for the agent." in docstring
+    assert "middleware: List of middleware to intercept agent and function invocations." in docstring
+
+
+def test_agent_run_docstring_surfaces_raw_agent_runtime_docs() -> None:
+    docstring = inspect.getdoc(Agent.run)
+
+    assert docstring is not None
+    assert "Run the agent with the given messages and options." in docstring
+    assert "function_invocation_kwargs: Keyword arguments forwarded to tool invocation." in docstring
+    assert "middleware: Optional per-run agent, chat, and function middleware." in docstring
+
+
+def test_agent_run_is_defined_on_agent_class() -> None:
+    signature = inspect.signature(Agent.run)
+
+    assert Agent.run.__qualname__ == "Agent.run"
+    assert "middleware" in signature.parameters
+
+
 async def test_chat_client_agent_init(client: SupportsChatGetResponse) -> None:
     agent_id = str(uuid4())
     agent = Agent(client=client, id=agent_id, description="Test")
@@ -119,6 +145,13 @@ async def test_chat_client_agent_init_with_name(
     assert agent.id == agent_id
     assert agent.name == "Test Agent"
     assert agent.description == "Test"
+
+
+def test_agent_init_warns_for_direct_additional_properties(client: SupportsChatGetResponse) -> None:
+    with pytest.warns(DeprecationWarning, match="additional_properties"):
+        agent = Agent(client=client, legacy_key="legacy-value")
+
+    assert agent.additional_properties["legacy_key"] == "legacy-value"
 
 
 async def test_chat_client_agent_run(client: SupportsChatGetResponse) -> None:
@@ -253,33 +286,36 @@ async def test_prepare_session_does_not_mutate_agent_chat_options(
     assert len(agent.default_options["tools"]) == 1
 
 
-async def test_prepare_run_context_keeps_compaction_overrides_out_of_kwargs(
+async def test_prepare_run_context_handles_function_kwargs(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
-    strategy = SlidingWindowStrategy(keep_last_groups=2)
-    tokenizer = _FixedTokenizer(13)
     agent = Agent(client=chat_client_base)
+    session = agent.create_session()
 
     ctx = await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
-        messages=[Message(role="user", text="Hello")],
-        session=None,
+        messages="Hello",
+        session=session,
         tools=None,
-        options=None,
-        compaction_strategy=strategy,
-        tokenizer=tokenizer,
-        kwargs={"custom_flag": True},
+        options={
+            "temperature": 0.4,
+            "additional_function_arguments": {"from_options": "options-value"},
+        },
+        legacy_kwargs={"legacy_key": "legacy-value"},
+        function_invocation_kwargs={"runtime_key": "runtime-value"},
+        client_kwargs={"client_key": "client-value"},
     )
 
-    assert ctx["compaction_strategy"] is strategy
-    assert ctx["tokenizer"] is tokenizer
-    assert ctx["filtered_kwargs"].get("custom_flag") is True
-    assert "compaction_strategy" not in ctx["filtered_kwargs"]
-    assert "tokenizer" not in ctx["filtered_kwargs"]
+    assert ctx["chat_options"]["temperature"] == 0.4
+    assert "additional_function_arguments" not in ctx["chat_options"]
+    assert ctx["function_invocation_kwargs"]["from_options"] == "options-value"
+    assert ctx["function_invocation_kwargs"]["legacy_key"] == "legacy-value"
+    assert ctx["function_invocation_kwargs"]["runtime_key"] == "runtime-value"
+    assert "session" not in ctx["function_invocation_kwargs"]
+    assert ctx["client_kwargs"]["client_key"] == "client-value"
+    assert "session" not in ctx["client_kwargs"]
 
 
-async def test_chat_client_agent_run_with_session(
-    chat_client_base: SupportsChatGetResponse,
-) -> None:
+async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:
     mock_response = ChatResponse(
         messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
         conversation_id="123",
@@ -720,8 +756,9 @@ async def test_chat_agent_as_tool_basic(client: SupportsChatGetResponse) -> None
 
     assert tool.name == "TestAgent"
     assert tool.description == "Test agent for as_tool"
+    assert tool.approval_mode == "never_require"
     assert hasattr(tool, "func")
-    assert hasattr(tool, "input_model")
+    assert tool.input_model is None
 
 
 async def test_chat_agent_as_tool_custom_parameters(
@@ -735,13 +772,15 @@ async def test_chat_agent_as_tool_custom_parameters(
         description="Custom description",
         arg_name="query",
         arg_description="Custom input description",
+        approval_mode="always_require",
     )
 
     assert tool.name == "CustomTool"
     assert tool.description == "Custom description"
+    assert tool.approval_mode == "always_require"
 
     # Check that the input model has the custom field name
-    schema = tool.input_model.model_json_schema()
+    schema = tool.parameters()
     assert "query" in schema["properties"]
     assert schema["properties"]["query"]["description"] == "Custom input description"
 
@@ -760,7 +799,7 @@ async def test_chat_agent_as_tool_defaults(client: SupportsChatGetResponse) -> N
     assert tool.description == ""  # Should default to empty string
 
     # Check default input field
-    schema = tool.input_model.model_json_schema()
+    schema = tool.parameters()
     assert "task" in schema["properties"]
     assert "Task for TestAgent" in schema["properties"]["task"]["description"]
 
@@ -783,7 +822,7 @@ async def test_chat_agent_as_tool_function_execution(
     tool = agent.as_tool()
 
     # Test function execution
-    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+    result = await tool.invoke(arguments={"task": "Hello"})
 
     # Should return the agent's response text as a list of Content items
     assert isinstance(result, list)
@@ -806,7 +845,7 @@ async def test_chat_agent_as_tool_with_stream_callback(
     tool = agent.as_tool(stream_callback=stream_callback)
 
     # Execute the tool
-    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+    result = await tool.invoke(arguments={"task": "Hello"})
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
@@ -826,7 +865,7 @@ async def test_chat_agent_as_tool_with_custom_arg_name(
     tool = agent.as_tool(arg_name="prompt", arg_description="Custom prompt input")
 
     # Test that the custom argument name works
-    result = await tool.invoke(arguments=tool.input_model(prompt="Test prompt"))
+    result = await tool.invoke(arguments={"prompt": "Test prompt"})
     assert isinstance(result, list)
     assert result[0].text == "test response"
 
@@ -846,7 +885,7 @@ async def test_chat_agent_as_tool_with_async_stream_callback(
     tool = agent.as_tool(stream_callback=async_stream_callback)
 
     # Execute the tool
-    result = await tool.invoke(arguments=tool.input_model(task="Hello"))
+    result = await tool.invoke(arguments={"task": "Hello"})
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
@@ -877,10 +916,8 @@ async def test_chat_agent_as_tool_name_sanitization(
         assert tool.name == expected_tool_name, f"Expected {expected_tool_name}, got {tool.name} for input {agent_name}"
 
 
-async def test_chat_agent_as_tool_propagate_session_true(
-    client: SupportsChatGetResponse,
-) -> None:
-    """Test that propagate_session=True forwards the parent's session to the sub-agent."""
+async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session=True forwards an explicitly provided session to the sub-agent."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
@@ -898,17 +935,21 @@ async def test_chat_agent_as_tool_propagate_session_true(
 
     agent.run = capturing_run  # type: ignore[assignment, method-assign]
 
-    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            kwargs={"session": parent_session},
+        )
+    )
 
     assert captured_session is parent_session
     assert captured_session.session_id == "parent-session-123"
     assert captured_session.state["shared_key"] == "shared_value"
 
 
-async def test_chat_agent_as_tool_propagate_session_false_by_default(
-    client: SupportsChatGetResponse,
-) -> None:
-    """Test that propagate_session defaults to False and does not forward the session."""
+async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
+    """Test that propagate_session defaults to False and does not forward runtime sessions."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool()  # default: propagate_session=False
 
@@ -924,15 +965,19 @@ async def test_chat_agent_as_tool_propagate_session_false_by_default(
 
     agent.run = capturing_run  # type: ignore[assignment, method-assign]
 
-    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            kwargs={"session": parent_session},
+        )
+    )
 
     assert captured_session is None
 
 
-async def test_chat_agent_as_tool_propagate_session_shares_state(
-    client: SupportsChatGetResponse,
-) -> None:
-    """Test that shared session allows the sub-agent to read and write parent's state."""
+async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
+    """Test that an explicitly propagated session allows the sub-agent to read and write parent state."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
@@ -952,7 +997,13 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(
 
     agent.run = capturing_run  # type: ignore[assignment, method-assign]
 
-    await tool.invoke(arguments=tool.input_model(task="Hello"), session=parent_session)
+    await tool.invoke(
+        context=FunctionInvocationContext(
+            function=tool,
+            arguments={"task": "Hello"},
+            kwargs={"session": parent_session},
+        )
+    )
 
     # The parent's state should reflect the sub-agent's mutation
     assert parent_session.state["counter"] == 1
@@ -1167,10 +1218,49 @@ async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> N
         session=session,
         options={"additional_function_arguments": {"session": session}},
     )
+    assert result.text == "done"
+    assert captured.get("has_session") is False
+    assert captured.get("has_state") is False
+
+
+async def test_agent_tool_receives_explicit_session_via_function_invocation_context_kwargs(
+    chat_client_base: Any,
+) -> None:
+    """Verify ctx-based tools read explicit sessions from FunctionInvocationContext.kwargs."""
+
+    captured: dict[str, Any] = {}
+
+    @tool(name="capture_session_context", approval_mode="never_require")
+    def capture_session_context(text: str, ctx: FunctionInvocationContext) -> str:
+        session = ctx.kwargs.get("session")
+        captured["session"] = session
+        captured["has_state"] = session.state is not None if isinstance(session, AgentSession) else False
+        return f"echo: {text}"
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="1",
+                        name="capture_session_context",
+                        arguments='{"text": "hello"}',
+                    )
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    agent = Agent(client=chat_client_base, tools=[capture_session_context])
+    session = agent.create_session()
+
+    result = await agent.run("hello", session=session, function_invocation_kwargs={"session": session})
 
     assert result.text == "done"
-    assert captured.get("has_session") is True
-    assert captured.get("has_state") is True
+    assert captured["session"] is session
+    assert captured["has_state"] is True
 
 
 async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_client_base: Any, tool_tool: Any) -> None:
@@ -1859,4 +1949,26 @@ async def test_stores_by_default_with_store_false_in_default_options_injects_inm
     assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
 
 
-# endregion
+# region as_tool user_input_request propagation
+
+
+async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetResponse) -> None:
+    """Test that as_tool raises when the wrapped sub-agent requests user input."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    consent_content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    client.streaming_responses = [  # type: ignore[attr-defined]
+        [ChatResponseUpdate(contents=[consent_content], role="assistant")],
+    ]
+
+    agent = Agent(client=client, name="OAuthAgent", description="Agent requiring consent")
+    agent_tool = agent.as_tool()
+
+    with raises(UserInputRequiredException) as exc_info:
+        await agent_tool.invoke(arguments={"task": "Do something"})
+
+    assert len(exc_info.value.contents) == 1
+    assert exc_info.value.contents[0].type == "oauth_consent_request"
+    assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"

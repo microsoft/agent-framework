@@ -104,9 +104,9 @@ class RawBedrockEmbeddingClient(
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw Bedrock embedding client."""
         settings = load_settings(
@@ -145,7 +145,7 @@ class RawBedrockEmbeddingClient(
 
         self.model_id: str = settings["embedding_model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
         self.region = resolved_region
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
@@ -274,9 +274,9 @@ class BedrockEmbeddingClient(
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
         otel_provider_name: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a Bedrock embedding client."""
         super().__init__(
@@ -287,8 +287,8 @@ class BedrockEmbeddingClient(
             session_token=session_token,
             client=client,
             boto3_session=boto3_session,
+            additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )

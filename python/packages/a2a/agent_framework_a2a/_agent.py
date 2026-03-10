@@ -6,7 +6,7 @@ import base64
 import json
 import re
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, Final, Literal, TypeAlias, overload
 
 import httpx
@@ -226,6 +226,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -238,17 +240,21 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
-    def run(
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         continuation_token: A2AContinuationToken | None = None,
         background: bool = False,
         **kwargs: Any,
@@ -261,17 +267,23 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+            function_invocation_kwargs: Present for compatibility with the shared agent interface.
+                A2AAgent does not use these values directly.
+            client_kwargs: Present for compatibility with the shared agent interface.
+                A2AAgent does not use these values directly.
+            kwargs: Additional compatibility keyword arguments.
+                A2AAgent does not use these values directly.
             continuation_token: Optional token to resume a long-running task
                 instead of starting a new one.
             background: When True, in-progress task updates surface continuation
                 tokens so the caller can poll or resubscribe later. When False
                 (default), the agent internally waits for the task to complete.
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
+        del function_invocation_kwargs, client_kwargs, kwargs
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
                 TaskIdParams(id=continuation_token["task_id"])
