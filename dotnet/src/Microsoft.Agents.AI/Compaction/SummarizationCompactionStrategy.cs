@@ -152,7 +152,6 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
             group.IsExcluded = true;
             group.ExcludeReason = $"Summarized by {nameof(SummarizationCompactionStrategy)}";
             excludedGroups.Add(group);
-            excludedGroupIndices.Add(i);
 
             // Stop marking when target condition is met
             if (this.Target(index))
