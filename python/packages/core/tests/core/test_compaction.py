@@ -448,3 +448,206 @@ async def test_apply_compaction_projects_included_messages_only() -> None:
 
     assert len(projected) < len(messages)
     assert projected[0].role == "system"
+
+
+# --- ToolResultCompactionStrategy tests ---
+
+from agent_framework._compaction import (
+    CompactionProvider,
+    ToolResultCompactionStrategy,
+)
+
+
+async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:
+    """Old tool-call groups are collapsed into summary messages, newest kept."""
+    messages = [
+        Message(role="user", text="u"),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+        _assistant_function_call("call-2"),
+        _tool_result("call-2", "r2"),
+        Message(role="assistant", text="done"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    texts = [m.text or "" for m in projected]
+    summary_msgs = [t for t in texts if t.startswith("[Tool calls:")]
+    assert len(summary_msgs) == 1
+    assert "tool" in summary_msgs[0]
+    assert any(m.role == "tool" for m in projected)
+
+
+async def test_tool_result_compaction_zero_collapses_all() -> None:
+    """With keep=0, all tool-call groups are collapsed into summaries."""
+    messages = [
+        Message(role="user", text="u"),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+        _assistant_function_call("call-2"),
+        _tool_result("call-2", "r2"),
+        Message(role="assistant", text="done"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    projected = included_messages(messages)
+    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool calls:")]
+    assert len(summary_msgs) == 2
+    assert not any(m.role == "tool" for m in projected)
+
+
+async def test_tool_result_compaction_no_change_when_within_limit() -> None:
+    """No compaction when tool groups count does not exceed keep limit."""
+    messages = [
+        Message(role="user", text="u"),
+        _assistant_function_call("call-1"),
+        _tool_result("call-1", "r1"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is False
+
+
+def test_tool_result_compaction_rejects_negative() -> None:
+    try:
+        ToolResultCompactionStrategy(keep_last_tool_call_groups=-1)
+    except ValueError as exc:
+        assert "must be greater than or equal to 0" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for negative keep_last_tool_call_groups.")
+
+
+async def test_tool_result_compaction_preserves_tool_names_in_summary() -> None:
+    """Summary text should include all tool names from the collapsed group."""
+    messages = [
+        Message(role="user", text="u"),
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(call_id="c1", name="get_weather", arguments="{}"),
+                Content.from_function_call(call_id="c2", name="search_docs", arguments="{}"),
+            ],
+        ),
+        _tool_result("c1", "sunny"),
+        _tool_result("c2", "found 3 docs"),
+        Message(role="assistant", text="done"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+
+    await strategy(messages)
+
+    projected = included_messages(messages)
+    summary_msgs = [m for m in projected if (m.text or "").startswith("[Tool calls:")]
+    assert len(summary_msgs) == 1
+    assert "get_weather" in summary_msgs[0].text  # type: ignore[operator]
+    assert "search_docs" in summary_msgs[0].text  # type: ignore[operator]
+
+
+# --- CompactionProvider tests ---
+
+
+class _MockSessionContext:
+    """Minimal mock for SessionContext used in CompactionProvider tests."""
+
+    def __init__(self) -> None:
+        self.context_messages: dict[str, list[Message]] = {}
+        self.input_messages: list[Message] = []
+        self._response: Any = None
+
+    @property
+    def response(self) -> Any:
+        return self._response
+
+    def extend_messages(self, provider: Any, messages: list[Message]) -> None:
+        source_id = getattr(provider, "source_id", "unknown")
+        self.context_messages.setdefault(source_id, []).extend(messages)
+
+
+class _MockResponse:
+    def __init__(self, messages: list[Message]) -> None:
+        self.messages = messages
+
+
+async def test_compaction_provider_before_run_injects_projected_messages() -> None:
+    """CompactionProvider.before_run loads, compacts, and injects messages."""
+    state: dict[str, Any] = {
+        "_compaction_messages": [
+            Message(role="system", text="sys").to_dict(),
+            Message(role="user", text="u1").to_dict(),
+            Message(role="assistant", text="a1").to_dict(),
+            Message(role="user", text="u2").to_dict(),
+            Message(role="assistant", text="a2").to_dict(),
+            Message(role="user", text="u3").to_dict(),
+            Message(role="assistant", text="a3").to_dict(),
+        ]
+    }
+    strategy = SlidingWindowStrategy(keep_last_groups=2, preserve_system=True)
+    provider = CompactionProvider(strategy=strategy)
+
+    context = _MockSessionContext()
+    await provider.before_run(agent=None, session=None, context=context, state=state)
+
+    injected = context.context_messages.get("compaction", [])
+    assert len(injected) > 0
+    assert injected[0].role == "system"
+    assert len(injected) < 7
+
+
+async def test_compaction_provider_after_run_appends_messages_to_state() -> None:
+    """CompactionProvider.after_run appends new input/output messages."""
+    state: dict[str, Any] = {"_compaction_messages": []}
+    strategy = SlidingWindowStrategy(keep_last_groups=10)
+    provider = CompactionProvider(strategy=strategy)
+
+    context = _MockSessionContext()
+    context.input_messages = [Message(role="user", text="hello")]
+    context._response = _MockResponse([Message(role="assistant", text="hi")])
+
+    await provider.after_run(agent=None, session=None, context=context, state=state)
+
+    stored = state["_compaction_messages"]
+    assert len(stored) == 2
+
+
+async def test_compaction_provider_round_trip() -> None:
+    """Full round trip: after_run stores, before_run loads and compacts."""
+    strategy = SlidingWindowStrategy(keep_last_groups=2, preserve_system=True)
+    provider = CompactionProvider(strategy=strategy)
+    state: dict[str, Any] = {}
+
+    for i in range(5):
+        context = _MockSessionContext()
+        context.input_messages = [Message(role="user", text=f"user turn {i}")]
+        context._response = _MockResponse([Message(role="assistant", text=f"response {i}")])
+        await provider.after_run(agent=None, session=None, context=context, state=state)
+
+    inject_context = _MockSessionContext()
+    await provider.before_run(agent=None, session=None, context=inject_context, state=state)
+
+    injected = inject_context.context_messages.get("compaction", [])
+    # 5 turns = 10 messages = 10 groups; sliding window keeps last 2 non-system groups
+    assert len(injected) == 2
+
+
+async def test_compaction_provider_empty_state_noop() -> None:
+    """before_run with empty state should not inject any messages."""
+    strategy = SlidingWindowStrategy(keep_last_groups=2)
+    provider = CompactionProvider(strategy=strategy)
+    state: dict[str, Any] = {}
+
+    context = _MockSessionContext()
+    await provider.before_run(agent=None, session=None, context=context, state=state)
+
+    assert context.context_messages == {}

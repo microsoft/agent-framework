@@ -795,6 +795,85 @@ class SelectiveToolCallCompactionStrategy:
         return changed
 
 
+class ToolResultCompactionStrategy:
+    """Collapse older tool-call groups into short summary messages.
+
+    Unlike ``SelectiveToolCallCompactionStrategy`` which fully excludes old
+    tool-call groups, this strategy *replaces* them with a compact summary
+    message of the form ``[Tool calls: tool_a, tool_b]``. This preserves a
+    readable trace of which tools were called while reclaiming the token
+    overhead of verbose tool results.
+
+    The most recent ``keep_last_tool_call_groups`` tool-call groups are left
+    untouched; older ones are collapsed.
+    """
+
+    def __init__(self, *, keep_last_tool_call_groups: int = 1) -> None:
+        """Create a tool-result compaction strategy.
+
+        Keyword Args:
+            keep_last_tool_call_groups: Number of newest included tool-call
+                groups to retain verbatim. Older tool-call groups are collapsed
+                into summary messages. Set to 0 to collapse all.
+
+        Raises:
+            ValueError: If ``keep_last_tool_call_groups`` is negative.
+        """
+        if keep_last_tool_call_groups < 0:
+            raise ValueError("keep_last_tool_call_groups must be greater than or equal to 0.")
+        self.keep_last_tool_call_groups = keep_last_tool_call_groups
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        ordered_group_ids = _ordered_group_ids_from_annotations(messages)
+        grouped = _group_messages_by_id(messages)
+        kinds = _group_kind_map(messages)
+
+        included_tool_group_ids = [
+            group_id
+            for group_id in _included_group_ids(messages, ordered_group_ids)
+            if kinds.get(group_id) == "tool_call"
+        ]
+        if len(included_tool_group_ids) <= self.keep_last_tool_call_groups:
+            return False
+
+        keep_ids = (
+            set(included_tool_group_ids[-self.keep_last_tool_call_groups :])
+            if self.keep_last_tool_call_groups > 0
+            else set()
+        )
+        starts = _group_start_indices(messages)
+        changed = False
+        for group_id in included_tool_group_ids:
+            if group_id in keep_ids:
+                continue
+            group_msgs = grouped.get(group_id, [])
+            tool_names: list[str] = []
+            for msg in group_msgs:
+                for content in msg.contents:
+                    if content.type == "function_call" and content.name:
+                        tool_names.append(content.name)
+            summary_label = ", ".join(tool_names) if tool_names else "unknown"
+            summary_text = f"[Tool calls: {summary_label}]"
+
+            for msg in group_msgs:
+                changed = set_excluded(msg, excluded=True, reason="tool_result_compaction") or changed
+
+            insertion_index = starts.get(group_id, 0)
+            summary_message = Message(
+                role="assistant",
+                text=summary_text,
+                message_id=f"tool_summary_{group_id}",
+            )
+            messages.insert(insertion_index, summary_message)
+            # Re-annotate the new summary message with the same group metadata.
+            annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
+            # Refresh index positions after insertion.
+            starts = _group_start_indices(messages)
+            grouped = _group_messages_by_id(messages)
+
+        return changed
+
+
 def _format_messages_for_summary(messages: list[Message]) -> str:
     lines: list[str] = []
     for index, message in enumerate(messages, start=1):
@@ -1053,7 +1132,127 @@ async def apply_compaction(
     return project_included_messages(messages)
 
 
+COMPACTION_STATE_KEY: Final[str] = "_compaction_messages"
+
+
+class CompactionProvider:
+    """Context provider that applies compaction before and stores state after each run.
+
+    This provider hooks into the agent's context-provider pipeline
+    (``BaseContextProvider``) and manages a compacted message history inside
+    ``session.state``. Before each run it loads existing compacted history,
+    applies the configured compaction strategy, and injects the projected
+    messages. After each run it appends the new input/output messages to the
+    compacted history for the next turn.
+
+    Examples:
+        .. code-block:: python
+
+            from agent_framework import Agent, CompactionProvider
+            from agent_framework._compaction import ToolResultCompactionStrategy
+
+            provider = CompactionProvider(
+                strategy=ToolResultCompactionStrategy(keep_last_tool_call_groups=1),
+            )
+            agent = Agent(client=client, name="assistant", context_providers=[provider])
+            session = agent.create_session()
+            await agent.run("Hello", session=session)
+    """
+
+    def __init__(
+        self,
+        *,
+        strategy: CompactionStrategy,
+        tokenizer: TokenizerProtocol | None = None,
+        source_id: str = "compaction",
+        state_key: str | None = None,
+    ) -> None:
+        """Create a compaction provider.
+
+        Keyword Args:
+            strategy: The compaction strategy to apply.
+            tokenizer: Optional tokenizer for token-aware strategies.
+            source_id: Provider source id (default ``"compaction"``).
+            state_key: Session state key for persisting compacted messages
+                (default ``"_compaction_messages"``).
+        """
+        self.strategy = strategy
+        self.tokenizer = tokenizer
+        self.source_id = source_id
+        self._state_key = state_key or COMPACTION_STATE_KEY
+
+    def _load_messages(self, state: dict[str, Any]) -> list[Message]:
+        raw = state.get(self._state_key)
+        if not isinstance(raw, list):
+            return []
+        messages: list[Message] = []
+        for item in raw:
+            if isinstance(item, Message):
+                messages.append(item)
+            elif isinstance(item, dict):
+                try:
+                    messages.append(Message.from_dict(item))
+                except Exception:
+                    logger.debug("Skipping non-deserializable compaction state entry.")
+        return messages
+
+    def _save_messages(self, state: dict[str, Any], messages: list[Message]) -> None:
+        state[self._state_key] = [msg.to_dict() for msg in messages]
+
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        """Load compacted history, apply compaction, and inject projected messages."""
+        compacted_messages = self._load_messages(state)
+        if not compacted_messages:
+            return
+
+        annotate_message_groups(compacted_messages)
+        if self.tokenizer is not None:
+            annotate_token_counts(compacted_messages, tokenizer=self.tokenizer)
+        await self.strategy(compacted_messages)
+
+        projected = project_included_messages(compacted_messages)
+        if projected:
+            context.extend_messages(self, projected)
+
+        self._save_messages(state, compacted_messages)
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: Any,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        """Append new input and output messages to the compacted history."""
+        compacted_messages = self._load_messages(state)
+
+        new_messages: list[Message] = []
+        if hasattr(context, "input_messages") and context.input_messages:
+            new_messages.extend(context.input_messages)
+        if hasattr(context, "response") and context.response and hasattr(context.response, "messages"):
+            new_messages.extend(context.response.messages)
+
+        if new_messages:
+            # Ensure unique message IDs across the full compacted history to avoid group-id collisions.
+            offset = len(compacted_messages)
+            for idx, msg in enumerate(new_messages):
+                if not msg.message_id:
+                    msg.message_id = f"msg_{offset + idx}"
+            extend_compaction_messages(compacted_messages, new_messages, tokenizer=self.tokenizer)
+
+        self._save_messages(state, compacted_messages)
+
+
 __all__ = [
+    "COMPACTION_STATE_KEY",
     "EXCLUDED_KEY",
     "EXCLUDE_REASON_KEY",
     "GROUP_ANNOTATION_KEY",
@@ -1066,6 +1265,7 @@ __all__ = [
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
     "CharacterEstimatorTokenizer",
+    "CompactionProvider",
     "CompactionStrategy",
     "GroupKind",
     "SelectiveToolCallCompactionStrategy",
@@ -1073,6 +1273,7 @@ __all__ = [
     "SummarizationStrategy",
     "TokenBudgetComposedStrategy",
     "TokenizerProtocol",
+    "ToolResultCompactionStrategy",
     "TruncationStrategy",
     "annotate_message_groups",
     "annotate_token_counts",
