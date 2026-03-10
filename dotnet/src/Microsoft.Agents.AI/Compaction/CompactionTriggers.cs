@@ -37,10 +37,10 @@ public static class CompactionTriggers
     /// <summary>
     /// Creates a trigger that fires when the included token count is below the specified maximum.
     /// </summary>
-    /// <param name="minTokens">The token threshold.</param>
+    /// <param name="maxTokens">The token threshold.</param>
     /// <returns>A <see cref="CompactionTrigger"/> that evaluates included token count.</returns>
-    public static CompactionTrigger TokensBelow(int minTokens) =>
-        index => index.IncludedTokenCount < minTokens;
+    public static CompactionTrigger TokensBelow(int maxTokens) =>
+        index => index.IncludedTokenCount < maxTokens;
 
     /// <summary>
     /// Creates a trigger that fires when the included token count exceeds the specified maximum.

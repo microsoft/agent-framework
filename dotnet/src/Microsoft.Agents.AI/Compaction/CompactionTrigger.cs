@@ -10,6 +10,6 @@ namespace Microsoft.Agents.AI.Compaction;
 /// to determine when to trigger compaction and when the target compaction threshold has been met.
 /// </summary>
 /// <param name="index">An index over conversation messages that provides group, token, message, and turn metrics.</param>
-/// <returns><see langword="true"/> to the trigger that the condition has been met; otherwise <see langword="false"/>.</returns>
+/// <returns><see langword="true"/> to indicate the condition has been met; otherwise <see langword="false"/>.</returns>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public delegate bool CompactionTrigger(MessageIndex index);

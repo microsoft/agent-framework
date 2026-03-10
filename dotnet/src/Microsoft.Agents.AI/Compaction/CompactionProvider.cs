@@ -113,7 +113,7 @@ public sealed class CompactionProvider : AIContextProvider
         if (state.MessageGroups.Count > 0)
         {
             // Update existing index with any new messages appended since the last call.
-            messageIndex = new(state.MessageGroups);
+            messageIndex = new([.. state.MessageGroups]);
             messageIndex.Update(messageList);
         }
         else
