@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -69,60 +68,77 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     /// <inheritdoc/>
     protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
-        // Identify protected groups: the N most-recent non-system, non-excluded groups
-        int[] nonSystemIncludedIndices =
-            index.Groups
-                .Select((group, index) => (group, index))
-                .Where(tuple => !tuple.group.IsExcluded && tuple.group.Kind != MessageGroupKind.System)
-                .Select(tuple => tuple.index)
-                .ToArray();
+        // Forward pass: count non-system included groups and pre-index them by TurnIndex.
+        int nonSystemIncludedCount = 0;
+        Dictionary<int, List<int>> turnGroups = [];
+        List<int> turnOrder = [];
 
-        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Length - this.MinimumPreserved);
-        HashSet<int> protectedGroupIndices = [.. nonSystemIncludedIndices.Skip(protectedStart)];
-
-        // Collect distinct included turn indices in order (oldest first), excluding protected groups
-        List<int> excludableTurns = [];
-        HashSet<int> processedTurns = [];
         for (int i = 0; i < index.Groups.Count; i++)
         {
             MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded
-                && group.Kind != MessageGroupKind.System
-                && !protectedGroupIndices.Contains(i)
-                && group.TurnIndex is int turnIndex
-                && !processedTurns.Contains(turnIndex))
+            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
             {
-                excludableTurns.Add(turnIndex);
-                processedTurns.Add(turnIndex);
+                nonSystemIncludedCount++;
+
+                if (group.TurnIndex is int turnIndex)
+                {
+                    if (!turnGroups.TryGetValue(turnIndex, out List<int>? indices))
+                    {
+                        indices = [];
+                        turnGroups[turnIndex] = indices;
+                        turnOrder.Add(turnIndex);
+                    }
+
+                    indices.Add(i);
+                }
             }
         }
 
-        // Exclude one turn at a time from oldest, re-checking target after each
+        // Backward pass: identify the protected tail (last MinimumPreserved non-system included groups).
+        int protectedCount = Math.Min(this.MinimumPreserved, nonSystemIncludedCount);
+#if NETSTANDARD
+        HashSet<int> protectedIndices = [];
+#else
+        HashSet<int> protectedIndices = new(protectedCount);
+#endif
+        int remaining = protectedCount;
+        for (int i = index.Groups.Count - 1; i >= 0 && remaining > 0; i--)
+        {
+            MessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            {
+                protectedIndices.Add(i);
+                remaining--;
+            }
+        }
+
+        // Exclude turns oldest-first using the pre-built index, checking target after each turn.
         bool compacted = false;
 
-        for (int t = 0; t < excludableTurns.Count; t++)
+        for (int t = 0; t < turnOrder.Count; t++)
         {
-            int turnToExclude = excludableTurns[t];
+            List<int> groupIndices = turnGroups[turnOrder[t]];
+            bool anyExcluded = false;
 
-            for (int i = 0; i < index.Groups.Count; i++)
+            for (int g = 0; g < groupIndices.Count; g++)
             {
-                MessageGroup group = index.Groups[i];
-                if (!group.IsExcluded
-                    && group.Kind != MessageGroupKind.System
-                    && !protectedGroupIndices.Contains(i)
-                    && group.TurnIndex == turnToExclude)
+                int idx = groupIndices[g];
+                if (!protectedIndices.Contains(idx))
                 {
-                    group.IsExcluded = true;
-                    group.ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
+                    index.Groups[idx].IsExcluded = true;
+                    index.Groups[idx].ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
+                    anyExcluded = true;
                 }
             }
 
-            compacted = true;
-
-            // Stop when target condition is met
-            if (this.Target(index))
+            if (anyExcluded)
             {
-                break;
+                compacted = true;
+
+                if (this.Target(index))
+                {
+                    break;
+                }
             }
         }
 
