@@ -204,6 +204,46 @@ class SettingNotFoundError(AgentFrameworkException):
 
 # endregion
 
+
+
+class OAuthConsentRequiredException(AgentException):
+    """Raised when a sub-agent tool requires OAuth consent.
+    
+    This exception is raised by as_tool() when a wrapped agent returns
+    an oauth_consent_request event. The parent agent should catch this
+    exception and forward the consent request to the user.
+    
+    Attributes:
+        consent_url: The OAuth consent URL that the user must visit.
+    """
+    
+    def __init__(self, consent_url: str):
+        self.consent_url = consent_url
+        super().__init__(
+            f'OAuth consent required. Please visit: {consent_url}',
+            log_level=logging.INFO,
+        )
+
+
+
+class OAuthConsentRequiredException(AgentException):
+    """Raised when a sub-agent tool requires OAuth consent.
+    
+    This exception is raised by as_tool() when a wrapped agent returns
+    an oauth_consent_request event. The parent agent should catch this
+    exception and forward the consent request to the user.
+    
+    Attributes:
+        consent_url: The OAuth consent URL that the user must visit.
+    """
+    
+    def __init__(self, consent_url: str):
+        self.consent_url = consent_url
+        super().__init__(
+            f'OAuth consent required. Please visit: {consent_url}',
+            log_level=logging.INFO,
+        )
+
 # region Workflow Exceptions
 
 

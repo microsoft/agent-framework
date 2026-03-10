@@ -51,7 +51,7 @@ from ._types import (
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidResponseException
+from .exceptions import AgentInvalidResponseException, OAuthConsentRequiredException
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
@@ -532,11 +532,25 @@ class BaseAgent(SerializationMixin):
 
             if stream_callback is None:
                 # Use non-streaming mode
-                return (await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)).text
+                response = await self.run(input_text, stream=False, session=parent_session, **forwarded_kwargs)
+                # Check for OAuth consent request in response
+                for content in response.contents:
+                    if content.type == 'oauth_consent_request':
+                        consent_url = content.get('consent_link') or content.get('url') or ''
+                        from .exceptions import OAuthConsentRequiredException
+                        raise OAuthConsentRequiredException(consent_url)
+                return response.text
 
             # Use streaming mode - accumulate updates and create final response
             response_updates: list[AgentResponseUpdate] = []
             async for update in self.run(input_text, stream=True, session=parent_session, **forwarded_kwargs):
+                # Check for OAuth consent request in update
+                for content in update.contents:
+                    if content.type == 'oauth_consent_request':
+                        consent_url = content.get('consent_link') or content.get('url') or ''
+                        from .exceptions import OAuthConsentRequiredException
+                        raise OAuthConsentRequiredException(consent_url)
+                
                 response_updates.append(update)
                 if is_async_callback:
                     await stream_callback(update)  # type: ignore[misc]
