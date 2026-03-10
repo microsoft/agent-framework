@@ -32,7 +32,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act
-        StreamingRun run =
+        await using StreamingRun run =
             await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> checkpoints = [];
@@ -218,11 +218,10 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
+        StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
-        using CancellationTokenSource cts = new();
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
             {
@@ -236,12 +235,11 @@ public class CheckpointParentTests
         // Dispose the first run to release workflow ownership before resuming.
         await run.DisposeAsync();
 
-        // Act: Resume from the first checkpoint
+        // Act: Resume from the second checkpoint
         StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
-        using CancellationTokenSource cts2 = new();
-        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
         {
             if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
             {
@@ -277,11 +275,10 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
+        StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
-        using CancellationTokenSource cts = new();
-        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
             if (evt is SuperStepCompletedEvent completedEvent && completedEvent.CompletionInfo?.Checkpoint is { } completedCp)
             {
@@ -295,7 +292,7 @@ public class CheckpointParentTests
         // Dispose the first run to release workflow ownership before resuming.
         await run.DisposeAsync();
 
-        // Act: Resume from the first checkpoint
+        // Act: Resume from the second checkpoint
         StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
