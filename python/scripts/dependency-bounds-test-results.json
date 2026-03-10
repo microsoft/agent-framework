@@ -1,0 +1,45 @@
+{
+  "started_at": "2026-03-10T10:12:45.561633+00:00",
+  "mode": "test",
+  "workspace_root": "/Users/edvan/Work/agent-framework-2/python",
+  "dry_run": false,
+  "scenarios": [
+    {
+      "name": "lower",
+      "resolution": "lowest-direct",
+      "status": "failed",
+      "packages": [
+        {
+          "project_path": "packages/a2a",
+          "package_name": "agent-framework-a2a",
+          "status": "passed",
+          "error": null
+        },
+        {
+          "project_path": "packages/ag-ui",
+          "package_name": "agent-framework-ag-ui",
+          "status": "passed",
+          "error": null
+        },
+        {
+          "project_path": "packages/anthropic",
+          "package_name": "agent-framework-anthropic",
+          "status": "passed",
+          "error": null
+        },
+        {
+          "project_path": "packages/azure-ai",
+          "package_name": "agent-framework-azure-ai",
+          "status": "failed",
+          "error": "Task 'test' failed for packages/azure-ai at resolution 'lowest-direct'.\n...\nE   ImportError: cannot import name 'TextResponseFormatJsonObject' from 'azure.ai.projects.models' (/Users/edvan/Work/agent-framework-2/python/.venv/lib/python3.13/site-packages/azure/ai/projects/models/__init__.py)\n____________________ ERROR collecting tests/test_shared.py _____________________\nImportError while importing test module '/Users/edvan/Work/agent-framework-2/python/packages/azure-ai/tests/test_shared.py'.\nHint: make sure your test modules/packages have valid Python names.\nTraceback:\n/Users/edvan/.local/share/uv/python/cpython-3.13.1-macos-aarch64-none/lib/python3.13/importlib/__init__.py:88: in import_module\n    return _bootstrap._gcd_import(name[level:], package, level)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\ntests/test_shared.py:14: in <module>\n    from agent_framework_azure_ai import AzureAIAgentClient\nagent_framework_azure_ai/__init__.py:5: in <module>\n    from ._agent_provider import AzureAIAgentsProvider\nagent_framework_azure_ai/_agent_provider.py:26: in <module>\n    from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions\nagent_framework_azure_ai/_chat_client.py:94: in <module>\n    from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools\nagent_framework_azure_ai/_shared.py:19: in <module>\n    from azure.ai.projects.models import (\nE   ImportError: cannot import name 'TextResponseFormatJsonObject' from 'azure.ai.projects.models' (/Users/edvan/Work/agent-framework-2/python/.venv/lib/python3.13/site-packages/azure/ai/projects/models/__init__.py)\n=========================== short test summary info ============================\nERROR tests/azure_ai/test_azure_ai_inference_embedding_client.py\nERROR tests/test_agent_provider.py\nERROR tests/test_azure_ai_agent_client.py\nERROR tests/test_azure_ai_client.py\nERROR tests/test_foundry_memory_provider.py\nERROR tests/test_provider.py\nERROR tests/test_shared.py\n!!!!!!!!!!!!!!!!!!! Interrupted: 7 errors during collection !!!!!!!!!!!!!!!!!!!!\n7 errors in 9.16s"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "packages_total": 23,
+    "scenarios_passed": 0,
+    "scenarios_failed": 1
+  },
+  "updated_at": "2026-03-10T10:13:44.420388+00:00"
+}

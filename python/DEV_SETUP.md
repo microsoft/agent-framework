@@ -279,22 +279,29 @@ Lint markdown code blocks:
 uv run poe markdown-code-lint
 ```
 
-#### `validate-dependency-ranges`
-Validate and extend external dependency upper bounds by running package checks/tests in isolated environments:
+#### `validate-dependency-bounds-test`
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
 ```bash
-uv run poe validate-dependency-ranges
+uv run poe validate-dependency-bounds-test
+# Defaults to --project "*"; pass a package to scope test mode
+uv run poe validate-dependency-bounds-test --project <workspace-package-name>
 ```
 
 #### `validate-dependency-lower-bounds`
-Validate and extend external dependency lower bounds by running package checks/tests in isolated environments:
+Validate and extend external dependency lower bounds for a single package:
 ```bash
-uv run poe validate-dependency-lower-bounds
+uv run poe validate-dependency-lower-bounds-project --project <workspace-package-name> --dependency "<dependency-name>"
 ```
 
-When adding or changing an external dependency, run lower bounds first, then upper bounds:
+#### `validate-dependency-ranges`
+Validate and extend external dependency upper bounds for a single package:
 ```bash
-uv run poe validate-dependency-lower-bounds
-uv run poe validate-dependency-ranges
+uv run poe validate-dependency-ranges-project --project <workspace-package-name> --dependency "<dependency-name>"
+```
+
+To run lower then upper expansion in one command for a package:
+```bash
+uv run poe validate-dependency-bounds-expand --mode both --project <workspace-package-name> --dependency "<dependency-name>"
 ```
 
 #### `add-dependency-and-validate-bounds`

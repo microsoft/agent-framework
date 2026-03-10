@@ -30,8 +30,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0,<9", "pytest-cov>=6.2.1,<7", "watchdog>=3.0.0,<7", "agent-framework-orchestrations"]
-all = ["pytest>=7.0.0,<9", "pytest-cov>=6.2.1,<7", "watchdog>=3.0.0,<7"]
+dev = ["pytest>=7.0.0", "watchdog>=3.0.0", "agent-framework-orchestrations"]
+all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
 
 [project.scripts]
 devui = "agent_framework_devui:main"

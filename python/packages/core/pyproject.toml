@@ -24,19 +24,19 @@ classifiers = [
 ]
 dependencies = [
     # utilities
-    "typing-extensions>=4.0.0,<5",
+    "typing-extensions==4.15.0",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     # telemetry
-    "opentelemetry-api>=1.0.0,<2",
-    "opentelemetry-sdk>=1.0.0,<2",
-    "opentelemetry-semantic-conventions-ai>=0.4.0,<0.4.14",
+    "opentelemetry-api>=1.39.0",
+    "opentelemetry-sdk>=1.39.0",
+    "opentelemetry-semantic-conventions-ai>=0.4.13",
     # connectors and functions
-    "openai>=1.0.0,<3",
+    "openai>=1.99.0",
     "azure-identity>=1,<2",
-    "azure-ai-projects>=2.0.0,<3.0",
+    "azure-ai-projects == 2.0.0b4",
     "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1,<26.0",
+    "packaging>=24.1",
 ]
 
 [project.optional-dependencies]
@@ -76,15 +76,7 @@ environments = [
 fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
-testpaths = [
-    'tests',
-    'packages/core/tests',
-    'packages/a2a/tests',
-    'packages/azure-ai/tests',
-    'packages/copilotstudio/tests',
-    'packages/mem0/tests',
-    'packages/runtime/tests'
-]
+testpaths = ['tests']
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

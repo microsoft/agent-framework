@@ -9,23 +9,32 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
+from _dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 from rich import print
 from task_runner import discover_projects, extract_poe_tasks
 
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
+SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
+    r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.-]+)\s*=\s*\[(?P<body>.*)\](?P<suffix>\s*(?:#.*)?)$"
+)
+QUOTED_STRING_PATTERN = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 
 
 @dataclass
@@ -112,6 +121,7 @@ class PackagePlan:
     internal_editables: list[Path]
     include_dev_group: bool
     include_dev_extra: bool
+    optional_extras: list[str]
 
 
 @dataclass
@@ -129,7 +139,7 @@ class PackageOutcome:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _truncate_error(stdout: str, stderr: str, *, max_chars: int = 2000) -> str:
@@ -140,8 +150,6 @@ def _truncate_error(stdout: str, stderr: str, *, max_chars: int = 2000) -> str:
 
 
 def _parse_requirement(requirement: str) -> RequirementEntry | None:
-    import re
-
     match = re.match(REQ_PATTERN, requirement)
     if not match:
         return None
@@ -213,6 +221,149 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
     )
 
 
+def _select_latest_dev_version(versions: list[Version]) -> Version | None:
+    if not versions:
+        return None
+    stable_versions = [version for version in versions if not version.is_prerelease]
+    if stable_versions:
+        return stable_versions[-1]
+    return versions[-1]
+
+
+@lru_cache(maxsize=8)
+def _load_workspace_package_versions(workspace_root: str) -> dict[str, Version]:
+    workspace_path = Path(workspace_root)
+    versions: dict[str, Version] = {}
+    for package_pyproject in sorted((workspace_path / "packages").glob("*/pyproject.toml")):
+        with package_pyproject.open("rb") as f:
+            package_data = tomli.load(f)
+        project_section = package_data.get("project", {}) or {}
+        package_name = str(project_section.get("name", "")).strip().lower()
+        package_version = project_section.get("version")
+        if not package_name or not package_version:
+            continue
+        try:
+            versions[package_name] = Version(str(package_version))
+        except InvalidVersion:
+            continue
+    return versions
+
+
+def _collect_dev_pin_replacements(
+    pyproject_file: Path,
+    *,
+    catalog: VersionCatalog,
+) -> dict[str, str]:
+    with pyproject_file.open("rb") as f:
+        data = tomli.load(f)
+    project = data.get("project", {}) or {}
+    optional_dependencies = project.get("optional-dependencies", {}) or {}
+    dependency_groups = data.get("dependency-groups", {}) or {}
+    workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
+
+    dev_requirements: list[str] = []
+    dev_requirements.extend(
+        requirement for requirement in (optional_dependencies.get("dev", []) or []) if isinstance(requirement, str)
+    )
+    dev_requirements.extend(
+        requirement for requirement in (dependency_groups.get("dev", []) or []) if isinstance(requirement, str)
+    )
+
+    seen_requirements: set[str] = set()
+    replacements: dict[str, str] = {}
+    for requirement in dev_requirements:
+        if requirement in seen_requirements:
+            continue
+        seen_requirements.add(requirement)
+
+        try:
+            parsed_requirement = Requirement(requirement)
+        except InvalidRequirement:
+            continue
+        if parsed_requirement.url is not None:
+            continue
+        dependency_name = parsed_requirement.name.lower()
+        if dependency_name.startswith("agent-framework"):
+            latest_version = workspace_versions.get(dependency_name)
+        else:
+            latest_version = _select_latest_dev_version(catalog.get_lock(dependency_name))
+            if latest_version is None:
+                latest_version = _select_latest_dev_version(catalog.get(dependency_name))
+        if latest_version is None:
+            continue
+
+        extras = f"[{','.join(sorted(parsed_requirement.extras))}]" if parsed_requirement.extras else ""
+        marker = f"; {parsed_requirement.marker}" if parsed_requirement.marker else ""
+        pinned_requirement = f"{parsed_requirement.name}{extras}=={latest_version}{marker}"
+        if requirement != pinned_requirement:
+            replacements[requirement] = pinned_requirement
+
+    return replacements
+
+
+def _is_dependency_array_assignment(section: str, key: str) -> bool:
+    if section == "project":
+        return key == "dependencies"
+    return section in {"project.optional-dependencies", "dependency-groups"}
+
+
+def _extract_inline_array_items(array_body: str) -> list[str] | None:
+    items = [match.group(0) for match in QUOTED_STRING_PATTERN.finditer(array_body)]
+    remainder = QUOTED_STRING_PATTERN.sub("", array_body)
+    if remainder.replace(",", "").strip():
+        return None
+    return items
+
+
+def _format_dependency_arrays_multiline(path: Path) -> None:
+    original_text = path.read_text()
+    lines = original_text.splitlines()
+    current_section = ""
+    updated_lines: list[str] = []
+    changed = False
+
+    for line in lines:
+        section_match = SECTION_HEADER_PATTERN.match(line)
+        if section_match:
+            current_section = section_match.group(1).strip()
+            updated_lines.append(line)
+            continue
+
+        assignment_match = INLINE_ARRAY_ASSIGNMENT_PATTERN.match(line)
+        if assignment_match is None:
+            updated_lines.append(line)
+            continue
+
+        indent = assignment_match.group("indent")
+        key = assignment_match.group("key")
+        body = assignment_match.group("body")
+        suffix = (assignment_match.group("suffix") or "").rstrip()
+        if not _is_dependency_array_assignment(current_section, key):
+            updated_lines.append(line)
+            continue
+
+        items = _extract_inline_array_items(body)
+        if items is None or len(items) == 0:
+            updated_lines.append(line)
+            continue
+
+        changed = True
+        updated_lines.append(f"{indent}{key} = [")
+        updated_lines.extend(f"{indent}    {item}," for item in items)
+        closing_line = f"{indent}]"
+        if suffix:
+            closing_line = f"{closing_line}{suffix}"
+        updated_lines.append(closing_line)
+
+    if not changed:
+        return
+
+    updated_text = "\n".join(updated_lines)
+    if original_text.endswith("\n"):
+        updated_text += "\n"
+    path.write_text(updated_text)
+
+
 def _replace_requirements(path: Path, replacements: list[tuple[str, str]]) -> None:
     text = path.read_text()
     updated_text = text
@@ -275,6 +426,10 @@ class VersionCatalog:
             self._cache[package_name] = versions
         return versions
 
+    def get_lock(self, package_name: str) -> list[Version]:
+        """Return lockfile versions for a package name."""
+        return self._lock_versions.get(package_name, [])
+
     def _fetch(self, package_name: str) -> list[Version]:
         if self._source == "lock":
             return self._lock_versions.get(package_name, [])
@@ -306,6 +461,13 @@ def _load_package_name(pyproject_file: Path) -> str:
     with pyproject_file.open("rb") as f:
         data = tomli.load(f)
     return str(data["project"]["name"])
+
+
+def _extract_requirement_name(requirement: str) -> str | None:
+    try:
+        return Requirement(requirement).name.lower()
+    except InvalidRequirement:
+        return None
 
 
 def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
@@ -343,12 +505,12 @@ def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) ->
             dependencies.extend([value for value in (values or []) if isinstance(value, str)])
         internal = set()
         for dependency in dependencies:
-            parsed = _parse_requirement(dependency)
-            if not parsed:
+            dependency_name = _extract_requirement_name(dependency)
+            if dependency_name is None:
                 continue
-            if parsed.name.startswith("agent-framework"):
+            if dependency_name.startswith("agent-framework"):
                 for candidate_name in package_map:
-                    if candidate_name.lower() == parsed.name:
+                    if candidate_name.lower() == dependency_name:
                         internal.add(candidate_name)
                         break
         graph[package_name] = internal
@@ -383,8 +545,6 @@ def _collect_targets(
         data = tomli.load(f)
     project = data.get("project", {})
     dependencies: list[str] = list(project.get("dependencies", []) or [])
-    for values in (project.get("optional-dependencies", {}) or {}).values():
-        dependencies.extend(values or [])
 
     grouped: dict[str, list[RequirementEntry]] = {}
     skipped: list[str] = []
@@ -507,12 +667,14 @@ def _build_trial_bounds(
 def _run_tasks(
     project_dir: Path,
     *,
+    workspace_root: Path,
     tasks: list[str],
     internal_editables: list[Path],
     resolution: str,
     dependency_pin: tuple[str, Version] | None,
     include_dev_group: bool,
     include_dev_extra: bool,
+    optional_extras: list[str],
     timeout_seconds: int,
 ) -> tuple[bool, str | None]:
     env = dict(os.environ)
@@ -533,16 +695,19 @@ def _run_tasks(
             "allow",
             "--quiet",
         ]
+        extend_command_with_runtime_tools(command, workspace_root)
         if include_dev_group:
             command.extend(["--group", "dev"])
         if include_dev_extra:
             command.extend(["--extra", "dev"])
+        for extra_name in optional_extras:
+            command.extend(["--extra", extra_name])
         for editable_path in internal_editables:
             command.extend(["--with-editable", str(editable_path)])
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        command.extend(["poe", task_name])
+        extend_command_with_task(command, task_name)
         try:
             result = subprocess.run(
                 command,
@@ -575,6 +740,7 @@ def _optimize_dependency(
     package_label: str,
     include_dev_group: bool,
     include_dev_extra: bool,
+    optional_extras: list[str],
 ) -> DependencyOutcome:
     # Build descending candidate trial bounds from the current constraint window.
     candidates = _build_trial_bounds(
@@ -617,23 +783,16 @@ def _optimize_dependency(
             f"[cyan]{package_label} :: {dependency.name} :: baseline {baseline_name} "
             f"({baseline_resolution}) [{baseline_version}] [/cyan]"
         )
-        if dry_run:
-            attempts.append(
-                DependencyAttempt(
-                    trial_upper=str(baseline_version),
-                    status=f"{baseline_name}_dry_run_pass",
-                )
-            )
-            continue
-
         success, error = _run_tasks(
             temp_pyproject.parent,
+            workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
             resolution=baseline_resolution,
             dependency_pin=(dependency.name, baseline_version),
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
+            optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
         )
         if success:
@@ -683,19 +842,16 @@ def _optimize_dependency(
         _replace_requirements(temp_pyproject, [(old, new) for old, new in replacements])
 
         print(f"[cyan]{package_label} :: {dependency.name} -> <{candidate}[/cyan]")
-        if dry_run:
-            attempts.append(DependencyAttempt(trial_upper=str(candidate), status="dry_run_pass"))
-            current_requirements = trial_requirements
-            break
-
         success, error = _run_tasks(
             temp_pyproject.parent,
+            workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
             resolution="highest",
             dependency_pin=None,
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
+            optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
         )
         if success:
@@ -722,6 +878,7 @@ def _optimize_dependency(
 def _process_package(
     plan: PackagePlan,
     *,
+    workspace_root: Path,
     catalog: VersionCatalog,
     dependency_filters: set[str] | None,
     dry_run: bool,
@@ -729,7 +886,7 @@ def _process_package(
     timeout_seconds: int,
 ) -> PackageOutcome:
     pyproject_file = plan.pyproject_path
-    source_workspace_root = pyproject_file.parent.parent.parent.resolve()
+    source_workspace_root = workspace_root.resolve()
     available_tasks = extract_poe_tasks(pyproject_file)
     tasks = _select_validation_tasks(available_tasks)
     if not tasks:
@@ -741,18 +898,6 @@ def _process_package(
             dependencies=[],
             replacements={},
             skipped=["No check/test task combination found."],
-        )
-
-    targets, skipped = _collect_targets(pyproject_file, dependency_filters=dependency_filters)
-    if not targets:
-        return PackageOutcome(
-            project_path=str(plan.project_path),
-            package_name=plan.package_name,
-            tasks=tasks,
-            changed=False,
-            dependencies=[],
-            replacements={},
-            skipped=[*skipped, "No eligible dependencies with upper bounds."],
         )
 
     with tempfile.TemporaryDirectory(prefix=f"dep-range-{plan.project_path.name}-") as temp_dir:
@@ -791,9 +936,21 @@ def _process_package(
             if candidate.exists():
                 temp_internal_editables.append(candidate)
 
+        dev_replacements = _collect_dev_pin_replacements(temp_pyproject, catalog=catalog)
+        if dev_replacements:
+            _replace_requirements(temp_pyproject, list(dev_replacements.items()))
+            print(
+                f"[cyan]{plan.project_path}: refreshed {len(dev_replacements)} dev dependency pin(s) to latest[/cyan]"
+            )
+
+        targets, skipped = _collect_targets(temp_pyproject, dependency_filters=dependency_filters)
+
         dependency_results: list[DependencyOutcome] = []
-        replacements: dict[str, str] = {}
+        replacements: dict[str, str] = dict(dev_replacements)
         package_label = f"{plan.project_path} ({plan.package_name})"
+
+        if not targets:
+            skipped.append("No eligible dependencies with upper bounds in project.dependencies.")
 
         # Run per-dependency trial generation + validation in the isolated temp workspace.
         for target in targets:
@@ -810,6 +967,7 @@ def _process_package(
                 package_label=package_label,
                 include_dev_group=plan.include_dev_group,
                 include_dev_extra=plan.include_dev_extra,
+                optional_extras=plan.optional_extras,
             )
             dependency_results.append(outcome)
             if outcome.changed:
@@ -867,14 +1025,15 @@ def _apply_package_replacements(path: Path, replacements: dict[str, str]) -> Non
     if not replacements:
         return
     _replace_requirements(path, list(replacements.items()))
+    _format_dependency_arrays_multiline(path)
 
 
 def main() -> None:
     """Run package-by-package dependency upper-bound discovery and updates."""
     parser = argparse.ArgumentParser(
         description=(
-            "Raise dependency upper bounds per package, run check+test in isolated uv envs, "
-            "and write a JSON report while updating pyproject files."
+            "Raise dependency upper bounds per package, refresh dev pins to latest exact versions, "
+            "run check+test in isolated uv envs, and write a JSON report while updating pyproject files."
         )
     )
     parser.add_argument(
@@ -918,7 +1077,7 @@ def main() -> None:
         default=1200,
         help="Timeout per task command execution.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Do not execute uv commands or update pyprojects.")
+    parser.add_argument("--dry-run", action="store_true", help="Validate candidates but do not update pyprojects.")
     args = parser.parse_args()
 
     # Preparation/target collection: resolve workspace metadata and package execution plans.
@@ -955,6 +1114,32 @@ def main() -> None:
                 internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
                 include_dev_group="dev" in dependency_groups,
                 include_dev_extra="dev" in optional_dependencies,
+                optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
+            )
+        )
+
+    root_package_name = _load_package_name(workspace_pyproject)
+    with workspace_pyproject.open("rb") as f:
+        root_config = tomli.load(f)
+    root_project_section = root_config.get("project", {})
+    root_optional_dependencies = root_project_section.get("optional-dependencies", {}) or {}
+    root_dependency_groups = root_config.get("dependency-groups", {}) or {}
+    if (
+        not package_filters
+        or "." in package_filters
+        or "./" in package_filters
+        or "root" in package_filters
+        or root_package_name in package_filters
+    ):
+        plans.append(
+            PackagePlan(
+                project_path=Path("."),
+                package_name=root_package_name,
+                pyproject_path=workspace_pyproject,
+                internal_editables=[],
+                include_dev_group="dev" in root_dependency_groups,
+                include_dev_extra="dev" in root_optional_dependencies,
+                optional_extras=sorted(name for name in root_optional_dependencies if name not in {"all", "dev"}),
             )
         )
 
@@ -973,7 +1158,6 @@ def main() -> None:
             "packages_total": len(plans),
             "packages_changed": 0,
             "dependencies_changed": 0,
-            "dependencies_failed": 0,
         },
     }
     _write_json(output_json_path, report)
@@ -985,6 +1169,7 @@ def main() -> None:
             executor.submit(
                 _process_package,
                 plan,
+                workspace_root=workspace_root,
                 catalog=catalog,
                 dependency_filters=dependency_filters,
                 dry_run=args.dry_run,
@@ -1020,13 +1205,6 @@ def main() -> None:
             report["summary"]["dependencies_changed"] = sum(
                 1 for value in package_outcomes for dependency in value.dependencies if dependency.changed
             )
-            report["summary"]["dependencies_failed"] = sum(
-                1
-                for value in package_outcomes
-                for dependency in value.dependencies
-                for attempt in dependency.attempts
-                if attempt.status == "failed"
-            )
             report["updated_at"] = _utc_now()
             _write_json(output_json_path, report)
 
@@ -1040,8 +1218,7 @@ def main() -> None:
     print(
         "[bold]Done.[/bold] "
         f"packages_changed={report['summary']['packages_changed']}, "
-        f"dependencies_changed={report['summary']['dependencies_changed']}, "
-        f"failed_attempts={report['summary']['dependencies_failed']}"
+        f"dependencies_changed={report['summary']['dependencies_changed']}"
     )
 
 

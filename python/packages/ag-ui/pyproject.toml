@@ -30,12 +30,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0,<9.0.2",
-    "pytest-asyncio>=1.0.0,<2",
-    "pytest-cov>=6.0.0,<7",
-    "pytest-xdist[psutil]>=3.2.0,<4",
-    "agent-framework-orchestrations>=1.0.0b260225",
-    "httpx>=0.27.0,<0.29",
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
 ]
 
 [build-system]

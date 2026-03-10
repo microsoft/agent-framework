@@ -402,7 +402,7 @@ So we use bounded ranges for external package dependencies in `pyproject.toml`:
 - For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good lower bound with a hard upper boundary in the same prerelease line (for example: `azure-ai-projects>=2.0.0b3,<2.0.0b4`).
 - For `<1.0.0` dependencies, use patch-bounded caps (`>=<known_good>,<next_patch>`), not minor-bounded caps (for example: `a2a-sdk>=0.3.5,<0.3.6`).
 - Prefer keeping support for multiple major versions when practical. This may mean that the upper bound spans multiple major versions when the dependency maintains backward compatibility; if APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility. For `<1.0.0>` and prerelease dependencies, also make the bounds as broad as possible but only for known packages, not for new ones, as the odds of breaking changes being introduced are higher.
-- When adding or changing an external dependency, run `uv run poe validate-dependency-lower-bounds` first to extend the minimum supported bound, then run `uv run poe validate-dependency-ranges` to raise/set the maximum supported bound.
+- When adding or changing an external dependency, first run `uv run poe validate-dependency-bounds-test` to validate workspace-wide lower/upper compatibility, then run `uv run poe validate-dependency-bounds-expand --mode both --project <workspace-package-name> --dependency "<dependency-name>"` to expand package-scoped bounds.
 
 ### Installation Options
 

@@ -9,23 +9,31 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
+from _dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 from rich import print
 from task_runner import discover_projects, extract_poe_tasks
 
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
+SECTION_HEADER_PATTERN = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+INLINE_ARRAY_ASSIGNMENT_PATTERN = re.compile(
+    r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.-]+)\s*=\s*\[(?P<body>.*)\](?P<suffix>\s*(?:#.*)?)$"
+)
+QUOTED_STRING_PATTERN = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'')
 
 
 @dataclass
@@ -109,6 +117,7 @@ class PackagePlan:
     internal_editables: list[Path]
     include_dev_group: bool
     include_dev_extra: bool
+    optional_extras: list[str]
 
 
 @dataclass
@@ -126,7 +135,7 @@ class PackageOutcome:
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _truncate_error(stdout: str, stderr: str, *, max_chars: int = 2000) -> str:
@@ -137,8 +146,6 @@ def _truncate_error(stdout: str, stderr: str, *, max_chars: int = 2000) -> str:
 
 
 def _parse_requirement(requirement: str) -> RequirementEntry | None:
-    import re
-
     match = re.match(REQ_PATTERN, requirement)
     if not match:
         return None
@@ -212,6 +219,69 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
         exact_index=exact_index,
         exact_version=exact_version,
     )
+
+
+def _is_dependency_array_assignment(section: str, key: str) -> bool:
+    if section == "project":
+        return key == "dependencies"
+    return section in {"project.optional-dependencies", "dependency-groups"}
+
+
+def _extract_inline_array_items(array_body: str) -> list[str] | None:
+    items = [match.group(0) for match in QUOTED_STRING_PATTERN.finditer(array_body)]
+    remainder = QUOTED_STRING_PATTERN.sub("", array_body)
+    if remainder.replace(",", "").strip():
+        return None
+    return items
+
+
+def _format_dependency_arrays_multiline(path: Path) -> None:
+    original_text = path.read_text()
+    lines = original_text.splitlines()
+    current_section = ""
+    updated_lines: list[str] = []
+    changed = False
+
+    for line in lines:
+        section_match = SECTION_HEADER_PATTERN.match(line)
+        if section_match:
+            current_section = section_match.group(1).strip()
+            updated_lines.append(line)
+            continue
+
+        assignment_match = INLINE_ARRAY_ASSIGNMENT_PATTERN.match(line)
+        if assignment_match is None:
+            updated_lines.append(line)
+            continue
+
+        indent = assignment_match.group("indent")
+        key = assignment_match.group("key")
+        body = assignment_match.group("body")
+        suffix = (assignment_match.group("suffix") or "").rstrip()
+        if not _is_dependency_array_assignment(current_section, key):
+            updated_lines.append(line)
+            continue
+
+        items = _extract_inline_array_items(body)
+        if items is None or len(items) == 0:
+            updated_lines.append(line)
+            continue
+
+        changed = True
+        updated_lines.append(f"{indent}{key} = [")
+        updated_lines.extend(f"{indent}    {item}," for item in items)
+        closing_line = f"{indent}]"
+        if suffix:
+            closing_line = f"{closing_line}{suffix}"
+        updated_lines.append(closing_line)
+
+    if not changed:
+        return
+
+    updated_text = "\n".join(updated_lines)
+    if original_text.endswith("\n"):
+        updated_text += "\n"
+    path.write_text(updated_text)
 
 
 def _replace_requirements(path: Path, replacements: list[tuple[str, str]]) -> None:
@@ -309,14 +379,18 @@ def _load_package_name(pyproject_file: Path) -> str:
     return str(data["project"]["name"])
 
 
+def _extract_requirement_name(requirement: str) -> str | None:
+    try:
+        return Requirement(requirement).name.lower()
+    except InvalidRequirement:
+        return None
+
+
 def _select_validation_tasks(available_tasks: set[str]) -> list[str]:
+    check_task = next((task for task in CHECK_TASK_PRIORITY if task in available_tasks), None)
     tasks: list[str] = []
-    if "lint" in available_tasks:
-        tasks.append("lint")
-    else:
-        check_task = next((task for task in CHECK_TASK_PRIORITY if task in available_tasks), None)
-        if check_task:
-            tasks.append(check_task)
+    if check_task:
+        tasks.append(check_task)
     if "test" in available_tasks and "test" not in tasks:
         tasks.append("test")
     return tasks
@@ -347,12 +421,12 @@ def _build_internal_graph(workspace_root: Path, package_map: dict[str, Path]) ->
             dependencies.extend([value for value in (values or []) if isinstance(value, str)])
         internal = set()
         for dependency in dependencies:
-            parsed = _parse_requirement(dependency)
-            if not parsed:
+            dependency_name = _extract_requirement_name(dependency)
+            if dependency_name is None:
                 continue
-            if parsed.name.startswith("agent-framework"):
+            if dependency_name.startswith("agent-framework"):
                 for candidate_name in package_map:
-                    if candidate_name.lower() == parsed.name:
+                    if candidate_name.lower() == dependency_name:
                         internal.add(candidate_name)
                         break
         graph[package_name] = internal
@@ -485,12 +559,14 @@ def _build_trial_lower_bounds(
 def _run_tasks(
     project_dir: Path,
     *,
+    workspace_root: Path,
     tasks: list[str],
     internal_editables: list[Path],
     resolution: str,
     dependency_pin: tuple[str, Version] | None,
     include_dev_group: bool,
     include_dev_extra: bool,
+    optional_extras: list[str],
     timeout_seconds: int,
 ) -> tuple[bool, str | None]:
     env = dict(os.environ)
@@ -511,16 +587,19 @@ def _run_tasks(
             "allow",
             "--quiet",
         ]
+        extend_command_with_runtime_tools(command, workspace_root)
         if include_dev_group:
             command.extend(["--group", "dev"])
         if include_dev_extra:
             command.extend(["--extra", "dev"])
+        for extra_name in optional_extras:
+            command.extend(["--extra", extra_name])
         for editable_path in internal_editables:
             command.extend(["--with-editable", str(editable_path)])
         if dependency_pin is not None:
             dependency_name, dependency_version = dependency_pin
             command.extend(["--with", f"{dependency_name}=={dependency_version}"])
-        command.extend(["poe", task_name])
+        extend_command_with_task(command, task_name)
         try:
             result = subprocess.run(
                 command,
@@ -553,6 +632,7 @@ def _optimize_dependency(
     package_label: str,
     include_dev_group: bool,
     include_dev_extra: bool,
+    optional_extras: list[str],
 ) -> DependencyOutcome:
     if dependency.lower_version is None:
         return DependencyOutcome(
@@ -582,49 +662,43 @@ def _optimize_dependency(
     baseline_version = dependency.lower_version
     attempted_versions.append(str(baseline_version))
     print(f"[cyan]{package_label} :: {dependency.name} :: baseline current_lower [{baseline_version}] [/cyan]")
-    if dry_run:
+    success, error = _run_tasks(
+        temp_pyproject.parent,
+        workspace_root=temp_pyproject.parent.parent.parent,
+        tasks=tasks,
+        internal_editables=internal_editables,
+        resolution="highest",
+        dependency_pin=(dependency.name, baseline_version),
+        include_dev_group=include_dev_group,
+        include_dev_extra=include_dev_extra,
+        optional_extras=optional_extras,
+        timeout_seconds=timeout_seconds,
+    )
+    if not success:
         attempts.append(
             DependencyAttempt(
                 trial_lower=str(baseline_version),
-                status="current_lower_dry_run_pass",
+                status="failed",
+                error=error,
             )
         )
-    else:
-        success, error = _run_tasks(
-            temp_pyproject.parent,
-            tasks=tasks,
-            internal_editables=internal_editables,
-            resolution="highest",
-            dependency_pin=(dependency.name, baseline_version),
-            include_dev_group=include_dev_group,
-            include_dev_extra=include_dev_extra,
-            timeout_seconds=timeout_seconds,
+        return DependencyOutcome(
+            name=dependency.name,
+            changed=False,
+            original_requirements=dependency.original_requirements,
+            final_requirements=dependency.original_requirements,
+            candidate_versions=candidate_versions,
+            attempted_versions=attempted_versions,
+            attempts=attempts,
+            skipped_reason="Baseline validation failed at current_lower.",
         )
-        if not success:
-            attempts.append(
-                DependencyAttempt(
-                    trial_lower=str(baseline_version),
-                    status="failed",
-                    error=error,
-                )
-            )
-            return DependencyOutcome(
-                name=dependency.name,
-                changed=False,
-                original_requirements=dependency.original_requirements,
-                final_requirements=dependency.original_requirements,
-                candidate_versions=candidate_versions,
-                attempted_versions=attempted_versions,
-                attempts=attempts,
-                skipped_reason="Baseline validation failed at current_lower.",
-            )
 
-        attempts.append(
-            DependencyAttempt(
-                trial_lower=str(baseline_version),
-                status="current_lower_passed",
-            )
+    attempts.append(
+        DependencyAttempt(
+            trial_lower=str(baseline_version),
+            status="current_lower_passed",
         )
+    )
 
     if not candidates:
         return DependencyOutcome(
@@ -650,20 +724,16 @@ def _optimize_dependency(
         _replace_requirements(temp_pyproject, [(old, new) for old, new in replacements])
 
         print(f"[cyan]{package_label} :: {dependency.name} -> >={candidate}[/cyan]")
-        if dry_run:
-            attempts.append(DependencyAttempt(trial_lower=str(candidate), status="dry_run_pass"))
-            current_requirements = trial_requirements
-            high = midpoint - 1
-            continue
-
         success, error = _run_tasks(
             temp_pyproject.parent,
+            workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
             resolution="highest",
             dependency_pin=(dependency.name, candidate),
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
+            optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
         )
         if success:
@@ -780,6 +850,7 @@ def _process_package(
                 package_label=package_label,
                 include_dev_group=plan.include_dev_group,
                 include_dev_extra=plan.include_dev_extra,
+                optional_extras=plan.optional_extras,
             )
             dependency_results.append(outcome)
             if outcome.changed:
@@ -837,6 +908,7 @@ def _apply_package_replacements(path: Path, replacements: dict[str, str]) -> Non
     if not replacements:
         return
     _replace_requirements(path, list(replacements.items()))
+    _format_dependency_arrays_multiline(path)
 
 
 def main() -> None:
@@ -888,7 +960,7 @@ def main() -> None:
         default=1200,
         help="Timeout per task command execution.",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Do not execute uv commands or update pyprojects.")
+    parser.add_argument("--dry-run", action="store_true", help="Validate candidates but do not update pyprojects.")
     args = parser.parse_args()
 
     workspace_pyproject = Path(__file__).parent.parent / "pyproject.toml"
@@ -925,6 +997,7 @@ def main() -> None:
                 internal_editables=_resolve_internal_editables(package_name, package_map, internal_graph),
                 include_dev_group="dev" in dependency_groups,
                 include_dev_extra="dev" in optional_dependencies,
+                optional_extras=sorted(name for name in optional_dependencies if name not in {"all", "dev"}),
             )
         )
 
@@ -943,7 +1016,6 @@ def main() -> None:
             "packages_total": len(plans),
             "packages_changed": 0,
             "dependencies_changed": 0,
-            "dependencies_failed": 0,
         },
     }
     _write_json(output_json_path, report)
@@ -990,13 +1062,6 @@ def main() -> None:
             report["summary"]["dependencies_changed"] = sum(
                 1 for value in package_outcomes for dependency in value.dependencies if dependency.changed
             )
-            report["summary"]["dependencies_failed"] = sum(
-                1
-                for value in package_outcomes
-                for dependency in value.dependencies
-                for attempt in dependency.attempts
-                if attempt.status == "failed"
-            )
             report["updated_at"] = _utc_now()
             _write_json(output_json_path, report)
 
@@ -1010,8 +1075,7 @@ def main() -> None:
     print(
         "[bold]Done.[/bold] "
         f"packages_changed={report['summary']['packages_changed']}, "
-        f"dependencies_changed={report['summary']['dependencies_changed']}, "
-        f"failed_attempts={report['summary']['dependencies_failed']}"
+        f"dependencies_changed={report['summary']['dependencies_changed']}"
     )
 
 

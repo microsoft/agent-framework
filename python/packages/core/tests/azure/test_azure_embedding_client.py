@@ -113,9 +113,9 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings() -> None:
     """End-to-end test of Azure OpenAI embedding generation."""
     client = AzureOpenAIEmbeddingClient()
@@ -131,9 +131,9 @@ async def test_integration_azure_openai_get_embeddings() -> None:
     assert result.usage["input_token_count"] > 0
 
 
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings_multiple() -> None:
     """Test Azure OpenAI embedding generation for multiple inputs."""
     client = AzureOpenAIEmbeddingClient()
@@ -145,9 +145,9 @@ async def test_integration_azure_openai_get_embeddings_multiple() -> None:
     assert all(d == dims[0] for d in dims)
 
 
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings_with_dimensions() -> None:
     """Test Azure OpenAI embedding generation with custom dimensions."""
     client = AzureOpenAIEmbeddingClient()

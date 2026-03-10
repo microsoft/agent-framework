@@ -24,8 +24,8 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
     "agent-framework-durabletask",
-    "azure-functions>=1.0.3,<2",
-    "azure-functions-durable>=1.0.0,<2",
+    "azure-functions==1.24.0",
+    "azure-functions-durable==1.5.0",
 ]
 
 [dependency-groups]

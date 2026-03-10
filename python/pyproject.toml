@@ -294,16 +294,28 @@ args = [
     { name = "dependency", options = ["-d", "--dependency"] },
 ]
 
+[tool.poe.tasks.validate-dependency-bounds-test]
+shell = "python scripts/validate_dependency_bounds.py --mode test --package \"$project\""
+args = [{ name = "project", default = "*", options = ["-p", "--project"] }]
+
 [tool.poe.tasks.validate-dependency-lower-bounds-project]
-cmd = "python scripts/validate_dependency_lower_bounds.py --packages ${project} --dependencies ${dependency}"
+cmd = "python scripts/validate_dependency_bounds.py --mode lower --package ${project} --dependencies ${dependency}"
 args = [
     { name = "project", options = ["-p", "--project"] },
     { name = "dependency", options = ["-d", "--dependency"] },
 ]
 
 [tool.poe.tasks.validate-dependency-ranges-project]
-cmd = "python scripts/validate_dependency_ranges.py --packages ${project} --dependencies ${dependency}"
+cmd = "python scripts/validate_dependency_bounds.py --mode upper --package ${project} --dependencies ${dependency}"
 args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.validate-dependency-bounds-expand]
+cmd = "python scripts/validate_dependency_bounds.py --mode ${mode} --package ${project} --dependencies ${dependency}"
+args = [
+    { name = "mode", default = "both", options = ["-m", "--mode"] },
     { name = "project", options = ["-p", "--project"] },
     { name = "dependency", options = ["-d", "--dependency"] },
 ]
@@ -311,8 +323,7 @@ args = [
 [tool.poe.tasks.add-dependency-and-validate-bounds]
 sequence = [
     { ref = "add-dependency-to-project --project ${project} --dependency ${dependency}" },
-    { ref = "validate-dependency-lower-bounds-project --project ${project} --dependency ${dependency}" },
-    { ref = "validate-dependency-ranges-project --project ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-bounds-expand --mode both --project ${project} --dependency ${dependency}" },
 ]
 args = [
     { name = "project", options = ["-p", "--project"] },
