@@ -10,7 +10,7 @@ and `SkillsProvider`.
 |---------|-------------|
 | **Code skill** | A `Skill` created in Python with `@skill.script` decorators for in-process callable functions and `@skill.resource` for dynamic content |
 | **File skill** | A skill discovered from a `SKILL.md` file on disk, with reference documents and executable script files |
-| **`script_runner`** | An async callable satisfying the `SkillScriptRunner` protocol — required when file skills have scripts |
+| **`script_runner`** | A callable (sync or async) satisfying the `SkillScriptRunner` protocol — required when file skills have scripts |
 | **`SkillsProvider`** | Registers both code-defined and file-based skills in a single provider |
 
 ## Skills in This Sample

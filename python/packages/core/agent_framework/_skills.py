@@ -786,10 +786,8 @@ class SkillsProvider(BaseContextProvider):
                                 ),
                             },
                             "args": {
-                                "anyOf": [
-                                    { "additionalProperties": True, "type": "object"},
-                                    { "type": "null" }
-                                ],
+                                "type": ["object", "null"],
+                                "additionalProperties": True,
                                 "default": None,
                                 "description": (
                                     "Arguments to pass to the script as key-value pairs. "
