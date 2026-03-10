@@ -8,6 +8,8 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
+    AgentContext,
+    AgentMiddleware,
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -457,6 +459,97 @@ class TestGitHubCopilotAgentRunStreaming:
 
         assert agent._started is True  # type: ignore
         mock_client.start.assert_called_once()
+
+
+class TestGitHubCopilotAgentMiddleware:
+    """Test cases for AgentMiddleware behavior."""
+
+    async def test_run_executes_agent_middleware(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that non-streaming run executes AgentMiddleware."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        calls: list[str] = []
+
+        class TrackingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Any) -> None:
+                calls.append("before")
+                await call_next()
+                calls.append("after")
+
+        agent = GitHubCopilotAgent(client=mock_client, middleware=[TrackingMiddleware()])
+        response = await agent.run("Hello")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "Test response"
+        assert calls == ["before", "after"]
+
+    async def test_run_stream_applies_agent_middleware_transform(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that streaming middleware transform hooks are applied."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        class PrefixDeltaMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Any) -> None:
+                if context.stream:
+
+                    def add_prefix(update: AgentResponseUpdate) -> AgentResponseUpdate:
+                        return AgentResponseUpdate(
+                            role=update.role,
+                            contents=[Content.from_text(f"mw:{update.text}")],
+                            response_id=update.response_id,
+                            message_id=update.message_id,
+                            raw_representation=update.raw_representation,
+                        )
+
+                    context.stream_transform_hooks.append(add_prefix)
+                await call_next()
+
+        agent = GitHubCopilotAgent(client=mock_client, middleware=[PrefixDeltaMiddleware()])
+
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert responses[0].text == "mw:Hello"
+
+    async def test_run_supports_agent_middleware_callable(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that function-based AgentMiddleware callables are supported."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        calls: list[str] = []
+
+        async def tracking_middleware(context: AgentContext, call_next: Any) -> None:
+            calls.append("before")
+            await call_next()
+            calls.append("after")
+
+        agent = GitHubCopilotAgent(client=mock_client, middleware=[tracking_middleware])
+        response = await agent.run("Hello")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "Test response"
+        assert calls == ["before", "after"]
 
 
 class TestGitHubCopilotAgentSessionManagement:

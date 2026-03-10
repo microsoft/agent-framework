@@ -26,6 +26,7 @@ from agent_framework import (
     normalize_messages,
     normalize_tools,
 )
+from agent_framework._middleware import AgentMiddlewareLayer
 from agent_framework.exceptions import AgentException
 from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
@@ -242,7 +243,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             name: Name of the agent.
             description: Description of the agent.
             context_providers: Context providers for the agent.
-            middleware: List of middleware.
+            middleware: List of AgentMiddleware.
             tools: Tools for the agent. Can be:
                 - Strings for built-in tools (e.g., "Read", "Write", "Bash", "Glob")
                 - Functions for custom tools
@@ -581,6 +582,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -591,6 +593,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -600,6 +603,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
@@ -612,6 +616,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 returns an awaitable AgentResponse.
             session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
+            middleware: Optional per-run AgentMiddleware applied on top of constructor middleware.
             kwargs: Additional keyword arguments including 'options' for runtime options
                 (model, permission_mode can be changed per-request).
 
@@ -620,14 +625,23 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
         options = kwargs.pop("options", None)
-        response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
-            finalizer=self._finalize_response,
-        )
-
+        response = self._run_stream_impl(messages=messages, session=session, options=options, **kwargs)
         if stream:
             return response
         return response.get_final_response()
+
+    def _run_stream_impl(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        session: AgentSession | None = None,
+        options: OptionsT | MutableMapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        return ResponseStream(
+            self._get_stream(messages, session=session, options=options, **kwargs),
+            finalizer=self._finalize_response,
+        )
 
     async def _get_stream(
         self,
@@ -716,7 +730,12 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._structured_output = structured_output
 
 
-class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[OptionsT]):
+class ClaudeAgent(
+    AgentTelemetryLayer,
+    AgentMiddlewareLayer,
+    RawClaudeAgent[OptionsT],
+    Generic[OptionsT],
+):
     """Claude Agent with OpenTelemetry instrumentation.
 
     This is the recommended agent class for most use cases. It includes
@@ -736,3 +755,5 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
                 response = await agent.run("Hello!")
                 print(response.text)
     """
+
+    pass

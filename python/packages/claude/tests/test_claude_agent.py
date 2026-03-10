@@ -4,7 +4,16 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import AgentResponseUpdate, AgentSession, Content, Message, tool
+from agent_framework import (
+    AgentContext,
+    AgentMiddleware,
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentSession,
+    Content,
+    Message,
+    tool,
+)
 from agent_framework._settings import load_settings
 
 from agent_framework_claude import ClaudeAgent, ClaudeAgentOptions, ClaudeAgentSettings
@@ -432,6 +441,168 @@ class TestClaudeAgentRunStream:
                 async for _ in agent.run("Hello", stream=True):
                     pass
             assert "Model 'claude-sonnet-4.5' not found" in str(exc_info.value)
+
+
+class TestClaudeAgentMiddleware:
+    """Tests for ClaudeAgent AgentMiddleware support."""
+
+    @staticmethod
+    async def _create_async_generator(items: list[Any]) -> Any:
+        """Helper to create async generator from list."""
+        for item in items:
+            yield item
+
+    def _create_mock_client(self, messages: list[Any]) -> MagicMock:
+        """Create a mock ClaudeSDKClient that yields given messages."""
+        mock_client = MagicMock()
+        mock_client.connect = AsyncMock()
+        mock_client.disconnect = AsyncMock()
+        mock_client.query = AsyncMock()
+        mock_client.set_model = AsyncMock()
+        mock_client.set_permission_mode = AsyncMock()
+        mock_client.receive_response = MagicMock(return_value=self._create_async_generator(messages))
+        return mock_client
+
+    async def test_run_executes_agent_middleware(self) -> None:
+        """Test that non-streaming run executes AgentMiddleware."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+        calls: list[str] = []
+
+        class TrackingMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Any) -> None:
+                calls.append("before")
+                await call_next()
+                calls.append("after")
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent(middleware=[TrackingMiddleware()])
+            response = await agent.run("Hello")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "Hello!"
+        assert calls == ["before", "after"]
+
+    async def test_run_stream_applies_agent_middleware_transform(self) -> None:
+        """Test that middleware stream transform hooks are applied."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Streaming"},
+                },
+                uuid="event-1",
+                session_id="stream-session",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Streaming")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="stream-session",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+
+        class PrefixDeltaMiddleware(AgentMiddleware):
+            async def process(self, context: AgentContext, call_next: Any) -> None:
+                if context.stream:
+
+                    def add_prefix(update: AgentResponseUpdate) -> AgentResponseUpdate:
+                        return AgentResponseUpdate(
+                            role=update.role,
+                            contents=[Content.from_text(f"mw:{update.text}")],
+                            response_id=update.response_id,
+                            message_id=update.message_id,
+                            raw_representation=update.raw_representation,
+                        )
+
+                    context.stream_transform_hooks.append(add_prefix)
+                await call_next()
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent(middleware=[PrefixDeltaMiddleware()])
+            updates: list[AgentResponseUpdate] = []
+            async for update in agent.run("Hello", stream=True):
+                updates.append(update)
+
+        assert len(updates) == 1
+        assert updates[0].text == "mw:Streaming"
+
+    async def test_run_supports_agent_middleware_callable(self) -> None:
+        """Test that function-based AgentMiddleware callables are supported."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+        from claude_agent_sdk.types import StreamEvent
+
+        messages = [
+            StreamEvent(
+                event={
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello!"},
+                },
+                uuid="event-1",
+                session_id="session-123",
+            ),
+            AssistantMessage(
+                content=[TextBlock(text="Hello!")],
+                model="claude-sonnet",
+            ),
+            ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=50,
+                is_error=False,
+                num_turns=1,
+                session_id="session-123",
+            ),
+        ]
+        mock_client = self._create_mock_client(messages)
+        calls: list[str] = []
+
+        async def tracking_middleware(context: AgentContext, call_next: Any) -> None:
+            calls.append("before")
+            await call_next()
+            calls.append("after")
+
+        with patch("agent_framework_claude._agent.ClaudeSDKClient", return_value=mock_client):
+            agent = ClaudeAgent(middleware=[tracking_middleware])
+            response = await agent.run("Hello")
+
+        assert isinstance(response, AgentResponse)
+        assert response.text == "Hello!"
+        assert calls == ["before", "after"]
 
 
 # region Test ClaudeAgent Session Management
