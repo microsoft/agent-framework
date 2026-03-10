@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Buffers;
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Compaction;
@@ -305,7 +306,7 @@ public class MessageIndexTests
     [Fact]
     public void CreateComputesByteCountMultipleMessagesInGroup()
     {
-        // Arrange — ToolCall group: assistant (tool call, null text) + tool result "OK" (2 bytes)
+        // Arrange — ToolCall group: assistant (tool call) + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
         MessageIndex groups = MessageIndex.Create([assistantMsg, toolResult]);
@@ -313,7 +314,7 @@ public class MessageIndexTests
         // Assert — single ToolCall group with 2 messages
         Assert.Single(groups.Groups);
         Assert.Equal(2, groups.Groups[0].MessageCount);
-        Assert.Equal(2, groups.Groups[0].ByteCount); // "OK" = 2 bytes, assistant text is null
+        Assert.Equal(9, groups.Groups[0].ByteCount); // FunctionCallContent: "call1" (5) + "fn" (2) = 7, "OK" = 2 → 9 total
     }
 
     [Fact]
@@ -328,17 +329,17 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void CreateNullTextHasZeroCounts()
+    public void CreateNonTextContentHasAccurateCounts()
     {
-        // Arrange — message with no text (e.g., pure function call)
+        // Arrange — message with pure function call (no text)
         ChatMessage msg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage tool = new(ChatRole.Tool, string.Empty);
         MessageIndex groups = MessageIndex.Create([msg, tool]);
 
-        // Assert
+        // Assert — FunctionCallContent: "call1" (5) + "get_weather" (11) = 16 bytes
         Assert.Equal(2, groups.Groups[0].MessageCount);
-        Assert.Equal(0, groups.Groups[0].ByteCount);
-        Assert.Equal(0, groups.Groups[0].TokenCount);
+        Assert.Equal(16, groups.Groups[0].ByteCount);
+        Assert.Equal(4, groups.Groups[0].TokenCount); // 16 / 4 = 4 estimated tokens
     }
 
     [Fact]
@@ -387,7 +388,7 @@ public class MessageIndexTests
     [Fact]
     public void ToolCallGroupAggregatesAcrossMessages()
     {
-        // Arrange — tool call group with assistant "Ask" (3 bytes) + tool result "OK" (2 bytes)
+        // Arrange — tool call group with FunctionCallContent + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
 
@@ -396,7 +397,7 @@ public class MessageIndexTests
         // Assert — single group with 2 messages
         Assert.Single(groups.Groups);
         Assert.Equal(2, groups.Groups[0].MessageCount);
-        Assert.Equal(2, groups.Groups[0].ByteCount); // assistant text is null (function call), tool result is "OK" = 2 bytes
+        Assert.Equal(9, groups.Groups[0].ByteCount); // FunctionCallContent: "call1" (5) + "fn" (2) = 7, "OK" = 2 → 9 total
         Assert.Equal(1, groups.TotalGroupCount);
         Assert.Equal(2, groups.TotalMessageCount);
     }
@@ -817,18 +818,18 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void ComputeTokenCountEmptyTextReturnsZero()
+    public void ComputeTokenCountEmptyContentsReturnsZero()
     {
-        // Arrange — message with no text content
+        // Arrange — message with empty contents
         List<ChatMessage> messages =
         [
-            new ChatMessage(ChatRole.User, [new FunctionCallContent("c1", "fn")]),
+            new ChatMessage(ChatRole.User, []),
         ];
 
         SimpleWordTokenizer tokenizer = new();
         int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
 
-        // Assert — no text content → 0 tokens
+        // Assert — no content → 0 tokens
         Assert.Equal(0, tokenCount);
     }
 
@@ -951,9 +952,9 @@ public class MessageIndexTests
     }
 
     [Fact]
-    public void ComputeByteCountHandlesNullAndNonNullText()
+    public void ComputeByteCountHandlesTextAndNonTextContent()
     {
-        // Mix of messages: one with text (non-null), one without (null Text)
+        // Mix of messages: one with text (non-null), one with FunctionCallContent
         List<ChatMessage> messages =
         [
             new ChatMessage(ChatRole.User, "Hello"),
@@ -962,14 +963,14 @@ public class MessageIndexTests
 
         int byteCount = MessageIndex.ComputeByteCount(messages);
 
-        // Only "Hello" contributes bytes (5 bytes UTF-8)
-        Assert.Equal(5, byteCount);
+        // "Hello" = 5 bytes, FunctionCallContent("c1", "fn") = "c1" (2) + "fn" (2) = 4 bytes
+        Assert.Equal(9, byteCount);
     }
 
     [Fact]
-    public void ComputeTokenCountHandlesNullAndNonNullText()
+    public void ComputeTokenCountHandlesTextAndNonTextContent()
     {
-        // Mix: one with text, one without
+        // Mix: one with text, one with FunctionCallContent
         SimpleWordTokenizer tokenizer = new();
         List<ChatMessage> messages =
         [
@@ -979,8 +980,220 @@ public class MessageIndexTests
 
         int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
 
-        // Only "Hello world" contributes tokens (2 words)
-        Assert.Equal(2, tokenCount);
+        // "Hello world" = 2 tokens (tokenized), FunctionCallContent("c1","fn") = 4 bytes → 1 token (estimated)
+        Assert.Equal(3, tokenCount);
+    }
+
+    [Fact]
+    public void ComputeByteCountTextContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new TextContent("Hello")]),
+        ];
+
+        Assert.Equal(5, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountTextReasoningContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new TextReasoningContent("think") { ProtectedData = "secret" }]),
+        ];
+
+        // "think" = 5 bytes, "secret" = 6 bytes
+        Assert.Equal(11, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountDataContent()
+    {
+        byte[] payload = new byte[100];
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new DataContent(payload, "image/png") { Name = "pic" }]),
+        ];
+
+        // 100 (data) + 9 ("image/png") + 3 ("pic")
+        Assert.Equal(112, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountUriContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new UriContent(new Uri("https://example.com/image.png"), "image/png")]),
+        ];
+
+        // "https://example.com/image.png" = 29 bytes, "image/png" = 9 bytes
+        Assert.Equal(38, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountFunctionCallContentWithArguments()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" }),
+            ]),
+        ];
+
+        // "call1" = 5, "get_weather" = 11, "city" = 4, "Seattle" = 7
+        Assert.Equal(27, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountFunctionCallContentWithoutArguments()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+        ];
+
+        // "c1" = 2, "fn" = 2
+        Assert.Equal(4, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountFunctionResultContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny, 72°F")]),
+        ];
+
+        // "call1" = 5, "Sunny, 72°F" = 13 bytes (° is 2 bytes in UTF-8)
+        Assert.Equal(5 + System.Text.Encoding.UTF8.GetByteCount("Sunny, 72°F"), MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountErrorContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new ErrorContent("fail") { ErrorCode = "E001" }]),
+        ];
+
+        // "fail" = 4, "E001" = 4
+        Assert.Equal(8, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountHostedFileContent()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new HostedFileContent("file-abc") { MediaType = "text/plain", Name = "readme.txt" }]),
+        ];
+
+        // "file-abc" = 8, "text/plain" = 10, "readme.txt" = 10
+        Assert.Equal(28, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountMixedContentInSingleMessage()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User,
+            [
+                new TextContent("Hello"),
+                new DataContent(new byte[50], "image/png"),
+            ]),
+        ];
+
+        // TextContent: "Hello" = 5 bytes
+        // DataContent: 50 (data) + 9 ("image/png") = 59 bytes
+        Assert.Equal(64, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountEmptyContentsReturnsZero()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, []),
+        ];
+
+        Assert.Equal(0, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeByteCountUnknownContentTypeReturnsZero()
+    {
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new UsageContent(new UsageDetails())]),
+        ];
+
+        Assert.Equal(0, MessageIndex.ComputeByteCount(messages));
+    }
+
+    [Fact]
+    public void ComputeTokenCountTextReasoningContentUsesTokenizer()
+    {
+        SimpleWordTokenizer tokenizer = new();
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.Assistant, [new TextReasoningContent("deep thinking here") { ProtectedData = "hidden data" }]),
+        ];
+
+        // "deep thinking here" = 3 words, "hidden data" = 2 words → 5 tokens via tokenizer
+        Assert.Equal(5, MessageIndex.ComputeTokenCount(messages, tokenizer));
+    }
+
+    [Fact]
+    public void ComputeTokenCountNonTextContentEstimatesFromBytes()
+    {
+        SimpleWordTokenizer tokenizer = new();
+        byte[] payload = new byte[40];
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, [new DataContent(payload, "image/png")]),
+        ];
+
+        // DataContent: 40 (data) + 9 ("image/png") = 49 bytes → 49/4 = 12 tokens (estimated)
+        Assert.Equal(12, MessageIndex.ComputeTokenCount(messages, tokenizer));
+    }
+
+    [Fact]
+    public void ComputeTokenCountMixedTextAndNonTextContent()
+    {
+        SimpleWordTokenizer tokenizer = new();
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User,
+            [
+                new TextContent("Hello world"),
+                new DataContent(new byte[40], "image/png"),
+            ]),
+        ];
+
+        // TextContent: "Hello world" = 2 tokens (tokenized)
+        // DataContent: 40 + 9 = 49 bytes → 12 tokens (estimated)
+        Assert.Equal(14, MessageIndex.ComputeTokenCount(messages, tokenizer));
+    }
+
+    [Fact]
+    public void CreateGroupByteCountIncludesAllContentTypes()
+    {
+        // Verify that MessageIndex.Create produces groups with accurate byte counts for non-text content
+        ChatMessage assistantMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
+        ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny")]);
+        List<ChatMessage> messages = [assistantMessage, toolResult];
+
+        MessageIndex index = MessageIndex.Create(messages);
+
+        // ToolCall group: FunctionCallContent("call1","get_weather",{city=Seattle}) + FunctionResultContent("call1","Sunny")
+        // = (5 + 11 + 4 + 7) + (5 + 5) = 27 + 10 = 37
+        Assert.Single(index.Groups);
+        Assert.Equal(37, index.Groups[0].ByteCount);
+        Assert.True(index.Groups[0].TokenCount > 0);
     }
 
     /// <summary>

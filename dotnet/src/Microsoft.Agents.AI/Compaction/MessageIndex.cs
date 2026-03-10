@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -337,19 +338,19 @@ public sealed class MessageIndex
     public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
 
     /// <summary>
-    /// Computes the UTF-8 byte count for a set of messages.
+    /// Computes the UTF-8 byte count for a set of messages across all content types.
     /// </summary>
     /// <param name="messages">The messages to compute byte count for.</param>
-    /// <returns>The total UTF-8 byte count of all message text content.</returns>
+    /// <returns>The total UTF-8 byte count of all message content.</returns>
     internal static int ComputeByteCount(IReadOnlyList<ChatMessage> messages)
     {
         int total = 0;
         for (int i = 0; i < messages.Count; i++)
         {
-            string text = messages[i].Text;
-            if (text.Length > 0)
+            IList<AIContent> contents = messages[i].Contents;
+            for (int j = 0; j < contents.Count; j++)
             {
-                total += Encoding.UTF8.GetByteCount(text);
+                total += ComputeContentByteCount(contents[j]);
             }
         }
 
@@ -361,21 +362,98 @@ public sealed class MessageIndex
     /// </summary>
     /// <param name="messages">The messages to compute token count for.</param>
     /// <param name="tokenizer">The tokenizer to use for counting tokens.</param>
-    /// <returns>The total token count across all message text content.</returns>
+    /// <returns>The total token count across all message content.</returns>
+    /// <remarks>
+    /// Text-bearing content (<see cref="TextContent"/> and <see cref="TextReasoningContent"/>)
+    /// is tokenized directly. All other content types estimate tokens as <c>byteCount / 4</c>.
+    /// </remarks>
     internal static int ComputeTokenCount(IReadOnlyList<ChatMessage> messages, Tokenizer tokenizer)
     {
         int total = 0;
         for (int i = 0; i < messages.Count; i++)
         {
-            string text = messages[i].Text;
-            if (text.Length > 0)
+            IList<AIContent> contents = messages[i].Contents;
+            for (int j = 0; j < contents.Count; j++)
             {
-                total += tokenizer.CountTokens(text);
+                AIContent content = contents[j];
+                switch (content)
+                {
+                    case TextContent text:
+                        if (text.Text is { Length: > 0 } t)
+                        {
+                            total += tokenizer.CountTokens(t);
+                        }
+
+                        break;
+
+                    case TextReasoningContent reasoning:
+                        if (reasoning.Text is { Length: > 0 } rt)
+                        {
+                            total += tokenizer.CountTokens(rt);
+                        }
+
+                        if (reasoning.ProtectedData is { Length: > 0 } pd)
+                        {
+                            total += tokenizer.CountTokens(pd);
+                        }
+
+                        break;
+
+                    default:
+                        total += ComputeContentByteCount(content) / 4;
+                        break;
+                }
             }
         }
 
         return total;
     }
+
+    private static int ComputeContentByteCount(AIContent content)
+    {
+        switch (content)
+        {
+            case TextContent text:
+                return GetStringByteCount(text.Text);
+
+            case TextReasoningContent reasoning:
+                return GetStringByteCount(reasoning.Text) + GetStringByteCount(reasoning.ProtectedData);
+
+            case DataContent data:
+                return data.Data.Length + GetStringByteCount(data.MediaType) + GetStringByteCount(data.Name);
+
+            case UriContent uri:
+                return (uri.Uri is Uri uriValue ? GetStringByteCount(uriValue.OriginalString) : 0) + GetStringByteCount(uri.MediaType);
+
+            case FunctionCallContent call:
+                int callBytes = GetStringByteCount(call.CallId) + GetStringByteCount(call.Name);
+                if (call.Arguments is not null)
+                {
+                    foreach (KeyValuePair<string, object?> arg in call.Arguments)
+                    {
+                        callBytes += GetStringByteCount(arg.Key);
+                        callBytes += GetStringByteCount(arg.Value?.ToString());
+                    }
+                }
+
+                return callBytes;
+
+            case FunctionResultContent result:
+                return GetStringByteCount(result.CallId) + GetStringByteCount(result.Result?.ToString());
+
+            case ErrorContent error:
+                return GetStringByteCount(error.Message) + GetStringByteCount(error.ErrorCode) + GetStringByteCount(error.Details);
+
+            case HostedFileContent file:
+                return GetStringByteCount(file.FileId) + GetStringByteCount(file.MediaType) + GetStringByteCount(file.Name);
+
+            default:
+                return 0;
+        }
+    }
+
+    private static int GetStringByteCount(string? value) =>
+        value is { Length: > 0 } ? Encoding.UTF8.GetByteCount(value) : 0;
 
     private static MessageGroup CreateGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, Tokenizer? tokenizer, int? turnIndex)
     {
