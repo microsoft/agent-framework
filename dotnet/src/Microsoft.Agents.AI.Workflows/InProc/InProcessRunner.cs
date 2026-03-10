@@ -245,7 +245,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     private async ValueTask RunSuperstepAsync(StepContext currentStep, CancellationToken cancellationToken)
     {
         // Save a checkpoint before the superstep executes, capturing the pre-delivery state.
-        await this.CheckpointAsync(cancellationToken).ConfigureAwait(false);
+        await this.CheckpointAsync(currentStep, cancellationToken).ConfigureAwait(false);
         CheckpointInfo? startCheckpoint = this.StepTracer.Checkpoint;
 
         await this.RaiseWorkflowEventAsync(this.StepTracer.Advance(currentStep, startCheckpoint)).ConfigureAwait(false);
@@ -282,7 +282,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     private WorkflowInfo? _workflowInfoCache;
     private CheckpointInfo? _lastCheckpointInfo;
     private readonly List<CheckpointInfo> _checkpoints = [];
-    internal async ValueTask CheckpointAsync(CancellationToken cancellationToken = default)
+    internal async ValueTask CheckpointAsync(StepContext? queuedMessagesOverride, CancellationToken cancellationToken = default)
     {
         this.RunContext.CheckEnded();
         if (this.CheckpointManager is null)
@@ -303,7 +303,7 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         await prepareTask.ConfigureAwait(false);
         await this.RunContext.StateManager.PublishUpdatesAsync(this.StepTracer).ConfigureAwait(false);
 
-        RunnerStateData runnerData = await this.RunContext.ExportStateAsync().ConfigureAwait(false);
+        RunnerStateData runnerData = await this.RunContext.ExportStateAsync(queuedMessagesOverride).ConfigureAwait(false);
         Dictionary<ScopeKey, PortableValue> stateData = await this.RunContext.StateManager.ExportStateAsync().ConfigureAwait(false);
 
         Checkpoint checkpoint = new(this.StepTracer.StepNumber, this._workflowInfoCache, runnerData, stateData, edgeData, this._lastCheckpointInfo);
@@ -311,6 +311,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         this.StepTracer.TraceCheckpointCreated(this._lastCheckpointInfo);
         this._checkpoints.Add(this._lastCheckpointInfo);
     }
+
+    internal ValueTask CheckpointAsync(CancellationToken cancellationToken = default)
+        => this.CheckpointAsync(null, cancellationToken);
 
     public async ValueTask RestoreCheckpointAsync(CheckpointInfo checkpointInfo, CancellationToken cancellationToken = default)
     {
