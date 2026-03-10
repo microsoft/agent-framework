@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
 /// A compaction strategy that executes a sequential pipeline of <see cref="CompactionStrategy"/> instances
-/// against the same <see cref="MessageIndex"/>.
+/// against the same <see cref="CompactionMessageIndex"/>.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -43,7 +43,7 @@ public sealed class PipelineCompactionStrategy : CompactionStrategy
     public IReadOnlyList<CompactionStrategy> Strategies { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         bool anyCompacted = false;
 

@@ -21,7 +21,7 @@ public class ToolResultCompactionStrategyTests
         ChatMessage toolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "What's the weather?"),
             toolCall,
@@ -41,9 +41,9 @@ public class ToolResultCompactionStrategyTests
         // Arrange — always trigger
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]),
@@ -71,9 +71,9 @@ public class ToolResultCompactionStrategyTests
         // Arrange — protect 2 recent non-system groups (the tool group + Q2)
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 3);
+            minimumPreservedGroups: 3);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call1", "search")]),
@@ -94,9 +94,9 @@ public class ToolResultCompactionStrategyTests
         // Arrange
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -119,7 +119,7 @@ public class ToolResultCompactionStrategyTests
         // Arrange — assistant calls two tools
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
         ChatMessage multiToolCall = new(ChatRole.Assistant,
         [
@@ -127,7 +127,7 @@ public class ToolResultCompactionStrategyTests
             new FunctionCallContent("c2", "search_docs"),
         ]);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             multiToolCall,
@@ -152,9 +152,9 @@ public class ToolResultCompactionStrategyTests
         // Arrange — trigger fires but no tool groups to collapse
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 0);
+            minimumPreservedGroups: 0);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -175,9 +175,9 @@ public class ToolResultCompactionStrategyTests
             CompactionTriggers.All(
                 CompactionTriggers.TokensExceed(0),
                 CompactionTriggers.HasToolCalls()),
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
@@ -197,14 +197,14 @@ public class ToolResultCompactionStrategyTests
     {
         // Arrange — 2 tool groups, target met after first collapse
         int collapseCount = 0;
-        bool TargetAfterOne(MessageIndex _) => ++collapseCount >= 1;
+        bool TargetAfterOne(CompactionMessageIndex _) => ++collapseCount >= 1;
 
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             target: TargetAfterOne);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn1")]),
@@ -223,9 +223,9 @@ public class ToolResultCompactionStrategyTests
 
         // Count collapsed tool groups (excluded with ToolCall kind)
         int collapsedToolGroups = 0;
-        foreach (MessageGroup group in index.Groups)
+        foreach (CompactionMessageGroup group in index.Groups)
         {
-            if (group.IsExcluded && group.Kind == MessageGroupKind.ToolCall)
+            if (group.IsExcluded && group.Kind == CompactionGroupKind.ToolCall)
             {
                 collapsedToolGroups++;
             }
@@ -238,7 +238,7 @@ public class ToolResultCompactionStrategyTests
     public async Task CompactAsyncSkipsPreExcludedAndSystemGroupsAsync()
     {
         // Arrange — pre-excluded and system groups in the enumeration
-        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 0);
+        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 0);
 
         List<ChatMessage> messages =
         [
@@ -249,7 +249,7 @@ public class ToolResultCompactionStrategyTests
             new ChatMessage(ChatRole.User, "Q1"),
         ];
 
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         // Pre-exclude the last user group
         index.Groups[index.Groups.Count - 1].IsExcluded = true;
 

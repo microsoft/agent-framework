@@ -35,7 +35,7 @@ public class PipelineCompactionStrategyTests
             });
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -55,7 +55,7 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy1 = new(_ => false);
 
         PipelineCompactionStrategy pipeline = new(strategy1);
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -76,7 +76,7 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy2 = new(_ => true);
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -97,7 +97,7 @@ public class PipelineCompactionStrategyTests
         TestCompactionStrategy strategy2 = new(_ => false);
 
         PipelineCompactionStrategy pipeline = new(strategy1, strategy2);
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -115,12 +115,12 @@ public class PipelineCompactionStrategyTests
     public async Task CompactAsyncComposesStrategiesEndToEndAsync()
     {
         // Arrange — pipeline: first exclude oldest 2 non-system groups, then exclude 2 more
-        static void ExcludeOldest2(MessageIndex index)
+        static void ExcludeOldest2(CompactionMessageIndex index)
         {
             int excluded = 0;
-            foreach (MessageGroup group in index.Groups)
+            foreach (CompactionMessageGroup group in index.Groups)
             {
-                if (!group.IsExcluded && group.Kind != MessageGroupKind.System && excluded < 2)
+                if (!group.IsExcluded && group.Kind != CompactionGroupKind.System && excluded < 2)
                 {
                     group.IsExcluded = true;
                     excluded++;
@@ -144,7 +144,7 @@ public class PipelineCompactionStrategyTests
 
         PipelineCompactionStrategy pipeline = new(phase1, phase2);
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -175,7 +175,7 @@ public class PipelineCompactionStrategyTests
     {
         // Arrange
         PipelineCompactionStrategy pipeline = new(new List<CompactionStrategy>());
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         bool result = await pipeline.CompactAsync(groups);
@@ -189,9 +189,9 @@ public class PipelineCompactionStrategyTests
     /// </summary>
     private sealed class TestCompactionStrategy : CompactionStrategy
     {
-        private readonly Func<MessageIndex, bool> _applyFunc;
+        private readonly Func<CompactionMessageIndex, bool> _applyFunc;
 
-        public TestCompactionStrategy(Func<MessageIndex, bool> applyFunc)
+        public TestCompactionStrategy(Func<CompactionMessageIndex, bool> applyFunc)
             : base(CompactionTriggers.Always)
         {
             this._applyFunc = applyFunc;
@@ -199,7 +199,7 @@ public class PipelineCompactionStrategyTests
 
         public int ApplyCallCount { get; private set; }
 
-        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
             return new(this._applyFunc(index));

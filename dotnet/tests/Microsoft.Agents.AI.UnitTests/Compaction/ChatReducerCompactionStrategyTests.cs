@@ -28,7 +28,7 @@ public class ChatReducerCompactionStrategyTests
         // Arrange — trigger never fires
         TestChatReducer reducer = new(messages => messages.Take(1));
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Never);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -49,7 +49,7 @@ public class ChatReducerCompactionStrategyTests
         // Arrange — reducer keeps only the last message
         TestChatReducer reducer = new(messages => messages.Skip(messages.Count() - 1));
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
             new ChatMessage(ChatRole.Assistant, "Response 1"),
@@ -72,7 +72,7 @@ public class ChatReducerCompactionStrategyTests
         // Arrange — reducer returns all messages (no reduction)
         TestChatReducer reducer = new(messages => messages);
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -93,7 +93,7 @@ public class ChatReducerCompactionStrategyTests
         // Arrange — no included messages
         TestChatReducer reducer = new(messages => messages);
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create([]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([]);
 
         // Act
         bool result = await strategy.CompactAsync(index);
@@ -115,7 +115,7 @@ public class ChatReducerCompactionStrategyTests
         });
 
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "First"),
@@ -129,9 +129,9 @@ public class ChatReducerCompactionStrategyTests
         // Assert
         Assert.True(result);
         Assert.Equal(2, index.IncludedGroupCount);
-        Assert.Equal(MessageGroupKind.System, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.System, index.Groups[0].Kind);
         Assert.Equal("You are helpful.", index.Groups[0].Messages[0].Text);
-        Assert.Equal(MessageGroupKind.User, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[1].Kind);
         Assert.Equal("Second", index.Groups[1].Messages[0].Text);
     }
 
@@ -145,7 +145,7 @@ public class ChatReducerCompactionStrategyTests
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
 
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Old question"),
             new ChatMessage(ChatRole.Assistant, "Old answer"),
@@ -161,9 +161,9 @@ public class ChatReducerCompactionStrategyTests
         Assert.True(result);
         // Should have 2 groups: ToolCall group (assistant + tool result) + User group
         Assert.Equal(2, index.IncludedGroupCount);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[0].Kind);
         Assert.Equal(2, index.Groups[0].Messages.Count);
-        Assert.Equal(MessageGroupKind.User, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[1].Kind);
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public class ChatReducerCompactionStrategyTests
         // Arrange — one group is pre-excluded, reducer keeps last message
         TestChatReducer reducer = new(messages => messages.Skip(messages.Count() - 1));
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Excluded"),
             new ChatMessage(ChatRole.User, "Included 1"),
@@ -214,7 +214,7 @@ public class ChatReducerCompactionStrategyTests
         });
 
         ChatReducerCompactionStrategy strategy = new(reducer, CompactionTriggers.Always);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First"),
             new ChatMessage(ChatRole.User, "Second"),

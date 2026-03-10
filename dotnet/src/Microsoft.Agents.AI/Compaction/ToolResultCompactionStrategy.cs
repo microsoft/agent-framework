@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
@@ -18,14 +17,14 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <remarks>
 /// <para>
 /// This is the gentlest compaction strategy — it does not remove any user messages or
-/// plain assistant responses. It only targets <see cref="MessageGroupKind.ToolCall"/>
+/// plain assistant responses. It only targets <see cref="CompactionGroupKind.ToolCall"/>
 /// groups outside the protected recent window, replacing each multi-message group
 /// (assistant call + tool results) with a single assistant message like
 /// <c>[Tool calls: get_weather, search_docs]</c>.
 /// </para>
 /// <para>
-/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
-/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
+/// <see cref="MinimumPreservedGroups"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreservedGroups"/> non-system groups.
 /// </para>
 /// <para>
 /// The <see cref="CompactionTrigger"/> predicate controls when compaction proceeds. Use
@@ -38,7 +37,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// <summary>
     /// The default minimum number of most-recent non-system groups to preserve.
     /// </summary>
-    public const int DefaultMinimumPreserved = 2;
+    public const int DefaultMinimumPreserved = 16;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ToolResultCompactionStrategy"/> class.
@@ -46,7 +45,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// <param name="trigger">
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// </param>
-    /// <param name="minimumPreserved">
+    /// <param name="minimumPreservedGroups">
     /// The minimum number of most-recent non-system message groups to preserve.
     /// This is a hard floor — compaction will not collapse groups beyond this limit,
     /// regardless of the target condition.
@@ -56,33 +55,33 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
+    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreservedGroups = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.MinimumPreserved = minimumPreserved;
+        this.MinimumPreservedGroups = EnsureNonNegative(minimumPreservedGroups);
     }
 
     /// <summary>
     /// Gets the minimum number of most-recent non-system groups that are always preserved.
     /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
-    public int MinimumPreserved { get; }
+    public int MinimumPreservedGroups { get; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Identify protected groups: the N most-recent non-system, non-excluded groups
         List<int> nonSystemIncludedIndices = [];
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
             {
                 nonSystemIncludedIndices.Add(i);
             }
         }
 
-        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.MinimumPreserved);
+        int protectedStart = EnsureNonNegative(nonSystemIncludedIndices.Count - this.MinimumPreservedGroups);
         HashSet<int> protectedGroupIndices = [];
         for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
         {
@@ -93,8 +92,8 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         List<int> eligibleIndices = [];
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind == MessageGroupKind.ToolCall && !protectedGroupIndices.Contains(i))
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind == CompactionGroupKind.ToolCall && !protectedGroupIndices.Contains(i))
             {
                 eligibleIndices.Add(i);
             }
@@ -112,7 +111,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         for (int e = 0; e < eligibleIndices.Count; e++)
         {
             int idx = eligibleIndices[e] + offset;
-            MessageGroup group = index.Groups[idx];
+            CompactionMessageGroup group = index.Groups[idx];
 
             // Extract tool names from FunctionCallContent
             List<string> toolNames = [];
@@ -137,9 +136,9 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             string summary = $"[Tool calls: {string.Join(", ", toolNames)}]";
 
             ChatMessage summaryMessage = new(ChatRole.Assistant, summary);
-            (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
+            (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
 
-            index.InsertGroup(idx + 1, MessageGroupKind.Summary, [summaryMessage], group.TurnIndex);
+            index.InsertGroup(idx + 1, CompactionGroupKind.Summary, [summaryMessage], group.TurnIndex);
             offset++; // Each insertion shifts subsequent indices by 1
 
             compacted = true;

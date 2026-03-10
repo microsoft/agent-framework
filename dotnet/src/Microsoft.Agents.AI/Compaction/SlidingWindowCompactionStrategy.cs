@@ -17,12 +17,14 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <remarks>
 /// <para>
 /// This strategy always preserves system messages. It identifies user turns in the
-/// conversation (via <see cref="MessageGroup.TurnIndex"/>) and excludes the oldest turns
+/// conversation (via <see cref="CompactionMessageGroup.TurnIndex"/>) and excludes the oldest turns
 /// one at a time until the <see cref="CompactionStrategy.Target"/> condition is met.
 /// </para>
 /// <para>
-/// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
-/// has not been reached, compaction will not touch the last <see cref="MinimumPreserved"/> non-system groups.
+/// <see cref="MinimumPreservedTurns"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
+/// has not been reached, compaction will not touch the last <see cref="MinimumPreservedTurns"/> turns
+/// (by <see cref="CompactionMessageGroup.TurnIndex"/>). Groups with a <see cref="CompactionMessageGroup.TurnIndex"/>
+/// of <c>0</c> or <see langword="null"/> are always preserved regardless of this setting.
 /// </para>
 /// <para>
 /// This strategy is more predictable than token-based truncation for bounding conversation
@@ -33,7 +35,7 @@ namespace Microsoft.Agents.AI.Compaction;
 public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
 {
     /// <summary>
-    /// The default minimum number of most-recent non-system groups to preserve.
+    /// The default minimum number of most-recent turns to preserve.
     /// </summary>
     public const int DefaultMinimumPreserved = 1;
 
@@ -44,101 +46,92 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     /// The <see cref="CompactionTrigger"/> that controls when compaction proceeds.
     /// Use <see cref="CompactionTriggers.TurnsExceed"/> for turn-based thresholds.
     /// </param>
-    /// <param name="minimumPreserved">
-    /// The minimum number of most-recent non-system message groups to preserve.
-    /// This is a hard floor — compaction will not exclude groups beyond this limit,
-    /// regardless of the target condition.
+    /// <param name="minimumPreservedTurns">
+    /// The minimum number of most-recent turns (by <see cref="CompactionMessageGroup.TurnIndex"/>) to preserve.
+    /// This is a hard floor — compaction will not exclude turns within this range, regardless of the target condition.
+    /// Groups with <see cref="CompactionMessageGroup.TurnIndex"/> of <c>0</c> or <see langword="null"/> are always preserved.
     /// </param>
     /// <param name="target">
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public SlidingWindowCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
+    public SlidingWindowCompactionStrategy(CompactionTrigger trigger, int minimumPreservedTurns = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.MinimumPreserved = minimumPreserved;
+        this.MinimumPreservedTurns = EnsureNonNegative(minimumPreservedTurns);
     }
 
     /// <summary>
-    /// Gets the minimum number of most-recent non-system groups that are always preserved.
+    /// Gets the minimum number of most-recent turns (by <see cref="CompactionMessageGroup.TurnIndex"/>) that are always preserved.
     /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
+    /// Groups with <see cref="CompactionMessageGroup.TurnIndex"/> of <c>0</c> or <see langword="null"/> are always preserved
+    /// independently of this value.
     /// </summary>
-    public int MinimumPreserved { get; }
+    public int MinimumPreservedTurns { get; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
-        // Forward pass: count non-system included groups and pre-index them by TurnIndex.
-        int nonSystemIncludedCount = 0;
+        // Forward pass: pre-index non-system included groups by TurnIndex.
         Dictionary<int, List<int>> turnGroups = [];
         List<int> turnOrder = [];
 
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System && group.TurnIndex is int turnIndex)
             {
-                nonSystemIncludedCount++;
-
-                if (group.TurnIndex is int turnIndex)
+                if (!turnGroups.TryGetValue(turnIndex, out List<int>? indices))
                 {
-                    if (!turnGroups.TryGetValue(turnIndex, out List<int>? indices))
-                    {
-                        indices = [];
-                        turnGroups[turnIndex] = indices;
-                        turnOrder.Add(turnIndex);
-                    }
-
-                    indices.Add(i);
+                    indices = [];
+                    turnGroups[turnIndex] = indices;
+                    turnOrder.Add(turnIndex);
                 }
+
+                indices.Add(i);
             }
         }
 
-        // Backward pass: identify the protected tail (last MinimumPreserved non-system included groups).
-        int protectedCount = Math.Min(this.MinimumPreserved, nonSystemIncludedCount);
-#if NETSTANDARD
-        HashSet<int> protectedIndices = [];
-#else
-        HashSet<int> protectedIndices = new(protectedCount);
-#endif
-        int remaining = protectedCount;
-        for (int i = index.Groups.Count - 1; i >= 0 && remaining > 0; i--)
+        // Backward pass: identify protected turns by TurnIndex.
+        // TurnIndex = 0 is always protected (non-system messages before first user message).
+        // TurnIndex = null is always protected (system messages, already excluded from turn tracking).
+        HashSet<int> protectedTurnIndices = [];
+        if (turnGroups.ContainsKey(0))
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
-            {
-                protectedIndices.Add(i);
-                remaining--;
-            }
+            protectedTurnIndices.Add(0);
         }
 
-        // Exclude turns oldest-first using the pre-built index, checking target after each turn.
+        // Protect the last MinimumPreservedTurns distinct turns.
+        int turnsToProtect = Math.Min(this.MinimumPreservedTurns, turnOrder.Count);
+        for (int i = turnOrder.Count - turnsToProtect; i < turnOrder.Count; i++)
+        {
+            protectedTurnIndices.Add(turnOrder[i]);
+        }
+
+        // Exclude turns oldest-first, skipping protected turns, checking target after each turn.
         bool compacted = false;
 
         for (int t = 0; t < turnOrder.Count; t++)
         {
-            List<int> groupIndices = turnGroups[turnOrder[t]];
-            bool anyExcluded = false;
+            int currentTurnIndex = turnOrder[t];
+            if (protectedTurnIndices.Contains(currentTurnIndex))
+            {
+                continue;
+            }
 
+            List<int> groupIndices = turnGroups[currentTurnIndex];
             for (int g = 0; g < groupIndices.Count; g++)
             {
                 int idx = groupIndices[g];
-                if (!protectedIndices.Contains(idx))
-                {
-                    index.Groups[idx].IsExcluded = true;
-                    index.Groups[idx].ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
-                    anyExcluded = true;
-                }
+                index.Groups[idx].IsExcluded = true;
+                index.Groups[idx].ExcludeReason = $"Excluded by {nameof(SlidingWindowCompactionStrategy)}";
             }
 
-            if (anyExcluded)
-            {
-                compacted = true;
+            compacted = true;
 
-                if (this.Target(index))
-                {
-                    break;
-                }
+            if (this.Target(index))
+            {
+                break;
             }
         }
 

@@ -27,7 +27,7 @@ public sealed class CompactionProviderTests
         TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
         CompactionProvider provider = new(strategy);
 
-        // Act & Assert — default state key is provider name + strategy type name
+        // Act & Assert — default state key is the strategy type name
         Assert.Single(provider.StateKeys);
         Assert.Equal(nameof(TruncationCompactionStrategy), provider.StateKeys[0]);
     }
@@ -105,7 +105,7 @@ public sealed class CompactionProviderTests
     public async Task InvokingAsyncAppliesCompactionWhenTriggeredAsync()
     {
         // Arrange — strategy that always triggers and keeps only 1 group
-        TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(_ => true, minimumPreservedGroups: 1);
         CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
@@ -194,7 +194,7 @@ public sealed class CompactionProviderTests
     public async Task InvokingAsyncWithExistingIndexUpdatesAsync()
     {
         // Arrange — call twice to exercise the "existing index" path
-        TruncationCompactionStrategy strategy = new(_ => true, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(_ => true, minimumPreservedGroups: 1);
         CompactionProvider provider = new(strategy);
 
         Mock<AIAgent> mockAgent = new() { CallBase = true };
@@ -299,7 +299,7 @@ public sealed class CompactionProviderTests
     public async Task CompactAsyncReducesMessagesWhenTriggeredAsync()
     {
         // Arrange — strategy that always triggers and keeps only 1 group
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         List<ChatMessage> messages =
         [
             new ChatMessage(ChatRole.User, "Q1"),
@@ -319,7 +319,7 @@ public sealed class CompactionProviderTests
     public async Task CompactAsyncHandlesEmptyMessageListAsync()
     {
         // Arrange
-        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreservedGroups: 1);
         List<ChatMessage> messages = [];
 
         // Act
@@ -356,7 +356,7 @@ public sealed class CompactionProviderTests
         Assert.Empty(state.MessageGroups);
 
         // Act
-        state.MessageGroups = [new MessageGroup(MessageGroupKind.User, [], 0, 0, 0)];
+        state.MessageGroups = [new CompactionMessageGroup(CompactionGroupKind.User, [], 0, 0, 0)];
 
         // Assert
         Assert.Single(state.MessageGroups);

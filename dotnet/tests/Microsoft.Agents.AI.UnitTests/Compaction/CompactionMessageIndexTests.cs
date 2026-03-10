@@ -10,9 +10,9 @@ using Microsoft.ML.Tokenizers;
 namespace Microsoft.Agents.AI.UnitTests.Compaction;
 
 /// <summary>
-/// Contains tests for the <see cref="MessageIndex"/> class.
+/// Contains tests for the <see cref="CompactionMessageIndex"/> class.
 /// </summary>
-public class MessageIndexTests
+public class CompactionMessageIndexTests
 {
     [Fact]
     public void CreateEmptyListReturnsEmptyGroups()
@@ -21,7 +21,7 @@ public class MessageIndexTests
         List<ChatMessage> messages = [];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Empty(groups.Groups);
@@ -37,11 +37,11 @@ public class MessageIndexTests
         ];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.System, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.System, groups.Groups[0].Kind);
         Assert.Single(groups.Groups[0].Messages);
     }
 
@@ -55,11 +55,11 @@ public class MessageIndexTests
         ];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.User, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.User, groups.Groups[0].Kind);
     }
 
     [Fact]
@@ -72,11 +72,11 @@ public class MessageIndexTests
         ];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, groups.Groups[0].Kind);
     }
 
     [Fact]
@@ -89,11 +89,11 @@ public class MessageIndexTests
         List<ChatMessage> messages = [assistantMessage, toolResult];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, groups.Groups[0].Kind);
         Assert.Equal(2, groups.Groups[0].Messages.Count);
         Assert.Same(assistantMessage, groups.Groups[0].Messages[0]);
         Assert.Same(toolResult, groups.Groups[0].Messages[1]);
@@ -109,11 +109,11 @@ public class MessageIndexTests
         List<ChatMessage> messages = [assistantMessage, toolResult];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, groups.Groups[0].Kind);
         Assert.Equal(2, groups.Groups[0].Messages.Count);
         Assert.Same(assistantMessage, groups.Groups[0].Messages[0]);
         Assert.Same(toolResult, groups.Groups[0].Messages[1]);
@@ -132,15 +132,15 @@ public class MessageIndexTests
         List<ChatMessage> messages = [systemMsg, userMsg, assistantToolCall, toolResult, assistantText];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(4, groups.Groups.Count);
-        Assert.Equal(MessageGroupKind.System, groups.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.User, groups.Groups[1].Kind);
-        Assert.Equal(MessageGroupKind.ToolCall, groups.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.System, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.User, groups.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, groups.Groups[2].Kind);
         Assert.Equal(2, groups.Groups[2].Messages.Count);
-        Assert.Equal(MessageGroupKind.AssistantText, groups.Groups[3].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, groups.Groups[3].Kind);
     }
 
     [Fact]
@@ -157,11 +157,11 @@ public class MessageIndexTests
         List<ChatMessage> messages = [assistantToolCall, toolResult1, toolResult2];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, groups.Groups[0].Kind);
         Assert.Equal(3, groups.Groups[0].Messages.Count);
     }
 
@@ -173,7 +173,7 @@ public class MessageIndexTests
         ChatMessage msg2 = new(ChatRole.Assistant, "Response");
         ChatMessage msg3 = new(ChatRole.User, "Second");
 
-        MessageIndex groups = MessageIndex.Create([msg1, msg2, msg3]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([msg1, msg2, msg3]);
         groups.Groups[1].IsExcluded = true;
 
         // Act
@@ -192,7 +192,7 @@ public class MessageIndexTests
         ChatMessage msg1 = new(ChatRole.User, "First");
         ChatMessage msg2 = new(ChatRole.Assistant, "Response");
 
-        MessageIndex groups = MessageIndex.Create([msg1, msg2]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([msg1, msg2]);
         groups.Groups[0].IsExcluded = true;
 
         // Act
@@ -206,7 +206,7 @@ public class MessageIndexTests
     public void IncludedGroupCountReflectsExclusions()
     {
         // Arrange
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "A"),
             new ChatMessage(ChatRole.Assistant, "B"),
@@ -225,16 +225,16 @@ public class MessageIndexTests
     {
         // Arrange
         ChatMessage summaryMessage = new(ChatRole.Assistant, "[Summary of earlier conversation]: key facts...");
-        (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
+        (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
 
         List<ChatMessage> messages = [summaryMessage];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Single(groups.Groups);
-        Assert.Equal(MessageGroupKind.Summary, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.Summary, groups.Groups[0].Kind);
         Assert.Same(summaryMessage, groups.Groups[0].Messages[0]);
     }
 
@@ -244,26 +244,26 @@ public class MessageIndexTests
         // Arrange
         ChatMessage systemMsg = new(ChatRole.System, "You are helpful.");
         ChatMessage summaryMsg = new(ChatRole.Assistant, "[Summary]: previous context");
-        (summaryMsg.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
+        (summaryMsg.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
         ChatMessage userMsg = new(ChatRole.User, "Continue...");
 
         List<ChatMessage> messages = [systemMsg, summaryMsg, userMsg];
 
         // Act
-        MessageIndex groups = MessageIndex.Create(messages);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(3, groups.Groups.Count);
-        Assert.Equal(MessageGroupKind.System, groups.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.Summary, groups.Groups[1].Kind);
-        Assert.Equal(MessageGroupKind.User, groups.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.System, groups.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.Summary, groups.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, groups.Groups[2].Kind);
     }
 
     [Fact]
     public void MessageGroupStoresPassedCounts()
     {
         // Arrange & Act
-        MessageGroup group = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
+        CompactionMessageGroup group = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
 
         // Assert
         Assert.Equal(1, group.MessageCount);
@@ -276,7 +276,7 @@ public class MessageIndexTests
     {
         // Arrange
         IReadOnlyList<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
-        MessageGroup group = new(MessageGroupKind.User, messages, byteCount: 5, tokenCount: 1);
+        CompactionMessageGroup group = new(CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
 
         // Assert — Messages is IReadOnlyList, not IList
         Assert.IsAssignableFrom<IReadOnlyList<ChatMessage>>(group.Messages);
@@ -287,7 +287,7 @@ public class MessageIndexTests
     public void CreateComputesByteCountUtf8()
     {
         // Arrange — "Hello" is 5 UTF-8 bytes
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Assert
         Assert.Equal(5, groups.Groups[0].ByteCount);
@@ -297,7 +297,7 @@ public class MessageIndexTests
     public void CreateComputesByteCountMultiByteChars()
     {
         // Arrange — "café" has a multi-byte 'é' (2 bytes in UTF-8) → 5 bytes total
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "café")]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([new ChatMessage(ChatRole.User, "café")]);
 
         // Assert
         Assert.Equal(5, groups.Groups[0].ByteCount);
@@ -309,7 +309,7 @@ public class MessageIndexTests
         // Arrange — ToolCall group: assistant (tool call) + tool result "OK" (2 bytes)
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
-        MessageIndex groups = MessageIndex.Create([assistantMsg, toolResult]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([assistantMsg, toolResult]);
 
         // Assert — single ToolCall group with 2 messages
         Assert.Single(groups.Groups);
@@ -321,7 +321,7 @@ public class MessageIndexTests
     public void CreateDefaultTokenCountIsHeuristic()
     {
         // Arrange — "Hello world test data!" = 22 UTF-8 bytes → 22 / 4 = 5 estimated tokens
-        MessageIndex groups = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello world test data!")]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([new ChatMessage(ChatRole.User, "Hello world test data!")]);
 
         // Assert
         Assert.Equal(22, groups.Groups[0].ByteCount);
@@ -334,7 +334,7 @@ public class MessageIndexTests
         // Arrange — message with pure function call (no text)
         ChatMessage msg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage tool = new(ChatRole.Tool, string.Empty);
-        MessageIndex groups = MessageIndex.Create([msg, tool]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([msg, tool]);
 
         // Assert — FunctionCallContent: "call1" (5) + "get_weather" (11) = 16 bytes
         Assert.Equal(2, groups.Groups[0].MessageCount);
@@ -346,7 +346,7 @@ public class MessageIndexTests
     public void TotalAggregatesSumAllGroups()
     {
         // Arrange
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes
             new ChatMessage(ChatRole.Assistant, "BBBB"),   // 4 bytes
@@ -365,7 +365,7 @@ public class MessageIndexTests
     public void IncludedAggregatesExcludeMarkedGroups()
     {
         // Arrange
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes
             new ChatMessage(ChatRole.Assistant, "BBBB"),   // 4 bytes
@@ -392,7 +392,7 @@ public class MessageIndexTests
         ChatMessage assistantMsg = new(ChatRole.Assistant, [new FunctionCallContent("call1", "fn")]);
         ChatMessage toolResult = new(ChatRole.Tool, "OK");
 
-        MessageIndex groups = MessageIndex.Create([assistantMsg, toolResult]);
+        CompactionMessageIndex groups = CompactionMessageIndex.Create([assistantMsg, toolResult]);
 
         // Assert — single group with 2 messages
         Assert.Single(groups.Groups);
@@ -406,7 +406,7 @@ public class MessageIndexTests
     public void CreateAssignsTurnIndicesSingleTurn()
     {
         // Arrange — System (no turn), User + Assistant = turn 1
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Hello"),
@@ -425,7 +425,7 @@ public class MessageIndexTests
     public void CreateAssignsTurnIndicesMultiTurn()
     {
         // Arrange — 3 user turns
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -452,7 +452,7 @@ public class MessageIndexTests
         ChatMessage assistantToolCall = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather")]);
         ChatMessage toolResult = new(ChatRole.Tool, "Sunny");
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "What's the weather?"),
             assistantToolCall,
@@ -472,7 +472,7 @@ public class MessageIndexTests
     public void GetTurnGroupsReturnsGroupsForSpecificTurn()
     {
         // Arrange
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -482,23 +482,23 @@ public class MessageIndexTests
         ]);
 
         // Act
-        List<MessageGroup> turn1 = [.. groups.GetTurnGroups(1)];
-        List<MessageGroup> turn2 = [.. groups.GetTurnGroups(2)];
+        List<CompactionMessageGroup> turn1 = [.. groups.GetTurnGroups(1)];
+        List<CompactionMessageGroup> turn2 = [.. groups.GetTurnGroups(2)];
 
         // Assert
         Assert.Equal(2, turn1.Count);
-        Assert.Equal(MessageGroupKind.User, turn1[0].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, turn1[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, turn1[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, turn1[1].Kind);
         Assert.Equal(2, turn2.Count);
-        Assert.Equal(MessageGroupKind.User, turn2[0].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, turn2[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, turn2[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, turn2[1].Kind);
     }
 
     [Fact]
     public void IncludedTurnCountReflectsExclusions()
     {
         // Arrange — 2 turns, exclude all groups in turn 1
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -518,7 +518,7 @@ public class MessageIndexTests
     public void TotalTurnCountZeroWhenNoUserMessages()
     {
         // Arrange — only system messages
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System."),
         ]);
@@ -532,7 +532,7 @@ public class MessageIndexTests
     public void IncludedTurnCountPartialExclusionStillCountsTurn()
     {
         // Arrange — turn 1 has 2 groups, only one excluded
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -554,7 +554,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         Assert.Equal(2, index.Groups.Count);
         Assert.Equal(2, index.RawMessageCount);
 
@@ -566,8 +566,8 @@ public class MessageIndexTests
         // Assert — should have 4 groups total, processed count updated
         Assert.Equal(4, index.Groups.Count);
         Assert.Equal(4, index.RawMessageCount);
-        Assert.Equal(MessageGroupKind.User, index.Groups[2].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[3].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[3].Kind);
     }
 
     [Fact]
@@ -578,7 +578,7 @@ public class MessageIndexTests
         [
             new ChatMessage(ChatRole.User, "Q1"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         int originalCount = index.Groups.Count;
 
         // Act — update with same count
@@ -598,7 +598,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.Assistant, "A1"),
             new ChatMessage(ChatRole.User, "Q2"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         Assert.Equal(3, index.Groups.Count);
 
         // Exclude a group to verify rebuild clears state
@@ -626,7 +626,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         Assert.Equal(2, index.Groups.Count);
 
         // Act — update with empty list
@@ -647,7 +647,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         Assert.Equal(2, index.Groups.Count);
         index.Groups[0].IsExcluded = true;
 
@@ -675,7 +675,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         index.Groups[0].IsExcluded = true;
         index.Groups[0].ExcludeReason = "Test exclusion";
 
@@ -693,7 +693,7 @@ public class MessageIndexTests
     public void InsertGroupInsertsAtSpecifiedIndex()
     {
         // Arrange
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -701,12 +701,12 @@ public class MessageIndexTests
 
         // Act — insert between Q1 and Q2
         ChatMessage summaryMsg = new(ChatRole.Assistant, "[Summary]");
-        MessageGroup inserted = index.InsertGroup(1, MessageGroupKind.Summary, [summaryMsg], turnIndex: 1);
+        CompactionMessageGroup inserted = index.InsertGroup(1, CompactionGroupKind.Summary, [summaryMsg], turnIndex: 1);
 
         // Assert
         Assert.Equal(3, index.Groups.Count);
         Assert.Same(inserted, index.Groups[1]);
-        Assert.Equal(MessageGroupKind.Summary, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.Summary, index.Groups[1].Kind);
         Assert.Equal("[Summary]", index.Groups[1].Messages[0].Text);
         Assert.Equal(1, inserted.TurnIndex);
     }
@@ -715,14 +715,14 @@ public class MessageIndexTests
     public void AddGroupAppendsToEnd()
     {
         // Arrange
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
         ]);
 
         // Act
         ChatMessage msg = new(ChatRole.Assistant, "Appended");
-        MessageGroup added = index.AddGroup(MessageGroupKind.AssistantText, [msg], turnIndex: 1);
+        CompactionMessageGroup added = index.AddGroup(CompactionGroupKind.AssistantText, [msg], turnIndex: 1);
 
         // Assert
         Assert.Equal(2, index.Groups.Count);
@@ -734,14 +734,14 @@ public class MessageIndexTests
     public void InsertGroupComputesByteAndTokenCounts()
     {
         // Arrange
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
         ]);
 
         // Act — insert a group with known text
         ChatMessage msg = new(ChatRole.Assistant, "Hello"); // 5 bytes, ~1 token (5/4)
-        MessageGroup inserted = index.InsertGroup(0, MessageGroupKind.AssistantText, [msg]);
+        CompactionMessageGroup inserted = index.InsertGroup(0, CompactionGroupKind.AssistantText, [msg]);
 
         // Assert
         Assert.Equal(5, inserted.ByteCount);
@@ -752,13 +752,13 @@ public class MessageIndexTests
     public void ConstructorWithGroupsRestoresTurnIndex()
     {
         // Arrange — pre-existing groups with turn indices
-        MessageGroup group1 = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
-        MessageGroup group2 = new(MessageGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
-        MessageGroup group3 = new(MessageGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
-        List<MessageGroup> groups = [group1, group2, group3];
+        CompactionMessageGroup group1 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group2 = new(CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group3 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
+        List<CompactionMessageGroup> groups = [group1, group2, group3];
 
         // Act — constructor should restore _currentTurn from the last group's TurnIndex
-        MessageIndex index = new(groups);
+        CompactionMessageIndex index = new(groups);
 
         // Assert — adding a new user message should get turn 3 (restored 2 + 1)
         index.Update(
@@ -770,8 +770,8 @@ public class MessageIndexTests
         ]);
 
         // The new user group should have TurnIndex 3
-        MessageGroup lastGroup = index.Groups[index.Groups.Count - 1];
-        Assert.Equal(MessageGroupKind.User, lastGroup.Kind);
+        CompactionMessageGroup lastGroup = index.Groups[index.Groups.Count - 1];
+        Assert.Equal(CompactionGroupKind.User, lastGroup.Kind);
         Assert.NotNull(lastGroup.TurnIndex);
     }
 
@@ -779,7 +779,7 @@ public class MessageIndexTests
     public void ConstructorWithEmptyGroupsHandlesGracefully()
     {
         // Arrange & Act — constructor with empty list
-        MessageIndex index = new([]);
+        CompactionMessageIndex index = new([]);
 
         // Assert
         Assert.Empty(index.Groups);
@@ -789,11 +789,11 @@ public class MessageIndexTests
     public void ConstructorWithGroupsWithoutTurnIndexSkipsRestore()
     {
         // Arrange — groups without turn indices (system messages)
-        MessageGroup systemGroup = new(MessageGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
-        List<MessageGroup> groups = [systemGroup];
+        CompactionMessageGroup systemGroup = new(CompactionGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
+        List<CompactionMessageGroup> groups = [systemGroup];
 
         // Act — constructor won't find a TurnIndex to restore
-        MessageIndex index = new(groups);
+        CompactionMessageIndex index = new(groups);
 
         // Assert
         Assert.Single(index.Groups);
@@ -811,7 +811,7 @@ public class MessageIndexTests
 
         // Act — use a simple tokenizer that counts words (each word = 1 token)
         SimpleWordTokenizer tokenizer = new();
-        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+        int tokenCount = CompactionMessageIndex.ComputeTokenCount(messages, tokenizer);
 
         // Assert — "Hello world" = 2, "Greetings" = 1 → 3 total
         Assert.Equal(3, tokenCount);
@@ -827,7 +827,7 @@ public class MessageIndexTests
         ];
 
         SimpleWordTokenizer tokenizer = new();
-        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+        int tokenCount = CompactionMessageIndex.ComputeTokenCount(messages, tokenizer);
 
         // Assert — no content → 0 tokens
         Assert.Equal(0, tokenCount);
@@ -845,7 +845,7 @@ public class MessageIndexTests
         ];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages, tokenizer);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages, tokenizer);
 
         // Assert — tokenizer counts words: "Hello world test" = 3 tokens
         Assert.Single(index.Groups);
@@ -858,14 +858,14 @@ public class MessageIndexTests
     {
         // Arrange
         SimpleWordTokenizer tokenizer = new();
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
         ], tokenizer);
 
         // Act
         ChatMessage msg = new(ChatRole.Assistant, "Hello world test message");
-        MessageGroup inserted = index.InsertGroup(0, MessageGroupKind.AssistantText, [msg]);
+        CompactionMessageGroup inserted = index.InsertGroup(0, CompactionGroupKind.AssistantText, [msg]);
 
         // Assert — tokenizer counts words: "Hello world test message" = 4 tokens
         Assert.Equal(4, inserted.TokenCount);
@@ -880,11 +880,11 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.Tool, "Orphaned tool result"),
         ];
 
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // The Tool message should be grouped as AssistantText (the default fallback)
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -894,10 +894,10 @@ public class MessageIndexTests
         ChatMessage assistant = new(ChatRole.Assistant, "Regular response");
         (assistant.AdditionalProperties ??= [])["someOtherKey"] = "value";
 
-        MessageIndex index = MessageIndex.Create([assistant]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([assistant]);
 
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -905,12 +905,12 @@ public class MessageIndexTests
     {
         // Summary property key present but value is false — not a summary
         ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
-        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = false;
+        (assistant.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = false;
 
-        MessageIndex index = MessageIndex.Create([assistant]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([assistant]);
 
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -918,12 +918,12 @@ public class MessageIndexTests
     {
         // Summary property key present but value is a string, not a bool
         ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
-        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = "true";
+        (assistant.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = "true";
 
-        MessageIndex index = MessageIndex.Create([assistant]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([assistant]);
 
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -931,12 +931,12 @@ public class MessageIndexTests
     {
         // Summary property key present but value is null
         ChatMessage assistant = new(ChatRole.Assistant, "Not a summary");
-        (assistant.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = null!;
+        (assistant.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = null!;
 
-        MessageIndex index = MessageIndex.Create([assistant]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([assistant]);
 
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -945,10 +945,10 @@ public class MessageIndexTests
         // Assistant message with no AdditionalProperties at all
         ChatMessage assistant = new(ChatRole.Assistant, "Plain response");
 
-        MessageIndex index = MessageIndex.Create([assistant]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([assistant]);
 
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -961,7 +961,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
         ];
 
-        int byteCount = MessageIndex.ComputeByteCount(messages);
+        int byteCount = CompactionMessageIndex.ComputeByteCount(messages);
 
         // "Hello" = 5 bytes, FunctionCallContent("c1", "fn") = "c1" (2) + "fn" (2) = 4 bytes
         Assert.Equal(9, byteCount);
@@ -978,7 +978,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
         ];
 
-        int tokenCount = MessageIndex.ComputeTokenCount(messages, tokenizer);
+        int tokenCount = CompactionMessageIndex.ComputeTokenCount(messages, tokenizer);
 
         // "Hello world" = 2 tokens (tokenized), FunctionCallContent("c1","fn") = 4 bytes → 1 token (estimated)
         Assert.Equal(3, tokenCount);
@@ -992,7 +992,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, [new TextContent("Hello")]),
         ];
 
-        Assert.Equal(5, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(5, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1004,7 +1004,7 @@ public class MessageIndexTests
         ];
 
         // "think" = 5 bytes, "secret" = 6 bytes
-        Assert.Equal(11, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(11, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1017,7 +1017,7 @@ public class MessageIndexTests
         ];
 
         // 100 (data) + 9 ("image/png") + 3 ("pic")
-        Assert.Equal(112, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(112, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1029,7 +1029,7 @@ public class MessageIndexTests
         ];
 
         // "https://example.com/image.png" = 29 bytes, "image/png" = 9 bytes
-        Assert.Equal(38, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(38, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1044,7 +1044,7 @@ public class MessageIndexTests
         ];
 
         // "call1" = 5, "get_weather" = 11, "city" = 4, "Seattle" = 7
-        Assert.Equal(27, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(27, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1056,7 +1056,7 @@ public class MessageIndexTests
         ];
 
         // "c1" = 2, "fn" = 2
-        Assert.Equal(4, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(4, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1068,7 +1068,7 @@ public class MessageIndexTests
         ];
 
         // "call1" = 5, "Sunny, 72°F" = 13 bytes (° is 2 bytes in UTF-8)
-        Assert.Equal(5 + System.Text.Encoding.UTF8.GetByteCount("Sunny, 72°F"), MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(5 + System.Text.Encoding.UTF8.GetByteCount("Sunny, 72°F"), CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1080,7 +1080,7 @@ public class MessageIndexTests
         ];
 
         // "fail" = 4, "E001" = 4
-        Assert.Equal(8, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(8, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1092,7 +1092,7 @@ public class MessageIndexTests
         ];
 
         // "file-abc" = 8, "text/plain" = 10, "readme.txt" = 10
-        Assert.Equal(28, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(28, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1109,7 +1109,7 @@ public class MessageIndexTests
 
         // TextContent: "Hello" = 5 bytes
         // DataContent: 50 (data) + 9 ("image/png") = 59 bytes
-        Assert.Equal(64, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(64, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1120,7 +1120,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.User, []),
         ];
 
-        Assert.Equal(0, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(0, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1131,7 +1131,7 @@ public class MessageIndexTests
             new ChatMessage(ChatRole.Assistant, [new UsageContent(new UsageDetails())]),
         ];
 
-        Assert.Equal(0, MessageIndex.ComputeByteCount(messages));
+        Assert.Equal(0, CompactionMessageIndex.ComputeByteCount(messages));
     }
 
     [Fact]
@@ -1144,7 +1144,7 @@ public class MessageIndexTests
         ];
 
         // "deep thinking here" = 3 words, "hidden data" = 2 words → 5 tokens via tokenizer
-        Assert.Equal(5, MessageIndex.ComputeTokenCount(messages, tokenizer));
+        Assert.Equal(5, CompactionMessageIndex.ComputeTokenCount(messages, tokenizer));
     }
 
     [Fact]
@@ -1158,7 +1158,7 @@ public class MessageIndexTests
         ];
 
         // DataContent: 40 (data) + 9 ("image/png") = 49 bytes → 49/4 = 12 tokens (estimated)
-        Assert.Equal(12, MessageIndex.ComputeTokenCount(messages, tokenizer));
+        Assert.Equal(12, CompactionMessageIndex.ComputeTokenCount(messages, tokenizer));
     }
 
     [Fact]
@@ -1176,7 +1176,7 @@ public class MessageIndexTests
 
         // TextContent: "Hello world" = 2 tokens (tokenized)
         // DataContent: 40 + 9 = 49 bytes → 12 tokens (estimated)
-        Assert.Equal(14, MessageIndex.ComputeTokenCount(messages, tokenizer));
+        Assert.Equal(14, CompactionMessageIndex.ComputeTokenCount(messages, tokenizer));
     }
 
     [Fact]
@@ -1187,7 +1187,7 @@ public class MessageIndexTests
         ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny")]);
         List<ChatMessage> messages = [assistantMessage, toolResult];
 
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // ToolCall group: FunctionCallContent("call1","get_weather",{city=Seattle}) + FunctionResultContent("call1","Sunny")
         // = (5 + 11 + 4 + 7) + (5 + 5) = 27 + 10 = 37

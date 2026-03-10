@@ -17,7 +17,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger requires > 3 turns, conversation has 2
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(3));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -37,7 +37,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 2 turns, conversation has 3
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(2));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -67,7 +67,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -91,7 +91,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -119,7 +119,7 @@ public class SlidingWindowCompactionStrategyTests
         // Arrange — trigger requires > 99 turns
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(99));
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -138,7 +138,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System"),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -163,14 +163,14 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn, custom target stops after removing 1 turn
         int removeCount = 0;
-        bool TargetAfterOne(MessageIndex _) => ++removeCount >= 1;
+        bool TargetAfterOne(CompactionMessageIndex _) => ++removeCount >= 1;
 
         SlidingWindowCompactionStrategy strategy = new(
             CompactionTriggers.TurnsExceed(1),
-            minimumPreserved: 0,
+            minimumPreservedTurns: 0,
             target: TargetAfterOne);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -198,10 +198,10 @@ public class SlidingWindowCompactionStrategyTests
         // Arrange — always trigger with never-satisfied target, but MinimumPreserved = 2 is hard floor
         SlidingWindowCompactionStrategy strategy = new(
             CompactionTriggers.TurnsExceed(1),
-            minimumPreserved: 2,
+            minimumPreservedTurns: 2,
             target: _ => false);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -214,10 +214,15 @@ public class SlidingWindowCompactionStrategyTests
         // Act
         bool result = await strategy.CompactAsync(index);
 
-        // Assert — target never says stop, but MinimumPreserved=2 prevents removing the last 2 groups
+        // Assert — target never says stop, but MinimumPreserved=2 protects the last 2 turns
         Assert.True(result);
-        Assert.Equal(2, index.IncludedGroupCount);
-        // Last 2 non-system groups must be preserved
+        Assert.Equal(4, index.IncludedGroupCount);
+        // Turn 1 excluded
+        Assert.True(index.Groups[0].IsExcluded);   // Q1
+        Assert.True(index.Groups[1].IsExcluded);   // A1
+        // Last 2 turns must be preserved
+        Assert.False(index.Groups[2].IsExcluded);  // Q2
+        Assert.False(index.Groups[3].IsExcluded);  // A2
         Assert.False(index.Groups[4].IsExcluded);  // Q3
         Assert.False(index.Groups[5].IsExcluded);  // A3
     }
@@ -228,9 +233,9 @@ public class SlidingWindowCompactionStrategyTests
         // Arrange — includes system and pre-excluded groups that must be skipped
         SlidingWindowCompactionStrategy strategy = new(
             CompactionTriggers.TurnsExceed(1),
-            minimumPreserved: 0);
+            minimumPreservedTurns: 0);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt"),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -246,5 +251,61 @@ public class SlidingWindowCompactionStrategyTests
         // Assert — system preserved, pre-excluded skipped
         Assert.True(result);
         Assert.False(index.Groups[0].IsExcluded); // System preserved
+    }
+
+    [Fact]
+    public async Task CompactAsyncPreservesTurnIndexZeroAsync()
+    {
+        // Arrange — assistant message before first user turn gets TurnIndex = 0
+        SlidingWindowCompactionStrategy strategy = new(
+            CompactionTriggers.TurnsExceed(1),
+            minimumPreservedTurns: 0,
+            target: _ => false);
+
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.Assistant, "Welcome!"),  // TurnIndex = 0
+            new ChatMessage(ChatRole.User, "Q1"),             // TurnIndex = 1
+            new ChatMessage(ChatRole.Assistant, "A1"),        // TurnIndex = 1
+            new ChatMessage(ChatRole.User, "Q2"),             // TurnIndex = 2
+            new ChatMessage(ChatRole.Assistant, "A2"),        // TurnIndex = 2
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — TurnIndex = 0 is always preserved even with minimumPreservedTurns = 0
+        Assert.True(result);
+        Assert.False(index.Groups[0].IsExcluded);  // Welcome (TurnIndex 0) preserved
+        Assert.True(index.Groups[1].IsExcluded);   // Q1 (TurnIndex 1) excluded
+        Assert.True(index.Groups[2].IsExcluded);   // A1 (TurnIndex 1) excluded
+        Assert.True(index.Groups[3].IsExcluded);   // Q2 (TurnIndex 2) excluded
+        Assert.True(index.Groups[4].IsExcluded);   // A2 (TurnIndex 2) excluded
+    }
+
+    [Fact]
+    public async Task CompactAsyncPreservesNullTurnIndexAsync()
+    {
+        // Arrange — system messages (TurnIndex = null) should never be removed
+        SlidingWindowCompactionStrategy strategy = new(
+            CompactionTriggers.TurnsExceed(0),
+            minimumPreservedTurns: 0,
+            target: _ => false);
+
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.System, "You are helpful."),
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(index);
+
+        // Assert — system message (TurnIndex null) always preserved
+        Assert.True(result);
+        Assert.False(index.Groups[0].IsExcluded);  // System (TurnIndex null) preserved
+        Assert.True(index.Groups[1].IsExcluded);   // Q1 excluded
+        Assert.True(index.Groups[2].IsExcluded);   // A1 excluded
     }
 }

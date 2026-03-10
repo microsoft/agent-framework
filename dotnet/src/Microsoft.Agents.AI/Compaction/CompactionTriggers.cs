@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A <see cref="CompactionTrigger"/> defines a condition based on <see cref="MessageIndex"/> metrics used
+/// A <see cref="CompactionTrigger"/> defines a condition based on <see cref="CompactionMessageIndex"/> metrics used
 /// by a <see cref="CompactionStrategy"/> to determine when to trigger compaction and when the target
 /// compaction threshold has been met.
 /// </para>
@@ -65,14 +65,14 @@ public static class CompactionTriggers
     /// <returns>A <see cref="CompactionTrigger"/> that evaluates included turn count.</returns>
     /// <remarks>
     /// <para>
-    /// A user turn starts with a <see cref="MessageGroupKind.User"/> group and includes all subsequent
+    /// A user turn starts with a <see cref="CompactionGroupKind.User"/> group and includes all subsequent
     /// non-user, non-system groups until the next user group or end of conversation.  Each group is assigned
-    /// a <see cref="MessageGroup.TurnIndex"/> indicating which user turn it belongs to.
-    /// System messages (<see cref="MessageGroupKind.System"/>) are always assigned a <see langword="null"/>
-    /// <see cref="MessageGroup.TurnIndex"/> since they never belong to a user turn.
+    /// a <see cref="CompactionMessageGroup.TurnIndex"/> indicating which user turn it belongs to.
+    /// System messages (<see cref="CompactionGroupKind.System"/>) are always assigned a <see langword="null"/>
+    /// <see cref="CompactionMessageGroup.TurnIndex"/> since they never belong to a user turn.
     /// </para>
     /// <para>
-    /// The turn count is the number of distinct values defined by <see cref="MessageGroup.TurnIndex"/>.
+    /// The turn count is the number of distinct values defined by <see cref="CompactionMessageGroup.TurnIndex"/>.
     /// </para>
     /// </remarks>
     public static CompactionTrigger TurnsExceed(int maxTurns) =>
@@ -88,11 +88,11 @@ public static class CompactionTriggers
 
     /// <summary>
     /// Creates a trigger that fires when the included message index contains at least one
-    /// non-excluded <see cref="MessageGroupKind.ToolCall"/> group.
+    /// non-excluded <see cref="CompactionGroupKind.ToolCall"/> group.
     /// </summary>
     /// <returns>A <see cref="CompactionTrigger"/> that evaluates included tool call presence.</returns>
     public static CompactionTrigger HasToolCalls() =>
-        index => index.Groups.Any(g => !g.IsExcluded && g.Kind == MessageGroupKind.ToolCall);
+        index => index.Groups.Any(g => !g.IsExcluded && g.Kind == CompactionGroupKind.ToolCall);
 
     /// <summary>
     /// Creates a compound trigger that fires only when <b>all</b> of the specified triggers fire.
