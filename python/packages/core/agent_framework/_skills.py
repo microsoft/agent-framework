@@ -188,6 +188,7 @@ class SkillScript:
         self.function = function
         self.path = path
         self._parameters_schema: dict[str, Any] | None = None
+        self._parameters_schema_resolved: bool = False
 
         # Precompute whether the function accepts **kwargs to avoid
         # repeated inspect.signature() calls on every invocation.
@@ -211,10 +212,11 @@ class SkillScript:
         Returns ``None`` for file-based scripts or functions with no
         introspectable parameters.
         """
-        if self._parameters_schema is None and self.function is not None:
+        if not self._parameters_schema_resolved and self.function is not None:
             tool = FunctionTool(name=self.function.__name__, func=self.function)
             schema = tool.parameters()
             self._parameters_schema = schema if schema and schema.get("properties") else None
+            self._parameters_schema_resolved = True
         return self._parameters_schema
 
 

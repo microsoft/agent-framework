@@ -2925,6 +2925,23 @@ class TestSkillScriptParametersSchema:
         script = SkillScript(name="func", function=func)
         assert script.parameters_schema is None
 
+    def test_no_params_caching_does_not_reinspect(self) -> None:
+        """parameters_schema caches the None result and does not re-inspect."""
+        from unittest.mock import patch
+
+        from agent_framework import SkillScript
+
+        def noop() -> None:
+            pass
+
+        script = SkillScript(name="noop", function=noop)
+        first = script.parameters_schema
+        assert first is None
+        # Second access should not create a new FunctionTool
+        with patch("agent_framework._skills.FunctionTool", side_effect=RuntimeError("should not be called")):
+            second = script.parameters_schema
+        assert second is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: _load_skills merging behavior
