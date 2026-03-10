@@ -279,7 +279,7 @@ public class CompactionMessageIndexTests
         CompactionMessageGroup group = new(CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
 
         // Assert — Messages is IReadOnlyList, not IList
-        Assert.IsAssignableFrom<IReadOnlyList<ChatMessage>>(group.Messages);
+        Assert.IsType<IReadOnlyList<ChatMessage>>(group.Messages, exactMatch: false);
         Assert.Same(messages, group.Messages);
     }
 
@@ -1182,7 +1182,7 @@ public class CompactionMessageIndexTests
     [Fact]
     public void CreateGroupByteCountIncludesAllContentTypes()
     {
-        // Verify that MessageIndex.Create produces groups with accurate byte counts for non-text content
+        // Verify that CompactionMessageIndex.Create produces groups with accurate byte counts for non-text content
         ChatMessage assistantMessage = new(ChatRole.Assistant, [new FunctionCallContent("call1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
         ChatMessage toolResult = new(ChatRole.Tool, [new FunctionResultContent("call1", "Sunny")]);
         List<ChatMessage> messages = [assistantMessage, toolResult];
@@ -1254,11 +1254,11 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [reasoning, toolCall, toolResult];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — all three messages in a single ToolCall group
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[0].Kind);
         Assert.Equal(3, index.Groups[0].MessageCount);
         Assert.Same(reasoning, index.Groups[0].Messages[0]);
         Assert.Same(toolCall, index.Groups[0].Messages[1]);
@@ -1277,11 +1277,11 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [reasoning1, reasoning2, toolCall, toolResult];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — all four messages in a single ToolCall group
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[0].Kind);
         Assert.Equal(4, index.Groups[0].MessageCount);
     }
 
@@ -1295,12 +1295,12 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [reasoning, user];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — reasoning becomes AssistantText, user stays User
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.User, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[1].Kind);
     }
 
     [Fact]
@@ -1313,12 +1313,12 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [user, reasoning];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.User, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[1].Kind);
     }
 
     [Fact]
@@ -1332,11 +1332,11 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [toolCall, toolResult, reasoning];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — reasoning after tool result should be included in the same ToolCall group
         Assert.Single(index.Groups);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[0].Kind);
         Assert.Equal(3, index.Groups[0].MessageCount);
     }
 
@@ -1355,14 +1355,14 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [reasoning1, toolCall1, toolResult1, user, reasoning2, toolCall2, toolResult2];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — two ToolCall groups with reasoning included, plus one User group
         Assert.Equal(3, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[0].Kind);
         Assert.Equal(3, index.Groups[0].MessageCount); // reasoning1 + toolCall1 + toolResult1
-        Assert.Equal(MessageGroupKind.User, index.Groups[1].Kind);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[2].Kind);
         Assert.Equal(3, index.Groups[2].MessageCount); // reasoning2 + toolCall2 + toolResult2
     }
 
@@ -1376,12 +1376,12 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [reasoning, plainAssistant];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — each becomes its own AssistantText group
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[1].Kind);
     }
 
     [Fact]
@@ -1397,14 +1397,14 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [system, user, reasoning, toolCall, toolResult];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert
         Assert.Equal(3, index.Groups.Count);
         Assert.Null(index.Groups[0].TurnIndex); // System
         Assert.Equal(1, index.Groups[1].TurnIndex); // User turn 1
         Assert.Equal(1, index.Groups[2].TurnIndex); // ToolCall inherits turn 1
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[2].Kind);
         Assert.Equal(3, index.Groups[2].MessageCount); // reasoning + toolCall + toolResult
     }
 
@@ -1422,12 +1422,12 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [mixedAssistant, toolCall, toolResult];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — mixedAssistant has non-reasoning content, so it's AssistantText, not grouped with ToolCall
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[1].Kind);
     }
 
     [Fact]
@@ -1440,11 +1440,11 @@ public class CompactionMessageIndexTests
         List<ChatMessage> messages = [emptyAssistant, user];
 
         // Act
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Assert — empty contents falls through to AssistantText
         Assert.Equal(2, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[0].Kind);
     }
 
     [Fact]
@@ -1456,7 +1456,7 @@ public class CompactionMessageIndexTests
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
         ];
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
         Assert.Equal(2, index.Groups.Count);
 
         // Add reasoning + tool-call
@@ -1469,9 +1469,9 @@ public class CompactionMessageIndexTests
 
         // Assert — new messages form a single ToolCall group (delta append)
         Assert.Equal(3, index.Groups.Count);
-        Assert.Equal(MessageGroupKind.User, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.AssistantText, index.Groups[1].Kind);
-        Assert.Equal(MessageGroupKind.ToolCall, index.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.User, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.AssistantText, index.Groups[1].Kind);
+        Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[2].Kind);
         Assert.Equal(3, index.Groups[2].MessageCount); // reasoning + toolCall + toolResult
     }
 }

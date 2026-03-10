@@ -430,9 +430,9 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -465,9 +465,9 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -503,9 +503,9 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -515,7 +515,7 @@ public class SummarizationCompactionStrategyTests
         await strategy.CompactAsync(index);
 
         // Assert — no Summary group was inserted
-        Assert.DoesNotContain(index.Groups, g => g.Kind == MessageGroupKind.Summary);
+        Assert.DoesNotContain(index.Groups, g => g.Kind == CompactionGroupKind.Summary);
     }
 
     [Fact]
@@ -532,9 +532,9 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -559,9 +559,9 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1);
+            minimumPreservedGroups: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -586,10 +586,10 @@ public class SummarizationCompactionStrategyTests
         SummarizationCompactionStrategy strategy = new(
             mockClient.Object,
             CompactionTriggers.Always,
-            minimumPreserved: 1,
+            minimumPreservedGroups: 1,
             target: _ => false); // Never stop — exclude as many as possible
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt"),
             new ChatMessage(ChatRole.User, "Q1"),

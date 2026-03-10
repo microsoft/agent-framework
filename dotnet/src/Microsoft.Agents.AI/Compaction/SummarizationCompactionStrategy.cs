@@ -129,7 +129,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         // Mark oldest non-system groups for summarization one at a time until the target is met.
         // Track which groups were excluded so we can restore them if the LLM call fails.
         List<ChatMessage> summarizationMessages = [new ChatMessage(ChatRole.System, this.SummarizationPrompt)];
-        List<MessageGroup> excludedGroups = [];
+        List<CompactionMessageGroup> excludedGroups = [];
         List<int> excludedGroupIndices = [];
         int insertIndex = -1;
 
