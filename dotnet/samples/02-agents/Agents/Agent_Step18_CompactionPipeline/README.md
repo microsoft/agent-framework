@@ -114,7 +114,7 @@ new SummarizationCompactionStrategy(summarizerChatClient, CompactionTriggers.Tok
 
 ### Registering through `ChatClientAgentOptions`
 
-`AIContextProviders` can also be specified directly on `ChatClientAgentOptions` instead of calling `UseAIContextProviders` on the builder:
+`CompactionProvider` can also be specified directly on `ChatClientAgentOptions` instead of calling `UseAIContextProviders` on the `ChatClientBuilder`:
 
 ```csharp
 AIAgent agent = agentChatClient
@@ -124,3 +124,7 @@ AIAgent agent = agentChatClient
         AIContextProviders = [new CompactionProvider(compactionPipeline)]
     });
 ```
+
+This places the compaction provider at the agent level instead of the chat client level, which allows you to use different compaction strategies for different agents that share the same chat client.
+
+> Note: In this mode the `CompactionProvider` is not engaged during the tool calling loop.

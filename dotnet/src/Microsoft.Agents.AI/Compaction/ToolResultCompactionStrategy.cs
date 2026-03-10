@@ -12,15 +12,22 @@ namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
 /// A compaction strategy that collapses old tool call groups into single concise assistant
-/// messages, removing the detailed tool results while preserving a record of which tools were called.
+/// messages, removing the detailed tool results while preserving a record of which tools were called
+/// and what they returned.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This is the gentlest compaction strategy — it does not remove any user messages or
 /// plain assistant responses. It only targets <see cref="CompactionGroupKind.ToolCall"/>
 /// groups outside the protected recent window, replacing each multi-message group
-/// (assistant call + tool results) with a single assistant message like
-/// <c>[Tool calls: get_weather, search_docs]</c>.
+/// (assistant call + tool results) with a single assistant message in a YAML-like format:
+/// <code>
+/// [Tool Calls]
+/// get_weather:
+///   - Sunny and 72°F
+/// search_docs:
+///   - Found 3 docs
+/// </code>
 /// </para>
 /// <para>
 /// <see cref="MinimumPreservedGroups"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
@@ -113,27 +120,11 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             int idx = eligibleIndices[e] + offset;
             CompactionMessageGroup group = index.Groups[idx];
 
-            // Extract tool names from FunctionCallContent
-            List<string> toolNames = [];
-            foreach (ChatMessage message in group.Messages)
-            {
-                if (message.Contents is not null)
-                {
-                    foreach (AIContent content in message.Contents)
-                    {
-                        if (content is FunctionCallContent fcc)
-                        {
-                            toolNames.Add(fcc.Name);
-                        }
-                    }
-                }
-            }
+            string summary = BuildToolCallSummary(group);
 
             // Exclude the original group and insert a collapsed replacement
             group.IsExcluded = true;
             group.ExcludeReason = $"Collapsed by {nameof(ToolResultCompactionStrategy)}";
-
-            string summary = $"[Tool calls: {string.Join(", ", toolNames)}]";
 
             ChatMessage summaryMessage = new(ChatRole.Assistant, summary);
             (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
@@ -151,5 +142,93 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         }
 
         return new ValueTask<bool>(compacted);
+    }
+
+    /// <summary>
+    /// Builds a concise summary string for a tool call group, including tool names,
+    /// results, and deduplication counts for repeated tool names.
+    /// </summary>
+    private static string BuildToolCallSummary(CompactionMessageGroup group)
+    {
+        // Collect function calls (callId, name) and results (callId → result text)
+        List<(string CallId, string Name)> functionCalls = [];
+        Dictionary<string, string> resultsByCallId = new();
+        List<string> plainTextResults = [];
+
+        foreach (ChatMessage message in group.Messages)
+        {
+            if (message.Contents is null)
+            {
+                continue;
+            }
+
+            bool hasFunctionResult = false;
+            foreach (AIContent content in message.Contents)
+            {
+                if (content is FunctionCallContent fcc)
+                {
+                    functionCalls.Add((fcc.CallId, fcc.Name));
+                }
+                else if (content is FunctionResultContent frc && frc.CallId is not null)
+                {
+                    resultsByCallId[frc.CallId] = frc.Result?.ToString() ?? string.Empty;
+                    hasFunctionResult = true;
+                }
+            }
+
+            // Collect plain text from Tool-role messages that lack FunctionResultContent
+            if (!hasFunctionResult && message.Role == ChatRole.Tool && message.Text is string text)
+            {
+                plainTextResults.Add(text);
+            }
+        }
+
+        // Match function calls to their results using CallId or positional fallback,
+        // grouping by tool name while preserving first-seen order.
+        int plainTextIdx = 0;
+        List<string> orderedNames = [];
+        Dictionary<string, List<string>> groupedResults = new();
+
+        foreach ((string callId, string name) in functionCalls)
+        {
+            if (!groupedResults.TryGetValue(name, out _))
+            {
+                orderedNames.Add(name);
+                groupedResults[name] = [];
+            }
+
+            string? result = null;
+            if (resultsByCallId.TryGetValue(callId, out string? matchedResult))
+            {
+                result = matchedResult;
+            }
+            else if (plainTextIdx < plainTextResults.Count)
+            {
+                result = plainTextResults[plainTextIdx++];
+            }
+
+            if (!string.IsNullOrEmpty(result))
+            {
+                groupedResults[name].Add(result);
+            }
+        }
+
+        // Format as YAML-like block with [Tool Calls] header
+        List<string> lines = ["[Tool Calls]"];
+        foreach (string name in orderedNames)
+        {
+            List<string> results = groupedResults[name];
+
+            lines.Add($"{name}:");
+            if (results.Count > 0)
+            {
+                foreach (string result in results)
+                {
+                    lines.Add($"  - {result}");
+                }
+            }
+        }
+
+        return string.Join("\n", lines);
     }
 }

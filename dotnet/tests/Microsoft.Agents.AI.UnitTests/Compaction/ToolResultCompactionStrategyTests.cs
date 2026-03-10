@@ -61,7 +61,7 @@ public class ToolResultCompactionStrategyTests
         // Q1 + collapsed tool summary + Q2
         Assert.Equal(3, included.Count);
         Assert.Equal("Q1", included[0].Text);
-        Assert.Contains("[Tool calls: get_weather]", included[1].Text);
+        Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny and 72°F", included[1].Text);
         Assert.Equal("Q2", included[2].Text);
     }
 
@@ -142,8 +142,7 @@ public class ToolResultCompactionStrategyTests
         // Assert
         List<ChatMessage> included = [.. groups.GetIncludedMessages()];
         string collapsed = included[1].Text!;
-        Assert.Contains("get_weather", collapsed);
-        Assert.Contains("search_docs", collapsed);
+        Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny\nsearch_docs:\n  - Found 3 docs", collapsed);
     }
 
     [Fact]
@@ -259,5 +258,94 @@ public class ToolResultCompactionStrategyTests
         // Assert — system never excluded, pre-excluded skipped
         Assert.True(result);
         Assert.False(index.Groups[0].IsExcluded); // System stays
+    }
+
+    [Fact]
+    public async Task CompactAsyncDeduplicatesDuplicateToolNamesAsync()
+    {
+        // Arrange — same tool called multiple times
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            minimumPreservedGroups: 1);
+
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("c1", "get_weather"),
+                new FunctionCallContent("c2", "get_weather"),
+            ]),
+            new ChatMessage(ChatRole.Tool, "Sunny"),
+            new ChatMessage(ChatRole.Tool, "Rainy"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        await strategy.CompactAsync(groups);
+
+        // Assert — duplicate names listed once with all results
+        List<ChatMessage> included = [.. groups.GetIncludedMessages()];
+        Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny\n  - Rainy", included[1].Text);
+    }
+
+    [Fact]
+    public async Task CompactAsyncIncludesResultsFromFunctionResultContentAsync()
+    {
+        // Arrange — tool results provided as FunctionResultContent (matched by CallId)
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            minimumPreservedGroups: 1);
+
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("c1", "get_weather"),
+                new FunctionCallContent("c2", "search_docs"),
+            ]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c1", "Sunny and 72°F")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c2", "Found 3 docs")]),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        await strategy.CompactAsync(groups);
+
+        // Assert — results matched by CallId and included in summary
+        List<ChatMessage> included = [.. groups.GetIncludedMessages()];
+        Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny and 72°F\nsearch_docs:\n  - Found 3 docs", included[1].Text);
+    }
+
+    [Fact]
+    public async Task CompactAsyncDeduplicatesWithFunctionResultContentAsync()
+    {
+        // Arrange — same tool called multiple times with FunctionResultContent
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            minimumPreservedGroups: 1);
+
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant,
+            [
+                new FunctionCallContent("c1", "get_weather"),
+                new FunctionCallContent("c2", "get_weather"),
+                new FunctionCallContent("c3", "search_docs"),
+            ]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c1", "Sunny")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c2", "Rainy")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("c3", "Found 3 docs")]),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        await strategy.CompactAsync(groups);
+
+        // Assert — duplicate tool name results listed under same key
+        List<ChatMessage> included = [.. groups.GetIncludedMessages()];
+        Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny\n  - Rainy\nsearch_docs:\n  - Found 3 docs", included[1].Text);
     }
 }
