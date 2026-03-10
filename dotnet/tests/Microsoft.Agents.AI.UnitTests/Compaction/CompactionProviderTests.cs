@@ -253,5 +253,103 @@ public sealed class CompactionProviderTests
         Assert.Equal("Hello", resultList[0].Text);
     }
 
+    [Fact]
+    public async Task CompactAsyncThrowsOnNullStrategyAsync()
+    {
+        List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
+
+        await Assert.ThrowsAsync<NullReferenceException>(() => CompactionProvider.CompactAsync(null!, messages));
+    }
+
+    [Fact]
+    public async Task CompactAsyncReturnsAllMessagesWhenTriggerDoesNotFireAsync()
+    {
+        // Arrange — trigger never fires → no compaction
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+
+        // Act
+        IEnumerable<ChatMessage> result = await CompactionProvider.CompactAsync(strategy, messages);
+
+        // Assert — all messages preserved
+        List<ChatMessage> resultList = [.. result];
+        Assert.Equal(messages.Count, resultList.Count);
+        Assert.Equal("Q1", resultList[0].Text);
+        Assert.Equal("A1", resultList[1].Text);
+        Assert.Equal("Q2", resultList[2].Text);
+    }
+
+    [Fact]
+    public async Task CompactAsyncReducesMessagesWhenTriggeredAsync()
+    {
+        // Arrange — strategy that always triggers and keeps only 1 group
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ];
+
+        // Act
+        IEnumerable<ChatMessage> result = await CompactionProvider.CompactAsync(strategy, messages);
+
+        // Assert — compaction should have reduced the message count
+        List<ChatMessage> resultList = [.. result];
+        Assert.True(resultList.Count < messages.Count);
+    }
+
+    [Fact]
+    public async Task CompactAsyncHandlesEmptyMessageListAsync()
+    {
+        // Arrange
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.Always, minimumPreserved: 1);
+        List<ChatMessage> messages = [];
+
+        // Act
+        IEnumerable<ChatMessage> result = await CompactionProvider.CompactAsync(strategy, messages);
+
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task CompactAsyncWorksWithNonListEnumerableAsync()
+    {
+        // Arrange — IEnumerable (not a List<ChatMessage>) to exercise the list copy branch
+        TruncationCompactionStrategy strategy = new(CompactionTriggers.TokensExceed(100000));
+        IEnumerable<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
+
+        // Act
+        IEnumerable<ChatMessage> result = await CompactionProvider.CompactAsync(strategy, messages);
+
+        // Assert
+        List<ChatMessage> resultList = [.. result];
+        Assert.Single(resultList);
+        Assert.Equal("Hello", resultList[0].Text);
+    }
+
+    [Fact]
+    public void CompactionStateAssignment()
+    {
+        // Arrange
+        CompactionProvider.State state = new();
+
+        // Assert
+        Assert.NotNull(state.MessageGroups);
+        Assert.Empty(state.MessageGroups);
+
+        // Act
+        state.MessageGroups = [new MessageGroup(MessageGroupKind.User, [], 0, 0, 0)];
+
+        // Assert
+        Assert.Single(state.MessageGroups);
+    }
+
     private sealed class TestAgentSession : AgentSession;
 }

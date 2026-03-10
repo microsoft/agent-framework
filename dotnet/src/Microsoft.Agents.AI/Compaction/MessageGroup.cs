@@ -87,11 +87,11 @@ public sealed class MessageGroup
     public int TokenCount { get; }
 
     /// <summary>
-    /// Gets the zero-based user turn index this group belongs to, or <see langword="null"/>
-    /// for groups that precede the first user message (e.g., system messages).  A turn index
-    /// of 0 corresponds with any non-system message that precedes the first user message,
+    /// Gets user turn index this group belongs to, or <see langword="null"/> for groups
+    /// that precede the first user message (e.g., system messages).  A turn index of 0
+    /// corresponds with any non-system message that precedes the first user message,
     /// turn index 1 corresponds with the first user message and its subsequent non-user
-    /// messages, and so on.
+    /// messages, and so on...
     /// </summary>
     /// <remarks>
     /// A turn starts with a <see cref="MessageGroupKind.User"/> group and includes all subsequent

@@ -33,7 +33,6 @@ public sealed class CompactionProvider : AIContextProvider
 {
     private readonly CompactionStrategy _compactionStrategy;
     private readonly ProviderSessionState<State> _sessionState;
-    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CompactionProvider"/> class.
@@ -46,14 +45,34 @@ public sealed class CompactionProvider : AIContextProvider
     public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
+        stateKey ??= $"{nameof(CompactionProvider)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}";
+        this.StateKeys = [stateKey];
         this._sessionState = new ProviderSessionState<State>(
             _ => new State(),
-            stateKey ?? $"{nameof(CompactionProvider)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}",
+            stateKey,
             AgentJsonUtilities.DefaultOptions);
     }
 
     /// <inheritdoc />
-    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
+    public override IReadOnlyList<string> StateKeys { get; }
+
+    /// <summary>
+    /// Applies compaction strategy to the provided message list and returns the compacted messages.
+    /// This can be used for ad-hoc compaction outside of the provider pipeline.
+    /// </summary>
+    /// <param name="compactionStrategy">The compaction strategy to apply before each invocation.</param>
+    /// <param name="messages">The messages to compact</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
+    /// <returns></returns>
+    public static async Task<IEnumerable<ChatMessage>> CompactAsync(CompactionStrategy compactionStrategy, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
+    {
+        List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages];
+        MessageIndex messageIndex = MessageIndex.Create(messageList);
+
+        await compactionStrategy.CompactAsync(messageIndex, cancellationToken).ConfigureAwait(false);
+
+        return messageIndex.GetIncludedMessages();
+    }
 
     /// <summary>
     /// Applies the compaction strategy to the accumulated message list before forwarding it to the agent.
@@ -118,7 +137,7 @@ public sealed class CompactionProvider : AIContextProvider
     /// <summary>
     /// Represents the persisted state of a <see cref="CompactionProvider"/> stored in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
-    public sealed class State
+    internal sealed class State
     {
         /// <summary>
         /// Gets or sets the message index groups used for incremental compaction updates.
