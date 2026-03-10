@@ -133,7 +133,7 @@ public partial class InProcessStateTests
 
         Run checkpointed = await InProcessExecution.RunAsync<TurnToken>(workflow, new(), CheckpointManager.Default);
 
-        checkpointed.Checkpoints.Should().HaveCount(4);
+        checkpointed.Checkpoints.Should().HaveCount(8);
 
         RunStatus status = await checkpointed.GetStatusAsync();
         status.Should().Be(RunStatus.Idle);

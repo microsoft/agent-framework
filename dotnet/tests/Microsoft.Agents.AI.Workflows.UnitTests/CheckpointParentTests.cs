@@ -198,4 +198,122 @@ public class CheckpointParentTests
         storedResumed.Parent.Should().NotBeNull("checkpoint created after resume should have a parent");
         storedResumed.Parent.Should().Be(resumePoint, "checkpoint after resume should reference the checkpoint we resumed from");
     }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    internal async Task Checkpoint_AfterResumeFromSuperstepStart_CountCheckpointsEmittedAsync(ExecutionEnvironment environment)
+    {
+        // Arrange: A basic workflow with 3 executor stages
+        ForwardMessageExecutor<string> executorA = new("A");
+        ForwardMessageExecutor<string> executorB = new("B");
+        ForwardMessageExecutor<string> executorC = new("C");
+
+        Workflow workflow = new WorkflowBuilder(executorA)
+            .AddEdge(executorA, executorB)
+            .AddEdge(executorB, executorC)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+
+        // First run: collect a checkpoint to resume from
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
+
+        List<CheckpointInfo> firstRunCheckpoints = [];
+        using CancellationTokenSource cts = new();
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
+        {
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                firstRunCheckpoints.Add(startCp);
+            }
+        }
+
+        firstRunCheckpoints.Should().HaveCount(3);
+        CheckpointInfo resumePoint = firstRunCheckpoints[1];
+
+        // Dispose the first run to release workflow ownership before resuming.
+        await run.DisposeAsync();
+
+        // Act: Resume from the first checkpoint
+        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
+
+        List<CheckpointInfo> resumedCheckpoints = [];
+        using CancellationTokenSource cts2 = new();
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
+        {
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                resumedCheckpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            {
+                resumedCheckpoints.Add(cp);
+            }
+        }
+
+        // Assert: The workflow should save the right number of checkpoints on re-run.
+        resumedCheckpoints.Should().NotBeEmpty();
+        resumedCheckpoints.Should().HaveCount(4, "the resumed workflow has 2 executors to run, each generating 2 checkpoints");
+    }
+
+    [Theory]
+    [InlineData(ExecutionEnvironment.InProcess_Lockstep)]
+    [InlineData(ExecutionEnvironment.InProcess_OffThread)]
+    internal async Task Checkpoint_AfterResumeFromSuperstepCompleted_CountCheckpointsEmittedAsync(ExecutionEnvironment environment)
+    {
+        // Arrange: A basic workflow with 3 executor stages
+        ForwardMessageExecutor<string> executorA = new("A");
+        ForwardMessageExecutor<string> executorB = new("B");
+        ForwardMessageExecutor<string> executorC = new("C");
+
+        Workflow workflow = new WorkflowBuilder(executorA)
+            .AddEdge(executorA, executorB)
+            .AddEdge(executorB, executorC)
+            .Build();
+
+        CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
+        InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
+
+        // First run: collect a checkpoint to resume from
+        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
+
+        List<CheckpointInfo> firstRunCheckpoints = [];
+        using CancellationTokenSource cts = new();
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
+        {
+            if (evt is SuperStepCompletedEvent completedEvent && completedEvent.CompletionInfo?.Checkpoint is { } startCp)
+            {
+                firstRunCheckpoints.Add(startCp);
+            }
+        }
+
+        firstRunCheckpoints.Should().HaveCount(3);
+        CheckpointInfo resumePoint = firstRunCheckpoints[1];
+
+        // Dispose the first run to release workflow ownership before resuming.
+        await run.DisposeAsync();
+
+        // Act: Resume from the first checkpoint
+        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
+
+        List<CheckpointInfo> resumedCheckpoints = [];
+        using CancellationTokenSource cts2 = new();
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
+        {
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                resumedCheckpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            {
+                resumedCheckpoints.Add(cp);
+            }
+        }
+
+        // Assert: The workflow should save the right number of checkpoints on re-run.
+        resumedCheckpoints.Should().NotBeEmpty();
+        resumedCheckpoints.Should().HaveCount(2, "the resumed workflow has 1 executor to run, generating 2 checkpoints");
+    }
 }
