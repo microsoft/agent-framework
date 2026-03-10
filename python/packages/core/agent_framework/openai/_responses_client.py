@@ -1225,8 +1225,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         if output_parts:
                             output = output_parts
                     else:
-                        text_parts = [item.text or "" for item in content.items if item.type == "text"]
-                        output = "\n".join(text_parts) if text_parts else ""
+                        output = content.result or ""
                 return {
                     "call_id": content.call_id,
                     "type": "function_call_output",

@@ -155,38 +155,24 @@ def _parse_tool_result_from_mcp(
     Returns:
         A list of Content items representing the tool result.
     """
-    import json
-
     result: list[Content] = []
     for item in mcp_type.content:
         match item:
             case types.TextContent():
                 result.append(Content.from_text(item.text))
-            case types.ImageContent():
+            case types.ImageContent() | types.AudioContent():
+                decoded = base64.b64decode(item.data)
                 result.append(
-                    Content.from_uri(
-                        uri=f"data:{item.mimeType};base64,{item.data}",
-                        media_type=item.mimeType,
-                    )
-                )
-            case types.AudioContent():
-                result.append(
-                    Content.from_uri(
-                        uri=f"data:{item.mimeType};base64,{item.data}",
+                    Content.from_data(
+                        data=decoded,
                         media_type=item.mimeType,
                     )
                 )
             case types.ResourceLink():
                 result.append(
-                    Content.from_text(
-                        json.dumps(
-                            {
-                                "type": "resource_link",
-                                "uri": str(item.uri),
-                                "mimeType": item.mimeType,
-                            },
-                            default=str,
-                        )
+                    Content.from_uri(
+                        uri=str(item.uri),
+                        media_type=item.mimeType,
                     )
                 )
             case types.EmbeddedResource():
@@ -195,15 +181,9 @@ def _parse_tool_result_from_mcp(
                         result.append(Content.from_text(item.resource.text))
                     case types.BlobResourceContents():
                         result.append(
-                            Content.from_text(
-                                json.dumps(
-                                    {
-                                        "type": "blob",
-                                        "data": item.resource.blob,
-                                        "mimeType": item.resource.mimeType,
-                                    },
-                                    default=str,
-                                )
+                            Content.from_uri(
+                                uri=item.resource.blob,
+                                media_type=item.resource.mimeType or "application/octet-stream",
                             )
                         )
             case _:
