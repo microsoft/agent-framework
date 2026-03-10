@@ -66,6 +66,9 @@ public sealed class CompactionProvider : AIContextProvider
     /// <returns></returns>
     public static async Task<IEnumerable<ChatMessage>> CompactAsync(CompactionStrategy compactionStrategy, IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
+        Throw.IfNull(compactionStrategy);
+        Throw.IfNull(messages);
+
         List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages];
         MessageIndex messageIndex = MessageIndex.Create(messageList);
 

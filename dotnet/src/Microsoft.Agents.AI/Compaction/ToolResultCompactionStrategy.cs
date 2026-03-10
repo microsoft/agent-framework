@@ -134,7 +134,11 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             group.ExcludeReason = $"Collapsed by {nameof(ToolResultCompactionStrategy)}";
 
             string summary = $"[Tool calls: {string.Join(", ", toolNames)}]";
-            index.InsertGroup(idx + 1, MessageGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, summary)], group.TurnIndex);
+
+            ChatMessage summaryMessage = new(ChatRole.Assistant, summary);
+            (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
+
+            index.InsertGroup(idx + 1, MessageGroupKind.Summary, [summaryMessage], group.TurnIndex);
             offset++; // Each insertion shifts subsequent indices by 1
 
             compacted = true;

@@ -49,7 +49,7 @@ public sealed class MessageIndex
     {
         this.Tokenizer = tokenizer;
         this.Groups = groups;
-        this.ProcessedMessageCount = this.TotalMessageCount;
+        this.ProcessedMessageCount = this.Groups.Where(g => g.Kind != MessageGroupKind.Summary).Sum(g => g.MessageCount);
 
         // Restore turn counter from the last group that has a TurnIndex
         for (int index = groups.Count - 1; index >= 0; --index)

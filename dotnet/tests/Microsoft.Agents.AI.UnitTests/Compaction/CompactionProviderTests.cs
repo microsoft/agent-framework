@@ -258,7 +258,7 @@ public sealed class CompactionProviderTests
     {
         List<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
 
-        await Assert.ThrowsAsync<NullReferenceException>(() => CompactionProvider.CompactAsync(null!, messages));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => CompactionProvider.CompactAsync(null!, messages));
     }
 
     [Fact]
