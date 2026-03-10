@@ -38,7 +38,11 @@ public class CheckpointParentTests
         List<CheckpointInfo> checkpoints = [];
         await foreach (WorkflowEvent evt in run.WatchStreamAsync())
         {
-            if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                checkpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
                 checkpoints.Add(cp);
             }
@@ -51,6 +55,13 @@ public class CheckpointParentTests
         Checkpoint storedFirst = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(firstCheckpoint.SessionId, firstCheckpoint);
         storedFirst.Parent.Should().BeNull("the first checkpoint should have no parent");
+
+        // Assert: The second checkpoint should have 1 parent, the first checkpoint.
+        CheckpointInfo secondCheckpoint = checkpoints[1];
+        Checkpoint storedSecond = await ((ICheckpointManager)checkpointManager)
+            .LookupCheckpointAsync(secondCheckpoint.SessionId, secondCheckpoint);
+        storedSecond.Parent.Should().NotBeNull("the second checkpoint should have a parent");
+        storedSecond.Parent.Should().Be(firstCheckpoint, "the second checkpoint's parent should be the first checkpoint");
     }
 
     [Theory]
