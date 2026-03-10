@@ -43,6 +43,10 @@ from agent_framework import Skill, SkillScript
 def subprocess_script_runner(skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> str:
     """Run a skill script as a local Python subprocess.
 
+    .. warning:: This runner is provided for **demonstration purposes only**.
+        For production use, implement proper sandboxing, resource limits,
+        input validation, and structured logging.
+
     Resolves the script's absolute path by joining ``skill.path`` (the skill
     directory) with ``script.path`` (relative path declared in ``SKILL.md``).
     The ``args`` dictionary is converted to CLI flags following these rules:

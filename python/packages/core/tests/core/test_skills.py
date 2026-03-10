@@ -1676,7 +1676,7 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("my-skill", "exploding_resource")
-        assert result.startswith("Error (RuntimeError):")
+        assert result.startswith("Error:")
         assert "Failed to read resource" in result
 
     async def test_read_async_callable_resource_exception_returns_error(self) -> None:
@@ -1688,7 +1688,7 @@ class TestSkillsProviderEdgeCases:
 
         provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("my-skill", "async_exploding")
-        assert result.startswith("Error (ValueError):")
+        assert result.startswith("Error:")
 
     def test_load_code_skill_xml_escapes_metadata(self) -> None:
         skill = Skill(name="my-skill", description='Uses <tags> & "quotes"', content="Body")

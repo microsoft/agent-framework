@@ -966,12 +966,9 @@ class SkillsProvider(BaseContextProvider):
                 else:
                     result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()  # pyright: ignore[reportPrivateUsage]
                 return str(result)
-            except Exception as exc:
+            except Exception:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
-                return (
-                    f"Error ({type(exc).__name__}): Failed to read resource"
-                    f" '{resource_name}' from skill '{skill_name}'."
-                )
+                return f"Error: Failed to read resource '{resource_name}' from skill '{skill_name}'."
 
         return f"Error: Resource '{resource.name}' has no content or function."
 
