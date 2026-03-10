@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 # ruff: noqa: INP001, S404, S603
 
-"""Raise dependency upper bounds, validate, and persist the latest passing set."""
+"""Lower dependency bounds, validate, and persist the oldest passing set."""
 
 from __future__ import annotations
 
@@ -16,17 +16,16 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
-from _dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
+from scripts.dependencies._dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 from rich import print
-from task_runner import discover_projects, extract_poe_tasks
+from scripts.task_runner import discover_projects, extract_poe_tasks
 
 CHECK_TASK_PRIORITY = ("check", "typing", "pyright", "mypy", "lint")
 REQ_PATTERN = r"^\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)\s*(.*?)\s*$"
@@ -47,24 +46,21 @@ class RequirementEntry:
     marker: str | None
     spec_parts: list[str]
     lower_version: Version | None
+    lower_index: int | None
     upper_index: int | None
     upper_version: Version | None
     exact_index: int | None = None
     exact_version: Version | None = None
 
-    def with_upper(self, upper: Version) -> str:
-        """Return a new requirement with the given exclusive upper bound."""
+    def with_lower(self, lower: Version) -> str:
+        """Return a new requirement with the given inclusive lower bound."""
         updated_parts = list(self.spec_parts)
-        if self.exact_index is not None and self.exact_version is not None:
-            updated_parts[self.exact_index] = f">={self.exact_version}"
-            if self.upper_index is not None:
-                updated_parts[self.upper_index] = f"<{upper}"
-            else:
-                updated_parts.append(f"<{upper}")
-        elif self.upper_index is not None:
-            updated_parts[self.upper_index] = f"<{upper}"
+        if self.exact_index is not None:
+            raise ValueError(f"Exact pin cannot be lowered in-place: {self.raw}")
+        if self.lower_index is not None:
+            updated_parts[self.lower_index] = f">={lower}"
         else:
-            raise ValueError(f"Requirement has no mutable bound information: {self.raw}")
+            updated_parts.insert(0, f">={lower}")
         spec = ",".join(updated_parts)
         requirement = f"{self.name_extras}{spec}"
         if self.marker:
@@ -90,9 +86,9 @@ class DependencyTarget:
 
 @dataclass
 class DependencyAttempt:
-    """A single upper-bound trial for one dependency."""
+    """A single lower-bound trial for one dependency."""
 
-    trial_upper: str
+    trial_lower: str
     status: str
     error: str | None = None
 
@@ -170,6 +166,7 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
         return None
 
     lower_version: Version | None = None
+    lower_index: int | None = None
     upper_version: Version | None = None
     upper_index: int | None = None
     exact_version: Version | None = None
@@ -184,6 +181,7 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
                 continue
             if lower_version is None or parsed > lower_version:
                 lower_version = parsed
+                lower_index = index
         elif part.startswith(("==", "===")):
             raw_version = part[3:].strip() if part.startswith("===") else part[2:].strip()
             try:
@@ -194,6 +192,7 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
             exact_index = index
             if lower_version is None or parsed > lower_version:
                 lower_version = parsed
+                lower_index = None
         if part.startswith(("<", "<=")):
             raw_version = part[2:].strip() if part.startswith("<=") else part[1:].strip()
             try:
@@ -214,93 +213,12 @@ def _parse_requirement(requirement: str) -> RequirementEntry | None:
         marker=marker,
         spec_parts=spec_parts,
         lower_version=lower_version,
+        lower_index=lower_index,
         upper_index=upper_index,
         upper_version=upper_version,
         exact_index=exact_index,
         exact_version=exact_version,
     )
-
-
-def _select_latest_dev_version(versions: list[Version]) -> Version | None:
-    if not versions:
-        return None
-    stable_versions = [version for version in versions if not version.is_prerelease]
-    if stable_versions:
-        return stable_versions[-1]
-    return versions[-1]
-
-
-@lru_cache(maxsize=8)
-def _load_workspace_package_versions(workspace_root: str) -> dict[str, Version]:
-    workspace_path = Path(workspace_root)
-    versions: dict[str, Version] = {}
-    for package_pyproject in sorted((workspace_path / "packages").glob("*/pyproject.toml")):
-        with package_pyproject.open("rb") as f:
-            package_data = tomli.load(f)
-        project_section = package_data.get("project", {}) or {}
-        package_name = str(project_section.get("name", "")).strip().lower()
-        package_version = project_section.get("version")
-        if not package_name or not package_version:
-            continue
-        try:
-            versions[package_name] = Version(str(package_version))
-        except InvalidVersion:
-            continue
-    return versions
-
-
-def _collect_dev_pin_replacements(
-    pyproject_file: Path,
-    *,
-    catalog: VersionCatalog,
-) -> dict[str, str]:
-    with pyproject_file.open("rb") as f:
-        data = tomli.load(f)
-    project = data.get("project", {}) or {}
-    optional_dependencies = project.get("optional-dependencies", {}) or {}
-    dependency_groups = data.get("dependency-groups", {}) or {}
-    workspace_versions = _load_workspace_package_versions(str(pyproject_file.parent.parent.parent.resolve()))
-
-    dev_requirements: list[str] = []
-    dev_requirements.extend(
-        requirement for requirement in (optional_dependencies.get("dev", []) or []) if isinstance(requirement, str)
-    )
-    dev_requirements.extend(
-        requirement for requirement in (dependency_groups.get("dev", []) or []) if isinstance(requirement, str)
-    )
-
-    seen_requirements: set[str] = set()
-    replacements: dict[str, str] = {}
-    for requirement in dev_requirements:
-        if requirement in seen_requirements:
-            continue
-        seen_requirements.add(requirement)
-
-        # Refresh exact dev pins while we already have the file open so outdated test tooling
-        # does not masquerade as a runtime dependency compatibility failure.
-        try:
-            parsed_requirement = Requirement(requirement)
-        except InvalidRequirement:
-            continue
-        if parsed_requirement.url is not None:
-            continue
-        dependency_name = parsed_requirement.name.lower()
-        if dependency_name.startswith("agent-framework"):
-            latest_version = workspace_versions.get(dependency_name)
-        else:
-            latest_version = _select_latest_dev_version(catalog.get_lock(dependency_name))
-            if latest_version is None:
-                latest_version = _select_latest_dev_version(catalog.get(dependency_name))
-        if latest_version is None:
-            continue
-
-        extras = f"[{','.join(sorted(parsed_requirement.extras))}]" if parsed_requirement.extras else ""
-        marker = f"; {parsed_requirement.marker}" if parsed_requirement.marker else ""
-        pinned_requirement = f"{parsed_requirement.name}{extras}=={latest_version}{marker}"
-        if requirement != pinned_requirement:
-            replacements[requirement] = pinned_requirement
-
-    return replacements
 
 
 def _is_dependency_array_assignment(section: str, key: str) -> bool:
@@ -428,10 +346,6 @@ class VersionCatalog:
             self._cache[package_name] = versions
         return versions
 
-    def get_lock(self, package_name: str) -> list[Version]:
-        """Return lockfile versions for a package name."""
-        return self._lock_versions.get(package_name, [])
-
     def _fetch(self, package_name: str) -> list[Version]:
         if self._source == "lock":
             return self._lock_versions.get(package_name, [])
@@ -547,6 +461,10 @@ def _collect_targets(
         data = tomli.load(f)
     project = data.get("project", {})
     dependencies: list[str] = list(project.get("dependencies", []) or [])
+    # Lower-bound validation also covers optional extras because those dependency ranges are part
+    # of the supported install surface just as much as base runtime dependencies are.
+    for values in (project.get("optional-dependencies", {}) or {}).values():
+        dependencies.extend(values or [])
 
     grouped: dict[str, list[RequirementEntry]] = {}
     skipped: list[str] = []
@@ -565,8 +483,8 @@ def _collect_targets(
     for dependency_name, entries in sorted(grouped.items()):
         if not entries:
             continue
-        # A dependency can be repeated across sections/extras. Only optimize it when every
-        # occurrence agrees on the current bound shape so we never rewrite inconsistent specs.
+        # A dependency can be repeated across base + extra requirements. Only optimize it when the
+        # whole package agrees on one bounded shape so we never "fix" one occurrence but not another.
         allow_prerelease_candidates = any(
             (
                 (entry.lower_version is not None and entry.lower_version.is_prerelease)
@@ -590,7 +508,10 @@ def _collect_targets(
                 skipped.append(f"{dependency_name}: conflicting upper bounds in package")
                 continue
             lower_versions = [entry.lower_version for entry in entries if entry.lower_version is not None]
-            lower = max(lower_versions) if lower_versions else None
+            if not lower_versions:
+                skipped.append(f"{dependency_name}: missing lower bound value")
+                continue
+            lower = max(lower_versions)
             targets.append(
                 DependencyTarget(
                     name=dependency_name,
@@ -603,69 +524,39 @@ def _collect_targets(
             continue
 
         if exact_entries and len(exact_entries) == len(entries):
-            first_exact = exact_entries[0].exact_version
-            if first_exact is None:
-                skipped.append(f"{dependency_name}: missing exact version value")
-                continue
-            if any(entry.exact_version != first_exact for entry in exact_entries[1:]):
-                skipped.append(f"{dependency_name}: conflicting exact pins in package")
-                continue
-            targets.append(
-                DependencyTarget(
-                    name=dependency_name,
-                    entries=entries,
-                    lower_version=first_exact,
-                    upper_version=first_exact,
-                    allow_prerelease_candidates=allow_prerelease_candidates,
-                )
-            )
+            skipped.append(f"{dependency_name}: exact pins are skipped for lower-bound optimization")
             continue
 
-        skipped.append(f"{dependency_name}: no usable upper or exact bound to optimize")
+        skipped.append(f"{dependency_name}: no usable bounded range to optimize")
     return targets, skipped
 
 
-def _build_trial_bounds(
+def _build_trial_lower_bounds(
     versions: list[Version],
     *,
-    lower: Version | None,
+    lower: Version,
     current_upper: Version,
     allow_prerelease: bool,
     max_candidates: int,
 ) -> list[Version]:
-    # Candidate generation mirrors the policy encoded in pyproject bounds:
-    # prerelease tracks only advance one prerelease step, 0.x tracks stay within the
-    # current minor, and stable tracks probe newer versions from highest to lowest.
-    if lower is not None and lower.is_prerelease:
-        if lower.pre is not None:
-            pre_tag, pre_num = lower.pre
-            next_prerelease = Version(f"{lower.base_version}{pre_tag}{pre_num + 1}")
-        elif lower.dev is not None:
-            next_prerelease = Version(f"{lower.base_version}.dev{lower.dev + 1}")
-        else:
-            next_prerelease = None
-        if next_prerelease is None:
-            return []
-        return [version for version in versions if version == next_prerelease and version > current_upper]
-
-    if lower is not None and lower.major == 0:
-        candidates = [
-            version
-            for version in versions
-            if version > current_upper and version.major == 0 and version.minor == lower.minor and version > lower
-        ]
-        if not allow_prerelease:
-            candidates = [version for version in candidates if not version.is_prerelease]
-        candidates.sort(reverse=True)
-        if max_candidates > 0:
-            return candidates[:max_candidates]
-        return candidates
-
-    candidates = [version for version in versions if version > current_upper and (lower is None or version > lower)]
+    # Lower-bound probing stays inside the currently supported compatibility lane:
+    # stable tracks never cross a major boundary and 0.x tracks never cross a minor boundary.
+    candidates = [version for version in versions if version < lower and version < current_upper]
     # `packaging` treats .dev/.a/.b/.rc as prereleases; only probe them when current spec already uses them.
     if not allow_prerelease:
         candidates = [version for version in candidates if not version.is_prerelease]
-    candidates.sort(reverse=True)
+    if lower.major >= 1:
+        major_floor = Version(f"{lower.major}.0.0")
+        candidates = [version for version in candidates if version.major == lower.major and version >= major_floor]
+    else:
+        minor_floor = Version(f"0.{lower.minor}.0")
+        candidates = [
+            version
+            for version in candidates
+            if version.major == 0 and version.minor == lower.minor and version >= minor_floor
+        ]
+
+    candidates.sort()
     if max_candidates > 0:
         return candidates[:max_candidates]
     return candidates
@@ -751,8 +642,19 @@ def _optimize_dependency(
     include_dev_extra: bool,
     optional_extras: list[str],
 ) -> DependencyOutcome:
-    # Build descending candidate trial bounds from the current constraint window.
-    candidates = _build_trial_bounds(
+    if dependency.lower_version is None:
+        return DependencyOutcome(
+            name=dependency.name,
+            changed=False,
+            original_requirements=dependency.original_requirements,
+            final_requirements=dependency.original_requirements,
+            candidate_versions=[],
+            attempted_versions=[],
+            attempts=[],
+            skipped_reason="No lower bound available for optimization.",
+        )
+
+    candidates = _build_trial_lower_bounds(
         available_versions,
         lower=dependency.lower_version,
         current_upper=dependency.upper_version,
@@ -764,60 +666,26 @@ def _optimize_dependency(
     attempted_versions: list[str] = []
     attempts: list[DependencyAttempt] = []
 
-    # Baselines answer two questions before the script widens any range:
-    # does the current floor still work, and does the newest version already in range still work?
-    in_range_versions = [
-        version
-        for version in available_versions
-        if (dependency.lower_version is None or version >= dependency.lower_version)
-        and (dependency.upper_version is None or version < dependency.upper_version)
-    ]
-    if not dependency.allow_prerelease_candidates:
-        in_range_versions = [version for version in in_range_versions if not version.is_prerelease]
-    baseline_trials: list[tuple[str, Version, str]] = []
-    if dependency.upper_version is not None and dependency.lower_version == dependency.upper_version:
-        baseline_trials.append(("current_fixed", dependency.upper_version, "highest"))
-    else:
-        if dependency.lower_version is not None:
-            lower_probe = next(
-                (version for version in in_range_versions if version >= dependency.lower_version),
-                dependency.lower_version,
-            )
-            baseline_trials.append(("current_lower", lower_probe, "lowest-direct"))
-        if dependency.upper_version is not None:
-            upper_probe = in_range_versions[-1] if in_range_versions else dependency.upper_version
-            baseline_trials.append(("current_upper", upper_probe, "highest"))
-
-    for baseline_name, baseline_version, baseline_resolution in baseline_trials:
-        attempted_versions.append(str(baseline_version))
-        print(
-            f"[cyan]{package_label} :: {dependency.name} :: baseline {baseline_name} "
-            f"({baseline_resolution}) [{baseline_version}] [/cyan]"
-        )
-        success, error = _run_tasks(
-            temp_pyproject.parent,
-            workspace_root=temp_pyproject.parent.parent.parent,
-            tasks=tasks,
-            internal_editables=internal_editables,
-            resolution=baseline_resolution,
-            dependency_pin=(dependency.name, baseline_version),
-            include_dev_group=include_dev_group,
-            include_dev_extra=include_dev_extra,
-            optional_extras=optional_extras,
-            timeout_seconds=timeout_seconds,
-        )
-        if success:
-            attempts.append(
-                DependencyAttempt(
-                    trial_upper=str(baseline_version),
-                    status=f"{baseline_name}_passed",
-                )
-            )
-            continue
-
+    # Establish a validated baseline before searching for lower acceptable bounds.
+    baseline_version = dependency.lower_version
+    attempted_versions.append(str(baseline_version))
+    print(f"[cyan]{package_label} :: {dependency.name} :: baseline current_lower [{baseline_version}] [/cyan]")
+    success, error = _run_tasks(
+        temp_pyproject.parent,
+        workspace_root=temp_pyproject.parent.parent.parent,
+        tasks=tasks,
+        internal_editables=internal_editables,
+        resolution="highest",
+        dependency_pin=(dependency.name, baseline_version),
+        include_dev_group=include_dev_group,
+        include_dev_extra=include_dev_extra,
+        optional_extras=optional_extras,
+        timeout_seconds=timeout_seconds,
+    )
+    if not success:
         attempts.append(
             DependencyAttempt(
-                trial_upper=str(baseline_version),
+                trial_lower=str(baseline_version),
                 status="failed",
                 error=error,
             )
@@ -830,8 +698,15 @@ def _optimize_dependency(
             candidate_versions=candidate_versions,
             attempted_versions=attempted_versions,
             attempts=attempts,
-            skipped_reason=f"Baseline validation failed at {baseline_name}.",
+            skipped_reason="Baseline validation failed at current_lower.",
         )
+
+    attempts.append(
+        DependencyAttempt(
+            trial_lower=str(baseline_version),
+            status="current_lower_passed",
+        )
+    )
 
     if not candidates:
         return DependencyOutcome(
@@ -842,37 +717,42 @@ def _optimize_dependency(
             candidate_versions=[],
             attempted_versions=attempted_versions,
             attempts=attempts,
-            skipped_reason="No higher candidate bounds found.",
+            skipped_reason="No lower candidate bounds found within allowed boundary.",
         )
 
-    # Probe candidates from highest to lowest; keep the first passing upper-bound rewrite.
-    for candidate in candidates:
+    # Probe older bounds with a binary-search-style loop: keep successful tighter lowers, revert failures.
+    low = 0
+    high = len(candidates) - 1
+    while low <= high:
+        midpoint = (low + high) // 2
+        candidate = candidates[midpoint]
         attempted_versions.append(str(candidate))
-        trial_requirements = [entry.with_upper(candidate) for entry in dependency.entries]
+        trial_requirements = [entry.with_lower(candidate) for entry in dependency.entries]
         replacements = list(zip(current_requirements, trial_requirements, strict=True))
         _replace_requirements(temp_pyproject, [(old, new) for old, new in replacements])
 
-        print(f"[cyan]{package_label} :: {dependency.name} -> <{candidate}[/cyan]")
+        print(f"[cyan]{package_label} :: {dependency.name} -> >={candidate}[/cyan]")
         success, error = _run_tasks(
             temp_pyproject.parent,
             workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
             resolution="highest",
-            dependency_pin=None,
+            dependency_pin=(dependency.name, candidate),
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
             timeout_seconds=timeout_seconds,
         )
         if success:
-            attempts.append(DependencyAttempt(trial_upper=str(candidate), status="passed"))
+            attempts.append(DependencyAttempt(trial_lower=str(candidate), status="passed"))
             current_requirements = trial_requirements
-            break
+            high = midpoint - 1
+            continue
 
-        attempts.append(DependencyAttempt(trial_upper=str(candidate), status="failed", error=error))
+        attempts.append(DependencyAttempt(trial_lower=str(candidate), status="failed", error=error))
         _replace_requirements(temp_pyproject, [(new, old) for old, new in replacements])
-        continue
+        low = midpoint + 1
 
     changed = current_requirements != dependency.original_requirements
     return DependencyOutcome(
@@ -889,7 +769,6 @@ def _optimize_dependency(
 def _process_package(
     plan: PackagePlan,
     *,
-    workspace_root: Path,
     catalog: VersionCatalog,
     dependency_filters: set[str] | None,
     dry_run: bool,
@@ -897,7 +776,7 @@ def _process_package(
     timeout_seconds: int,
 ) -> PackageOutcome:
     pyproject_file = plan.pyproject_path
-    source_workspace_root = workspace_root.resolve()
+    source_workspace_root = pyproject_file.parent.parent.parent.resolve()
     available_tasks = extract_poe_tasks(pyproject_file)
     tasks = _select_validation_tasks(available_tasks)
     if not tasks:
@@ -911,7 +790,20 @@ def _process_package(
             skipped=["No check/test task combination found."],
         )
 
-    with tempfile.TemporaryDirectory(prefix=f"dep-range-{plan.project_path.name}-") as temp_dir:
+    # Build the per-package optimization target set from eligible bounded dependency specifications.
+    targets, skipped = _collect_targets(pyproject_file, dependency_filters=dependency_filters)
+    if not targets:
+        return PackageOutcome(
+            project_path=str(plan.project_path),
+            package_name=plan.package_name,
+            tasks=tasks,
+            changed=False,
+            dependencies=[],
+            replacements={},
+            skipped=[*skipped, "No eligible dependencies with lower+upper bounds."],
+        )
+
+    with tempfile.TemporaryDirectory(prefix=f"dep-lower-{plan.project_path.name}-") as temp_dir:
         temp_root = Path(temp_dir)
         temp_workspace_root = temp_root / source_workspace_root.name
         # Copy the whole workspace so uv workspace sources and editable internal packages resolve
@@ -949,23 +841,11 @@ def _process_package(
             if candidate.exists():
                 temp_internal_editables.append(candidate)
 
-        dev_replacements = _collect_dev_pin_replacements(temp_pyproject, catalog=catalog)
-        if dev_replacements:
-            _replace_requirements(temp_pyproject, list(dev_replacements.items()))
-            print(
-                f"[cyan]{plan.project_path}: refreshed {len(dev_replacements)} dev dependency pin(s) to latest[/cyan]"
-            )
-
-        targets, skipped = _collect_targets(temp_pyproject, dependency_filters=dependency_filters)
-
+        # Execute lower-bound trials per dependency and accumulate final replacement strings for persistence.
         dependency_results: list[DependencyOutcome] = []
-        replacements: dict[str, str] = dict(dev_replacements)
+        replacements: dict[str, str] = {}
         package_label = f"{plan.project_path} ({plan.package_name})"
 
-        if not targets:
-            skipped.append("No eligible dependencies with upper bounds in project.dependencies.")
-
-        # Run per-dependency trial generation + validation in the isolated temp workspace.
         for target in targets:
             versions = catalog.get(target.name)
             outcome = _optimize_dependency(
@@ -1022,7 +902,7 @@ def _to_json(package_outcome: PackageOutcome) -> dict:
                 "skipped_reason": dependency.skipped_reason,
                 "attempts": [
                     {
-                        "trial_upper": attempt.trial_upper,
+                        "trial_lower": attempt.trial_lower,
                         "status": attempt.status,
                         "error": attempt.error,
                     }
@@ -1042,11 +922,11 @@ def _apply_package_replacements(path: Path, replacements: dict[str, str]) -> Non
 
 
 def main() -> None:
-    """Run package-by-package dependency upper-bound discovery and updates."""
+    """Run package-by-package dependency lower-bound discovery and updates."""
     parser = argparse.ArgumentParser(
         description=(
-            "Raise dependency upper bounds per package, refresh dev pins to latest exact versions, "
-            "run check+test in isolated uv envs, and write a JSON report while updating pyproject files."
+            "Lower dependency bounds per package, run lint+test in isolated uv envs, "
+            "and write a JSON report while updating pyproject files."
         )
     )
     parser.add_argument(
@@ -1071,18 +951,18 @@ def main() -> None:
         "--max-candidates",
         type=int,
         default=0,
-        help="Maximum candidate upper bounds per dependency (0 = no limit).",
+        help="Maximum candidate lower bounds per dependency (0 = no limit).",
     )
     parser.add_argument(
         "--output-json",
-        default="scripts/dependency-range-results.json",
+        default="scripts/dependencies/dependency-lower-bound-results.json",
         help="Path to incremental JSON output report.",
     )
     parser.add_argument(
         "--version-source",
         choices=("pypi", "lock"),
         default="pypi",
-        help="Version source for candidate upper bounds.",
+        help="Version source for candidate lower bounds.",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -1093,14 +973,13 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Validate candidates but do not update pyprojects.")
     args = parser.parse_args()
 
-    # Preparation/target collection: resolve workspace metadata and package execution plans
-    # up front so each worker can operate independently on a package-local temp copy.
-    workspace_pyproject = Path(__file__).parent.parent / "pyproject.toml"
+    workspace_pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     workspace_root = workspace_pyproject.parent
     package_filters = set(args.packages) if args.packages else None
     dependency_filters = {name.lower() for name in args.dependencies} if args.dependencies else None
     output_json_path = (workspace_root / args.output_json).resolve()
 
+    # Phase 1: prepare shared workspace metadata and collect package execution plans.
     package_map = _build_workspace_package_map(workspace_root)
     internal_graph = _build_internal_graph(workspace_root, package_map)
     lock_versions = _load_lock_versions(workspace_root)
@@ -1132,36 +1011,11 @@ def main() -> None:
             )
         )
 
-    root_package_name = _load_package_name(workspace_pyproject)
-    with workspace_pyproject.open("rb") as f:
-        root_config = tomli.load(f)
-    root_project_section = root_config.get("project", {})
-    root_optional_dependencies = root_project_section.get("optional-dependencies", {}) or {}
-    root_dependency_groups = root_config.get("dependency-groups", {}) or {}
-    if (
-        not package_filters
-        or "." in package_filters
-        or "./" in package_filters
-        or "root" in package_filters
-        or root_package_name in package_filters
-    ):
-        plans.append(
-            PackagePlan(
-                project_path=Path("."),
-                package_name=root_package_name,
-                pyproject_path=workspace_pyproject,
-                internal_editables=[],
-                include_dev_group="dev" in root_dependency_groups,
-                include_dev_extra="dev" in root_optional_dependencies,
-                optional_extras=sorted(name for name in root_optional_dependencies if name not in {"all", "dev"}),
-            )
-        )
-
     if not plans:
         print("[yellow]No packages matched the selection.[/yellow]")
         return
 
-    # Aggregation + persistence/reporting: initialize the incremental JSON report.
+    # Phase 2: initialize incremental report state before running package validations in parallel.
     report: dict = {
         "started_at": _utc_now(),
         "workspace_root": str(workspace_root),
@@ -1175,7 +1029,7 @@ def main() -> None:
         },
     }
     _write_json(output_json_path, report)
-    print(f"[cyan]Writing dependency-range report to {output_json_path}[/cyan]")
+    print(f"[cyan]Writing dependency-lower-bound report to {output_json_path}[/cyan]")
 
     package_outcomes: list[PackageOutcome] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallelism)) as executor:
@@ -1183,7 +1037,6 @@ def main() -> None:
             executor.submit(
                 _process_package,
                 plan,
-                workspace_root=workspace_root,
                 catalog=catalog,
                 dependency_filters=dependency_filters,
                 dry_run=args.dry_run,
@@ -1213,7 +1066,7 @@ def main() -> None:
             if outcome.changed and not args.dry_run:
                 _apply_package_replacements(plan.pyproject_path, outcome.replacements)
 
-            # Persist each completed package outcome so long runs keep a live report.
+            # Phase 3: aggregate outcomes, persist incremental JSON snapshots, and emit per-package progress.
             report["packages"].append(_to_json(outcome))
             report["summary"]["packages_changed"] = sum(1 for value in package_outcomes if value.changed)
             report["summary"]["dependencies_changed"] = sum(
@@ -1225,7 +1078,7 @@ def main() -> None:
             if outcome.error:
                 print(f"[red]{plan.project_path}: package execution error[/red]")
             elif outcome.changed:
-                print(f"[green]{plan.project_path}: updated dependency bounds[/green]")
+                print(f"[green]{plan.project_path}: updated dependency lower bounds[/green]")
             else:
                 print(f"[yellow]{plan.project_path}: no changes[/yellow]")
 

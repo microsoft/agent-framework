@@ -22,15 +22,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import tomli
-from _dependency_bounds_runtime import extend_command_with_runtime_tools
-from _dependency_bounds_upper_impl import (
+from rich import print
+from scripts.dependencies._dependency_bounds_runtime import extend_command_with_runtime_tools
+from scripts.dependencies._dependency_bounds_upper_impl import (
     _build_internal_graph,
     _build_workspace_package_map,
     _load_package_name,
     _resolve_internal_editables,
 )
-from rich import print
-from task_runner import discover_projects, extract_poe_tasks
+from scripts.task_runner import discover_projects, extract_poe_tasks
+
+_LOWER_IMPL_MODULE = "scripts.dependencies._dependency_bounds_lower_impl"
+_UPPER_IMPL_MODULE = "scripts.dependencies._dependency_bounds_upper_impl"
 
 
 @dataclass
@@ -248,7 +251,7 @@ def _run_test_mode(
 def _build_optimizer_command(
     *,
     workspace_root: Path,
-    script_name: str,
+    module_name: str,
     package: str,
     dependencies: list[str] | None,
     parallelism: int,
@@ -260,7 +263,8 @@ def _build_optimizer_command(
 ) -> list[str]:
     command = [
         sys.executable,
-        str(workspace_root / "scripts" / script_name),
+        "-m",
+        module_name,
         "--packages",
         package,
         "--parallelism",
@@ -284,7 +288,7 @@ def _build_optimizer_command(
 def _run_optimizer_mode(
     *,
     workspace_root: Path,
-    script_name: str,
+    module_name: str,
     package: str,
     dependencies: list[str] | None,
     parallelism: int,
@@ -296,7 +300,7 @@ def _run_optimizer_mode(
 ) -> int:
     command = _build_optimizer_command(
         workspace_root=workspace_root,
-        script_name=script_name,
+        module_name=module_name,
         package=package,
         dependencies=dependencies,
         parallelism=parallelism,
@@ -378,7 +382,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--test-output-json",
-        default="scripts/dependency-bounds-test-results.json",
+        default="scripts/dependencies/dependency-bounds-test-results.json",
         help="Output report path for test mode.",
     )
     args = parser.parse_args()
@@ -386,7 +390,7 @@ def main() -> None:
     if args.mode in {"lower", "upper", "both"} and not args.package:
         parser.error("--package is required when --mode is lower, upper, or both.")
 
-    workspace_root = Path(__file__).parent.parent
+    workspace_root = Path(__file__).resolve().parents[2]
 
     if args.mode == "test":
         exit_code = _run_test_mode(
@@ -401,7 +405,7 @@ def main() -> None:
     if args.mode == "lower":
         exit_code = _run_optimizer_mode(
             workspace_root=workspace_root,
-            script_name="_dependency_bounds_lower_impl.py",
+            module_name=_LOWER_IMPL_MODULE,
             package=args.package,
             dependencies=args.dependencies,
             parallelism=args.parallelism,
@@ -416,7 +420,7 @@ def main() -> None:
     if args.mode == "upper":
         exit_code = _run_optimizer_mode(
             workspace_root=workspace_root,
-            script_name="_dependency_bounds_upper_impl.py",
+            module_name=_UPPER_IMPL_MODULE,
             package=args.package,
             dependencies=args.dependencies,
             parallelism=args.parallelism,
@@ -432,7 +436,7 @@ def main() -> None:
     # already been validated; when `--output-json` is supplied, each pass gets its own suffixed report.
     lower_exit = _run_optimizer_mode(
         workspace_root=workspace_root,
-        script_name="_dependency_bounds_lower_impl.py",
+        module_name=_LOWER_IMPL_MODULE,
         package=args.package,
         dependencies=args.dependencies,
         parallelism=args.parallelism,
@@ -447,7 +451,7 @@ def main() -> None:
 
     upper_exit = _run_optimizer_mode(
         workspace_root=workspace_root,
-        script_name="_dependency_bounds_upper_impl.py",
+        module_name=_UPPER_IMPL_MODULE,
         package=args.package,
         dependencies=args.dependencies,
         parallelism=args.parallelism,

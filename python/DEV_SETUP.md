@@ -223,6 +223,8 @@ uv run poe install
 ```
 For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
 
+For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
+
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
 ```bash
@@ -309,6 +311,13 @@ Add an external dependency to a workspace project and run both validators for th
 ```bash
 uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
 ```
+
+#### `upgrade-dev-dependencies`
+Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+```bash
+uv run poe upgrade-dev-dependencies
+```
+Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Comprehensive Checks
 

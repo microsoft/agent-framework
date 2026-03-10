@@ -33,7 +33,7 @@ gaia = [
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
   "orjson>=3.8.0",
-  "pyarrow>=10.0.0",  # For reading parquet files
+  "pyarrow>=18.0.0",  # For reading parquet files
 ]
 
 # Lightning RL training module dependencies
@@ -56,19 +56,19 @@ math = [
 
 [dependency-groups]
 dev = [
-    "uv",
-    "ruff>=0.11.8",
-    "pytest>=8.4.1",
-    "mypy>=1.16.1",
-    "pyright>=1.1.402",
+    "uv==0.10.9",
+    "ruff==0.15.5",
+    "pytest==9.0.2",
+    "mypy==1.19.1",
+    "pyright==1.1.408",
     #tasks
-    "poethepoet>=0.36.0",
-    "rich",
-    "tomli",
-    "tomli-w",
+    "poethepoet==0.42.1",
+    "rich==13.7.1",
+    "tomli==2.4.0",
+    "tomli-w==1.2.0",
     # tau2 from source (not available on PyPI)
     "tau2@ git+https://github.com/sierra-research/tau2-bench@5ba9e3e56db57c5e4114bf7f901291f09b2c5619",
-    "prek>=0.3.2",
+    "prek==0.3.4",
 ]
 
 [project.scripts]

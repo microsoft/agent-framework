@@ -28,7 +28,7 @@ dependencies = [
 ]
 [dependency-groups]
 dev = [
-    "types-PyYaml"
+    "types-PyYaml==6.0.12.20250915"
 ]
 
 [tool.uv]

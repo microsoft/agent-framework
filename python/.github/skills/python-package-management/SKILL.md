@@ -42,6 +42,9 @@ uv run poe venv --python 3.12
 # Intentionally upgrade a specific dependency to reduce lockfile conflicts
 uv lock --upgrade-package <dependency-name> && uv run poe install
 
+# Refresh all dev dependency pins, lockfile, and validation in one run
+uv run poe upgrade-dev-dependencies
+
 # First, run workspace-wide lower/upper compatibility gates
 uv run poe validate-dependency-bounds-test
 # Defaults to --project "*"; pass a package to scope test mode
@@ -62,6 +65,7 @@ uv run poe add-dependency-and-validate-bounds --project <workspace-package-name>
 - For dependency changes, run workspace-wide bound gates first, then package-scoped bound expansion (`--mode both`) to keep minimum and maximum constraints current.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
+- Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
 
 ## Lazy Loading Pattern
 

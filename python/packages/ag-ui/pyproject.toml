@@ -30,8 +30,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "httpx>=0.27.0",
+    "pytest==9.0.2",
+    "httpx==0.28.1",
 ]
 
 [build-system]

@@ -28,22 +28,22 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "uv>=0.9,<1.0.0",
-    "flit>=3.12.0",
-    "ruff>=0.11.8",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.2.1",
-    "pytest-xdist[psutil]>=3.8.0",
-    "pytest-timeout>=2.3.1",
-    "pytest-retry>=1",
-    "mypy>=1.16.1",
-    "pyright>=1.1.402",
+    "uv==0.10.9",
+    "flit==3.12.0",
+    "ruff==0.15.5",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.0.0",
+    "pytest-xdist[psutil]==3.8.0",
+    "pytest-timeout==2.4.0",
+    "pytest-retry==1.7.0",
+    "mypy==1.19.1",
+    "pyright==1.1.408",
     #tasks
-    "poethepoet>=0.36.0",
-    "rich",
-    "tomli",
-    "prek>=0.3.2",
+    "poethepoet==0.42.1",
+    "rich==13.7.1",
+    "tomli==2.4.0",
+    "prek==0.3.4",
 ]
 
 [tool.uv]
@@ -287,6 +287,22 @@ sequence = [
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
 
+[tool.poe.tasks.upgrade-dev-dependency-pins]
+cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
+
+[tool.poe.tasks.upgrade-lockfile]
+cmd = "uv lock --upgrade"
+
+[tool.poe.tasks.upgrade-dev-dependencies]
+sequence = [
+    { ref = "upgrade-dev-dependency-pins" },
+    { ref = "upgrade-lockfile" },
+    { ref = "install" },
+    { ref = "check" },
+    { ref = "typing" },
+    { ref = "test" },
+]
+
 [tool.poe.tasks.add-dependency-to-project]
 cmd = "uv add --package ${project} ${dependency}"
 args = [
@@ -295,25 +311,25 @@ args = [
 ]
 
 [tool.poe.tasks.validate-dependency-bounds-test]
-shell = "python scripts/validate_dependency_bounds.py --mode test --package \"$project\""
+shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
 args = [{ name = "project", default = "*", options = ["-p", "--project"] }]
 
 [tool.poe.tasks.validate-dependency-lower-bounds-project]
-cmd = "python scripts/validate_dependency_bounds.py --mode lower --package ${project} --dependencies ${dependency}"
+cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode lower --package ${project} --dependencies ${dependency}"
 args = [
     { name = "project", options = ["-p", "--project"] },
     { name = "dependency", options = ["-d", "--dependency"] },
 ]
 
 [tool.poe.tasks.validate-dependency-ranges-project]
-cmd = "python scripts/validate_dependency_bounds.py --mode upper --package ${project} --dependencies ${dependency}"
+cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode upper --package ${project} --dependencies ${dependency}"
 args = [
     { name = "project", options = ["-p", "--project"] },
     { name = "dependency", options = ["-d", "--dependency"] },
 ]
 
 [tool.poe.tasks.validate-dependency-bounds-expand]
-cmd = "python scripts/validate_dependency_bounds.py --mode ${mode} --package ${project} --dependencies ${dependency}"
+cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode ${mode} --package ${project} --dependencies ${dependency}"
 args = [
     { name = "mode", default = "both", options = ["-m", "--mode"] },
     { name = "project", options = ["-p", "--project"] },

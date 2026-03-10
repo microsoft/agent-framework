@@ -44,7 +44,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dependency-range-results
-          path: python/scripts/dependency-range-results.json
+          path: python/scripts/dependencies/dependency-range-results.json
           if-no-files-found: warn
 
       - name: Create issues for failed dependency candidates
@@ -54,7 +54,7 @@ jobs:
         with:
           script: |
             const fs = require("fs")
-            const reportPath = "python/scripts/dependency-range-results.json"
+            const reportPath = "python/scripts/dependencies/dependency-range-results.json"
 
             if (!fs.existsSync(reportPath)) {
               core.warning(`No dependency range report found at ${reportPath}`)
