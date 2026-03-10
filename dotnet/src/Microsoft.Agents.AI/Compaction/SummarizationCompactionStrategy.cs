@@ -1,9 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -121,7 +120,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         }
 
         // Mark oldest non-system groups for summarization one at a time until the target is met
-        StringBuilder conversationText = new();
+        List<ChatMessage> summarizationMessages = [new ChatMessage(ChatRole.System, this.SummarizationPrompt)];
         int summarized = 0;
         int insertIndex = -1;
 
@@ -138,15 +137,8 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
                 insertIndex = i;
             }
 
-            // Build text representation of the group for summarization
-            foreach (ChatMessage message in group.Messages)
-            {
-                string text = message.Text;
-                if (!string.IsNullOrEmpty(text))
-                {
-                    conversationText.AppendLine($"{message.Role}: {text}");
-                }
-            }
+            // Collect messages from this group for summarization
+            summarizationMessages.AddRange(group.Messages);
 
             group.IsExcluded = true;
             group.ExcludeReason = $"Summarized by {nameof(SummarizationCompactionStrategy)}";
@@ -161,14 +153,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
 
         // Generate summary using the chat client (single LLM call for all marked groups)
         ChatResponse response = await this.ChatClient.GetResponseAsync(
-            [
-                new ChatMessage(ChatRole.System, this.SummarizationPrompt),
-                .. index.Groups
-                    .Where(g => !g.IsExcluded && g.Kind == MessageGroupKind.System)
-                    .SelectMany(g => g.Messages),
-                new ChatMessage(ChatRole.User, conversationText.ToString()),
-                new ChatMessage(ChatRole.User, "Summarize the conversation above concisely."),
-            ],
+            summarizationMessages,
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
         string summaryText = string.IsNullOrWhiteSpace(response.Text) ? "[Summary unavailable]" : response.Text;
