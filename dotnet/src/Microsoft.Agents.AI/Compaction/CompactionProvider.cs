@@ -55,7 +55,7 @@ public sealed class CompactionProvider : AIContextProvider
     public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null, ILoggerFactory? loggerFactory = null)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
-        stateKey ??= compactionStrategy.GetType().Name;
+        stateKey ??= this._compactionStrategy.GetType().Name;
         this.StateKeys = [stateKey];
         this._sessionState = new ProviderSessionState<State>(
             _ => new State(),

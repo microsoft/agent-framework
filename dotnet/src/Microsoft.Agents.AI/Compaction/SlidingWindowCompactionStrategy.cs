@@ -56,7 +56,7 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     public SlidingWindowCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.MinimumPreserved = minimumPreserved;
+        this.MinimumPreserved = EnsureNonNegative(minimumPreserved);
     }
 
     /// <summary>

@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.Extensions.AI;
 using Microsoft.ML.Tokenizers;
 using Microsoft.Shared.DiagnosticIds;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -43,8 +44,8 @@ public sealed class MessageIndex
     /// <param name="tokenizer">An optional tokenizer retained for computing token counts when adding new groups.</param>
     public MessageIndex(IList<MessageGroup> groups, Tokenizer? tokenizer = null)
     {
+        this.Groups = Throw.IfNull(groups, nameof(groups));
         this.Tokenizer = tokenizer;
-        this.Groups = groups;
 
         // Restore turn counter and last processed message from the groups
         for (int index = groups.Count - 1; index >= 0; --index)
@@ -331,7 +332,7 @@ public sealed class MessageIndex
     /// <summary>
     /// Returns all groups that belong to the specified user turn.
     /// </summary>
-    /// <param name="turnIndex">The zero-based turn index.</param>
+    /// <param name="turnIndex">The desired turn index.</param>
     /// <returns>The groups belonging to the turn, in order.</returns>
     public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
 

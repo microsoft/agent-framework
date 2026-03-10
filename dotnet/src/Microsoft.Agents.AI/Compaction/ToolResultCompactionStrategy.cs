@@ -59,7 +59,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreserved = DefaultMinimumPreserved, CompactionTrigger? target = null)
         : base(trigger, target)
     {
-        this.MinimumPreserved = minimumPreserved;
+        this.MinimumPreserved = EnsureNonNegative(minimumPreserved);
     }
 
     /// <summary>
@@ -82,7 +82,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             }
         }
 
-        int protectedStart = Math.Max(0, nonSystemIncludedIndices.Count - this.MinimumPreserved);
+        int protectedStart = EnsureNonNegative(nonSystemIncludedIndices.Count - this.MinimumPreserved);
         HashSet<int> protectedGroupIndices = [];
         for (int i = protectedStart; i < nonSystemIncludedIndices.Count; i++)
         {

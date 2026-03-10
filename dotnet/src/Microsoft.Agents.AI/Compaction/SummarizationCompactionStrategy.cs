@@ -79,7 +79,7 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         : base(trigger, target)
     {
         this.ChatClient = Throw.IfNull(chatClient);
-        this.MinimumPreserved = minimumPreserved;
+        this.MinimumPreserved = EnsureNonNegative(minimumPreserved);
         this.SummarizationPrompt = summarizationPrompt ?? DefaultSummarizationPrompt;
     }
 

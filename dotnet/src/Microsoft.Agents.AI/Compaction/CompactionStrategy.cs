@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
@@ -153,4 +154,11 @@ public abstract class CompactionStrategy
 
         return compacted;
     }
+
+    /// <summary>
+    /// Ensures the provided value is not a negative number.
+    /// </summary>
+    /// <param name="value">The target value.</param>
+    /// <returns>0 if negative; otherwise the value</returns>
+    protected static int EnsureNonNegative(int value) => Math.Max(0, value);
 }
