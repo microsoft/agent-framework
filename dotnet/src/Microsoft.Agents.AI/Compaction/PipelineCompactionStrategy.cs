@@ -20,9 +20,8 @@ namespace Microsoft.Agents.AI.Compaction;
 /// such as summarizing older messages first and then truncating to fit a token budget.
 /// </para>
 /// <para>
-/// The pipeline's own <see cref="CompactionStrategy.Trigger"/> is evaluated first. If it returns
-/// <see langword="false"/>, none of the child strategies are executed. Each child strategy also
-/// evaluates its own trigger independently.
+/// The pipeline itself always executes while each child strategy evaluates its own
+/// <see cref="CompactionStrategy.Trigger"/> independently to decide whether it should compact.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]

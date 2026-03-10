@@ -103,17 +103,15 @@ public sealed class MessageIndex
     /// </param>
     /// <remarks>
     /// <para>
-    /// Uses reference equality on the last processed message to detect changes. If the last
-    /// processed message is found within <paramref name="allMessages"/>, only the messages
-    /// after that position are processed and appended as new groups. Existing groups and their
-    /// compaction state (exclusions) are preserved.
+    /// Uses equality on the last processed message to detect changes.  Only the messages after that position are
+    /// processed and appended as new groups. Existing groups and their compaction state (exclusions) are preserved.
     /// </para>
     /// <para>
-    /// If the last processed message is not found (e.group., the message list was replaced entirely
+    /// If the last processed message is not found (e.g., the message list was replaced entirely
     /// or a sliding window shifted past it), all groups are cleared and rebuilt from scratch.
     /// </para>
     /// <para>
-    /// If the last message in <paramref name="allMessages"/> is the same reference as the last
+    /// If the last message in <paramref name="allMessages"/> is matches the last
     /// processed message, no work is performed.
     /// </para>
     /// </remarks>
