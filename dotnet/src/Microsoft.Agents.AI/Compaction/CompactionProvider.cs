@@ -43,7 +43,9 @@ public sealed class CompactionProvider : AIContextProvider
     /// </summary>
     /// <param name="compactionStrategy">The compaction strategy to apply before each invocation.</param>
     /// <param name="stateKey">
-    /// An optional key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// An optional key used to store the provider state in the <see cref="AgentSession.StateBag"/>.  Provide
+    /// an explicit value if configuring multiple agents with different compaction strategies that will interact
+    /// in the same session.
     /// </param>
     /// <param name="loggerFactory">
     /// An optional <see cref="ILoggerFactory"/> used to create a logger for provider diagnostics.
@@ -53,7 +55,7 @@ public sealed class CompactionProvider : AIContextProvider
     public CompactionProvider(CompactionStrategy compactionStrategy, string? stateKey = null, ILoggerFactory? loggerFactory = null)
     {
         this._compactionStrategy = Throw.IfNull(compactionStrategy);
-        stateKey ??= $"{nameof(CompactionProvider)}:{Convert.ToBase64String(BitConverter.GetBytes(compactionStrategy.GetHashCode()))}";
+        stateKey ??= compactionStrategy.GetType().Name;
         this.StateKeys = [stateKey];
         this._sessionState = new ProviderSessionState<State>(
             _ => new State(),
