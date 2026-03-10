@@ -90,11 +90,6 @@ public class CheckpointParentTests
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
-            if (checkpoints.Count >= 3)
-            {
-                cts.Cancel();
-            }
-
             if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
             {
                 checkpoints.Add(startCp);
@@ -102,6 +97,11 @@ public class CheckpointParentTests
             else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
                 checkpoints.Add(cp);
+            }
+
+            if (checkpoints.Count >= 3)
+            {
+                cts.Cancel();
             }
         }
 
@@ -148,13 +148,18 @@ public class CheckpointParentTests
         using CancellationTokenSource cts = new();
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
-            if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                firstRunCheckpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
                 firstRunCheckpoints.Add(cp);
-                if (firstRunCheckpoints.Count >= 2)
-                {
-                    cts.Cancel();
-                }
+            }
+
+            if (firstRunCheckpoints.Count >= 2)
+            {
+                cts.Cancel();
             }
         }
 
@@ -171,13 +176,18 @@ public class CheckpointParentTests
         using CancellationTokenSource cts2 = new();
         await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
         {
-            if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                resumedCheckpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
                 resumedCheckpoints.Add(cp);
-                if (resumedCheckpoints.Count >= 1)
-                {
-                    cts2.Cancel();
-                }
+            }
+
+            if (resumedCheckpoints.Count >= 1)
+            {
+                cts2.Cancel();
             }
         }
 
