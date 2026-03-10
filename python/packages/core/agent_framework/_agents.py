@@ -1090,11 +1090,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             additional_function_arguments["session"] = active_session
 
         # Build options dict from run() options merged with provided options
+        # Determine conversation_id: honor explicit runtime option first, then conditionally forward service_session_id
+        explicit_conversation_id = opts.pop("conversation_id", None)
+
+        # Check if any history provider has load_messages=False (meaning it wants to manage history itself)
+        has_history_provider_disabling_load = any(
+            isinstance(p, BaseHistoryProvider) and not p.load_messages
+            for p in self.context_providers
+        )
+
+        # Only auto-forward service_session_id if:
+        # 1. No explicit conversation_id provided in runtime options
+        # 2. No history provider is explicitly disabling message loading
+        should_forward_service_session = (
+            active_session
+            and active_session.service_session_id
+            and not explicit_conversation_id
+            and not has_history_provider_disabling_load
+        )
+
         run_opts: dict[str, Any] = {
             "model_id": opts.pop("model_id", None),
-            "conversation_id": active_session.service_session_id
-            if active_session
-            else opts.pop("conversation_id", None),
+            "conversation_id": explicit_conversation_id if explicit_conversation_id else (
+                active_session.service_session_id if should_forward_service_session else None
+            ),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "additional_function_arguments": additional_function_arguments or None,
             "frequency_penalty": opts.pop("frequency_penalty", None),
