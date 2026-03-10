@@ -47,8 +47,7 @@ public sealed class MessageGroup
     /// <param name="byteCount">The total UTF-8 byte count of the text content in the messages.</param>
     /// <param name="tokenCount">The token count for the messages, computed by a tokenizer or estimated.</param>
     /// <param name="turnIndex">
-    /// The zero-based user turn this group belongs to, or <see langword="null"/> for groups that precede
-    /// the first user message (e.g., system messages).
+    /// The user turn this group belongs to, or <see langword="null"/> for <see cref="MessageGroupKind.System"/>.
     /// </param>
     [JsonConstructor]
     internal MessageGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)

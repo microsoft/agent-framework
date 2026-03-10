@@ -93,7 +93,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
             // Apply pre-retrieval reduction if configured
-            await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
+            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
 
         return state.Messages;
@@ -111,11 +111,11 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
         {
             // Apply pre-write reduction strategy if configured
-            await CompactMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
+            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private static async Task CompactMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
+    private static async Task ReduceMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
     {
         state.Messages = [.. await reducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
         return;
