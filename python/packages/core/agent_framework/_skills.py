@@ -696,10 +696,10 @@ class SkillsProvider(BaseContextProvider):
         skill is registered, appends the skill-list system prompt and the
         ``load_skill`` / ``read_skill_resource`` tools to *context*.
 
-        When a script runner is provided, or a skill defines a code-based
-        script, the system prompt also includes script-runner instructions
-        (embedded via the ``{runner_instructions}`` placeholder), and the
-        ``run_skill_script`` tool is included alongside the base tools.
+        When any registered skill defines one or more scripts (file-based or
+        code-based), the system prompt also includes script-runner
+        instructions (embedded via the ``{runner_instructions}`` placeholder),
+        and the ``run_skill_script`` tool is included alongside the base tools.
 
         Args:
             agent: The agent instance about to run.
