@@ -2459,6 +2459,23 @@ def test_from_function_result_with_only_rich_content_list():
     assert result.items[0].type == "data"
 
 
+def test_function_result_items_roundtrip_via_dict():
+    """Test that items survive a to_dict/from_dict round-trip as Content objects."""
+    content_list = [
+        Content.from_text("done"),
+        Content.from_data(data=b"png_data", media_type="image/png"),
+    ]
+    original = Content.from_function_result(call_id="call-rt", result=content_list)
+    restored = Content.from_dict(original.to_dict())
+    assert restored.items is not None
+    assert len(restored.items) == 2
+    assert isinstance(restored.items[0], Content)
+    assert restored.items[0].type == "text"
+    assert restored.items[0].text == "done"
+    assert isinstance(restored.items[1], Content)
+    assert restored.items[1].type == "data"
+
+
 def test_from_function_result_with_non_content_list():
     """Test Content.from_function_result with a list of non-Content objects falls back to str."""
     result = Content.from_function_result(call_id="test-789", result=["hello", "world"])

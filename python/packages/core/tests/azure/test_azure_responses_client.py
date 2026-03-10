@@ -659,4 +659,5 @@ async def test_azure_openai_responses_client_tool_rich_content_image() -> None:
         assert isinstance(response, ChatResponse)
         assert response.text is not None
         assert len(response.text) > 0
+        # sample_image.jpg contains a photo of a house; the model should mention it.
         assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"

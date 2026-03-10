@@ -1337,7 +1337,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     ),
                 ) from e
 
-            # Convert result to MCP content
+            # Convert result to MCP content.
+            # Currently only text items are forwarded over MCP; rich content
+            # (images, audio) is not yet supported in the MCP server path and
+            # is silently omitted.
             mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
             for c in result:
                 if c.type == "text" and c.text:

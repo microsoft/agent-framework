@@ -1307,6 +1307,8 @@ class Content:
             remaining["inputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in input_items]  # type: ignore[reportUnknownVariableType]
         if (output_items := remaining.get("outputs")) and isinstance(output_items, list):
             remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
+        if (content_items := remaining.get("items")) and isinstance(content_items, list):
+            remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
 
         return cls(
             type=content_type,
