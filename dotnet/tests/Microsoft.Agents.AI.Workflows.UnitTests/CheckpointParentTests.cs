@@ -283,9 +283,9 @@ public class CheckpointParentTests
         using CancellationTokenSource cts = new();
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
-            if (evt is SuperStepCompletedEvent completedEvent && completedEvent.CompletionInfo?.Checkpoint is { } startCp)
+            if (evt is SuperStepCompletedEvent completedEvent && completedEvent.CompletionInfo?.Checkpoint is { } completedCp)
             {
-                firstRunCheckpoints.Add(startCp);
+                firstRunCheckpoints.Add(completedCp);
             }
         }
 
