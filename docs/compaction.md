@@ -4,7 +4,7 @@ Long-running agent sessions accumulate chat history that can exceed a model's co
 
 ## How It Works
 
-Compaction is wired in as an `AIContextProvider` (`CompactionProvider`), which means it runs before **every** model invocation — including each iteration of the function-calling loop. This is important: the context window is actively managed throughout a tool-use chain, not just at the start of a turn.
+Compaction is wired in as an `AIContextProvider` (`CompactionProvider`), which means it runs before **every** model invocation — including each iteration of the function-calling loop. This is important: the context window is actively managed throughout a tool-use chain, not just at the start of an agent invocation.
 
 The provider groups messages into atomic units, so tool-call/result pairs are always treated as a single unit and never split during compaction.
 
@@ -51,4 +51,4 @@ PipelineCompactionStrategy compactionPipeline =
         new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(0x8000)));
 ```
 
-See the [Agent_Step18_CompactionPipeline](../dotnet/samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Program.cs) sample for a complete working example.
+See the [Agent_Step18_CompactionPipeline](https://github.com/microsoft/agent-framework/dotnet/samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Program.cs) sample for a complete working example.
