@@ -1204,7 +1204,7 @@ public class MessageIndexTests
         public override PreTokenizer? PreTokenizer => null;
         public override Normalizer? Normalizer => null;
 
-        protected override EncodeResults<EncodedToken> EncodeToTokens(string? text, System.ReadOnlySpan<char> textSpan, EncodeSettings settings)
+        protected override EncodeResults<EncodedToken> EncodeToTokens(string? text, ReadOnlySpan<char> textSpan, EncodeSettings settings)
         {
             // Simple word-based encoding
             string input = text ?? textSpan.ToString();
@@ -1212,7 +1212,7 @@ public class MessageIndexTests
             {
                 return new EncodeResults<EncodedToken>
                 {
-                    Tokens = System.Array.Empty<EncodedToken>(),
+                    Tokens = [],
                     CharsConsumed = 0,
                     NormalizedText = null,
                 };
@@ -1223,7 +1223,7 @@ public class MessageIndexTests
             int offset = 0;
             for (int i = 0; i < words.Length; i++)
             {
-                tokens.Add(new EncodedToken(i, words[i], new System.Range(offset, offset + words[i].Length)));
+                tokens.Add(new EncodedToken(i, words[i], new Range(offset, offset + words[i].Length)));
                 offset += words[i].Length + 1;
             }
 
@@ -1235,7 +1235,7 @@ public class MessageIndexTests
             };
         }
 
-        public override OperationStatus Decode(IEnumerable<int> ids, System.Span<char> destination, out int idsConsumed, out int charsWritten)
+        public override OperationStatus Decode(IEnumerable<int> ids, Span<char> destination, out int idsConsumed, out int charsWritten)
         {
             idsConsumed = 0;
             charsWritten = 0;
