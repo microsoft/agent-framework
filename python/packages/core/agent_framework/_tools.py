@@ -647,6 +647,9 @@ class FunctionTool(SerializationMixin):
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a FunctionTool to the JSON Schema function specification format.
 
+        The parameter schema is sanitized to remove JSON Schema features
+        (e.g. ``$ref``, ``$defs``, ``$schema``) that LLM APIs may not accept.
+
         Returns:
             A dictionary containing the function specification in JSON Schema format.
         """
@@ -655,7 +658,7 @@ class FunctionTool(SerializationMixin):
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters(),
+                "parameters": sanitize_schema_for_api(self.parameters()),
             },
         }
 
@@ -666,6 +669,97 @@ class FunctionTool(SerializationMixin):
             return as_dict
         as_dict["input_model"] = self.parameters()  # Use cached parameters()
         return as_dict
+
+
+# Keys that are valid JSON Schema metadata but not accepted by most LLM APIs
+# when used in function tool parameter schemas.
+_UNSUPPORTED_SCHEMA_ROOT_KEYS: Final[frozenset[str]] = frozenset({
+    "$schema",
+    "$id",
+    "title",
+})
+
+
+def _resolve_refs(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    """Recursively resolve ``$ref`` references by inlining definitions.
+
+    Args:
+        schema: A JSON Schema node (possibly containing ``$ref``).
+        defs: The top-level ``$defs`` / ``definitions`` mapping to resolve against.
+
+    Returns:
+        A new dict with ``$ref`` pointers replaced by their resolved definitions.
+    """
+    if "$ref" in schema:
+        ref_path: str = schema["$ref"]
+        # Only handle local fragment references: #/$defs/Name or #/definitions/Name
+        for prefix in ("#/$defs/", "#/definitions/"):
+            if ref_path.startswith(prefix):
+                def_name = ref_path[len(prefix) :]
+                if def_name in defs:
+                    resolved = dict(defs[def_name])
+                    # Merge any sibling keys (e.g. description) from the referring node
+                    for k, v in schema.items():
+                        if k != "$ref" and k not in resolved:
+                            resolved[k] = v
+                    return _resolve_refs(resolved, defs)
+        # Unresolvable $ref — drop it and keep sibling keys as a best-effort fallback
+        return {k: v for k, v in schema.items() if k != "$ref"}
+
+    result: dict[str, Any] = {}
+    for key, value in schema.items():
+        if isinstance(value, dict):
+            result[key] = _resolve_refs(cast(dict[str, Any], value), defs)
+        elif isinstance(value, list):
+            result[key] = [
+                _resolve_refs(cast(dict[str, Any], item), defs) if isinstance(item, dict) else item
+                for item in cast(list[Any], value)
+            ]
+        else:
+            result[key] = value
+    return result
+
+
+def sanitize_schema_for_api(schema: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize a JSON Schema for use as LLM function-tool parameters.
+
+    MCP servers may return ``inputSchema`` dicts that contain standard JSON
+    Schema features (``$schema``, ``$defs``, ``$ref``, ``title``, etc.) which
+    many LLM API backends do not accept.  This function produces a clean copy
+    suitable for the ``parameters`` field of a function-tool definition.
+
+    The original *schema* dict is never mutated.
+
+    Args:
+        schema: The raw JSON Schema dict (e.g. from ``tool.inputSchema``).
+
+    Returns:
+        A sanitized deep copy with unsupported fields removed, ``$ref``
+        pointers resolved inline, and ``type`` defaulting to ``"object"``
+        when ``properties`` is present.
+    """
+    if not schema:
+        return {"type": "object", "properties": {}}
+
+    # Collect $defs / definitions before deep-copying the whole tree
+    defs: dict[str, Any] = schema.get("$defs", schema.get("definitions", {}))
+
+    # Resolve $ref pointers inline (also deep-copies while traversing)
+    sanitized = _resolve_refs(schema, defs)
+
+    # Strip unsupported root-level keys
+    for key in _UNSUPPORTED_SCHEMA_ROOT_KEYS:
+        sanitized.pop(key, None)
+
+    # Remove $defs / definitions (no longer needed after resolution)
+    sanitized.pop("$defs", None)
+    sanitized.pop("definitions", None)
+
+    # Ensure top-level type is "object" when properties are present
+    if "properties" in sanitized and "type" not in sanitized:
+        sanitized["type"] = "object"
+
+    return sanitized
 
 
 ToolTypes: TypeAlias = FunctionTool | MCPTool | Mapping[str, Any] | object
