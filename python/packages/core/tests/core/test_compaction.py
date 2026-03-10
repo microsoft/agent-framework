@@ -35,9 +35,6 @@ from agent_framework._compaction import (
     append_compaction_message,
     extend_compaction_messages,
 )
-    included_messages,
-    included_token_count,
-)
 
 
 def _assistant_function_call(call_id: str) -> Message:
