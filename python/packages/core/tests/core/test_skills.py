@@ -1818,7 +1818,7 @@ class TestSkillScript:
     def test_path_set_explicitly(self) -> None:
         from agent_framework import SkillScript
 
-        script = SkillScript(name="gen.py", function=lambda: None, path="/skills/my-skill/scripts/gen.py")
+        script = SkillScript(name="gen.py", path="/skills/my-skill/scripts/gen.py")
         assert script.path == "/skills/my-skill/scripts/gen.py"
 
     def test_create_with_function(self) -> None:
@@ -2164,7 +2164,7 @@ class TestSkillsProviderFactories:
         # A skill with both a code script and a file-based script
         skill = Skill(name="my-skill", description="test", content="body")
         skill.scripts.append(SkillScript(name="code-s", function=lambda: "ok"))
-        skill.scripts.append(SkillScript(name="file-s", function=lambda: "print('hi')", path="scripts/s1.py"))
+        skill.scripts.append(SkillScript(name="file-s", path="scripts/s1.py"))
 
         provider = SkillsProvider(skills=[skill])
         run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
@@ -2223,46 +2223,21 @@ class TestSkillsProviderFactories:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_script_with_path_and_function_delegates_to_executor(self) -> None:
-        """A script that has both a path and a function should be treated as
-        file-based and delegate to the executor rather than executing the
-        function directly."""
-        from agent_framework import CallbackSkillScriptExecutor, SkillScript
+    async def test_script_with_path_and_function_raises_error(self) -> None:
+        """A script cannot have both a path and a function."""
+        from agent_framework import SkillScript
 
-        executed_via_function = False
-
-        def my_function() -> str:
-            nonlocal executed_via_function
-            executed_via_function = True
-            return "direct"
-
-        skill = Skill(name="my-skill", description="test", content="body")
-        script = SkillScript(name="s1", function=my_function, path="scripts/s1.py")
-        skill.scripts.append(script)
-
-        async def executor_callback(skill: Any, script: Any, args: Any) -> str:
-            return "executor"
-
-        provider = SkillsProvider(
-            skills=[skill],
-            script_executor=CallbackSkillScriptExecutor(callback=executor_callback),
-        )
-        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")
-        result = await run_tool.func(skill_name="my-skill", script_name="s1")
-
-        assert result == "executor", "Script with path should delegate to executor"
-        assert not executed_via_function, "Function should not be called when path is set"
+        with pytest.raises(ValueError, match="must have either function or path, not both"):
+            SkillScript(name="s1", function=lambda: "direct", path="scripts/s1.py")
 
     @pytest.mark.asyncio
-    async def test_script_with_path_and_function_errors_without_executor(self) -> None:
-        """A script that has both a path and a function but no executor should
-        return an error rather than executing the function directly."""
+    async def test_script_with_path_errors_without_executor(self) -> None:
+        """A file-based script without an executor should return an error."""
         from agent_framework import SkillScript
 
         skill = Skill(name="my-skill", description="test", content="body")
-        # Code script so the tool is created, plus a path+function script
         skill.scripts.append(SkillScript(name="code-s", function=lambda: "ok"))
-        skill.scripts.append(SkillScript(name="path-s", function=lambda: "direct", path="scripts/s1.py"))
+        skill.scripts.append(SkillScript(name="path-s", path="scripts/s1.py"))
 
         provider = SkillsProvider(skills=[skill])
         run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "execute_skill_script")

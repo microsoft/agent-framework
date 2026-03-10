@@ -127,15 +127,15 @@ class SkillScript:
         This API is experimental and subject to change or removal
         in future versions without notice.
 
-    A script represents executable code that an agent can run.  It may
-    carry an inline ``function`` callable (code-defined scripts) and/or
+    A script represents executable code that an agent can run.  It holds
+    either an inline ``function`` callable (code-defined scripts) or
     a ``path`` to a script file on disk (file-based scripts).
+    Exactly one must be provided.
 
-    When ``function`` is set and ``path`` is ``None`` the script is
-    treated as **code-based** and the function is invoked directly
-    in-process.  When ``path`` is set the script is treated as
-    **file-based** and delegated to the configured
-    :class:`SkillScriptExecutor`.
+    When ``function`` is set the script is treated as **code-based**
+    and the function is invoked directly in-process.  When ``path`` is
+    set the script is treated as **file-based** and delegated to the
+    configured :class:`SkillScriptExecutor`.
 
     Attributes:
         name: Script identifier.
@@ -173,12 +173,16 @@ class SkillScript:
             description: Optional human-readable summary.
             function: Callable (sync or async) that implements the script.
                 Set for code-defined scripts; ``None`` for file-based scripts.
+                Mutually exclusive with *path*.
             path: Relative path to the script file from the skill directory.
                 Set automatically for file-based scripts discovered from disk;
                 ``None`` for code-defined scripts.
+                Mutually exclusive with *function*.
         """
         if not name or not name.strip():
             raise ValueError("Script name cannot be empty.")
+        if function is not None and path is not None:
+            raise ValueError(f"Script '{name}' must have either function or path, not both.")
 
         self.name = name
         self.description = description
@@ -946,7 +950,7 @@ class SkillsProvider(BaseContextProvider):
             return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
 
         # Code-defined scripts: execute the function directly
-        if script.function is not None and script.path is None:
+        if script.function is not None:
             try:
                 if script._accepts_kwargs:  # pyright: ignore[reportPrivateUsage]
                     merged = {**kwargs, **(args or {})}
