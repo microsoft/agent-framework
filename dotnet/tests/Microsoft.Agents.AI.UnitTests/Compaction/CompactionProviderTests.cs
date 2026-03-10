@@ -356,7 +356,7 @@ public sealed class CompactionProviderTests
         Assert.Empty(state.MessageGroups);
 
         // Act
-        state.MessageGroups = [new MessageGroup(MessageGroupKind.User, [], 0, 0, 0)];
+        state.MessageGroups = [new CompactionMessageGroup(CompactionGroupKind.User, [], 0, 0, 0)];
 
         // Assert
         Assert.Single(state.MessageGroups);

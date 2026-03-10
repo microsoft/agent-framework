@@ -82,7 +82,7 @@ public sealed class CompactionProvider : AIContextProvider
         Throw.IfNull(messages);
 
         List<ChatMessage> messageList = messages as List<ChatMessage> ?? [.. messages];
-        MessageIndex messageIndex = MessageIndex.Create(messageList);
+        CompactionMessageIndex messageIndex = CompactionMessageIndex.Create(messageList);
 
         await compactionStrategy.CompactAsync(messageIndex, logger, cancellationToken).ConfigureAwait(false);
 
@@ -126,7 +126,7 @@ public sealed class CompactionProvider : AIContextProvider
 
         State state = this._sessionState.GetOrInitializeState(session);
 
-        MessageIndex messageIndex;
+        CompactionMessageIndex messageIndex;
         if (state.MessageGroups.Count > 0)
         {
             // Update existing index with any new messages appended since the last call.
@@ -136,7 +136,7 @@ public sealed class CompactionProvider : AIContextProvider
         else
         {
             // First pass — initialize the message index from scratch.
-            messageIndex = MessageIndex.Create(messageList);
+            messageIndex = CompactionMessageIndex.Create(messageList);
         }
 
         string strategyName = this._compactionStrategy.GetType().Name;
@@ -181,6 +181,6 @@ public sealed class CompactionProvider : AIContextProvider
         /// Gets or sets the message index groups used for incremental compaction updates.
         /// </summary>
         [JsonPropertyName("messagegroups")]
-        public List<MessageGroup> MessageGroups { get; set; } = [];
+        public List<CompactionMessageGroup> MessageGroups { get; set; } = [];
     }
 }

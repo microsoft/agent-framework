@@ -38,7 +38,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.TokensExceed(100000),
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -61,7 +61,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "First question"),
             new ChatMessage(ChatRole.Assistant, "First answer"),
@@ -92,7 +92,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Old question"),
@@ -119,7 +119,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -131,10 +131,10 @@ public class SummarizationCompactionStrategyTests
         await strategy.CompactAsync(index);
 
         // Assert — summary should be inserted after system, before preserved group
-        MessageGroup summaryGroup = index.Groups.First(g => g.Kind == MessageGroupKind.Summary);
+        CompactionMessageGroup summaryGroup = index.Groups.First(g => g.Kind == CompactionGroupKind.Summary);
         Assert.NotNull(summaryGroup);
         Assert.Contains("[Summary]", summaryGroup.Messages[0].Text);
-        Assert.True(summaryGroup.Messages[0].AdditionalProperties!.ContainsKey(MessageGroup.SummaryPropertyKey));
+        Assert.True(summaryGroup.Messages[0].AdditionalProperties!.ContainsKey(CompactionMessageGroup.SummaryPropertyKey));
     }
 
     [Fact]
@@ -146,7 +146,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -169,7 +169,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 5);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -203,7 +203,7 @@ public class SummarizationCompactionStrategyTests
             minimumPreserved: 1,
             summarizationPrompt: CustomPrompt);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -230,7 +230,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Old"),
             new ChatMessage(ChatRole.User, "New"),
@@ -240,7 +240,7 @@ public class SummarizationCompactionStrategyTests
         await strategy.CompactAsync(index);
 
         // Assert
-        MessageGroup excluded = index.Groups.First(g => g.IsExcluded);
+        CompactionMessageGroup excluded = index.Groups.First(g => g.IsExcluded);
         Assert.NotNull(excluded.ExcludeReason);
         Assert.Contains("SummarizationCompactionStrategy", excluded.ExcludeReason);
     }
@@ -250,7 +250,7 @@ public class SummarizationCompactionStrategyTests
     {
         // Arrange — 4 non-system groups, preserve 1, target met after 1 exclusion
         int exclusionCount = 0;
-        bool TargetAfterOne(MessageIndex _) => ++exclusionCount >= 1;
+        bool TargetAfterOne(CompactionMessageIndex _) => ++exclusionCount >= 1;
 
         SummarizationCompactionStrategy strategy = new(
             CreateMockChatClient("Partial summary."),
@@ -258,7 +258,7 @@ public class SummarizationCompactionStrategyTests
             minimumPreserved: 1,
             target: TargetAfterOne);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -283,7 +283,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 2);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -312,7 +312,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.System, "System note"),
@@ -325,8 +325,8 @@ public class SummarizationCompactionStrategyTests
 
         // Assert — summary inserted at 0, system group shifted to index 2
         Assert.True(result);
-        Assert.Equal(MessageGroupKind.Summary, index.Groups[0].Kind);
-        Assert.Equal(MessageGroupKind.System, index.Groups[2].Kind);
+        Assert.Equal(CompactionGroupKind.Summary, index.Groups[0].Kind);
+        Assert.Equal(CompactionGroupKind.System, index.Groups[2].Kind);
         Assert.False(index.Groups[2].IsExcluded); // System never excluded
     }
 
@@ -341,7 +341,7 @@ public class SummarizationCompactionStrategyTests
             minimumPreserved: 3,
             target: _ => false);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -369,7 +369,7 @@ public class SummarizationCompactionStrategyTests
             CompactionTriggers.Always,
             minimumPreserved: 1);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -403,7 +403,7 @@ public class SummarizationCompactionStrategyTests
             new ChatMessage(ChatRole.Assistant, "A1"),
         ];
 
-        MessageIndex index = MessageIndex.Create(messages);
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
 
         // Act — the tool-call group's message has null text
         bool result = await strategy.CompactAsync(index);

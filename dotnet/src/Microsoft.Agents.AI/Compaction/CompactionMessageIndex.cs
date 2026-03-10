@@ -13,16 +13,16 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// A collection of <see cref="MessageGroup"/> instances and derived metrics based on a flat list of <see cref="ChatMessage"/> objects.
+/// A collection of <see cref="CompactionMessageGroup"/> instances and derived metrics based on a flat list of <see cref="ChatMessage"/> objects.
 /// </summary>
 /// <remarks>
-/// <see cref="MessageIndex"/> provides structural grouping of messages into logical <see cref="MessageGroup"/> units.  Individual
+/// <see cref="CompactionMessageIndex"/> provides structural grouping of messages into logical <see cref="CompactionMessageGroup"/> units.  Individual
 /// groups can be marked as excluded without being removed, allowing compaction strategies to toggle visibility while preserving
 /// the full history for diagnostics or storage.  Metrics are provided both including and excluding excluded groups,
 /// allowing strategies to make informed decisions based on the impact of potential exclusions.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class MessageIndex
+public sealed class CompactionMessageIndex
 {
     private int _currentTurn;
     private ChatMessage? _lastProcessedMessage;
@@ -30,7 +30,7 @@ public sealed class MessageIndex
     /// <summary>
     /// Gets the list of message groups in this collection.
     /// </summary>
-    public IList<MessageGroup> Groups { get; }
+    public IList<CompactionMessageGroup> Groups { get; }
 
     /// <summary>
     /// Gets the tokenizer used for computing token counts, or <see langword="null"/> if token counts are estimated.
@@ -38,11 +38,11 @@ public sealed class MessageIndex
     public Tokenizer? Tokenizer { get; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MessageIndex"/> class with the specified groups.
+    /// Initializes a new instance of the <see cref="CompactionMessageIndex"/> class with the specified groups.
     /// </summary>
     /// <param name="groups">The message groups.</param>
     /// <param name="tokenizer">An optional tokenizer retained for computing token counts when adding new groups.</param>
-    public MessageIndex(IList<MessageGroup> groups, Tokenizer? tokenizer = null)
+    public CompactionMessageIndex(IList<CompactionMessageGroup> groups, Tokenizer? tokenizer = null)
     {
         this.Groups = Throw.IfNull(groups, nameof(groups));
         this.Tokenizer = tokenizer;
@@ -50,7 +50,7 @@ public sealed class MessageIndex
         // Restore turn counter and last processed message from the groups
         for (int index = groups.Count - 1; index >= 0; --index)
         {
-            if (this._lastProcessedMessage is null && this.Groups[index].Kind != MessageGroupKind.Summary)
+            if (this._lastProcessedMessage is null && this.Groups[index].Kind != CompactionGroupKind.Summary)
             {
                 IReadOnlyList<ChatMessage> groupMessages = this.Groups[index].Messages;
                 this._lastProcessedMessage = groupMessages[^1];
@@ -70,27 +70,27 @@ public sealed class MessageIndex
     }
 
     /// <summary>
-    /// Creates a <see cref="MessageIndex"/> from a flat list of <see cref="ChatMessage"/> instances.
+    /// Creates a <see cref="CompactionMessageIndex"/> from a flat list of <see cref="ChatMessage"/> instances.
     /// </summary>
     /// <param name="messages">The messages to group.</param>
     /// <param name="tokenizer">
     /// An optional <see cref="Tokenizer"/> for computing token counts on each group.
     /// When <see langword="null"/>, token counts are estimated as <c>ByteCount / 4</c>.
     /// </param>
-    /// <returns>A new <see cref="MessageIndex"/> with messages organized into logical groups.</returns>
+    /// <returns>A new <see cref="CompactionMessageIndex"/> with messages organized into logical groups.</returns>
     /// <remarks>
     /// The grouping algorithm:
     /// <list type="bullet">
-    /// <item><description>System messages become <see cref="MessageGroupKind.System"/> groups.</description></item>
-    /// <item><description>User messages become <see cref="MessageGroupKind.User"/> groups.</description></item>
-    /// <item><description>Assistant messages with tool calls, followed by their corresponding tool result messages, become <see cref="MessageGroupKind.ToolCall"/> groups.</description></item>
-    /// <item><description>Assistant messages marked with <see cref="MessageGroup.SummaryPropertyKey"/> become <see cref="MessageGroupKind.Summary"/> groups.</description></item>
-    /// <item><description>Assistant messages without tool calls become <see cref="MessageGroupKind.AssistantText"/> groups.</description></item>
+    /// <item><description>System messages become <see cref="CompactionGroupKind.System"/> groups.</description></item>
+    /// <item><description>User messages become <see cref="CompactionGroupKind.User"/> groups.</description></item>
+    /// <item><description>Assistant messages with tool calls, followed by their corresponding tool result messages, become <see cref="CompactionGroupKind.ToolCall"/> groups.</description></item>
+    /// <item><description>Assistant messages marked with <see cref="CompactionMessageGroup.SummaryPropertyKey"/> become <see cref="CompactionGroupKind.Summary"/> groups.</description></item>
+    /// <item><description>Assistant messages without tool calls become <see cref="CompactionGroupKind.AssistantText"/> groups.</description></item>
     /// </list>
     /// </remarks>
-    internal static MessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
+    internal static CompactionMessageIndex Create(IList<ChatMessage> messages, Tokenizer? tokenizer = null)
     {
-        MessageIndex instance = new([], tokenizer);
+        CompactionMessageIndex instance = new([], tokenizer);
         instance.AppendFromMessages(messages, 0);
         return instance;
     }
@@ -184,13 +184,13 @@ public sealed class MessageIndex
             if (message.Role == ChatRole.System)
             {
                 // System messages are not part of any turn
-                this.Groups.Add(CreateGroup(MessageGroupKind.System, [message], this.Tokenizer, turnIndex: null));
+                this.Groups.Add(CreateGroup(CompactionGroupKind.System, [message], this.Tokenizer, turnIndex: null));
                 index++;
             }
             else if (message.Role == ChatRole.User)
             {
                 this._currentTurn++;
-                this.Groups.Add(CreateGroup(MessageGroupKind.User, [message], this.Tokenizer, this._currentTurn));
+                this.Groups.Add(CreateGroup(CompactionGroupKind.User, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasToolCalls(message))
@@ -205,16 +205,16 @@ public sealed class MessageIndex
                     index++;
                 }
 
-                this.Groups.Add(CreateGroup(MessageGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
+                this.Groups.Add(CreateGroup(CompactionGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
             }
             else if (message.Role == ChatRole.Assistant && IsSummaryMessage(message))
             {
-                this.Groups.Add(CreateGroup(MessageGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
+                this.Groups.Add(CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else
             {
-                this.Groups.Add(CreateGroup(MessageGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
+                this.Groups.Add(CreateGroup(CompactionGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
         }
@@ -226,32 +226,32 @@ public sealed class MessageIndex
     }
 
     /// <summary>
-    /// Creates a new <see cref="MessageGroup"/> with byte and token counts computed using this collection's
+    /// Creates a new <see cref="CompactionMessageGroup"/> with byte and token counts computed using this collection's
     /// <see cref="Tokenizer"/>, and adds it to the <see cref="Groups"/> list at the specified index.
     /// </summary>
     /// <param name="index">The zero-based index at which the group should be inserted.</param>
     /// <param name="kind">The kind of message group.</param>
     /// <param name="messages">The messages in the group.</param>
     /// <param name="turnIndex">The optional turn index to assign to the new group.</param>
-    /// <returns>The newly created <see cref="MessageGroup"/>.</returns>
-    public MessageGroup InsertGroup(int index, MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int? turnIndex = null)
+    /// <returns>The newly created <see cref="CompactionMessageGroup"/>.</returns>
+    public CompactionMessageGroup InsertGroup(int index, CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, int? turnIndex = null)
     {
-        MessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
+        CompactionMessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
         this.Groups.Insert(index, group);
         return group;
     }
 
     /// <summary>
-    /// Creates a new <see cref="MessageGroup"/> with byte and token counts computed using this collection's
+    /// Creates a new <see cref="CompactionMessageGroup"/> with byte and token counts computed using this collection's
     /// <see cref="Tokenizer"/>, and appends it to the end of the <see cref="Groups"/> list.
     /// </summary>
     /// <param name="kind">The kind of message group.</param>
     /// <param name="messages">The messages in the group.</param>
     /// <param name="turnIndex">The optional turn index to assign to the new group.</param>
-    /// <returns>The newly created <see cref="MessageGroup"/>.</returns>
-    public MessageGroup AddGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int? turnIndex = null)
+    /// <returns>The newly created <see cref="CompactionMessageGroup"/>.</returns>
+    public CompactionMessageGroup AddGroup(CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, int? turnIndex = null)
     {
-        MessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
+        CompactionMessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
         this.Groups.Add(group);
         return group;
     }
@@ -320,21 +320,21 @@ public sealed class MessageIndex
     public int IncludedTurnCount => this.Groups.Where(group => !group.IsExcluded && group.TurnIndex is not null && group.TurnIndex > 0).Select(group => group.TurnIndex).Distinct().Count();
 
     /// <summary>
-    /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="MessageGroupKind.System"/>.
+    /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="CompactionGroupKind.System"/>.
     /// </summary>
-    public int IncludedNonSystemGroupCount => this.Groups.Count(group => !group.IsExcluded && group.Kind != MessageGroupKind.System);
+    public int IncludedNonSystemGroupCount => this.Groups.Count(group => !group.IsExcluded && group.Kind != CompactionGroupKind.System);
 
     /// <summary>
     /// Gets the total number of original messages (that are not summaries).
     /// </summary>
-    public int RawMessageCount => this.Groups.Where(group => group.Kind != MessageGroupKind.Summary).Sum(group => group.MessageCount);
+    public int RawMessageCount => this.Groups.Where(group => group.Kind != CompactionGroupKind.Summary).Sum(group => group.MessageCount);
 
     /// <summary>
     /// Returns all groups that belong to the specified user turn.
     /// </summary>
     /// <param name="turnIndex">The desired turn index.</param>
     /// <returns>The groups belonging to the turn, in order.</returns>
-    public IEnumerable<MessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
+    public IEnumerable<CompactionMessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
 
     /// <summary>
     /// Computes the UTF-8 byte count for a set of messages across all content types.
@@ -454,14 +454,14 @@ public sealed class MessageIndex
     private static int GetStringByteCount(string? value) =>
         value is { Length: > 0 } ? Encoding.UTF8.GetByteCount(value) : 0;
 
-    private static MessageGroup CreateGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, Tokenizer? tokenizer, int? turnIndex)
+    private static CompactionMessageGroup CreateGroup(CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, Tokenizer? tokenizer, int? turnIndex)
     {
         int byteCount = ComputeByteCount(messages);
         int tokenCount = tokenizer is not null
             ? ComputeTokenCount(messages, tokenizer)
             : byteCount / 4;
 
-        return new MessageGroup(kind, messages, byteCount, tokenCount, turnIndex);
+        return new CompactionMessageGroup(kind, messages, byteCount, tokenCount, turnIndex);
     }
 
     private static bool HasToolCalls(ChatMessage message)
@@ -479,7 +479,7 @@ public sealed class MessageIndex
 
     private static bool IsSummaryMessage(ChatMessage message)
     {
-        return message.AdditionalProperties?.TryGetValue(MessageGroup.SummaryPropertyKey, out object? value) is true
+        return message.AdditionalProperties?.TryGetValue(CompactionMessageGroup.SummaryPropertyKey, out object? value) is true
             && value is true;
     }
 }

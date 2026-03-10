@@ -26,7 +26,7 @@ public class CompactionStrategyTests
     {
         // Arrange — trigger never fires, but enough non-system groups to pass short-circuit
         TestStrategy strategy = new(_ => false);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -45,7 +45,7 @@ public class CompactionStrategyTests
     {
         // Arrange — trigger always fires, enough non-system groups
         TestStrategy strategy = new(_ => true, applyFunc: _ => true);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -64,7 +64,7 @@ public class CompactionStrategyTests
     {
         // Arrange — trigger fires but Apply does nothing
         TestStrategy strategy = new(_ => true, applyFunc: _ => false);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -83,7 +83,7 @@ public class CompactionStrategyTests
     {
         // Arrange — trigger would fire, but only 1 non-system group → short-circuit
         TestStrategy strategy = new(_ => true, applyFunc: _ => true);
-        MessageIndex index = MessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
+        CompactionMessageIndex index = CompactionMessageIndex.Create([new ChatMessage(ChatRole.User, "Hello")]);
 
         // Act
         bool result = await strategy.CompactAsync(index);
@@ -98,7 +98,7 @@ public class CompactionStrategyTests
     {
         // Arrange — system group + 1 non-system group → still short-circuits
         TestStrategy strategy = new(_ => true, applyFunc: _ => true);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Hello"),
@@ -117,7 +117,7 @@ public class CompactionStrategyTests
     {
         // Arrange — exactly 2 non-system groups: boundary passes, trigger fires
         TestStrategy strategy = new(_ => true, applyFunc: _ => true);
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -140,9 +140,9 @@ public class CompactionStrategyTests
         TestStrategy strategy = new(trigger, applyFunc: index =>
         {
             // Exclude oldest non-system group one at a time
-            foreach (MessageGroup group in index.Groups)
+            foreach (CompactionMessageGroup group in index.Groups)
             {
-                if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+                if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
                 {
                     group.IsExcluded = true;
                     // Target (default = !trigger) returns true when groups <= 2
@@ -154,7 +154,7 @@ public class CompactionStrategyTests
             return true;
         });
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -175,7 +175,7 @@ public class CompactionStrategyTests
     {
         // Arrange — custom target that always signals stop
         bool targetCalled = false;
-        bool CustomTarget(MessageIndex _)
+        bool CustomTarget(CompactionMessageIndex _)
         {
             targetCalled = true;
             return true;
@@ -187,7 +187,7 @@ public class CompactionStrategyTests
             return true;
         });
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Hello"),
             new ChatMessage(ChatRole.Assistant, "Hi!"),
@@ -208,12 +208,12 @@ public class CompactionStrategyTests
     /// </summary>
     private sealed class TestStrategy : CompactionStrategy
     {
-        private readonly Func<MessageIndex, bool>? _applyFunc;
+        private readonly Func<CompactionMessageIndex, bool>? _applyFunc;
 
         public TestStrategy(
             CompactionTrigger trigger,
             CompactionTrigger? target = null,
-            Func<MessageIndex, bool>? applyFunc = null)
+            Func<CompactionMessageIndex, bool>? applyFunc = null)
             : base(trigger, target)
         {
             this._applyFunc = applyFunc;
@@ -224,9 +224,9 @@ public class CompactionStrategyTests
         /// <summary>
         /// Exposes the protected Target property for test verification.
         /// </summary>
-        public bool InvokeTarget(MessageIndex index) => this.Target(index);
+        public bool InvokeTarget(CompactionMessageIndex index) => this.Target(index);
 
-        protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+        protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
         {
             this.ApplyCallCount++;
             bool result = this._applyFunc?.Invoke(index) ?? false;

@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <remarks>
 /// <para>
 /// Message groups ensure atomic preservation of related messages. For example, an assistant message
-/// containing tool calls and its corresponding tool result messages form a <see cref="MessageGroupKind.ToolCall"/>
+/// containing tool calls and its corresponding tool result messages form a <see cref="CompactionGroupKind.ToolCall"/>
 /// group — removing one without the other would cause LLM API errors.
 /// </para>
 /// <para>
@@ -24,33 +24,33 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </para>
 /// <para>
 /// Each group tracks its <see cref="MessageCount"/>, <see cref="ByteCount"/>, and <see cref="TokenCount"/>
-/// so that <see cref="MessageIndex"/> can efficiently aggregate totals across all or only included groups.
+/// so that <see cref="CompactionMessageIndex"/> can efficiently aggregate totals across all or only included groups.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class MessageGroup
+public sealed class CompactionMessageGroup
 {
     /// <summary>
     /// The <see cref="ChatMessage.AdditionalProperties"/> key used to identify a message as a compaction summary.
     /// </summary>
     /// <remarks>
     /// When this key is present with a value of <see langword="true"/>, the message is classified as
-    /// <see cref="MessageGroupKind.Summary"/> by <see cref="MessageIndex.Create"/>.
+    /// <see cref="CompactionGroupKind.Summary"/> by <see cref="CompactionMessageIndex.Create"/>.
     /// </remarks>
     public static readonly string SummaryPropertyKey = "_is_summary";
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="MessageGroup"/> class.
+    /// Initializes a new instance of the <see cref="CompactionMessageGroup"/> class.
     /// </summary>
     /// <param name="kind">The kind of message group.</param>
     /// <param name="messages">The messages in this group. The list is captured as a read-only snapshot.</param>
     /// <param name="byteCount">The total UTF-8 byte count of the text content in the messages.</param>
     /// <param name="tokenCount">The token count for the messages, computed by a tokenizer or estimated.</param>
     /// <param name="turnIndex">
-    /// The user turn this group belongs to, or <see langword="null"/> for <see cref="MessageGroupKind.System"/>.
+    /// The user turn this group belongs to, or <see langword="null"/> for <see cref="CompactionGroupKind.System"/>.
     /// </param>
     [JsonConstructor]
-    internal MessageGroup(MessageGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
+    internal CompactionMessageGroup(CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
     {
         this.Kind = kind;
         this.Messages = messages;
@@ -63,7 +63,7 @@ public sealed class MessageGroup
     /// <summary>
     /// Gets the kind of this message group.
     /// </summary>
-    public MessageGroupKind Kind { get; }
+    public CompactionGroupKind Kind { get; }
 
     /// <summary>
     /// Gets the messages in this group.
@@ -93,9 +93,9 @@ public sealed class MessageGroup
     /// messages, and so on...
     /// </summary>
     /// <remarks>
-    /// A turn starts with a <see cref="MessageGroupKind.User"/> group and includes all subsequent
+    /// A turn starts with a <see cref="CompactionGroupKind.User"/> group and includes all subsequent
     /// non-user, non-system groups until the next user group or end of conversation.  System messages
-    /// (<see cref="MessageGroupKind.System"/>) are always assigned a <see langword="null"/> turn index
+    /// (<see cref="CompactionGroupKind.System"/>) are always assigned a <see langword="null"/> turn index
     /// since they never belong to a user turn.
     /// </remarks>
     public int? TurnIndex { get; }
@@ -105,7 +105,7 @@ public sealed class MessageGroup
     /// </summary>
     /// <remarks>
     /// Excluded groups are preserved in the collection for diagnostics or storage purposes
-    /// but are not included when calling <see cref="MessageIndex.GetIncludedMessages"/>.
+    /// but are not included when calling <see cref="CompactionMessageIndex.GetIncludedMessages"/>.
     /// </remarks>
     public bool IsExcluded { get; set; }
 

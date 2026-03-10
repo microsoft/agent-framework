@@ -6,7 +6,7 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// Identifies the kind of a <see cref="MessageGroup"/>.
+/// Identifies the kind of a <see cref="CompactionMessageGroup"/>.
 /// </summary>
 /// <remarks>
 /// Message groups are used to classify logically related messages that must be kept together
@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// and its corresponding tool result messages form an atomic <see cref="ToolCall"/> group.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public enum MessageGroupKind
+public enum CompactionGroupKind
 {
     /// <summary>
     /// A system message group containing one or more system messages.
@@ -47,7 +47,7 @@ public enum MessageGroupKind
     /// </summary>
     /// <remarks>
     /// Summary groups replace previously compacted messages with a condensed representation.
-    /// They are identified by the <see cref="MessageGroup.SummaryPropertyKey"/> metadata entry
+    /// They are identified by the <see cref="CompactionMessageGroup.SummaryPropertyKey"/> metadata entry
     /// on the underlying <see cref="Microsoft.Extensions.AI.ChatMessage"/>.
     /// </remarks>
 #pragma warning restore IDE0001 // Simplify Names

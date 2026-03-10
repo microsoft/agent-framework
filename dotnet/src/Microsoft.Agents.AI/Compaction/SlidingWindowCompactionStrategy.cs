@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <remarks>
 /// <para>
 /// This strategy always preserves system messages. It identifies user turns in the
-/// conversation (via <see cref="MessageGroup.TurnIndex"/>) and excludes the oldest turns
+/// conversation (via <see cref="CompactionMessageGroup.TurnIndex"/>) and excludes the oldest turns
 /// one at a time until the <see cref="CompactionStrategy.Target"/> condition is met.
 /// </para>
 /// <para>
@@ -66,7 +66,7 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Forward pass: count non-system included groups and pre-index them by TurnIndex.
         int nonSystemIncludedCount = 0;
@@ -75,8 +75,8 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
 
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
             {
                 nonSystemIncludedCount++;
 
@@ -104,8 +104,8 @@ public sealed class SlidingWindowCompactionStrategy : CompactionStrategy
         int remaining = protectedCount;
         for (int i = index.Groups.Count - 1; i >= 0 && remaining > 0; i--)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
             {
                 protectedIndices.Add(i);
                 remaining--;

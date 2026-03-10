@@ -63,14 +63,14 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
     public int MinimumPreserved { get; }
 
     /// <inheritdoc/>
-    protected override ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Count removable (non-system, non-excluded) groups
         int removableCount = 0;
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
             {
                 removableCount++;
             }
@@ -87,8 +87,8 @@ public sealed class TruncationCompactionStrategy : CompactionStrategy
         int removed = 0;
         for (int i = 0; i < index.Groups.Count && removed < maxRemovable; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (group.IsExcluded || group.Kind == MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (group.IsExcluded || group.Kind == CompactionGroupKind.System)
             {
                 continue;
             }

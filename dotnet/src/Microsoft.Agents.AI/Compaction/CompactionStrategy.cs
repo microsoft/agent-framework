@@ -13,17 +13,17 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI.Compaction;
 
 /// <summary>
-/// Base class for strategies that compact a <see cref="MessageIndex"/> to reduce context size.
+/// Base class for strategies that compact a <see cref="CompactionMessageIndex"/> to reduce context size.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Compaction strategies operate on <see cref="MessageIndex"/> instances, which organize messages
+/// Compaction strategies operate on <see cref="CompactionMessageIndex"/> instances, which organize messages
 /// into atomic groups that respect the tool-call/result pairing constraint. Strategies mutate the collection
 /// in place by marking groups as excluded, removing groups, or replacing message content (e.g., with summaries).
 /// </para>
 /// <para>
 /// Every strategy requires a <see cref="CompactionTrigger"/> that determines whether compaction should
-/// proceed based on current <see cref="MessageIndex"/> metrics (token count, message count, turn count, etc.).
+/// proceed based on current <see cref="CompactionMessageIndex"/> metrics (token count, message count, turn count, etc.).
 /// The base class evaluates this trigger at the start of <see cref="CompactAsync"/> and skips compaction when
 /// the trigger returns <see langword="false"/>.
 /// </para>
@@ -42,7 +42,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// </list>
 /// </para>
 /// <para>
-/// Multiple strategies can be composed by applying them sequentially to the same <see cref="MessageIndex"/>
+/// Multiple strategies can be composed by applying them sequentially to the same <see cref="CompactionMessageIndex"/>
 /// via <see cref="PipelineCompactionStrategy"/>.
 /// </para>
 /// </remarks>
@@ -91,7 +91,7 @@ public abstract class CompactionStrategy
     /// <param name="logger">The <see cref="ILogger"/> for emitting compaction diagnostics.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task whose result is <see langword="true"/> if any compaction was performed, <see langword="false"/> otherwise.</returns>
-    protected abstract ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken);
+    protected abstract ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken);
 
     /// <summary>
     /// Evaluates the <see cref="Trigger"/> and, when it fires, delegates to
@@ -101,7 +101,7 @@ public abstract class CompactionStrategy
     /// <param name="logger">An optional <see cref="ILogger"/> for emitting compaction diagnostics. When <see langword="null"/>, logging is disabled.</param>
     /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests.</param>
     /// <returns>A task representing the asynchronous operation. The task result is <see langword="true"/> if compaction occurred, <see langword="false"/> otherwise.</returns>
-    public async ValueTask<bool> CompactAsync(MessageIndex index, ILogger? logger = null, CancellationToken cancellationToken = default)
+    public async ValueTask<bool> CompactAsync(CompactionMessageIndex index, ILogger? logger = null, CancellationToken cancellationToken = default)
     {
         string strategyName = this.GetType().Name;
         logger ??= NullLogger.Instance;

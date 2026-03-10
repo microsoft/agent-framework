@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// This strategy protects system messages and the most recent <see cref="MinimumPreserved"/>
 /// non-system groups. All older groups are collected and sent to the <see cref="IChatClient"/>
 /// for summarization. The resulting summary replaces those messages as a single assistant message
-/// with <see cref="MessageGroupKind.Summary"/>.
+/// with <see cref="CompactionGroupKind.Summary"/>.
 /// </para>
 /// <para>
 /// <see cref="MinimumPreserved"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
@@ -100,14 +100,14 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
     public string SummarizationPrompt { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // Count non-system, non-excluded groups to determine which are protected
         int nonSystemIncludedCount = 0;
         for (int i = 0; i < index.Groups.Count; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (!group.IsExcluded && group.Kind != MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (!group.IsExcluded && group.Kind != CompactionGroupKind.System)
             {
                 nonSystemIncludedCount++;
             }
@@ -128,8 +128,8 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
 
         for (int i = 0; i < index.Groups.Count && summarized < maxSummarizable; i++)
         {
-            MessageGroup group = index.Groups[i];
-            if (group.IsExcluded || group.Kind == MessageGroupKind.System)
+            CompactionMessageGroup group = index.Groups[i];
+            if (group.IsExcluded || group.Kind == CompactionGroupKind.System)
             {
                 continue;
             }
@@ -169,9 +169,9 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
 
         // Insert a summary group at the position of the first summarized group
         ChatMessage summaryMessage = new(ChatRole.Assistant, $"[Summary]\n{summaryText}");
-        (summaryMessage.AdditionalProperties ??= [])[MessageGroup.SummaryPropertyKey] = true;
+        (summaryMessage.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
 
-        index.InsertGroup(insertIndex, MessageGroupKind.Summary, [summaryMessage]);
+        index.InsertGroup(insertIndex, CompactionGroupKind.Summary, [summaryMessage]);
 
         logger.LogSummarizationCompleted(summaryText.Length, insertIndex);
 

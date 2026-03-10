@@ -17,7 +17,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger requires > 3 turns, conversation has 2
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(3));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -37,7 +37,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 2 turns, conversation has 3
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(2));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -67,7 +67,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "You are helpful."),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -91,7 +91,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -119,7 +119,7 @@ public class SlidingWindowCompactionStrategyTests
         // Arrange — trigger requires > 99 turns
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(99));
 
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.User, "Q2"),
@@ -138,7 +138,7 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn
         SlidingWindowCompactionStrategy strategy = new(CompactionTriggers.TurnsExceed(1));
-        MessageIndex groups = MessageIndex.Create(
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System"),
             new ChatMessage(ChatRole.User, "Q1"),
@@ -163,14 +163,14 @@ public class SlidingWindowCompactionStrategyTests
     {
         // Arrange — trigger on > 1 turn, custom target stops after removing 1 turn
         int removeCount = 0;
-        bool TargetAfterOne(MessageIndex _) => ++removeCount >= 1;
+        bool TargetAfterOne(CompactionMessageIndex _) => ++removeCount >= 1;
 
         SlidingWindowCompactionStrategy strategy = new(
             CompactionTriggers.TurnsExceed(1),
             minimumPreserved: 0,
             target: TargetAfterOne);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -201,7 +201,7 @@ public class SlidingWindowCompactionStrategyTests
             minimumPreserved: 2,
             target: _ => false);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.User, "Q1"),
             new ChatMessage(ChatRole.Assistant, "A1"),
@@ -230,7 +230,7 @@ public class SlidingWindowCompactionStrategyTests
             CompactionTriggers.TurnsExceed(1),
             minimumPreserved: 0);
 
-        MessageIndex index = MessageIndex.Create(
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
         [
             new ChatMessage(ChatRole.System, "System prompt"),
             new ChatMessage(ChatRole.User, "Q1"),

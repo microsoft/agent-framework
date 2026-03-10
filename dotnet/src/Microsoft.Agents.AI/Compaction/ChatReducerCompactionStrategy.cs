@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Compaction;
 /// <para>
 /// This strategy bridges the <see cref="IChatReducer"/> abstraction from <c>Microsoft.Extensions.AI</c>
 /// into the compaction pipeline. It collects the currently included messages from the
-/// <see cref="MessageIndex"/>, passes them to the reducer, and rebuilds the index from the
+/// <see cref="CompactionMessageIndex"/>, passes them to the reducer, and rebuilds the index from the
 /// reduced message list when the reducer produces fewer messages.
 /// </para>
 /// <para>
@@ -56,7 +56,7 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
     public IChatReducer ChatReducer { get; }
 
     /// <inheritdoc/>
-    protected override async ValueTask<bool> CompactCoreAsync(MessageIndex index, ILogger logger, CancellationToken cancellationToken)
+    protected override async ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
     {
         // No need to short-circuit on empty conversations, this is handled by <see cref="CompactionStrategy.CompactAsync"/>.
         List<ChatMessage> includedMessages = [.. index.GetIncludedMessages()];
@@ -70,9 +70,9 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
         }
 
         // Rebuild the index from the reduced messages
-        MessageIndex rebuilt = MessageIndex.Create(reducedMessages, index.Tokenizer);
+        CompactionMessageIndex rebuilt = CompactionMessageIndex.Create(reducedMessages, index.Tokenizer);
         index.Groups.Clear();
-        foreach (MessageGroup group in rebuilt.Groups)
+        foreach (CompactionMessageGroup group in rebuilt.Groups)
         {
             index.Groups.Add(group);
         }
