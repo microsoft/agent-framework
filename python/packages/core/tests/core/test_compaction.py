@@ -659,10 +659,11 @@ async def test_tool_result_compaction_multiple_groups_combined() -> None:
     assert projected[0].role == "user"  # original user message
     assert projected[1].text == '[Tool results: get_weather: {"temp":12,"condition":"cloudy","wind":"NW 15km/h"}]'
     assert projected[2].text == "London is cloudy at 12°C."
-    assert (
-        projected[3].text
-        == '[Tool results: get_weather: {"temp":18,"condition":"sunny"}; search_hotels: Grand Hotel (€120), Le Petit (€85)]'
+    expected_g2 = (
+        '[Tool results: get_weather: {"temp":18,"condition":"sunny"};'
+        " search_hotels: Grand Hotel (€120), Le Petit (€85)]"
     )
+    assert projected[3].text == expected_g2
     assert projected[4].text == "Paris is sunny at 18°C. Found 2 hotels."  # group 2 assistant text
     assert projected[5].role == "assistant"  # group 3 function_call (verbatim)
     assert projected[6].role == "tool"  # group 3 tool result (verbatim)

@@ -1264,12 +1264,14 @@ class CompactionProvider(BaseContextProvider):
             return
 
         # Access the history provider's stored messages from session state.
-        history_state = session.state.get(self.history_source_id) if session else None
-        if not isinstance(history_state, dict):
+        history_state_raw = session.state.get(self.history_source_id) if session else None
+        if not isinstance(history_state_raw, dict):
             return
-        stored_messages = history_state.get("messages")
-        if not isinstance(stored_messages, list) or not stored_messages:
+        history_state: dict[str, Any] = history_state_raw  # type: ignore[assignment]
+        raw_messages = history_state.get("messages")
+        if not isinstance(raw_messages, list) or not raw_messages:
             return
+        stored_messages: list[Message] = raw_messages  # type: ignore[assignment]
 
         annotate_message_groups(stored_messages)
         if self.tokenizer is not None:
