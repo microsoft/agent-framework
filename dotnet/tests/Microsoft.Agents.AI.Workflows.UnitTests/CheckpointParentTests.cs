@@ -90,13 +90,18 @@ public class CheckpointParentTests
 
         await foreach (WorkflowEvent evt in run.WatchStreamAsync(cts.Token))
         {
-            if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
+            if (checkpoints.Count >= 3)
+            {
+                cts.Cancel();
+            }
+
+            if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
+            {
+                checkpoints.Add(startCp);
+            }
+            else if (evt is SuperStepCompletedEvent stepEvt && stepEvt.CompletionInfo?.Checkpoint is { } cp)
             {
                 checkpoints.Add(cp);
-                if (checkpoints.Count >= 3)
-                {
-                    cts.Cancel();
-                }
             }
         }
 
