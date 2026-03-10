@@ -204,10 +204,35 @@ internal sealed class WorkflowSession : AgentSession
         List<(ExternalResponse Response, string? ContentId)> externalResponses = [];
         bool hasMatchedExternalResponses = false;
 
+        // Tracks content IDs already matched to pending requests within this invocation,
+        // preventing duplicate responses for the same ID from being sent to the workflow engine.
+        HashSet<string>? matchedContentIds = null;
+
         foreach (ChatMessage message in messages)
         {
             List<AIContent> regularContents = [];
-            PartitionMessageContents(message, regularContents);
+
+            foreach (AIContent content in message.Contents)
+            {
+                string? contentId = GetResponseContentId(content);
+
+                // Skip duplicate response content for an already-matched content ID
+                if (contentId != null && matchedContentIds?.Contains(contentId) == true)
+                {
+                    continue;
+                }
+
+                if (contentId != null
+                    && this.TryGetPendingRequest(contentId) is ExternalRequest pendingRequest)
+                {
+                    externalResponses.Add((pendingRequest.CreateResponse(content), contentId));
+                    (matchedContentIds ??= new(StringComparer.OrdinalIgnoreCase)).Add(contentId);
+                }
+                else
+                {
+                    regularContents.Add(content);
+                }
+            }
 
             if (regularContents.Count > 0)
             {
@@ -236,44 +261,6 @@ internal sealed class WorkflowSession : AgentSession
         }
 
         return hasMatchedExternalResponses;
-
-        void PartitionMessageContents(ChatMessage message, List<AIContent> regularContents)
-        {
-            foreach (AIContent content in message.Contents)
-            {
-                string? contentId = GetResponseContentId(content);
-                if (this.TryCreateExternalResponse(content) is ExternalResponse response)
-                {
-                    externalResponses.Add((response, contentId));
-                }
-                else
-                {
-                    regularContents.Add(content);
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Attempts to create an ExternalResponse from response content (FunctionResultContent or UserInputResponseContent)
-    /// by matching it to a pending request.
-    /// </summary>
-    private ExternalResponse? TryCreateExternalResponse(AIContent content)
-    {
-        string? contentId = GetResponseContentId(content);
-        if (contentId == null)
-        {
-            return null;
-        }
-
-        ExternalRequest? pendingRequest = this.TryGetPendingRequest(contentId);
-        if (pendingRequest == null)
-        {
-            return null;
-        }
-
-        // Create ExternalResponse via the pending request to ensure proper validation and wrapping
-        return pendingRequest.CreateResponse(content);
     }
 
     /// <summary>

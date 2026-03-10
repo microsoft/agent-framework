@@ -440,7 +440,7 @@ public class WorkflowHostSmokeTests
             session).ToListAsync();
 
         int functionCallCount = secondCallUpdates
-            .Where(u => u.RawRepresentation?.GetType().Name == "RequestInfoEvent")
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Count(c => c.CallId == CallId);
 
