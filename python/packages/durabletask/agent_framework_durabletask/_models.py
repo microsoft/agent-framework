@@ -312,6 +312,7 @@ class DurableAgentSession(AgentSession):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DurableAgentSession:
         """Create a DurableAgentSession from a state dict."""
+        data = dict(data)  # defensive copy — avoid mutating caller's dict
         session_id_value = data.pop(cls._SERIALIZED_SESSION_ID_KEY, None)
         session = super().from_dict(data)
         durable_session_id: AgentSessionId | None = None

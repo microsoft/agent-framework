@@ -55,7 +55,7 @@ def store_findings(findings: str, ctx: FunctionInvocationContext) -> None:
     if current_findings is None:
         session.state["findings"] = findings
     else:
-        session.state["finding"] = f"{current_findings}\n{findings}"
+        session.state["findings"] = f"{current_findings}\n{findings}"
 
 
 @tool(description="Use this tool to gather the current findings from other agents.")
