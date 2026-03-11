@@ -135,7 +135,7 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
 
     def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> DurableAgentSession:
         """Create a new agent session via the provider."""
-        return self._executor.get_new_session(self.name)
+        return self._executor.get_new_session(self.name, **kwargs)
 
     def get_session(self, service_session_id: str, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
         """Retrieve an existing session via the provider."""
