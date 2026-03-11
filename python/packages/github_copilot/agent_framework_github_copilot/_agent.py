@@ -26,12 +26,11 @@ from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
 from copilot import CopilotClient, CopilotSession
-from copilot.generated.session_events import SessionEvent, SessionEventType
+from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
 from copilot.types import (
     CopilotClientOptions,
     MCPServerConfig,
     MessageOptions,
-    PermissionRequest,
     PermissionRequestResult,
     ResumeSessionConfig,
     SessionConfig,
@@ -529,7 +528,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
-            args = invocation.get("arguments", {})
+            args: dict[str, Any] = invocation.arguments or {}
             try:
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
@@ -537,13 +536,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 else:
                     result = await ai_func.invoke(arguments=args)
                 return ToolResult(
-                    textResultForLlm=str(result),
-                    resultType="success",
+                    text_result_for_llm=str(result),
+                    result_type="success",
                 )
             except Exception as e:
                 return ToolResult(
-                    textResultForLlm=f"Error: {e}",
-                    resultType="failure",
+                    text_result_for_llm=f"Error: {e}",
+                    result_type="failure",
                     error=str(e),
                 )
 

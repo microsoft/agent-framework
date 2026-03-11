@@ -15,7 +15,25 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._compaction import (
+    EXCLUDED_KEY,
+    GROUP_ANNOTATION_KEY,
+    GROUP_ID_KEY,
+    CharacterEstimatorTokenizer,
+    SlidingWindowStrategy,
+    TokenBudgetComposedStrategy,
+    annotate_message_groups,
+    included_token_count,
+)
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+
+
+def _group_id(message: Message) -> str | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_ID_KEY)
+    return value if isinstance(value, str) else None
 
 
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
@@ -129,6 +147,127 @@ async def test_base_client_with_function_calling_resets(chat_client_base: Suppor
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[2].contents[0].type == "function_call"
     assert response.messages[3].contents[0].type == "function_result"
+
+
+async def test_function_loop_applies_compaction_projection_each_model_call(chat_client_base: SupportsChatGetResponse):
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    class _ExcludeOldestGroupAfterFirstTurn:
+        async def __call__(self, messages: list[Message]) -> bool:
+            groups = annotate_message_groups(messages)
+            if len(groups) <= 1:
+                return False
+            oldest_group_id = groups[0]
+            changed = False
+            for message in messages:
+                if _group_id(message) == oldest_group_id:
+                    if message.additional_properties.get(EXCLUDED_KEY) is not True:
+                        changed = True
+                    message.additional_properties[EXCLUDED_KEY] = True
+            return changed
+
+    captured_roles: list[list[str]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base.compaction_strategy = _ExcludeOldestGroupAfterFirstTurn()  # type: ignore[attr-defined]
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
+
+    assert len(captured_roles) >= 2
+    assert "user" in captured_roles[0]
+    assert "user" not in captured_roles[1]
+
+
+async def test_function_loop_token_budget_strategy_caps_tokens_each_iteration(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+    token_budget = 500
+    tokenizer = CharacterEstimatorTokenizer()
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}. " + ("result " * 120)
+
+    captured_token_counts: list[int] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        annotate_message_groups(messages, force_reannotate=True, tokenizer=tokenizer)
+        captured_token_counts.append(included_token_count(messages))
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.compaction_strategy = TokenBudgetComposedStrategy(  # type: ignore[attr-defined]
+        token_budget=token_budget,
+        tokenizer=tokenizer,
+        strategies=[SlidingWindowStrategy(keep_last_groups=2)],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="2", name="test_function", arguments='{"arg1": "value2"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello " * 160)],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert response.messages[-1].text == "done"
+    assert exec_counter == 2
+    assert len(captured_token_counts) >= 3
+    assert all(token_count > 0 for token_count in captured_token_counts)
+    assert all(token_count <= token_budget for token_count in captured_token_counts)
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: SupportsChatGetResponse):
@@ -3449,3 +3588,66 @@ async def test_streaming_function_calling_response_includes_reasoning_and_tool_r
     reasoning_contents = [c for msg in response.messages for c in msg.contents if c.type == "text_reasoning"]
     assert len(reasoning_contents) >= 1
     assert reasoning_contents[0].id == "rs_test123"
+
+
+# region _update_conversation_id unit tests
+
+
+class TestUpdateConversationId:
+    """Tests for _update_conversation_id handling dict chat_options."""
+
+    def test_chat_options_as_dict(self):
+        """When chat_options is a plain dict, conversation_id should be set via key access."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        _update_conversation_id(kwargs, "conv_1")
+        assert kwargs["chat_options"]["conversation_id"] == "conv_1"
+
+    def test_chat_options_as_typed_dict(self):
+        """When chat_options is a ChatOptions TypedDict, conversation_id should be set via key access."""
+        from agent_framework import ChatOptions
+        from agent_framework._tools import _update_conversation_id
+
+        opts: ChatOptions = {"temperature": 0.5}
+        kwargs: dict[str, Any] = {"chat_options": opts}
+        _update_conversation_id(kwargs, "conv_2")
+        assert kwargs["chat_options"]["conversation_id"] == "conv_2"
+
+    def test_no_chat_options_falls_back_to_kwargs(self):
+        """When chat_options is absent, conversation_id should be set directly on kwargs."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {}
+        _update_conversation_id(kwargs, "conv_4")
+        assert kwargs["conversation_id"] == "conv_4"
+
+    def test_none_conversation_id_is_noop(self):
+        """When conversation_id is None, kwargs should not be modified."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        _update_conversation_id(kwargs, None)
+        assert "conversation_id" not in kwargs["chat_options"]
+        assert "conversation_id" not in kwargs
+
+    def test_options_dict_also_updated(self):
+        """The optional options dict should also receive conversation_id."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {}}
+        options: dict[str, Any] = {}
+        _update_conversation_id(kwargs, "conv_5", options)
+        assert kwargs["chat_options"]["conversation_id"] == "conv_5"
+        assert options["conversation_id"] == "conv_5"
+
+    def test_dict_overwrites_existing_conversation_id(self):
+        """When a dict already has a conversation_id, it should be overwritten."""
+        from agent_framework._tools import _update_conversation_id
+
+        kwargs: dict[str, Any] = {"chat_options": {"conversation_id": "old_id"}}
+        _update_conversation_id(kwargs, "new_id")
+        assert kwargs["chat_options"]["conversation_id"] == "new_id"
+
+
+# endregion
