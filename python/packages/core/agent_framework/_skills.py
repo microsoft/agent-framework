@@ -644,7 +644,7 @@ class SkillsProvider(BaseContextProvider):
                 The application should present the request to the user, then
                 call ``request.to_function_approval_response(approved=True)``
                 (or ``False`` to reject) and pass the response back with
-                ``agent.run(Message("user", [approval_response]), session=session)``.
+                ``agent.run(approval_response, session=session)``.
                 Rejected scripts are not executed and the agent is informed
                 the user declined. Defaults to ``False``.  See
                 ``samples/02-agents/skills/script_approval/script_approval.py``

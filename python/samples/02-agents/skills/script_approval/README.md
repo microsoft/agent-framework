@@ -10,7 +10,7 @@ When `require_script_approval=True` is set, the agent pauses before executing an
 2. `result.user_input_requests` contains approval request(s) with function name and arguments
 3. The application inspects each request and decides to approve or reject
 4. `request.to_function_approval_response(approved=True|False)` creates the response
-5. The response is sent back via `agent.run(Message(...), session=session)`
+5. The response is sent back via `agent.run(approval_response, session=session)`
 6. If approved, the script executes; if rejected, the agent receives an error
 
 ## Key Components
@@ -18,7 +18,6 @@ When `require_script_approval=True` is set, the agent pauses before executing an
 - **`require_script_approval=True`** — Gates all script execution on human approval
 - **`result.user_input_requests`** — Contains pending approval requests after `agent.run()`
 - **`request.to_function_approval_response()`** — Creates an approval or rejection response
-- **`Message`** — Wraps the approval response for sending back to the agent
 
 ## Running the Sample
 
