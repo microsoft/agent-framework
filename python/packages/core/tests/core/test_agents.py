@@ -1009,6 +1009,34 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
     assert parent_session.state["counter"] == 1
 
 
+async def test_chat_agent_as_tool_propagate_session_rejects_non_agent_session(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that propagate_session=True raises TypeError for non-AgentSession values."""
+    agent = Agent(client=client, name="SubAgent", description="Sub agent")
+    tool = agent.as_tool(propagate_session=True)
+
+    # A plain dict is truthy but not an AgentSession — should raise TypeError.
+    with raises(TypeError, match="not a AgentSession object"):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Hello"},
+                kwargs={"session": {"fake": "session"}},
+            )
+        )
+
+    # A string is also truthy and not an AgentSession.
+    with raises(TypeError, match="not a AgentSession object"):
+        await tool.invoke(
+            context=FunctionInvocationContext(
+                function=tool,
+                arguments={"task": "Hello"},
+                kwargs={"session": "not-a-session"},
+            )
+        )
+
+
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
     """Test basic as_mcp_server functionality."""
     agent = Agent(client=client, name="TestAgent", description="Test agent for MCP")
