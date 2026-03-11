@@ -23,7 +23,7 @@ public sealed class FoundryVersionedAgentTests
     #region CreateAIAgentAsync validation tests
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithNullEndpoint_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullEndpoint_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -38,7 +38,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithNullTokenProvider_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullTokenProvider_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -53,7 +53,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithNullModel_ThrowsArgumentException()
+    public async Task CreateAIAgentAsync_WithNullModel_ThrowsArgumentExceptionAsync()
     {
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
@@ -66,7 +66,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithEmptyModel_ThrowsArgumentException()
+    public async Task CreateAIAgentAsync_WithEmptyModel_ThrowsArgumentExceptionAsync()
     {
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
@@ -79,7 +79,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithNullInstructions_ThrowsArgumentException()
+    public async Task CreateAIAgentAsync_WithNullInstructions_ThrowsArgumentExceptionAsync()
     {
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
@@ -93,7 +93,7 @@ public sealed class FoundryVersionedAgentTests
 
     [Theory]
     [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
-    public async Task CreateAIAgentAsync_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+    public async Task CreateAIAgentAsync_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
     {
         // Act & Assert
         ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -109,7 +109,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithValidParams_CreatesAgent()
+    public async Task CreateAIAgentAsync_WithValidParams_CreatesAgentAsync()
     {
         // Arrange
         using HttpHandlerAssert httpHandler = CreateAgentVersionHttpHandler("test-agent");
@@ -138,7 +138,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithTools_CreatesAgentWithTools()
+    public async Task CreateAIAgentAsync_WithTools_CreatesAgentWithToolsAsync()
     {
         // Arrange
         using HttpHandlerAssert httpHandler = CreateAgentVersionHttpHandler("test-agent");
@@ -172,7 +172,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task CreateAIAgentAsync_WithDescription_SetsDescription()
+    public async Task CreateAIAgentAsync_WithDescription_SetsDescriptionAsync()
     {
         // Arrange
         using HttpHandlerAssert httpHandler = CreateAgentVersionHttpHandler("test-agent", description: "A test description");
@@ -206,7 +206,7 @@ public sealed class FoundryVersionedAgentTests
     #region GetAIAgentAsync validation tests
 
     [Fact]
-    public async Task GetAIAgentAsync_WithNullEndpoint_ThrowsArgumentNullException()
+    public async Task GetAIAgentAsync_WithNullEndpoint_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -219,7 +219,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task GetAIAgentAsync_WithNullTokenProvider_ThrowsArgumentNullException()
+    public async Task GetAIAgentAsync_WithNullTokenProvider_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -232,7 +232,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task GetAIAgentAsync_WithNullName_ThrowsArgumentException()
+    public async Task GetAIAgentAsync_WithNullName_ThrowsArgumentExceptionAsync()
     {
         // Act & Assert
         await Assert.ThrowsAnyAsync<ArgumentException>(() =>
@@ -244,7 +244,8 @@ public sealed class FoundryVersionedAgentTests
 
     [Theory]
     [MemberData(nameof(InvalidAgentNameTestData.GetInvalidAgentNames), MemberType = typeof(InvalidAgentNameTestData))]
-    public async Task GetAIAgentAsync_WithInvalidAgentName_ThrowsArgumentException(string invalidName)
+
+    public async Task GetAIAgentAsync_WithInvalidAgentName_ThrowsArgumentExceptionAsync(string invalidName)
     {
         // Act & Assert
         ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -258,7 +259,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task GetAIAgentAsync_WithValidName_RetrievesAgent()
+    public async Task GetAIAgentAsync_WithValidName_RetrievesAgentAsync()
     {
         // Arrange
         using HttpHandlerAssert httpHandler = GetAgentRecordHttpHandler("test-agent");
@@ -392,7 +393,7 @@ public sealed class FoundryVersionedAgentTests
     #region Delete tests
 
     [Fact]
-    public async Task DeleteAIAgentAsync_WithNullAgent_ThrowsArgumentNullException()
+    public async Task DeleteAIAgentAsync_WithNullAgent_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -402,7 +403,7 @@ public sealed class FoundryVersionedAgentTests
     }
 
     [Fact]
-    public async Task DeleteAIAgentVersionAsync_WithNullAgent_ThrowsArgumentNullException()
+    public async Task DeleteAIAgentVersionAsync_WithNullAgent_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
         ArgumentNullException exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
@@ -530,7 +531,7 @@ public sealed class FoundryVersionedAgentTests
     #region User-Agent header tests
 
     [Fact]
-    public async Task CreateAIAgentAsync_UserAgentHeaderAddedToRequests()
+    public async Task CreateAIAgentAsync_UserAgentHeaderAddedToRequestsAsync()
     {
         // Arrange
         bool userAgentFound = false;

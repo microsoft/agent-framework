@@ -80,11 +80,12 @@ public sealed class FoundryAgent : AIAgent
     /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
     /// <param name="tokenProvider">The authentication token provider used to authenticate with the Microsoft Foundry service.</param>
     /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="options">Configuration options that control all aspects of the agent's behavior.</param>
+    /// <param name="options">Configuration options that control all aspects of the agent's behavior. <see cref="ChatOptions.ModelId"/> is required when using this overload.</param>
     /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
     /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
     /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="endpoint"/> or <paramref name="tokenProvider"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="endpoint"/>, <paramref name="tokenProvider"/>, or <paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="options"/> does not specify <see cref="ChatOptions.ModelId"/>.</exception>
     public FoundryAgent(
         Uri endpoint,
         AuthenticationTokenProvider tokenProvider,
@@ -96,6 +97,9 @@ public sealed class FoundryAgent : AIAgent
     {
         Throw.IfNull(endpoint);
         Throw.IfNull(tokenProvider);
+        Throw.IfNull(options);
+        Throw.IfNull(options.ChatOptions);
+        Throw.IfNullOrWhitespace(options.ChatOptions.ModelId);
 
         clientOptions ??= new AIProjectClientOptions();
         clientOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, PipelinePosition.PerCall);
@@ -104,7 +108,7 @@ public sealed class FoundryAgent : AIAgent
 
         IChatClient chatClient = this._aiProjectClient
             .OpenAI
-            .GetProjectResponsesClientForModel(options?.ChatOptions?.ModelId ?? string.Empty)
+            .GetProjectResponsesClientForModel(options.ChatOptions.ModelId)
             .AsIChatClient();
 
         if (chatClientFactory is not null)

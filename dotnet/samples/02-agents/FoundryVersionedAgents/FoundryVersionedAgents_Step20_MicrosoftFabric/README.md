@@ -39,7 +39,7 @@ $env:FABRIC_PROJECT_CONNECTION_ID="your-fabric-connection-id"  # The full ARM re
 
 ## Run the sample
 
-Navigate to the FoundryAgents sample directory and run:
+Navigate to the FoundryVersionedAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryVersionedAgents

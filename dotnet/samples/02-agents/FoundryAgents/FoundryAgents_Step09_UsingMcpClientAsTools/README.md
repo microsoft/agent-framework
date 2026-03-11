@@ -1,11 +1,11 @@
 # Using MCP Client as Tools with the Responses API
 
-This sample shows how to use MCP (Model Context Protocol) client tools with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use MCP (Model Context Protocol) client tools with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 
 - Connecting to an MCP server (GitHub) via stdio transport
-- Retrieving MCP tools and passing them to a `FoundryAgentClient`
+- Retrieving MCP tools and passing them to a `FoundryAgent`
 - Using MCP tools for agent interactions without server-side agent creation
 
 ## Prerequisites

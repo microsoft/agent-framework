@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use SharePoint Grounding Tool with a FoundryAgentClient.
+// This sample shows how to use SharePoint Grounding Tool with a FoundryAgent.
 
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;

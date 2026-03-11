@@ -1,6 +1,6 @@
 # Computer Use with the Responses API
 
-This sample shows how to use the Computer Use tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the Computer Use tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 

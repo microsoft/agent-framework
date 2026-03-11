@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use dependency injection to register a FoundryAgentClient and use it from a hosted service.
+// This sample shows how to use dependency injection to register a FoundryAgent and use it from a hosted service.
 
 using Azure.Identity;
 using Microsoft.Agents.AI;

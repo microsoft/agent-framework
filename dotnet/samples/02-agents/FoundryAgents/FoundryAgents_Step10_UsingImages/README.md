@@ -25,6 +25,6 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o"
 ## Run the sample
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents-RAPI
-dotnet run --project .\FoundryAgentsRAPI_Step10_UsingImages
+cd dotnet/samples/02-agents/FoundryAgents
+dotnet run --project .\FoundryAgents_Step10_UsingImages
 ```

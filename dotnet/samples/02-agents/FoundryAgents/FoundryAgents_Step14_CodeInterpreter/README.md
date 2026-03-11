@@ -1,10 +1,10 @@
 # Code Interpreter with the Responses API
 
-This sample shows how to use the Code Interpreter tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the Code Interpreter tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 
-- Using `HostedCodeInterpreterTool` with `FoundryAgentClient`
+- Using `HostedCodeInterpreterTool` with `FoundryAgent`
 - Extracting code input and output from agent responses
 - Handling code interpreter annotations and file citations
 

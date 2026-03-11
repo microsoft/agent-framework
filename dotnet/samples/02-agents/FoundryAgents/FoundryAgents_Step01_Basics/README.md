@@ -1,10 +1,10 @@
 # Creating and Running a Basic Agent with the Responses API
 
-This sample demonstrates how to create and run a basic AI agent using the `FoundryAgentClient`, which uses the Microsoft Foundry Responses API directly without creating server-side agent definitions.
+This sample demonstrates how to create and run a basic AI agent using the `FoundryAgent`, which uses the Microsoft Foundry Responses API directly without creating server-side agent definitions.
 
 ## What this sample demonstrates
 
-- Creating a `FoundryAgentClient` with instructions and a model
+- Creating a `FoundryAgent` with instructions and a model
 - Running a simple single-turn conversation
 - No server-side agent creation or cleanup required
 
@@ -25,13 +25,11 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
-The `FoundryAgentClient` auto-discovers these environment variables — no endpoint or credential code is needed in the sample.
-
 ## Run the sample
 
-Navigate to the FoundryAgents-RAPI sample directory and run:
+Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents-RAPI
-dotnet run --project .\FoundryAgentsRAPI_Step01_Basics
+cd dotnet/samples/02-agents/FoundryAgents
+dotnet run --project .\FoundryAgents_Step01_Basics
 ```

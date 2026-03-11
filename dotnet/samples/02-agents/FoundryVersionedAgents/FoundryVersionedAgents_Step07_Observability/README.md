@@ -32,7 +32,7 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="your-connection-string"  # Optional,
 
 ## Run the sample
 
-Navigate to the FoundryAgents sample directory and run:
+Navigate to the FoundryVersionedAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryVersionedAgents

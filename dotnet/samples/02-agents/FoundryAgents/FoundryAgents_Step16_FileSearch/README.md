@@ -1,11 +1,11 @@
 # File Search with the Responses API
 
-This sample shows how to use the File Search tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the File Search tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 
 - Uploading files and creating vector stores via `AIProjectClient`
-- Using `HostedFileSearchTool` with `FoundryAgentClient`
+- Using `HostedFileSearchTool` with `FoundryAgent`
 - Handling file citation annotations in agent responses
 - Cleaning up file resources after use
 

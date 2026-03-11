@@ -1,10 +1,10 @@
 # Multi-turn Conversation with the Responses API
 
-This sample demonstrates how to implement multi-turn conversations using the `FoundryAgentClient`, where context is preserved across multiple agent runs using sessions.
+This sample demonstrates how to implement multi-turn conversations using the `FoundryAgent`, where context is preserved across multiple agent runs using sessions.
 
 ## What this sample demonstrates
 
-- Creating a `FoundryAgentClient` with instructions
+- Creating a `FoundryAgent` with instructions
 - Using sessions to maintain conversation context across multiple runs
 - Running multi-turn conversations with text output
 - Running multi-turn conversations with streaming output
@@ -27,13 +27,11 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
-The `FoundryAgentClient` auto-discovers these environment variables — no endpoint or credential code is needed in the sample.
-
 ## Run the sample
 
-Navigate to the FoundryAgents-RAPI sample directory and run:
+Navigate to the FoundryAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents-RAPI
-dotnet run --project .\FoundryAgentsRAPI_Step02_MultiturnConversation
+cd dotnet/samples/02-agents/FoundryAgents
+dotnet run --project .\FoundryAgents_Step02_MultiturnConversation
 ```

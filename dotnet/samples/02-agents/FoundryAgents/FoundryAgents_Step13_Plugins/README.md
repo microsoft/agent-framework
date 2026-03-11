@@ -1,12 +1,12 @@
 # Using Plugins with the Responses API
 
-This sample shows how to use plugins with a `FoundryAgentClient` using the Responses API directly, with dependency injection for plugin services.
+This sample shows how to use plugins with a `FoundryAgent` using the Responses API directly, with dependency injection for plugin services.
 
 ## What this sample demonstrates
 
 - Creating plugin classes with injected dependencies
 - Registering services and building a service provider
-- Passing `services` to the `FoundryAgentClient` via the options-based constructor
+- Passing `services` to the `FoundryAgent` via the options-based constructor
 - Using `AIFunctionFactory` to expose plugin methods as AI tools
 
 ## Prerequisites

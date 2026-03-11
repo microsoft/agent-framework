@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and run a basic agent with a FoundryAgentClient.
+// This sample shows how to create and run a basic agent with a FoundryAgent.
 
 using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;

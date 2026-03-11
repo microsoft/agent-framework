@@ -1,10 +1,10 @@
 # Dependency Injection with the Responses API
 
-This sample demonstrates how to register a `FoundryAgentClient` in a dependency injection container and use it from a hosted service.
+This sample demonstrates how to register a `FoundryAgent` in a dependency injection container and use it from a hosted service.
 
 ## What this sample demonstrates
 
-- Registering `FoundryAgentClient` as an `AIAgent` in the service collection
+- Registering `FoundryAgent` as an `AIAgent` in the service collection
 - Using the agent from a `IHostedService` with an interactive chat loop
 - Streaming responses in a hosted service context
 - No server-side agent creation or cleanup required
@@ -25,6 +25,6 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ## Run the sample
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents-RAPI
-dotnet run --project .\FoundryAgentsRAPI_Step08_DependencyInjection
+cd dotnet/samples/02-agents/FoundryAgents
+dotnet run --project .\FoundryAgents_Step08_DependencyInjection
 ```

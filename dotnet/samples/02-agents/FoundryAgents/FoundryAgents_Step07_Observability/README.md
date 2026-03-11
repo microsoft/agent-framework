@@ -26,6 +26,6 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="..."  # Optional
 ## Run the sample
 
 ```powershell
-cd dotnet/samples/02-agents/FoundryAgents-RAPI
-dotnet run --project .\FoundryAgentsRAPI_Step07_Observability
+cd dotnet/samples/02-agents/FoundryAgents
+dotnet run --project .\FoundryAgents_Step07_Observability
 ```

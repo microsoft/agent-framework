@@ -1,6 +1,6 @@
 # OpenAPI Tools with the Responses API
 
-This sample shows how to use OpenAPI tools with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use OpenAPI tools with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 

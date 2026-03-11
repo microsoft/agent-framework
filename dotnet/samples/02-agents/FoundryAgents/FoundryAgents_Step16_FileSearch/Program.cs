@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use File Search Tool with a FoundryAgentClient.
+// This sample shows how to use File Search Tool with a FoundryAgent.
 
 using Azure.AI.Projects;
 using Azure.Identity;

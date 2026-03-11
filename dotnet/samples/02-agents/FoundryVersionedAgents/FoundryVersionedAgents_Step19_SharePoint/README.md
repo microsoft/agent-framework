@@ -30,7 +30,7 @@ $env:SHAREPOINT_PROJECT_CONNECTION_ID="your-sharepoint-connection-id"  # Require
 
 ## Run the sample
 
-Navigate to the FoundryAgents sample directory and run:
+Navigate to the FoundryVersionedAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryVersionedAgents

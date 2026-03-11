@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use Code Interpreter Tool with a FoundryAgentClient.
+// This sample shows how to use Code Interpreter Tool with a FoundryAgent.
 
 using System.Text;
 using Azure.Identity;

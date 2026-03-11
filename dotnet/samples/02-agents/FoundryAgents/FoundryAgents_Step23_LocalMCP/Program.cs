@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates how to use a local MCP (Model Context Protocol) client with a FoundryAgentClient
+// This sample demonstrates how to use a local MCP (Model Context Protocol) client with a FoundryAgent
 //. The MCP tools are resolved locally by connecting directly to the MCP
 // server via HTTP, and then passed to the agent as client-side tools.
 

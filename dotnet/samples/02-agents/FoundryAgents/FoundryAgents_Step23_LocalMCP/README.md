@@ -1,13 +1,13 @@
 # Local MCP with the Responses API
 
-This sample demonstrates how to use a local MCP (Model Context Protocol) client with a `FoundryAgentClient` using the Responses API directly.
+This sample demonstrates how to use a local MCP (Model Context Protocol) client with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 
 - Connecting to an MCP server via HTTP (Streamable HTTP transport)
 - Resolving MCP tools locally and wrapping them with logging
 - Using `DelegatingAIFunction` to add custom behavior to MCP tools
-- Passing locally-resolved MCP tools to `FoundryAgentClient`
+- Passing locally-resolved MCP tools to `FoundryAgent`
 
 ## Prerequisites
 

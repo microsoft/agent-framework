@@ -46,7 +46,7 @@ $env:AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME="your-configuration-name"
 
 ## Run the sample
 
-Navigate to the FoundryAgents sample directory and run:
+Navigate to the FoundryVersionedAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryVersionedAgents

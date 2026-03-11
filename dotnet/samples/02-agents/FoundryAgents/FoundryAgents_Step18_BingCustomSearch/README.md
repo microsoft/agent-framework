@@ -1,6 +1,6 @@
 # Bing Custom Search with the Responses API
 
-This sample shows how to use the Bing Custom Search tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the Bing Custom Search tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 

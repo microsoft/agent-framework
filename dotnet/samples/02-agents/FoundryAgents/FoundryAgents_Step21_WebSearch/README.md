@@ -1,10 +1,10 @@
 # Web Search with the Responses API
 
-This sample shows how to use the Web Search tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the Web Search tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 
-- Using `HostedWebSearchTool` with `FoundryAgentClient`
+- Using `HostedWebSearchTool` with `FoundryAgent`
 - Processing web search citations and annotations
 - Extracting URL citation details (title, URL) from responses
 

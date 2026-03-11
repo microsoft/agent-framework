@@ -1,6 +1,6 @@
 # SharePoint Grounding with the Responses API
 
-This sample shows how to use the SharePoint Grounding tool with a `FoundryAgentClient` using the Responses API directly.
+This sample shows how to use the SharePoint Grounding tool with a `FoundryAgent` using the Responses API directly.
 
 ## What this sample demonstrates
 

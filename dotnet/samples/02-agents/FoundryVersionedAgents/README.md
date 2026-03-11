@@ -5,24 +5,30 @@ These samples demonstrate how to work with server-side versioned agents in Micro
 Unlike `FoundryAgent` (which uses the Responses API directly), `FoundryVersionedAgent` creates and manages agent definitions
 that are versioned and persisted in the Foundry service. Agent behavior (instructions, tools, options) is locked at creation time.
 
-## Environment Variable Auto-Discovery
+## Configuration
 
-`FoundryVersionedAgent` automatically resolves the following from the environment — no manual `AIProjectClient` construction needed:
+Set the following environment variables:
 
-| Variable | Required | Description |
-|---|---|---|
-| `AZURE_AI_PROJECT_ENDPOINT` | Yes | The Microsoft Foundry project endpoint URL |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | No | The model deployment name (e.g., `gpt-4o-mini`) |
+```powershell
+$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
+```
 
-Authentication uses `DefaultAzureCredential` automatically. Make sure you're logged in with `az login`.
+Many creation samples default the deployment name to `gpt-4o-mini` when the environment variable is not set. Retrieval-only flows such as `GetAIAgentAsync(...)` do not require a model once the agent already exists.
 
 ```csharp
-// All you need — endpoint, credential, and model are auto-discovered
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    ?? "gpt-4o-mini";
+
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    endpoint: new Uri(endpoint),
+    tokenProvider: new DefaultAzureCredential(),
     name: "MyAgent",
+    model: deploymentName,
     instructions: "You are a helpful assistant.");
 
-// Cleanup: deletes the agent and all its versions
 await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 ```
 
@@ -40,13 +46,6 @@ Agents have **versions** and their definitions are established at creation time.
 - .NET 10 SDK or later
 - Microsoft Foundry service endpoint and project configured
 - Azure CLI installed and authenticated (`az login`)
-
-Set the following environment variables:
-
-```powershell
-$env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
-$env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, auto-discovered by FoundryVersionedAgent
-```
 
 ## Samples
 
@@ -87,7 +86,6 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"  # Optional, auto-discovered b
 ## Running the samples
 
 ```powershell
-cd FoundryVersionedAgents_Step01.2_Running
-dotnet run
+cd dotnet/samples/02-agents/FoundryVersionedAgents
+dotnet run --project .\FoundryVersionedAgents_Step01.2_Running
 ```
-

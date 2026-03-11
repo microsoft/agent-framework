@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to use plugins with a FoundryAgentClient.
+// This sample shows how to use plugins with a FoundryAgent.
 // Plugin classes can depend on other services that need to be injected.
 
 using Azure.Identity;

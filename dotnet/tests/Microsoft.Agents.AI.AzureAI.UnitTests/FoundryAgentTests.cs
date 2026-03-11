@@ -66,6 +66,36 @@ public class FoundryAgentTests
     }
 
     [Fact]
+    public void Constructor_WithNullOptions_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            new FoundryAgent(
+                endpoint: TestEndpoint,
+                tokenProvider: new FakeAuthenticationTokenProvider(),
+                options: null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    [Fact]
+    public void Constructor_WithOptionsWithoutModelId_ThrowsArgumentException()
+    {
+        // Arrange
+        ChatClientAgentOptions options = new()
+        {
+            ChatOptions = new ChatOptions()
+        };
+
+        // Act & Assert
+        Assert.ThrowsAny<ArgumentException>(() =>
+            new FoundryAgent(
+                endpoint: TestEndpoint,
+                tokenProvider: new FakeAuthenticationTokenProvider(),
+                options: options));
+    }
+
+    [Fact]
     public void Constructor_WithValidParams_CreatesAgent()
     {
         // Act
@@ -191,7 +221,7 @@ public class FoundryAgentTests
     #region Functional tests
 
     [Fact]
-    public async Task RunAsync_SendsRequestToResponsesAPI()
+    public async Task RunAsync_SendsRequestToResponsesAPIAsync()
     {
         // Arrange
         bool requestTriggered = false;
@@ -261,7 +291,7 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public async Task Constructor_UserAgentHeaderAddedToRequests()
+    public async Task Constructor_UserAgentHeaderAddedToRequestsAsync()
     {
         // Arrange
         bool userAgentFound = false;

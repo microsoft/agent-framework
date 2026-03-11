@@ -67,7 +67,7 @@ $env:AZURE_AI_MEMORY_STORE_NAME="your-memory-store-name"  # Required - name of p
 
 ## Run the sample
 
-Navigate to the FoundryAgents sample directory and run:
+Navigate to the FoundryVersionedAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/FoundryVersionedAgents
