@@ -57,6 +57,7 @@ public class CheckpointParentTests
         storedFirst.Parent.Should().BeNull("the first checkpoint should have no parent");
 
         // Assert: The second checkpoint should have 1 parent, the first checkpoint.
+        checkpoints.Should().HaveCountGreaterThanOrEqualTo(2, "multiple checkpoints should have been created, and we can't verify parent checkpoint without at least 2 checkpoints present.");
         CheckpointInfo secondCheckpoint = checkpoints[1];
         Checkpoint storedSecond = await ((ICheckpointManager)checkpointManager)
             .LookupCheckpointAsync(secondCheckpoint.SessionId, secondCheckpoint);
