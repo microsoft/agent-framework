@@ -23,7 +23,10 @@ from pathlib import Path
 
 import tomli
 from rich import print
-from scripts.dependencies._dependency_bounds_runtime import extend_command_with_runtime_tools
+from scripts.dependencies._dependency_bounds_runtime import (
+    extend_command_with_runtime_tools,
+    extend_command_with_task,
+)
 from scripts.dependencies._dependency_bounds_upper_impl import (
     _build_internal_graph,
     _build_workspace_package_map,
@@ -62,6 +65,14 @@ def _truncate_error(stdout: str, stderr: str, *, max_chars: int = 2000) -> str:
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False))
+
+
+def _coerce_subprocess_output(output: str | bytes | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode(errors="replace")
+    return output
 
 
 def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[PackageTestPlan]:
@@ -148,20 +159,35 @@ def _run_package_tasks(
             command.extend(["--extra", extra_name])
         for editable_path in plan.internal_editables:
             command.extend(["--with-editable", str(editable_path)])
-        command.extend(["python", "-m", "poethepoet", task_name])
+        extend_command_with_task(command, task_name)
 
         if dry_run:
             print(f"[cyan]DRY RUN[/cyan] {' '.join(command)}")
             continue
 
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            error_message = _truncate_error(
+                _coerce_subprocess_output(exc.stdout),
+                _coerce_subprocess_output(exc.stderr),
+            )
+            if not error_message:
+                error_message = "Process timed out without additional output."
+            return (
+                False,
+                (
+                    f"Task '{task_name}' timed out for {plan.project_path} at resolution '{resolution}' "
+                    f"after {timeout_seconds} seconds.\n{error_message}"
+                ),
+            )
         if result.returncode != 0:
             error_message = _truncate_error(result.stdout, result.stderr)
             return (
@@ -252,7 +278,7 @@ def _build_optimizer_command(
     *,
     workspace_root: Path,
     module_name: str,
-    package: str,
+    package: str | None,
     dependencies: list[str] | None,
     parallelism: int,
     max_candidates: int,
@@ -265,8 +291,6 @@ def _build_optimizer_command(
         sys.executable,
         "-m",
         module_name,
-        "--packages",
-        package,
         "--parallelism",
         str(parallelism),
         "--max-candidates",
@@ -276,6 +300,8 @@ def _build_optimizer_command(
         "--timeout-seconds",
         str(timeout_seconds),
     ]
+    if package:
+        command.extend(["--packages", package])
     if dependencies:
         command.extend(["--dependencies", *dependencies])
     if output_json:
@@ -289,7 +315,7 @@ def _run_optimizer_mode(
     *,
     workspace_root: Path,
     module_name: str,
-    package: str,
+    package: str | None,
     dependencies: list[str] | None,
     parallelism: int,
     max_candidates: int,
@@ -327,7 +353,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Unified dependency-bound workflow. Use mode=test for workspace-wide lower+upper gates, "
-            "or lower/upper/both for package-scoped bound expansion."
+            "or lower/upper/both for package-scoped or workspace-wide bound expansion."
         )
     )
     parser.add_argument(
@@ -339,16 +365,13 @@ def main() -> None:
     parser.add_argument(
         "--package",
         default=None,
-        help=(
-            "Optional workspace package path/name filter for test mode. "
-            "Required for lower/upper/both modes (for example: packages/core)."
-        ),
+        help="Optional workspace package path/name filter for all modes. Use '*' or omit it for the whole workspace.",
     )
     parser.add_argument(
         "--dependencies",
         nargs="*",
         default=None,
-        help="Optional dependency-name filters (only used in lower/upper/both).",
+        help="Optional dependency-name filters for lower/upper/both. Omit to process all matching dependencies.",
     )
     parser.add_argument(
         "--parallelism",
@@ -387,15 +410,13 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.mode in {"lower", "upper", "both"} and not args.package:
-        parser.error("--package is required when --mode is lower, upper, or both.")
-
     workspace_root = Path(__file__).resolve().parents[2]
+    normalized_package = None if args.package in {None, "", "*"} else args.package
 
     if args.mode == "test":
         exit_code = _run_test_mode(
             workspace_root=workspace_root,
-            package_filter=args.package,
+            package_filter=normalized_package,
             timeout_seconds=args.timeout_seconds,
             dry_run=args.dry_run,
             output_json=(workspace_root / args.test_output_json).resolve(),
@@ -406,7 +427,7 @@ def main() -> None:
         exit_code = _run_optimizer_mode(
             workspace_root=workspace_root,
             module_name=_LOWER_IMPL_MODULE,
-            package=args.package,
+            package=normalized_package,
             dependencies=args.dependencies,
             parallelism=args.parallelism,
             max_candidates=args.max_candidates,
@@ -421,7 +442,7 @@ def main() -> None:
         exit_code = _run_optimizer_mode(
             workspace_root=workspace_root,
             module_name=_UPPER_IMPL_MODULE,
-            package=args.package,
+            package=normalized_package,
             dependencies=args.dependencies,
             parallelism=args.parallelism,
             max_candidates=args.max_candidates,
@@ -437,7 +458,7 @@ def main() -> None:
     lower_exit = _run_optimizer_mode(
         workspace_root=workspace_root,
         module_name=_LOWER_IMPL_MODULE,
-        package=args.package,
+        package=normalized_package,
         dependencies=args.dependencies,
         parallelism=args.parallelism,
         max_candidates=args.max_candidates,
@@ -452,7 +473,7 @@ def main() -> None:
     upper_exit = _run_optimizer_mode(
         workspace_root=workspace_root,
         module_name=_UPPER_IMPL_MODULE,
-        package=args.package,
+        package=normalized_package,
         dependencies=args.dependencies,
         parallelism=args.parallelism,
         max_candidates=args.max_candidates,

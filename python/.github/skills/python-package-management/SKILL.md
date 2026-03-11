@@ -53,6 +53,9 @@ uv run poe validate-dependency-bounds-test --project <workspace-package-name>
 # Then expand bounds for one dependency in the target package
 uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
 
+# Repo-wide automation can reuse the same task
+uv run poe validate-dependency-bounds-project --mode upper --project "*"
+
 # Add a dependency to one project and run both validators for that project/dependency
 uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
 ```
@@ -62,7 +65,7 @@ uv run poe add-dependency-and-validate-bounds --project <workspace-package-name>
 - Stable dependencies (`>=1.0`) should typically be bounded as `>=<known-good>,<next-major>`.
 - Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds on a known-good line (avoid open-ended ranges).
 - Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
-- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current.
+- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--project "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 - Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.

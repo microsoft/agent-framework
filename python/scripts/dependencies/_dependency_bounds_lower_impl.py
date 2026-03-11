@@ -975,7 +975,7 @@ def main() -> None:
 
     workspace_pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
     workspace_root = workspace_pyproject.parent
-    package_filters = set(args.packages) if args.packages else None
+    package_filters = {value for value in (args.packages or []) if value and value != "*"} or None
     dependency_filters = {name.lower() for name in args.dependencies} if args.dependencies else None
     output_json_path = (workspace_root / args.output_json).resolve()
 

@@ -315,11 +315,18 @@ shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test -
 args = [{ name = "project", default = "*", options = ["-p", "--project"] }]
 
 [tool.poe.tasks.validate-dependency-bounds-project]
-cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode ${mode} --package ${project} --dependencies ${dependency}"
+shell = """
+command=(python -m scripts.dependencies.validate_dependency_bounds --mode "${mode}" --package "${project}")
+if [ -n "${dependency}" ]; then
+    command+=(--dependencies "${dependency}")
+fi
+"${command[@]}"
+"""
+interpreter = "bash"
 args = [
     { name = "mode", default = "both", options = ["-m", "--mode"] },
-    { name = "project", options = ["-p", "--project"] },
-    { name = "dependency", options = ["-d", "--dependency"] },
+    { name = "project", default = "*", options = ["-p", "--project"] },
+    { name = "dependency", default = "", options = ["-d", "--dependency"] },
 ]
 
 [tool.poe.tasks.add-dependency-and-validate-bounds]

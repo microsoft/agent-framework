@@ -53,7 +53,7 @@ uv run poe validate-dependency-bounds-project --mode both --project <workspace-p
 - `upgrade-dev-dependency-pins` only refreshes exact dev pins in `pyproject.toml` files.
 - `upgrade-dev-dependencies` refreshes dev pins (using task above), runs `uv lock --upgrade`, reinstalls from the frozen lockfile, then runs `check`, `typing`, and `test`.
 - `validate-dependency-bounds-test` runs the repo-wide lower/upper smoke gate.
-- `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair.
+- `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair. Its `--project` argument defaults to `*`, and `--dependency` is optional, so automation can also use it for repo-wide upper-bound runs.
 
 ### GitHub Actions workflows
 
@@ -61,7 +61,7 @@ These workflows call the Poe tasks:
 
 - `.github/workflows/python-dependency-range-validation.yml`
   - Trigger: `workflow_dispatch`
-  - Runs `uv run python -m scripts.dependencies._dependency_bounds_upper_impl`
+  - Runs `uv run poe validate-dependency-bounds-project --mode upper --project "*"`
   - Uploads `python/scripts/dependencies/dependency-range-results.json`
   - Creates issues for failing candidate versions and opens/updates a PR for passing range updates
 
