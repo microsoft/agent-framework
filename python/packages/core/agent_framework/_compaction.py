@@ -255,7 +255,7 @@ def _read_group_annotation(message: Message) -> dict[str, Any] | None:
 def _read_group_annotation_raw(message: Message) -> dict[str, Any] | None:
     annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
     if isinstance(annotation, Mapping):
-        return annotation  # type: ignore[reportUnknownVariableType]
+        return annotation  # type: ignore[reportUnknownVariableType, return-value]
     return None
 
 
