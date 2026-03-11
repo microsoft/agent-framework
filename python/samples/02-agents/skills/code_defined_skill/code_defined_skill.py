@@ -76,7 +76,7 @@ unit_converter_skill = Skill(
 # 2. Dynamic Resources — callable function via @skill.resource
 # ---------------------------------------------------------------------------
 @unit_converter_skill.resource(name="conversion-policy", description="Current conversion formatting and rounding policy")
-def conversion_policy(**kwargs: Any) -> str:
+def conversion_policy(**kwargs: Any) -> Any:
     """Return the current conversion policy.
 
     Dynamic resources are evaluated at runtime, so they can include

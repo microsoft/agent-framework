@@ -882,7 +882,7 @@ class TestSkill:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def get_schema() -> str:
+        def get_schema() -> Any:
             """Get the database schema."""
             return "CREATE TABLE users (id INT)"
 
@@ -895,7 +895,7 @@ class TestSkill:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(name="custom-name", description="Custom description")
-        def my_resource() -> str:
+        def my_resource() -> Any:
             return "data"
 
         assert len(skill.resources) == 1
@@ -907,7 +907,7 @@ class TestSkill:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def get_data() -> str:
+        def get_data() -> Any:
             return "data"
 
         assert callable(get_data)
@@ -917,11 +917,11 @@ class TestSkill:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def resource_a() -> str:
+        def resource_a() -> Any:
             return "A"
 
         @skill.resource
-        def resource_b() -> str:
+        def resource_b() -> Any:
             return "B"
 
         assert len(skill.resources) == 2
@@ -933,7 +933,7 @@ class TestSkill:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        async def get_async_data() -> str:
+        async def get_async_data() -> Any:
             return "async data"
 
         assert len(skill.resources) == 1
@@ -1003,7 +1003,7 @@ class TestSkillsProviderCodeSkill:
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def get_schema() -> str:
+        def get_schema() -> Any:
             return "CREATE TABLE users"
 
         provider = SkillsProvider(skills=[skill])
@@ -1014,7 +1014,7 @@ class TestSkillsProviderCodeSkill:
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        async def get_data() -> str:
+        async def get_data() -> Any:
             return "async data"
 
         provider = SkillsProvider(skills=[skill])
@@ -1042,7 +1042,7 @@ class TestSkillsProviderCodeSkill:
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def get_user_config(**kwargs: Any) -> str:
+        def get_user_config(**kwargs: Any) -> Any:
             user_id = kwargs.get("user_id", "unknown")
             return f"config for {user_id}"
 
@@ -1054,7 +1054,7 @@ class TestSkillsProviderCodeSkill:
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        async def get_user_data(**kwargs: Any) -> str:
+        async def get_user_data(**kwargs: Any) -> Any:
             token = kwargs.get("auth_token", "none")
             return f"data with token={token}"
 
@@ -1067,12 +1067,48 @@ class TestSkillsProviderCodeSkill:
         skill = Skill(name="prog-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def static_resource() -> str:
+        def static_resource() -> Any:
             return "static content"
 
         provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "static_resource", user_id="ignored")
         assert result == "static content"
+
+    async def test_read_callable_resource_returns_dict(self) -> None:
+        """Resource functions may return non-string types, passed through as-is."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_config() -> Any:
+            return {"max_retries": 3, "timeout": 30}
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_config")
+        assert result == {"max_retries": 3, "timeout": 30}
+
+    async def test_read_callable_resource_returns_list(self) -> None:
+        """Resource functions may return lists, passed through as-is."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_items() -> Any:
+            return [1, 2, 3]
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_items")
+        assert result == [1, 2, 3]
+
+    async def test_read_callable_resource_returns_none(self) -> None:
+        """Resource functions may return None."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_nothing() -> Any:
+            return None
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_nothing")
+        assert result is None
 
     async def test_before_run_injects_code_skills(self) -> None:
         skill = Skill(name="prog-skill", description="A code-defined skill.", content="Body")
@@ -1671,7 +1707,7 @@ class TestSkillsProviderEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def exploding_resource() -> str:
+        def exploding_resource() -> Any:
             raise RuntimeError("boom")
 
         provider = SkillsProvider(skills=[skill])
@@ -1683,7 +1719,7 @@ class TestSkillsProviderEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        async def async_exploding() -> str:
+        async def async_exploding() -> Any:
             raise ValueError("async boom")
 
         provider = SkillsProvider(skills=[skill])
@@ -1751,7 +1787,7 @@ class TestSkillResourceDecoratorEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def no_docs() -> str:
+        def no_docs() -> Any:
             return "data"
 
         assert skill.resources[0].description is None
@@ -1760,7 +1796,7 @@ class TestSkillResourceDecoratorEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(name="custom-name")
-        def get_data() -> str:
+        def get_data() -> Any:
             """Some docs."""
             return "data"
 
@@ -1772,7 +1808,7 @@ class TestSkillResourceDecoratorEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource(description="Custom desc")
-        def get_data() -> str:
+        def get_data() -> Any:
             return "data"
 
         assert skill.resources[0].name == "get_data"
@@ -1782,11 +1818,11 @@ class TestSkillResourceDecoratorEdgeCases:
         skill = Skill(name="my-skill", description="A skill.", content="Body")
 
         @skill.resource
-        def original() -> str:
+        def original() -> Any:
             return "original"
 
         @skill.resource(name="aliased")
-        def aliased() -> str:
+        def aliased() -> Any:
             return "aliased"
 
         # Both decorated functions should still be callable

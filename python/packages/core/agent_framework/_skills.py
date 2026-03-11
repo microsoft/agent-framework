@@ -94,6 +94,7 @@ class SkillResource:
             description: Optional human-readable summary shown when advertising the resource.
             content: Static content string.  Mutually exclusive with *function*.
             function: Callable (sync or async) that returns content on demand.
+                May return any type; the value is passed through as-is.
                 Mutually exclusive with *content*.
         """
         if not name or not name.strip():
@@ -336,7 +337,7 @@ class Skill:
             .. code-block:: python
 
                 @skill.resource
-                def get_schema() -> str:
+                def get_schema() -> Any:
                     return "schema..."
 
             With arguments:
@@ -344,7 +345,7 @@ class Skill:
             .. code-block:: python
 
                 @skill.resource(name="custom-name", description="Custom desc")
-                async def get_data() -> str:
+                async def get_data() -> Any:
                     return "data..."
         """
 
@@ -918,7 +919,7 @@ class SkillsProvider(BaseContextProvider):
             logger.exception("Error running file-based script '%s' in skill '%s'", script_name, skill_name)
             return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
+    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> Any:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
@@ -933,7 +934,7 @@ class SkillsProvider(BaseContextProvider):
                 ``agent.run(user_id="123")``).
 
         Returns:
-            The resource content string, or a user-facing error message on
+            The resource content (any type), or a user-facing error message on
             failure.
         """
         if not skill_name or not skill_name.strip():
@@ -965,7 +966,7 @@ class SkillsProvider(BaseContextProvider):
                     )
                 else:
                     result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()  # pyright: ignore[reportPrivateUsage]
-                return str(result)
+                return result
             except Exception:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
                 return f"Error: Failed to read resource '{resource_name}' from skill '{skill_name}'."

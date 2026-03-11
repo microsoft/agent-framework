@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 from agent_framework import (
     Agent,
@@ -70,7 +71,7 @@ volume_converter_skill = Skill(
 
 
 @volume_converter_skill.resource(name="conversion-table", description="Volume conversion factors")
-def volume_table() -> str:
+def volume_table() -> Any:
     """Return the volume conversion factor table."""
     return dedent("""\
         # Volume Conversion Table
