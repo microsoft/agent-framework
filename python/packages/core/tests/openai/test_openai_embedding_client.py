@@ -198,7 +198,6 @@ skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
 
 
 @skip_if_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings() -> None:
@@ -217,7 +216,6 @@ async def test_integration_openai_get_embeddings() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings_multiple() -> None:
@@ -232,7 +230,6 @@ async def test_integration_openai_get_embeddings_multiple() -> None:
 
 
 @skip_if_openai_integration_tests_disabled
-@pytest.mark.integration
 @pytest.mark.flaky
 @pytest.mark.integration
 async def test_integration_openai_get_embeddings_with_dimensions() -> None:
