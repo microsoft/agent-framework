@@ -3363,3 +3363,128 @@ async def test_prepare_options_excludes_continuation_token() -> None:
 
 
 # endregion
+
+
+# region Function Call Fidelity Tests
+
+
+def test_parse_response_from_openai_function_call_includes_status() -> None:
+    """Test _parse_response_from_openai includes status in function call additional_properties."""
+    from openai.types.responses import ResponseFunctionToolCall
+
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Create a real ResponseFunctionToolCall object
+    mock_function_call_item = ResponseFunctionToolCall(
+        type="function_call",
+        call_id="call_123",
+        name="get_weather",
+        arguments='{"location": "Seattle"}',
+        id="fc_456",
+        status="completed",
+    )
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output = [mock_function_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "get_weather"
+    assert function_call.arguments == '{"location": "Seattle"}'
+    # Verify status is included in additional_properties
+    assert function_call.additional_properties is not None
+    assert function_call.additional_properties.get("status") == "completed"
+    assert function_call.additional_properties.get("fc_id") == "fc_456"
+    # Verify raw_representation is preserved
+    assert function_call.raw_representation is mock_function_call_item
+
+
+def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
+    """Test _prepare_messages_for_openai correctly filters empty fc_id values from call_id_to_id mapping."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="check hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with empty fc_id - should NOT be added to call_id_to_id
+                Content.from_function_call(
+                    call_id="call_empty",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": ""},  # Empty string
+                ),
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with valid fc_id - SHOULD be added to call_id_to_id
+                Content.from_function_call(
+                    call_id="call_valid",
+                    name="search_flights",
+                    arguments='{"from": "NYC"}',
+                    additional_properties={"fc_id": "fc_valid123"},
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    # Find the function_call items in the result
+    fc_items = [item for item in result if item.get("type") == "function_call"]
+    assert len(fc_items) == 2
+
+    # The empty fc_id should result in an auto-generated id (starts with fc_)
+    empty_fc_item = next(item for item in fc_items if item.get("call_id") == "call_empty")
+    assert empty_fc_item["id"].startswith("fc_")
+    assert empty_fc_item["id"] != ""
+
+    # The valid fc_id should be preserved
+    valid_fc_item = next(item for item in fc_items if item.get("call_id") == "call_valid")
+    assert valid_fc_item["id"] == "fc_valid123"
+
+
+def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
+    """Test _prepare_messages_for_openai correctly filters None fc_id values."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with None fc_id value
+                Content.from_function_call(
+                    call_id="call_none",
+                    name="get_info",
+                    arguments="{}",
+                    additional_properties={"fc_id": None},  # None value
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    # Find the function_call item
+    fc_items = [item for item in result if item.get("type") == "function_call"]
+    assert len(fc_items) == 1
+
+    # The None fc_id should result in an auto-generated id
+    fc_item = fc_items[0]
+    assert fc_item["id"].startswith("fc_")
+
+
+# endregion

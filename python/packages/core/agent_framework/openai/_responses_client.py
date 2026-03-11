@@ -1019,6 +1019,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     content.type == "function_call"
                     and content.additional_properties
                     and "fc_id" in content.additional_properties
+                    and content.additional_properties["fc_id"]
                 ):
                     call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
@@ -1158,13 +1159,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 # OpenAI Responses API requires IDs to start with `fc_`
                 if not fc_id.startswith("fc_"):
                     fc_id = f"fc_{fc_id}"
-                return {
+
+                function_call_obj = {
                     "call_id": content.call_id,
                     "id": fc_id,
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
                 }
+                if status := content.additional_properties.get("status"):
+                    function_call_obj["status"] = status
+                return function_call_obj
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
@@ -1472,10 +1477,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 case "function_call":  # ResponseOutputFunctionCall
                     contents.append(
                         Content.from_function_call(
-                            call_id=item.call_id if hasattr(item, "call_id") and item.call_id else "",
-                            name=item.name if hasattr(item, "name") else "",
-                            arguments=item.arguments if hasattr(item, "arguments") else "",
-                            additional_properties={"fc_id": item.id} if hasattr(item, "id") else {},
+                            call_id=item.call_id,
+                            name=item.name,
+                            arguments=item.arguments,
+                            additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
                     )

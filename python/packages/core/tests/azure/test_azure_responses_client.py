@@ -602,3 +602,70 @@ async def test_integration_client_agent_existing_session():
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
+
+
+# region Integration with Foundry V2
+
+
+skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
+    or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
+    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
+)
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_ai_integration_tests_disabled
+async def test_integration_function_call_roundtrip_preserves_fidelity():
+    """Test that function calls roundtrip correctly with full fidelity preserved.
+
+    This verifies the changes where:
+    1. raw_representation is preserved when parsing function calls
+    2. fc_id and status are included in additional_properties
+    3. When re-sending messages, the full object fidelity is preserved
+    """
+    call_count = 0
+
+    @tool(name="get_weather", approval_mode="never_require")
+    async def get_weather_tool(location: str) -> str:
+        """Get weather for a location."""
+        nonlocal call_count
+        call_count += 1
+        return f"Weather in {location} is sunny, 72F"
+
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        credential=AzureCliCredential(),
+    )
+
+    async with Agent(
+        client=client,
+        name="WeatherAgent",
+        instructions="You help check weather. Use get_weather when asked about weather.",
+        tools=[get_weather_tool],
+        default_options={"store": False},  # Store messages locally to test fidelity across messages
+    ) as agent:
+        session = agent.create_session()
+
+        # First request - should invoke the tool
+        response1 = await agent.run("What is the weather in Seattle?", session=session)
+
+        assert response1 is not None
+        assert response1.text is not None
+        assert call_count >= 1
+
+        # Verify the response contains expected content
+        response_text = response1.text.lower()
+        assert "seattle" in response_text or "sunny" in response_text or "72" in response_text
+
+        # Second request - should work correctly with the preserved conversation
+        response2 = await agent.run("And how about in Portland?", session=session)
+
+        assert response2 is not None
+        assert response2.text is not None
+        assert call_count >= 2
+
+
+# endregion
