@@ -445,6 +445,8 @@ class Content:
     `Content.from_uri()`, etc. to create instances.
     """
 
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
     def __init__(
         self,
         type: ContentType,
@@ -545,6 +547,23 @@ class Content:
         self.user_input_request = user_input_request
         self.approved = approved
         self.consent_link = consent_link
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Content:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        shallow = cls._SHALLOW_COPY_FIELDS
+        for k, v in self.__dict__.items():
+            if k in shallow:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, deepcopy(v, memo))
+        return result
 
     @classmethod
     def from_text(
