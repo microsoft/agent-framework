@@ -606,8 +606,11 @@ class FunctionTool(SerializationMixin):
         # that still declare ``**kwargs``. New tools should consume runtime data via ``ctx``.
         legacy_runtime_kwargs = dict(runtime_kwargs)
         if self._forward_runtime_kwargs and legacy_runtime_kwargs:
-            call_kwargs.update(legacy_runtime_kwargs)
-            observable_kwargs.update(legacy_runtime_kwargs)
+            for key, value in legacy_runtime_kwargs.items():
+                if key not in call_kwargs:
+                    call_kwargs[key] = value
+                if key not in observable_kwargs:
+                    observable_kwargs[key] = value
 
         if self._context_parameter_name is not None and effective_context is not None:
             call_kwargs[self._context_parameter_name] = effective_context

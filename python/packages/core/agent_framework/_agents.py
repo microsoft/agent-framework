@@ -411,16 +411,16 @@ class BaseAgent(SerializationMixin):
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create a new lightweight session.
 
-        This will be used by a agent to hold the persisted session.
+        This will be used by an agent to hold the persisted session.
         This depends on the service used, in some cases, or with store=True
-        this will add the `service_session_id` based on the response,
+        this will add the ``service_session_id`` based on the response,
         which is then fed back to the API on the next call.
 
         In other cases, if there is a HistoryProvider setup in the agent,
         that is used and it can store state in the session.
 
         If there is no HistoryProvider and store=False or the default of a service is False.
-        Then a ``InMemoryHistoryProvider`` is added to the agent and used with the session automatically.
+        Then a ``InMemoryHistoryProvider`` instance is added to the agent and used with the session automatically.
         The ``InMemoryHistoryProvider`` stores the messages as `state` in the session by default.
 
         Keyword Args:
