@@ -108,6 +108,7 @@
     <!-- Inference SDKs -->
     <PackageVersion Include="AWSSDK.Extensions.Bedrock.MEAI" Version="4.0.5.1" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.10.0" />
+    <PackageVersion Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageVersion Include="OllamaSharp" Version="5.4.8" />
     <PackageVersion Include="OpenAI" Version="2.9.1" />
     <!-- Identity -->
