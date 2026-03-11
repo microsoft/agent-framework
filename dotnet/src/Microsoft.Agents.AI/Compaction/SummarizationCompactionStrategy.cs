@@ -130,7 +130,6 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
         // Track which groups were excluded so we can restore them if the LLM call fails.
         List<ChatMessage> summarizationMessages = [new ChatMessage(ChatRole.System, this.SummarizationPrompt)];
         List<CompactionMessageGroup> excludedGroups = [];
-        List<int> excludedGroupIndices = [];
         int insertIndex = -1;
 
         for (int i = 0; i < index.Groups.Count && excludedGroups.Count < maxSummarizable; i++)
