@@ -7,10 +7,12 @@
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? $"foundry-memory-sample-{Guid.NewGuid():N}";
@@ -113,6 +115,8 @@ async Task EnsureMemoryStoreAsync()
 async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         model: deploymentName,
         name: AgentNameMEAI,
         instructions: AgentInstructions,
@@ -123,6 +127,8 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: AgentNameNative,
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

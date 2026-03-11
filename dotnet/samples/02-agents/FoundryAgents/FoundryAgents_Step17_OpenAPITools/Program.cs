@@ -3,12 +3,19 @@
 // This sample shows how to use OpenAPI Tools with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with OpenAPI tool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: "OpenAPIToolsAgent-RAPI",
     tools: [FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition())]);

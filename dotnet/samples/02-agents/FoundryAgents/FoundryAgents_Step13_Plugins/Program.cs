@@ -3,6 +3,7 @@
 // This sample shows how to use plugins with a FoundryAgentClient.
 // Plugin classes can depend on other services that need to be injected.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -19,12 +20,17 @@ services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider a
 
 IServiceProvider serviceProvider = services.BuildServiceProvider();
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with the options-based constructor to pass services.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     options: new ChatClientAgentOptions
     {
         Name = AssistantName,
-        ChatOptions = new() { Instructions = AssistantInstructions, Tools = serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList() }
+        ChatOptions = new() { ModelId = deploymentName, Instructions = AssistantInstructions, Tools = serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList() }
     },
     services: serviceProvider);
 

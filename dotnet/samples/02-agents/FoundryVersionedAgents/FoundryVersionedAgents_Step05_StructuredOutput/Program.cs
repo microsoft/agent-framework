@@ -5,15 +5,22 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using SampleApp;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AssistantInstructions = "You are a helpful assistant that extracts structured information about people.";
 const string AssistantName = "StructuredOutputAssistant";
 
 // Create FoundryVersionedAgent directly
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     new ChatClientAgentOptions()
     {
         Name = AssistantName,
@@ -35,6 +42,9 @@ Console.WriteLine($"Occupation: {response.Result.Occupation}");
 
 // Create the FoundryVersionedAgent with the specified name, instructions, and expected structured output the agent should produce.
 FoundryVersionedAgent agentWithPersonInfo = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     new ChatClientAgentOptions()
     {
         Name = AssistantName,

@@ -4,6 +4,7 @@
 //. The MCP tools are resolved locally by connecting directly to the MCP
 // server via HTTP, and then passed to the agent as client-side tools.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -28,8 +29,14 @@ Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t =>
 // Wrap each MCP tool with a DelegatingAIFunction to log local invocations.
 List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(tool)).ToList();
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with the locally-resolved MCP tools.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: AgentName,
     tools: wrappedTools);

@@ -3,6 +3,7 @@
 // This sample shows how to use Microsoft Fabric Tool with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
@@ -14,8 +15,14 @@ const string AgentInstructions = "You are a helpful assistant with access to Mic
 var fabricToolOptions = new FabricDataAgentToolOptions();
 fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection(fabricConnectionId));
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with Microsoft Fabric tool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: "FabricAgent-RAPI",
     tools: [FoundryAITool.CreateMicrosoftFabricTool(fabricToolOptions)]);

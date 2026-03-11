@@ -3,6 +3,7 @@
 // This sample demonstrates how to use function tools.
 
 using System.ComponentModel;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -11,6 +12,9 @@ using Microsoft.Extensions.AI;
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 const string AssistantInstructions = "You are a helpful assistant that can get weather information.";
 const string AssistantName = "WeatherAssistant";
 
@@ -18,7 +22,13 @@ const string AssistantName = "WeatherAssistant";
 AITool tool = AIFunctionFactory.Create(GetWeather);
 
 // Create AIAgent directly
-FoundryVersionedAgent newAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: AssistantName, instructions: AssistantInstructions, tools: [tool]);
+FoundryVersionedAgent newAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: AssistantName,
+    model: deploymentName,
+    instructions: AssistantInstructions,
+    tools: [tool]);
 
 // Getting an already existing agent by name with tools.
 /* 
@@ -26,7 +36,11 @@ FoundryVersionedAgent newAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
  * you need to provided all invocable function tools when retrieving the agent so it can invoke them automatically.
  * If no invocable tools are provided, the function calling needs to handled manually.
  */
-FoundryVersionedAgent existingAgent = await FoundryVersionedAgent.GetAIAgentAsync(name: AssistantName, tools: [tool]);
+FoundryVersionedAgent existingAgent = await FoundryVersionedAgent.GetAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: AssistantName,
+    tools: [tool]);
 
 AgentSession session = await existingAgent.CreateSessionAsync();
 Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", session));

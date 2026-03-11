@@ -2,6 +2,7 @@
 
 // This sample shows how to use MCP client tools with a FoundryAgentClient.
 
+using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
@@ -19,8 +20,14 @@ await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport
 // Retrieve the list of tools available on the GitHub server
 IList<McpClientTool> mcpTools = await mcpClient.ListToolsAsync();
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with MCP tools.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: "You answer questions related to GitHub repositories only.",
     name: "AgentWithMCP",
     tools: [.. mcpTools.Cast<AITool>()]);

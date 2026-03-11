@@ -4,6 +4,7 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -15,6 +16,7 @@ internal sealed class Program
 {
     private static async Task Main(string[] args)
     {
+        string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
         string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
         const string AgentInstructions = @"
@@ -29,7 +31,10 @@ internal sealed class Program
         // Option 1 - Using ComputerUseTool + AgentOptions (MEAI + AgentFramework)
         // Create AIAgent directly
         FoundryVersionedAgent agentOption1 = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(endpoint),
+            new DefaultAzureCredential(),
             name: AgentNameMEAI,
+            model: deploymentName,
             instructions: AgentInstructions,
             description: "Computer automation agent with screen interaction capabilities.",
             tools: [
@@ -39,6 +44,8 @@ internal sealed class Program
         // Option 2 - Using PromptAgentDefinition SDK native type
         // Create the server side agent version
         FoundryVersionedAgent agentOption2 = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(endpoint),
+            new DefaultAzureCredential(),
             name: AgentNameNative,
             creationOptions: new AgentVersionCreationOptions(
                 new PromptAgentDefinition(model: deploymentName)

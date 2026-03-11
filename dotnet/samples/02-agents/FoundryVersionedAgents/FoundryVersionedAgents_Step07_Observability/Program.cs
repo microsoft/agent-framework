@@ -2,12 +2,15 @@
 
 // This sample shows how to create and use a simple AI agent with Microsoft Foundry Agents as the backend that logs telemetry using OpenTelemetry.
 
+using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string? applicationInsightsConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
 
 const string JokerInstructions = "You are good at telling jokes.";
@@ -26,7 +29,12 @@ if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
 using var tracerProvider = tracerProviderBuilder.Build();
 
 // Define the agent you want to create. (Prompt Agent in this case)
-FoundryVersionedAgent foundryAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
+FoundryVersionedAgent foundryAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: JokerName,
+    model: deploymentName,
+    instructions: JokerInstructions);
 AIAgent agent = foundryAgent
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)

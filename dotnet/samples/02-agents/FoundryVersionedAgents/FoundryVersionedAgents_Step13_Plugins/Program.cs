@@ -9,10 +9,14 @@
 // as AI functions. The AsAITools method of the plugin class shows how to specify
 // which methods should be exposed to the AI agent.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AssistantInstructions = "You are a helpful assistant that helps people find information.";
 const string AssistantName = "PluginAssistant";
@@ -28,7 +32,10 @@ IServiceProvider serviceProvider = services.BuildServiceProvider();
 // Define the agent with plugin tools
 // Define the agent you want to create. (Prompt Agent in this case)
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: AssistantName,
+    model: deploymentName,
     instructions: AssistantInstructions,
     tools: serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList(),
     services: serviceProvider);

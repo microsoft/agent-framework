@@ -6,10 +6,12 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? $"rapi-memory-sample-{Guid.NewGuid():N}";
@@ -21,6 +23,9 @@ string memoryScope = "travel-preferences";
 MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, memoryScope) { UpdateDelay = 0 };
 
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: "You are a helpful travel assistant. Use the memory search tool to recall what you know about the user from past conversations.",
     name: AgentName,
     tools: [FoundryAITool.FromResponseTool(memorySearchTool)]);

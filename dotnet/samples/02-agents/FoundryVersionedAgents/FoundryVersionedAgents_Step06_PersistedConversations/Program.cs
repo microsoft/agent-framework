@@ -3,13 +3,22 @@
 // This sample shows how to create and use a simple AI agent with a conversation that can be persisted to disk.
 
 using System.Text.Json;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
 
-FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: JokerName,
+    model: deploymentName,
+    instructions: JokerInstructions);
 
 // Start a new session for the agent conversation.
 AgentSession session = await agent.CreateSessionAsync();

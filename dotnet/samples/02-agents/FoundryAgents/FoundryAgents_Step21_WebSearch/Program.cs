@@ -2,6 +2,7 @@
 
 // This sample shows how to use the Web Search Tool with a FoundryAgentClient.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -10,8 +11,14 @@ using OpenAI.Responses;
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
 const string AgentName = "WebSearchAgent-RAPI";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with HostedWebSearchTool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: AgentName,
     tools: [new HostedWebSearchTool()]);

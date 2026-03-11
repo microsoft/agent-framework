@@ -3,10 +3,14 @@
 // This sample shows how to use dependency injection to register an AIAgent and use it from a hosted service with a user input chat loop.
 
 using System.ClientModel;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string JokerInstructions = "You are good at telling jokes.";
 const string JokerName = "JokerAgent";
@@ -15,11 +19,19 @@ const string JokerName = "JokerAgent";
 FoundryVersionedAgent agent;
 try
 {
-    agent = await FoundryVersionedAgent.GetAIAgentAsync(name: JokerName);
+    agent = await FoundryVersionedAgent.GetAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
+        name: JokerName);
 }
 catch (ClientResultException ex) when (ex.Status == 404)
 {
-    agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
+    agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
+        name: JokerName,
+        model: deploymentName,
+        instructions: JokerInstructions);
 }
 
 // Create a host builder that we will register services with and then run.

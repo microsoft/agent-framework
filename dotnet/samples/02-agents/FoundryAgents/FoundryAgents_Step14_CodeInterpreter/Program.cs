@@ -3,6 +3,7 @@
 // This sample shows how to use Code Interpreter Tool with a FoundryAgentClient.
 
 using System.Text;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -11,8 +12,14 @@ using OpenAI.Assistants;
 const string AgentInstructions = "You are a personal math tutor. When asked a math question, write and run code using the python tool to answer the question.";
 const string AgentName = "CoderAgent-RAPI";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with HostedCodeInterpreterTool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: AgentName,
     tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);

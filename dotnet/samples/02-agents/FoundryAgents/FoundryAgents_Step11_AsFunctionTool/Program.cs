@@ -3,6 +3,7 @@
 // This sample shows how to use one agent as a function tool for another agent.
 
 using System.ComponentModel;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -11,13 +12,22 @@ using Microsoft.Extensions.AI;
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
 FoundryAgent weatherAgent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: "You answer questions about the weather.",
     name: "WeatherAgent",
     tools: [weatherTool]);
 
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: "You are a helpful assistant who responds in French.",
     name: "MainAgent",
     tools: [weatherAgent.AsAIFunction()]);

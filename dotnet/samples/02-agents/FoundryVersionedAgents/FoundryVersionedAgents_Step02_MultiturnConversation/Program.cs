@@ -2,12 +2,20 @@
 
 // This sample shows how to create and use a simple AI agent with a multi-turn conversation.
 
-
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryVersionedAgent for the server side agent version.
-FoundryVersionedAgent jokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(instructions: "You are good at telling jokes.", name: "JokerAgent");
+FoundryVersionedAgent jokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: "JokerAgent",
+    model: deploymentName,
+    instructions: "You are good at telling jokes.");
 
 // Create a conversation session — this creates a server-side conversation that appears in the Foundry Project UI.
 ChatClientAgentSession session = await jokerAgent.CreateConversationSessionAsync();

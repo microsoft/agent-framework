@@ -11,6 +11,7 @@ using OpenAI.Assistants;
 using OpenAI.Files;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
@@ -49,6 +50,9 @@ Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
 // Create a FoundryAgent with HostedFileSearchTool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: "FileSearchAgent-RAPI",
     tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);

@@ -2,9 +2,13 @@
 
 // This sample shows how to expose an AI agent as an MCP tool.
 
+using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 Console.WriteLine("Starting MCP Stdio for @modelcontextprotocol/server-github ... ");
 
@@ -24,7 +28,10 @@ Console.WriteLine($"Creating the agent '{agentName}' ...");
 
 // Define the agent you want to create. (Prompt Agent in this case)
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: agentName,
+    model: deploymentName,
     instructions: "You answer questions related to GitHub repositories only.",
     tools: [.. mcpTools.Cast<AITool>()]);
 

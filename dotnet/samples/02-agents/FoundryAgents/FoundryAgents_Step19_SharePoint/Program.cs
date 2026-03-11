@@ -3,6 +3,7 @@
 // This sample shows how to use SharePoint Grounding Tool with a FoundryAgentClient.
 
 using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
@@ -17,8 +18,14 @@ const string AgentInstructions = """
 var sharepointOptions = new SharePointGroundingToolOptions();
 sharepointOptions.ProjectConnections.Add(new ToolProjectConnection(sharepointConnectionId));
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 // Create a FoundryAgent with SharePoint tool.
 FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
     instructions: AgentInstructions,
     name: "SharePointAgent-RAPI",
     tools: [FoundryAITool.CreateSharepointTool(sharepointOptions)]);

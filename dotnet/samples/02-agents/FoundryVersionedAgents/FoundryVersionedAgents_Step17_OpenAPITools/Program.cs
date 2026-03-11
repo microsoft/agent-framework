@@ -4,10 +4,11 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Microsoft.Agents.AI;
+using Azure.Identity;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
@@ -27,7 +28,10 @@ await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "OpenAPIToolsAgent-MEAI",
+        model: deploymentName,
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition())]);
 }
@@ -36,6 +40,8 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAI()
 async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "OpenAPIToolsAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

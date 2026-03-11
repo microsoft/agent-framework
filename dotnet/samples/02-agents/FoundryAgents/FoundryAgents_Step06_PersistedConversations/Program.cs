@@ -3,10 +3,19 @@
 // This sample shows how to persist and resume conversations.
 
 using System.Text.Json;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
-FoundryAgent agent = new(instructions: "You are good at telling jokes.", name: "JokerAgent");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
 
 // Start a new session for the agent conversation.
 AgentSession session = await agent.CreateSessionAsync();

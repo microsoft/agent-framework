@@ -2,12 +2,21 @@
 
 // This sample shows how to use dependency injection to register a FoundryAgentClient and use it from a hosted service.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
-FoundryAgent agent = new(instructions: "You are good at telling jokes.", name: "JokerAgent");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+FoundryAgent agent = new(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    deploymentName,
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
 
 // Create a host builder that we will register services with and then run.
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);

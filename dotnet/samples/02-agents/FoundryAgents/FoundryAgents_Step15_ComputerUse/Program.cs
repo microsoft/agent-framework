@@ -2,6 +2,7 @@
 
 // This sample shows how to use Computer Use Tool with a FoundryAgentClient.
 
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -21,8 +22,14 @@ internal sealed class Program
 
         const string AgentName = "ComputerAgent-RAPI";
 
+        string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+        string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "computer-use-preview";
+
         // Create a FoundryAgent with ComputerUseTool.
         FoundryAgent agent = new(
+            new Uri(endpoint),
+            new DefaultAzureCredential(),
+            deploymentName,
             instructions: AgentInstructions,
             name: AgentName,
             description: "Computer automation agent with screen interaction capabilities.",

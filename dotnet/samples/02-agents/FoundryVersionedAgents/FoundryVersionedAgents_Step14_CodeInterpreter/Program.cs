@@ -5,12 +5,14 @@
 using System.Text;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a personal math tutor. When asked a math question, write and run code using the python tool to answer the question.";
@@ -20,13 +22,18 @@ const string AgentNameNative = "CoderAgent-NATIVE";
 // Option 1 - Using HostedCodeInterpreterTool + AgentOptions (MEAI + AgentFramework)
 // Create the server side agent version
 FoundryVersionedAgent agentOption1 = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: AgentNameMEAI,
+    model: deploymentName,
     instructions: AgentInstructions,
     tools: [new HostedCodeInterpreterTool() { Inputs = [] }]);
 
 // Option 2 - Using PromptAgentDefinition SDK native type
 // Create the server side agent version
 FoundryVersionedAgent agentOption2 = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: AgentNameNative,
     creationOptions: new AgentVersionCreationOptions(
         new PromptAgentDefinition(model: deploymentName)

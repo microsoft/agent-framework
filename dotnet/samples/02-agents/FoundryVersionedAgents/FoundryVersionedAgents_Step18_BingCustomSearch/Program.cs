@@ -4,10 +4,12 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 string connectionId = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_CONNECTION_ID is not set.");
 string instanceName = Environment.GetEnvironmentVariable("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME") ?? throw new InvalidOperationException("AZURE_AI_CUSTOM_SEARCH_INSTANCE_NAME is not set.");
@@ -46,7 +48,10 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "BingCustomSearchAgent-MEAI",
+        model: deploymentName,
         instructions: AgentInstructions,
         tools: [FoundryAITool.CreateBingCustomSearchTool(bingCustomSearchToolParameters)]);
 }
@@ -55,6 +60,8 @@ async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
 async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "BingCustomSearchAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

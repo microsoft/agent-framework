@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -18,13 +19,22 @@ using Microsoft.Extensions.AI;
 static string GetWeather([Description("The location to get the weather for.")] string location)
     => $"The weather in {location} is cloudy with a high of 15°C.";
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
 const string AssistantInstructions = "You are a helpful assistant that can get weather information.";
 const string AssistantName = "WeatherAssistant";
 
 ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)));
 
 // Create AIAgent directly
-FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(name: AssistantName, instructions: AssistantInstructions, tools: [approvalTool]);
+FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
+    name: AssistantName,
+    model: deploymentName,
+    instructions: AssistantInstructions,
+    tools: [approvalTool]);
 
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.

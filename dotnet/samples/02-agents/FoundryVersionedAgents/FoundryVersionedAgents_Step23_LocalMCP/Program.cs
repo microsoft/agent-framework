@@ -6,10 +6,14 @@
 // This sample uses the Microsoft Learn MCP endpoint to search documentation.
 
 using Azure.AI.Projects;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can help with Microsoft documentation questions. Use the Microsoft Learn MCP tool to search for documentation.";
 const string AgentName = "DocsAgent";
@@ -33,7 +37,10 @@ List<AITool> wrappedTools = mcpTools.Select(tool => (AITool)new LoggingMcpTool(t
 
 // Create the agent with the locally-resolved MCP tools.
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: AgentName,
+    model: deploymentName,
     instructions: AgentInstructions,
     tools: wrappedTools);
 

@@ -4,11 +4,13 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search the web to find current information and answer questions accurately.";
@@ -44,13 +46,18 @@ await FoundryVersionedAgent.DeleteAIAgentAsync(agent);
 // Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
 async Task<FoundryVersionedAgent> CreateAgentWithMEAIAsync()
     => await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: AgentName,
+        model: deploymentName,
         instructions: AgentInstructions,
         tools: [new HostedWebSearchTool()]);
 
 // Creates the agent using the PromptAgentDefinition with the Responses API native ResponseTool.CreateWebSearchTool().
 async Task<FoundryVersionedAgent> CreateAgentWithNativeSDKAsync()
     => await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         AgentName,
         new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)

@@ -58,6 +58,8 @@ ChatConfiguration chatConfiguration = safetyConfig.ToChatConfiguration(
 
 // Create a test agent
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: "KnowledgeAgent",
     model: deploymentName,
     instructions: "You are a helpful assistant. Answer questions accurately based on the provided context.");

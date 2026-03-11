@@ -4,6 +4,7 @@
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -11,13 +12,17 @@ using OpenAI.Assistants;
 using OpenAI.Files;
 using OpenAI.Responses;
 
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
 // Create an initial agent to obtain the AIProjectClient
 FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: "FileSearchAgent-MEAI",
+    model: deploymentName,
     instructions: AgentInstructions);
 AIProjectClient aiProjectClient = agent.GetService<AIProjectClient>()!;
 var projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
@@ -53,7 +58,10 @@ Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
 // Option 1 - Recreate the agent with the file search tool (MEAI + AgentFramework)
 agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+    new Uri(endpoint),
+    new DefaultAzureCredential(),
     name: "FileSearchAgent-MEAI",
+    model: deploymentName,
     instructions: AgentInstructions,
     tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
@@ -92,6 +100,8 @@ Console.WriteLine("Cleanup completed successfully.");
 async Task<FoundryVersionedAgent> CreateAgentWithNativeSDK()
 {
     return await FoundryVersionedAgent.CreateAIAgentAsync(
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "FileSearchAgent-NATIVE",
         creationOptions: new AgentVersionCreationOptions(
             new PromptAgentDefinition(model: deploymentName)
