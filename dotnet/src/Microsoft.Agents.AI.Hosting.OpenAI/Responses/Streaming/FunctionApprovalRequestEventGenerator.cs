@@ -27,7 +27,10 @@ internal sealed class ToolApprovalRequestEventGenerator(
             throw new InvalidOperationException("ToolApprovalRequestEventGenerator only supports ToolApprovalRequestContent.");
         }
 
-        var functionCall = (FunctionCallContent)approvalRequest.ToolCall;
+        if (approvalRequest.ToolCall is not FunctionCallContent functionCall)
+        {
+            yield break;
+        }
         yield return new StreamingFunctionApprovalRequested
         {
             SequenceNumber = seq.Increment(),
