@@ -12,9 +12,6 @@
 // For more details, see:
 // https://learn.microsoft.com/dotnet/ai/evaluation/libraries
 
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;

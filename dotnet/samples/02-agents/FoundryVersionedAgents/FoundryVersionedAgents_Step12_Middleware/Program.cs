@@ -7,7 +7,6 @@
 
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;

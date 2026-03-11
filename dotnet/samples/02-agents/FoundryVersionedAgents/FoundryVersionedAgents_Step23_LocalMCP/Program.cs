@@ -5,7 +5,6 @@
 // and then passed to the Foundry agent as client-side tools.
 // This sample uses the Microsoft Learn MCP endpoint to search documentation.
 
-using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
