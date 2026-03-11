@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import sys
+# ruff: noqa: E402
+
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -9,8 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-if sys.version_info < (3, 11):
-    pytest.skip("agent-framework-github-copilot tests require Python 3.11+.", allow_module_level=True)
+copilot = pytest.importorskip("copilot")
 
 from agent_framework import (
     AgentResponse,
