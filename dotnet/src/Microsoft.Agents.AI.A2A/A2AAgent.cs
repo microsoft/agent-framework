@@ -127,6 +127,7 @@ public sealed class A2AAgent : AIAgent
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
+                FinishReason = ChatFinishReason.Stop,
                 RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
                 AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
@@ -141,6 +142,7 @@ public sealed class A2AAgent : AIAgent
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
+                FinishReason = MapTaskStateToFinishReason(agentTask.Status.State),
                 RawRepresentation = agentTask,
                 Messages = agentTask.ToChatMessages() ?? [],
                 ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
@@ -328,6 +330,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
+            FinishReason = ChatFinishReason.Stop,
             RawRepresentation = message,
             Role = ChatRole.Assistant,
             MessageId = message.MessageId,
@@ -342,6 +345,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = task.Id,
+            FinishReason = MapTaskStateToFinishReason(task.Status.State),
             RawRepresentation = task,
             Role = ChatRole.Assistant,
             Contents = task.ToAIContents(),
@@ -365,7 +369,16 @@ public sealed class A2AAgent : AIAgent
             responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
             responseUpdate.RawRepresentation = artifactUpdateEvent;
         }
+        else if (taskUpdateEvent is TaskStatusUpdateEvent statusUpdateEvent)
+        {
+            responseUpdate.FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State);
+        }
 
         return responseUpdate;
+    }
+
+    private static ChatFinishReason? MapTaskStateToFinishReason(TaskState state)
+    {
+        return state == TaskState.Completed ? ChatFinishReason.Stop : null;
     }
 }
