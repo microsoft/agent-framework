@@ -312,7 +312,7 @@ async def test_prepare_run_context_handles_function_kwargs(
     assert ctx["function_invocation_kwargs"]["runtime_key"] == "runtime-value"
     assert "session" not in ctx["function_invocation_kwargs"]
     assert ctx["client_kwargs"]["client_key"] == "client-value"
-    assert "session" not in ctx["client_kwargs"]
+    assert ctx["client_kwargs"]["session"] is session
 
 
 async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:
@@ -917,14 +917,13 @@ async def test_chat_agent_as_tool_name_sanitization(
 
 
 async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGetResponse) -> None:
-    """Test that propagate_session=True forwards an explicitly provided session to the sub-agent."""
+    """Test that propagate_session=True forwards the session to the sub-agent."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
     parent_session = AgentSession(session_id="parent-session-123")
     parent_session.state["shared_key"] = "shared_value"
 
-    # Spy on the agent's run method to capture the session argument
     original_run = agent.run
     captured_session = None
 
@@ -939,7 +938,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
         context=FunctionInvocationContext(
             function=tool,
             arguments={"task": "Hello"},
-            kwargs={"session": parent_session},
+            session=parent_session,
         )
     )
 
@@ -949,7 +948,7 @@ async def test_chat_agent_as_tool_propagate_session_true(client: SupportsChatGet
 
 
 async def test_chat_agent_as_tool_propagate_session_false_by_default(client: SupportsChatGetResponse) -> None:
-    """Test that propagate_session defaults to False and does not forward runtime sessions."""
+    """Test that propagate_session defaults to False and does not forward the session."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool()  # default: propagate_session=False
 
@@ -969,7 +968,7 @@ async def test_chat_agent_as_tool_propagate_session_false_by_default(client: Sup
         context=FunctionInvocationContext(
             function=tool,
             arguments={"task": "Hello"},
-            kwargs={"session": parent_session},
+            session=parent_session,
         )
     )
 
@@ -977,14 +976,13 @@ async def test_chat_agent_as_tool_propagate_session_false_by_default(client: Sup
 
 
 async def test_chat_agent_as_tool_propagate_session_shares_state(client: SupportsChatGetResponse) -> None:
-    """Test that an explicitly propagated session allows the sub-agent to read and write parent state."""
+    """Test that a propagated session allows the sub-agent to read and write parent state."""
     agent = Agent(client=client, name="SubAgent", description="Sub agent")
     tool = agent.as_tool(propagate_session=True)
 
     parent_session = AgentSession(session_id="shared-session")
     parent_session.state["counter"] = 0
 
-    # The sub-agent receives the same session object, so mutations are shared
     original_run = agent.run
     captured_session = None
 
@@ -1001,40 +999,11 @@ async def test_chat_agent_as_tool_propagate_session_shares_state(client: Support
         context=FunctionInvocationContext(
             function=tool,
             arguments={"task": "Hello"},
-            kwargs={"session": parent_session},
+            session=parent_session,
         )
     )
 
-    # The parent's state should reflect the sub-agent's mutation
     assert parent_session.state["counter"] == 1
-
-
-async def test_chat_agent_as_tool_propagate_session_rejects_non_agent_session(
-    client: SupportsChatGetResponse,
-) -> None:
-    """Test that propagate_session=True raises TypeError for non-AgentSession values."""
-    agent = Agent(client=client, name="SubAgent", description="Sub agent")
-    tool = agent.as_tool(propagate_session=True)
-
-    # A plain dict is truthy but not an AgentSession — should raise TypeError.
-    with raises(TypeError, match="The provided session is not an ``AgentSession`` object"):
-        await tool.invoke(
-            context=FunctionInvocationContext(
-                function=tool,
-                arguments={"task": "Hello"},
-                kwargs={"session": {"fake": "session"}},
-            )
-        )
-
-    # A string is also truthy and not an AgentSession.
-    with raises(TypeError, match="The provided session is not an ``AgentSession`` object"):
-        await tool.invoke(
-            context=FunctionInvocationContext(
-                function=tool,
-                arguments={"task": "Hello"},
-                kwargs={"session": "not-a-session"},
-            )
-        )
 
 
 async def test_chat_agent_as_mcp_server_basic(client: SupportsChatGetResponse) -> None:
@@ -1254,15 +1223,14 @@ async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> N
 async def test_agent_tool_receives_explicit_session_via_function_invocation_context_kwargs(
     chat_client_base: Any,
 ) -> None:
-    """Verify ctx-based tools read explicit sessions from FunctionInvocationContext.kwargs."""
+    """Verify ctx-based tools receive the session via FunctionInvocationContext.session."""
 
     captured: dict[str, Any] = {}
 
     @tool(name="capture_session_context", approval_mode="never_require")
     def capture_session_context(text: str, ctx: FunctionInvocationContext) -> str:
-        session = ctx.kwargs.get("session")
-        captured["session"] = session
-        captured["has_state"] = session.state is not None if isinstance(session, AgentSession) else False
+        captured["session"] = ctx.session
+        captured["has_state"] = ctx.session.state is not None if isinstance(ctx.session, AgentSession) else False
         return f"echo: {text}"
 
     chat_client_base.run_responses = [
@@ -1284,7 +1252,7 @@ async def test_agent_tool_receives_explicit_session_via_function_invocation_cont
     agent = Agent(client=chat_client_base, tools=[capture_session_context])
     session = agent.create_session()
 
-    result = await agent.run("hello", session=session, function_invocation_kwargs={"session": session})
+    result = await agent.run("hello", session=session)
 
     assert result.text == "done"
     assert captured["session"] is session

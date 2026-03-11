@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._mcp import MCPTool
     from ._middleware import FunctionInvocationContext, FunctionMiddlewarePipeline, FunctionMiddlewareTypes
+    from ._sessions import AgentSession
     from ._types import (
         ChatOptions,
         ChatResponse,
@@ -1312,9 +1313,10 @@ async def _auto_invoke_function(
     *,
     config: FunctionInvocationConfiguration,
     tool_map: dict[str, FunctionTool],
+    invocation_session: AgentSession | None = None,
     sequence_index: int | None = None,
     request_index: int | None = None,
-    middleware_pipeline: FunctionMiddlewarePipeline | None = None,  # Optional MiddlewarePipeline
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
 ) -> Content:
     """Invoke a function call requested by the agent, applying middleware that is defined.
 
@@ -1325,6 +1327,7 @@ async def _auto_invoke_function(
     Keyword Args:
         config: The function invocation configuration.
         tool_map: A mapping of tool names to FunctionTool instances.
+        invocation_session: The agent session for this invocation, if any.
         sequence_index: The index of the function call in the sequence.
         request_index: The index of the request iteration.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
@@ -1376,6 +1379,8 @@ async def _auto_invoke_function(
         for key, value in (custom_args or {}).items()
         if key not in {"_function_middleware_pipeline", "middleware", "conversation_id"}
     }
+    if invocation_session is not None:
+        runtime_kwargs["session"] = invocation_session
     try:
         if not cast(bool, getattr(tool, "_schema_supplied", False)) and tool.input_model is not None:
             args = tool.input_model.model_validate(parsed_args).model_dump(exclude_none=True)
@@ -1407,6 +1412,7 @@ async def _auto_invoke_function(
                 direct_context = FunctionInvocationContext(
                     function=tool,
                     arguments=args,
+                    session=invocation_session,
                     kwargs=runtime_kwargs.copy(),
                 )
             function_result = await tool.invoke(
@@ -1435,6 +1441,7 @@ async def _auto_invoke_function(
     middleware_context = FunctionInvocationContext(
         function=tool,
         arguments=args,
+        session=invocation_session,
         kwargs=runtime_kwargs.copy(),
     )
 
@@ -1495,7 +1502,8 @@ async def _try_execute_function_calls(
     function_calls: Sequence[Content],
     tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
     config: FunctionInvocationConfiguration,
-    middleware_pipeline: Any = None,  # Optional MiddlewarePipeline to avoid circular imports
+    invocation_session: AgentSession | None = None,
+    middleware_pipeline: Any = None,
 ) -> tuple[Sequence[Content], bool]:
     """Execute multiple function calls concurrently.
 
@@ -1505,6 +1513,7 @@ async def _try_execute_function_calls(
         function_calls: A sequence of FunctionCallContent to execute.
         tools: The tools available for execution.
         config: Configuration for function invocation.
+        invocation_session: The agent session for this invocation, if any.
         middleware_pipeline: Optional middleware pipeline to apply during execution.
 
     Returns:
@@ -1586,6 +1595,7 @@ async def _try_execute_function_calls(
                 function_call_content=function_call,  # type: ignore[arg-type]
                 custom_args=custom_args,
                 tool_map=tool_map,
+                invocation_session=invocation_session,
                 sequence_index=seq_idx,
                 request_index=attempt_idx,
                 middleware_pipeline=middleware_pipeline,
@@ -1642,6 +1652,7 @@ async def _execute_function_calls(
     function_calls: list[Content],
     tool_options: dict[str, Any] | None,
     config: FunctionInvocationConfiguration,
+    invocation_session: AgentSession | None = None,
     middleware_pipeline: Any = None,
 ) -> tuple[list[Content], bool, bool]:
     tools = _extract_tools(tool_options)
@@ -1652,6 +1663,7 @@ async def _execute_function_calls(
         attempt_idx=attempt_idx,
         function_calls=function_calls,
         tools=tools,  # type: ignore
+        invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         config=config,
     )
@@ -2113,10 +2125,15 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         )
         if options and (additional_opts := options.get("additional_function_arguments")):  # type: ignore[attr-defined]
             additional_function_arguments.update(cast(Mapping[str, Any], additional_opts))
+        from ._sessions import AgentSession as _AgentSession
+
+        raw_session = effective_client_kwargs.get("session")
+        invocation_session = raw_session if isinstance(raw_session, _AgentSession) else None
         execute_function_calls = partial(
             _execute_function_calls,
             custom_args=additional_function_arguments,
             config=self.function_invocation_configuration,
+            invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}

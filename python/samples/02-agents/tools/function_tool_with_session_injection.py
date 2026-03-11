@@ -14,10 +14,9 @@ load_dotenv()
 """
 AI Function with Session Injection Example
 
-This example demonstrates explicitly passing an ``AgentSession`` through
-``function_invocation_kwargs`` and reading it from ``FunctionInvocationContext.kwargs``.
-The injected context parameter can be typed as ``FunctionInvocationContext`` as
-shown here, or left untyped as ``ctx`` when you want the conventional untyped form.
+This example demonstrates accessing the agent session inside a tool function
+via ``FunctionInvocationContext.session``. The session is automatically
+available when the agent is invoked with a session.
 """
 
 
@@ -29,9 +28,7 @@ async def get_weather(
     ctx: FunctionInvocationContext,
 ) -> str:
     """Get the weather for a given location."""
-    # FunctionInvocationContext does not surface agent sessions directly.
-    # If a tool needs session data, pass it explicitly through function_invocation_kwargs.
-    session = ctx.kwargs.get("session")
+    session = ctx.session
     if session and isinstance(session, AgentSession) and session.service_session_id:
         print(f"Session ID: {session.service_session_id}.")
 
@@ -49,16 +46,14 @@ async def main() -> None:
     # Create a session
     session = agent.create_session()
 
-    # Pass the session explicitly through function_invocation_kwargs when the tool needs it.
+    # Run the agent with the session; tools receive it via ctx.session.
     print(
-        f"Agent: {await agent.run('What is the weather in London?', session=session, function_invocation_kwargs={'session': session})}"
+        f"Agent: {await agent.run('What is the weather in London?', session=session)}"
     )
     print(
-        f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session, function_invocation_kwargs={'session': session})}"
+        f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}"
     )
-    print(
-        f"Agent: {await agent.run('What cities did I ask about?', session=session, function_invocation_kwargs={'session': session})}"
-    )
+    print(f"Agent: {await agent.run('What cities did I ask about?', session=session)}")
 
 
 if __name__ == "__main__":

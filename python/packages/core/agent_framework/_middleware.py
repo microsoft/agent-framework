@@ -206,6 +206,7 @@ class FunctionInvocationContext:
     Attributes:
         function: The function being invoked.
         arguments: The validated arguments for the function.
+        session: The agent session for this invocation, if any.
         metadata: Metadata dictionary for sharing data between function middleware.
         result: Function execution result. Can be observed after calling ``call_next()``
                 to see the actual execution result or can be set to override the execution result.
@@ -234,6 +235,7 @@ class FunctionInvocationContext:
         self,
         function: FunctionTool,
         arguments: BaseModel | Mapping[str, Any],
+        session: AgentSession | None = None,
         metadata: Mapping[str, Any] | None = None,
         result: Any = None,
         kwargs: Mapping[str, Any] | None = None,
@@ -243,12 +245,14 @@ class FunctionInvocationContext:
         Args:
             function: The function being invoked.
             arguments: The validated arguments for the function.
+            session: The agent session for this invocation, if any.
             metadata: Metadata dictionary for sharing data between function middleware.
             result: Function execution result.
             kwargs: Additional runtime keyword arguments forwarded to the function invocation.
         """
         self.function = function
         self.arguments = arguments
+        self.session = session
         self.metadata: dict[str, Any] = dict(metadata) if metadata is not None else {}
         self.result = result
         self.kwargs: dict[str, Any] = dict(kwargs) if kwargs is not None else {}

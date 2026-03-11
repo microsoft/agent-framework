@@ -495,10 +495,9 @@ class BaseAgent(SerializationMixin):
                 If None, defaults to "Task for {tool_name}".
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
-            propagate_session: If True, this agent gets a ``session`` object from the
-                calling agents, when one is supplied explicitly (for example via
-                ``function_invocation_kwargs={"session": session}``). Defaults
-                to False, meaning this agent runs without a session.
+            propagate_session: If True, the parent agent's session is forwarded
+                to this sub-agent's ``run()`` call so both agents share the
+                same session. Defaults to False.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
@@ -514,8 +513,7 @@ class BaseAgent(SerializationMixin):
                 # Convert the agent to a tool (independent session)
                 research_tool = agent.as_tool()
 
-                # Convert the agent to a tool (shared session when the caller
-                # passes ``function_invocation_kwargs={"session": session}``)
+                # Convert the agent to a tool (shared session with parent)
                 research_tool = agent.as_tool(propagate_session=True)
 
                 # Use the tool with another agent
@@ -550,19 +548,10 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = None
-            if propagate_session:
-                session = ctx.kwargs.get("session")
-                if session and not isinstance(session, AgentSession):
-                    raise TypeError(
-                        "The provided session is not an ``AgentSession`` object, "
-                        f"got {type(session).__name__!r}, please make sure to "
-                        "pass it through the function_invocation_kwargs."
-                    )
             stream = self.run(
                 str(kwargs.get(arg_name, "")),
                 stream=True,
-                session=session,
+                session=ctx.session if propagate_session else None,
                 function_invocation_kwargs=dict(ctx.kwargs),
             )
             if stream_callback is not None:
@@ -1231,6 +1220,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             **dict(legacy_kwargs),
             **(dict(client_kwargs) if client_kwargs is not None else {}),
         }
+        if active_session is not None:
+            effective_client_kwargs["session"] = active_session
 
         return {
             "session": active_session,
