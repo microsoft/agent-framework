@@ -82,9 +82,7 @@ class Runner:
             raise WorkflowRunnerException("Runner is already running.")
 
         self._running = True
-        previous_checkpoint_id: CheckpointID | None = (
-            self._resume_parent_checkpoint_id if self._resumed_from_checkpoint else None
-        )
+        previous_checkpoint_id: CheckpointID | None = self._resume_parent_checkpoint_id
         try:
             # Emit any events already produced prior to entering loop
             if await self._ctx.has_events():
@@ -156,9 +154,9 @@ class Runner:
                 raise WorkflowConvergenceException(f"Runner did not converge after {self._max_iterations} iterations.")
 
             logger.info(f"Workflow completed after {self._iteration} supersteps")
-            self._resumed_from_checkpoint = False  # Reset resume flag for next run
-            self._resume_parent_checkpoint_id = None
         finally:
+            self._resumed_from_checkpoint = False
+            self._resume_parent_checkpoint_id = None
             self._running = False
 
     async def _run_iteration(self) -> None:
@@ -358,7 +356,7 @@ class Runner:
     def _mark_resumed(self, iteration: int, checkpoint_id: CheckpointID) -> None:
         """Mark the runner as having resumed from a checkpoint.
 
-        Optionally set the current iteration and max iterations.
+        Set the current iteration and record the resumed checkpoint ID.
         """
         self._resumed_from_checkpoint = True
         self._iteration = iteration
