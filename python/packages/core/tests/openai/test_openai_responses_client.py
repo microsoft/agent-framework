@@ -3357,69 +3357,6 @@ def test_parse_response_from_openai_function_call_includes_status() -> None:
     assert function_call.raw_representation is mock_function_call_item
 
 
-def test_prepare_content_for_openai_preserves_raw_function_call_representation() -> None:
-    """Test _prepare_content_for_openai preserves fidelity when raw_representation is set.
-
-    When raw_representation is a ResponseFunctionToolCall, the method should use model_dump
-    to preserve full object fidelity instead of reconstructing the dict manually.
-    """
-    from openai.types.responses import ResponseFunctionToolCall
-
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Create a real ResponseFunctionToolCall object with all fields
-    raw_fc = ResponseFunctionToolCall(
-        type="function_call",
-        call_id="call_abc",
-        name="search_hotels",
-        arguments='{"city": "Paris"}',
-        id="fc_xyz",
-        status="in_progress",
-    )
-
-    # Create function call content with raw_representation
-    function_call_content = Content.from_function_call(
-        call_id="call_abc",
-        name="search_hotels",
-        arguments='{"city": "Paris"}',
-        additional_properties={"fc_id": "fc_xyz", "status": "in_progress"},
-        raw_representation=raw_fc,
-    )
-
-    result = client._prepare_content_for_openai("assistant", function_call_content, {})
-
-    # When raw_representation is a ResponseFunctionToolCall, it should use model_dump
-    assert result["type"] == "function_call"
-    assert result["call_id"] == "call_abc"
-    assert result["name"] == "search_hotels"
-    assert result["arguments"] == '{"city": "Paris"}'
-    assert result["id"] == "fc_xyz"
-    assert result["status"] == "in_progress"
-
-
-def test_prepare_content_for_openai_function_call_without_raw_representation() -> None:
-    """Test _prepare_content_for_openai handles function calls without raw_representation."""
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Create function call content without raw_representation
-    function_call_content = Content.from_function_call(
-        call_id="call_manual",
-        name="get_weather",
-        arguments='{"location": "Seattle"}',
-    )
-
-    result = client._prepare_content_for_openai("assistant", function_call_content, {})
-
-    # Should fall back to manual construction
-    assert result["type"] == "function_call"
-    assert result["call_id"] == "call_manual"
-    assert result["name"] == "get_weather"
-    assert result["arguments"] == '{"location": "Seattle"}'
-    # ID should be auto-generated with fc_ prefix
-    assert result["id"].startswith("fc_")
-    assert result["status"] is None
-
-
 def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
     """Test _prepare_messages_for_openai correctly filters empty fc_id values from call_id_to_id mapping."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
@@ -3496,52 +3433,6 @@ def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
     # The None fc_id should result in an auto-generated id
     fc_item = fc_items[0]
     assert fc_item["id"].startswith("fc_")
-
-
-def test_function_call_roundtrip_preserves_fidelity() -> None:
-    """Test that function calls can roundtrip through parse and prepare while preserving fidelity."""
-    from openai.types.responses import ResponseFunctionToolCall
-
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
-
-    # Step 1: Create a mock OpenAI response with function call
-    original_fc = ResponseFunctionToolCall(
-        type="function_call",
-        call_id="call_roundtrip",
-        name="execute_action",
-        arguments='{"action": "test", "value": 123}',
-        id="fc_original_id",
-        status="completed",
-    )
-
-    mock_response = MagicMock()
-    mock_response.output_parsed = None
-    mock_response.metadata = {}
-    mock_response.usage = None
-    mock_response.id = "resp-roundtrip"
-    mock_response.model = "test-model"
-    mock_response.created_at = 1000000000
-    mock_response.output = [original_fc]
-
-    # Step 2: Parse the response
-    parsed_response = client._parse_response_from_openai(mock_response, options={})
-
-    # Step 3: Create a message from the parsed content and prepare it back
-    function_call_content = parsed_response.messages[0].contents[0]
-    messages = [Message(role="assistant", contents=[function_call_content])]
-
-    prepared = client._prepare_messages_for_openai(messages)
-
-    # Step 4: Verify the prepared message preserves all original fields
-    fc_items = [item for item in prepared if item.get("type") == "function_call"]
-    assert len(fc_items) == 1
-
-    prepared_fc = fc_items[0]
-    assert prepared_fc["call_id"] == "call_roundtrip"
-    assert prepared_fc["name"] == "execute_action"
-    assert prepared_fc["arguments"] == '{"action": "test", "value": 123}'
-    assert prepared_fc["id"] == "fc_original_id"
-    assert prepared_fc["status"] == "completed"
 
 
 # endregion

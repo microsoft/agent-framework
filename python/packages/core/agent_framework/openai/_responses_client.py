@@ -19,7 +19,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellTool, ResponseFunctionToolCall
+from openai.types.responses import FunctionShellTool
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -1151,10 +1151,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     return file_obj
                 return {}
             case "function_call":
-                if isinstance(content.raw_representation, ResponseFunctionToolCall):
-                    # Preserve full object fidelity for function calls that originated from the Responses API.
-                    return content.raw_representation.model_dump(exclude_none=True)
-
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
