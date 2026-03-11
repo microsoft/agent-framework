@@ -181,10 +181,9 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         {
             var content = update.Contents[i];
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
-            if (content is ToolApprovalRequestContent request)
+            if (content is ToolApprovalRequestContent request && request.ToolCall is FunctionCallContent functionCall)
             {
                 updatedContents ??= [.. update.Contents];
-                var functionCall = (FunctionCallContent)request.ToolCall;
                 var approvalId = request.RequestId;
 
                 var approvalData = new ApprovalRequest

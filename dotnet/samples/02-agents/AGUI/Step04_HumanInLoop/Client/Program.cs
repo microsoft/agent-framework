@@ -59,10 +59,10 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             {
                 switch (content)
                 {
-                    case ToolApprovalRequestContent approvalRequest:
-                        DisplayApprovalRequest(approvalRequest);
+                    case ToolApprovalRequestContent approvalRequest when approvalRequest.ToolCall is FunctionCallContent fcc:
+                        DisplayApprovalRequest(approvalRequest, fcc);
 
-                        Console.Write($"\nApprove '{((FunctionCallContent)approvalRequest.ToolCall).Name}'? (yes/no): ");
+                        Console.Write($"\nApprove '{fcc.Name}'? (yes/no): ");
                         string? userInput = Console.ReadLine();
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
@@ -128,20 +128,19 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
 }
 
 #pragma warning disable MEAI001
-static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest)
+static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest, FunctionCallContent fcc)
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine();
     Console.WriteLine("============================================================");
     Console.WriteLine("APPROVAL REQUIRED");
     Console.WriteLine("============================================================");
-    Console.WriteLine($"Function: {((FunctionCallContent)approvalRequest.ToolCall!).Name}");
+    Console.WriteLine($"Function: {fcc.Name}");
 
-    var funcCallArgs = ((FunctionCallContent)approvalRequest.ToolCall!).Arguments;
-    if (funcCallArgs != null)
+    if (fcc.Arguments != null)
     {
         Console.WriteLine("Arguments:");
-        foreach (var arg in funcCallArgs)
+        foreach (var arg in fcc.Arguments)
         {
             Console.WriteLine($"  {arg.Key} = {arg.Value}");
         }
