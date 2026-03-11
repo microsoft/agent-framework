@@ -5,9 +5,12 @@ from typing import Any
 from unittest.mock import patch
 
 from agent_framework import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_TOKEN_COUNT_KEY,
     BaseChatClient,
     ChatResponse,
     Message,
+    SlidingWindowStrategy,
     SupportsChatGetResponse,
     SupportsCodeInterpreterTool,
     SupportsFileSearchTool,
@@ -16,6 +19,14 @@ from agent_framework import (
     SupportsWebSearchTool,
     TruncationStrategy,
 )
+
+
+class _FixedTokenizer:
+    def __init__(self, token_count: int) -> None:
+        self.token_count = token_count
+
+    def count_tokens(self, text: str) -> int:
+        return self.token_count
 
 
 def test_chat_client_type(client: SupportsChatGetResponse):
@@ -102,6 +113,136 @@ async def test_base_client_applies_compaction_before_streaming_inner_call(
     ):
         pass
     assert captured_roles == [["assistant"]]
+
+
+async def test_base_client_per_call_compaction_override_applies_before_inner_call(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    captured_roles: list[list[str]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    await chat_client_base.get_response(
+        [
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Previous response"),
+        ],
+        compaction_strategy=TruncationStrategy(max_n=1, compact_to=1),
+    )
+    assert captured_roles == [["assistant"]]
+
+
+async def test_base_client_per_call_tokenizer_override_annotates_messages(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    captured_token_counts: list[list[int | None]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_token_counts.append([
+            group.get(GROUP_TOKEN_COUNT_KEY) if isinstance(group, dict) else None
+            for group in (message.additional_properties.get(GROUP_ANNOTATION_KEY) for message in messages)
+        ])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    await chat_client_base.get_response(
+        [
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Previous response"),
+        ],
+        compaction_strategy=SlidingWindowStrategy(keep_last_groups=2),
+        tokenizer=_FixedTokenizer(17),
+    )
+    assert captured_token_counts == [[17, 17]]
+
+
+async def test_base_client_per_call_tokenizer_override_without_strategy_annotates_messages(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    captured_token_counts: list[list[int | None]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_token_counts.append([
+            group.get(GROUP_TOKEN_COUNT_KEY) if isinstance(group, dict) else None
+            for group in (message.additional_properties.get(GROUP_ANNOTATION_KEY) for message in messages)
+        ])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    await chat_client_base.get_response(
+        [
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Previous response"),
+        ],
+        tokenizer=_FixedTokenizer(17),
+    )
+    assert captured_token_counts == [[17, 17]]
+
+
+async def test_base_client_default_tokenizer_without_strategy_annotates_messages(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.function_invocation_configuration["enabled"] = False  # type: ignore[attr-defined]
+    chat_client_base.tokenizer = _FixedTokenizer(19)  # type: ignore[attr-defined]
+    captured_token_counts: list[list[int | None]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_token_counts.append([
+            group.get(GROUP_TOKEN_COUNT_KEY) if isinstance(group, dict) else None
+            for group in (message.additional_properties.get(GROUP_ANNOTATION_KEY) for message in messages)
+        ])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    await chat_client_base.get_response([
+        Message(role="user", text="Hello"),
+        Message(role="assistant", text="Previous response"),
+    ])
+    assert captured_token_counts == [[19, 19]]
+
+
+def test_base_client_as_agent_does_not_copy_client_compaction_defaults(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    strategy = TruncationStrategy(max_n=1, compact_to=1)
+    tokenizer = _FixedTokenizer(11)
+    chat_client_base.compaction_strategy = strategy  # type: ignore[attr-defined]
+    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]
+
+    agent = chat_client_base.as_agent(name="shared-client-agent")
+
+    assert agent.compaction_strategy is None  # type: ignore[attr-defined]
+    assert agent.tokenizer is None  # type: ignore[attr-defined]
 
 
 async def test_chat_client_instructions_handling(chat_client_base: SupportsChatGetResponse):

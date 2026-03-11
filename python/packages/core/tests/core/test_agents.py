@@ -10,6 +10,8 @@ import pytest
 from pytest import raises
 
 from agent_framework import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_TOKEN_COUNT_KEY,
     Agent,
     AgentResponse,
     AgentResponseUpdate,
@@ -21,12 +23,22 @@ from agent_framework import (
     Content,
     FunctionTool,
     Message,
+    SlidingWindowStrategy,
     SupportsAgentRun,
     SupportsChatGetResponse,
+    TruncationStrategy,
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool
+
+
+class _FixedTokenizer:
+    def __init__(self, token_count: int) -> None:
+        self.token_count = token_count
+
+    def count_tokens(self, text: str) -> int:
+        return self.token_count
 
 
 def test_agent_session_type(agent_session: AgentSession) -> None:
@@ -215,6 +227,30 @@ async def test_prepare_session_does_not_mutate_agent_chat_options(
 
     prepared_chat_options["tools"].append({"type": "code_interpreter"})  # type: ignore[arg-type]
     assert len(agent.default_options["tools"]) == 1
+
+
+async def test_prepare_run_context_keeps_compaction_overrides_out_of_kwargs(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    strategy = SlidingWindowStrategy(keep_last_groups=2)
+    tokenizer = _FixedTokenizer(13)
+    agent = Agent(client=chat_client_base)
+
+    ctx = await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
+        messages=[Message(role="user", text="Hello")],
+        session=None,
+        tools=None,
+        options=None,
+        compaction_strategy=strategy,
+        tokenizer=tokenizer,
+        kwargs={"custom_flag": True},
+    )
+
+    assert ctx["compaction_strategy"] is strategy
+    assert ctx["tokenizer"] is tokenizer
+    assert ctx["filtered_kwargs"].get("custom_flag") is True
+    assert "compaction_strategy" not in ctx["filtered_kwargs"]
+    assert "tokenizer" not in ctx["filtered_kwargs"]
 
 
 async def test_chat_client_agent_run_with_session(
@@ -1126,6 +1162,102 @@ async def test_chat_agent_tool_choice_none_at_run_preserves_agent_level(chat_cli
     # Verify the client received tool_choice="auto" from agent-level
     assert len(captured_options) >= 1
     assert captured_options[0]["tool_choice"] == "auto"
+
+
+async def test_chat_agent_compaction_overrides_client_defaults(chat_client_base: Any) -> None:
+    captured_roles: list[list[str]] = []
+    captured_token_counts: list[list[int | None]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        captured_token_counts.append([
+            group.get(GROUP_TOKEN_COUNT_KEY) if isinstance(group, dict) else None
+            for group in (message.additional_properties.get(GROUP_ANNOTATION_KEY) for message in messages)
+        ])
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+    chat_client_base.function_invocation_configuration["enabled"] = False
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)
+    chat_client_base.tokenizer = _FixedTokenizer(5)
+
+    agent = Agent(
+        client=chat_client_base,
+        compaction_strategy=SlidingWindowStrategy(keep_last_groups=2),
+        tokenizer=_FixedTokenizer(9),
+    )
+
+    await agent.run([
+        Message(role="user", text="Hello"),
+        Message(role="assistant", text="Previous response"),
+    ])
+
+    assert captured_roles == [["user", "assistant"]]
+    assert captured_token_counts == [[9, 9]]
+
+
+async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_client_base: Any) -> None:
+    captured_roles: list[list[str]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+    chat_client_base.function_invocation_configuration["enabled"] = False
+    chat_client_base.compaction_strategy = TruncationStrategy(max_n=1, compact_to=1)
+
+    agent = Agent(client=chat_client_base)
+
+    await agent.run([
+        Message(role="user", text="Hello"),
+        Message(role="assistant", text="Previous response"),
+    ])
+
+    assert captured_roles == [["assistant"]]
+
+
+async def test_chat_agent_run_level_compaction_and_tokenizer_override_agent_defaults(chat_client_base: Any) -> None:
+    captured_roles: list[list[str]] = []
+    captured_token_counts: list[list[int | None]] = []
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        captured_token_counts.append([
+            group.get(GROUP_TOKEN_COUNT_KEY) if isinstance(group, dict) else None
+            for group in (message.additional_properties.get(GROUP_ANNOTATION_KEY) for message in messages)
+        ])
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+    chat_client_base.function_invocation_configuration["enabled"] = False
+
+    agent = Agent(
+        client=chat_client_base,
+        compaction_strategy=SlidingWindowStrategy(keep_last_groups=2),
+        tokenizer=_FixedTokenizer(9),
+    )
+
+    await agent.run(
+        [
+            Message(role="user", text="Hello"),
+            Message(role="assistant", text="Previous response"),
+        ],
+        compaction_strategy=TruncationStrategy(max_n=1, compact_to=1),
+        tokenizer=_FixedTokenizer(23),
+    )
+
+    assert captured_roles == [["assistant"]]
+    assert captured_token_counts == [[23]]
 
 
 # region Test _merge_options

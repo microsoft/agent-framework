@@ -49,6 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import (
@@ -1122,6 +1123,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -1132,6 +1135,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1142,6 +1147,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1151,6 +1158,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics."""
@@ -1160,7 +1169,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         super_get_response = super().get_response  # type: ignore[misc]
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
+            return super_get_response(
+                messages=messages,
+                stream=stream,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                **kwargs,
+            )  # type: ignore[no-any-return]
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
@@ -1178,7 +1194,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         if stream:
             result_stream = cast(
                 ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
-                super_get_response(messages=messages, stream=True, options=opts, **kwargs),
+                super_get_response(
+                    messages=messages,
+                    stream=True,
+                    options=opts,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    **kwargs,
+                ),
             )
 
             # Create span directly without trace.use_span() context attachment.
@@ -1266,6 +1289,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             messages=messages,
                             stream=False,
                             options=opts,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
                             **kwargs,
                         ),
                     )
@@ -1393,6 +1418,8 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1403,6 +1430,8 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1412,6 +1441,8 @@ class AgentTelemetryLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1430,6 +1461,8 @@ class AgentTelemetryLayer:
                 messages=messages,
                 stream=stream,
                 session=session,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
                 **kwargs,
             )
 
@@ -1452,6 +1485,8 @@ class AgentTelemetryLayer:
                 messages=messages,
                 stream=True,
                 session=session,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1541,6 +1576,8 @@ class AgentTelemetryLayer:
                         messages=messages,
                         stream=False,
                         session=session,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
                         **kwargs,
                     )
                 except Exception as exception:
