@@ -12,11 +12,8 @@ using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-
-// Memory store configuration
-// NOTE: Memory stores must be created beforehand via Azure Portal or Python SDK.
-// The .NET SDK currently only supports using existing memory stores with agents.
-string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? throw new InvalidOperationException("AZURE_AI_MEMORY_STORE_ID is not set.");
+string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
+string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? $"foundry-memory-sample-{Guid.NewGuid():N}";
 
 const string AgentInstructions = """
     You are a helpful assistant that remembers past conversations.
@@ -32,71 +29,57 @@ const string AgentNameNative = "MemorySearchAgent-NATIVE";
 string userScope = $"user_{Environment.MachineName}";
 
 // Get a client to create/retrieve/delete server side agents with Azure Foundry Agents.
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
+DefaultAzureCredential credential = new();
+AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
+
+// Ensure the memory store exists and has memories to retrieve.
+await EnsureMemoryStoreAsync();
 
 // Create the Memory Search tool configuration
-MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope)
-{
-    // Optional: Configure how quickly new memories are indexed (in seconds)
-    UpdateDelay = 1,
-
-    // Optional: Configure search behavior
-    SearchOptions = new MemorySearchToolOptions
-    {
-        // Additional search options can be configured here if needed
-    }
-};
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelay = 0 };
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
 AIAgent agent = await CreateAgentWithMEAI();
 // AIAgent agent = await CreateAgentWithNativeSDK();
 
-Console.WriteLine("Agent created with Memory Search tool. Starting conversation...\n");
-
-// Conversation 1: Share some personal information
-Console.WriteLine("User: My name is Alice and I love programming in C#.");
-AgentResponse response1 = await agent.RunAsync("My name is Alice and I love programming in C#.");
-Console.WriteLine($"Agent: {response1.Messages.LastOrDefault()?.Text}\n");
-
-// Allow time for memory to be indexed
-await Task.Delay(2000);
-
-// Conversation 2: Test if the agent remembers
-Console.WriteLine("User: What's my name and what programming language do I prefer?");
-AgentResponse response2 = await agent.RunAsync("What's my name and what programming language do I prefer?");
-Console.WriteLine($"Agent: {response2.Messages.LastOrDefault()?.Text}\n");
-
-// Inspect memory search results if available in raw response items
-// Note: Memory search tool call results appear as AgentResponseItem types
-foreach (var message in response2.Messages)
+try
 {
-    if (message.RawRepresentation is AgentResponseItem agentResponseItem &&
-        agentResponseItem is MemorySearchToolCallResponseItem memorySearchResult)
-    {
-        Console.WriteLine($"Memory Search Status: {memorySearchResult.Status}");
-        Console.WriteLine($"Memory Search Results Count: {memorySearchResult.Results.Count}");
+    Console.WriteLine("Agent created with Memory Search tool. Starting conversation...\n");
 
-        foreach (var result in memorySearchResult.Results)
+    // The agent uses the memory search tool to recall stored information.
+    Console.WriteLine("User: What's my name and what programming language do I prefer?");
+    AgentResponse response = await agent.RunAsync("What's my name and what programming language do I prefer?");
+    Console.WriteLine($"Agent: {response.Messages.LastOrDefault()?.Text}\n");
+
+    // Inspect memory search results if available in raw response items.
+    foreach (var message in response.Messages)
+    {
+        if (message.RawRepresentation is MemorySearchToolCallResponseItem memorySearchResult)
         {
-            var memoryItem = result.MemoryItem;
-            Console.WriteLine($"  - Memory ID: {memoryItem.MemoryId}");
-            Console.WriteLine($"    Scope: {memoryItem.Scope}");
-            Console.WriteLine($"    Content: {memoryItem.Content}");
-            Console.WriteLine($"    Updated: {memoryItem.UpdatedAt}");
+            Console.WriteLine($"Memory Search Status: {memorySearchResult.Status}");
+            Console.WriteLine($"Memory Search Results Count: {memorySearchResult.Results.Count}");
+
+            foreach (var result in memorySearchResult.Results)
+            {
+                var memoryItem = result.MemoryItem;
+                Console.WriteLine($"  - Memory ID: {memoryItem.MemoryId}");
+                Console.WriteLine($"    Scope: {memoryItem.Scope}");
+                Console.WriteLine($"    Content: {memoryItem.Content}");
+                Console.WriteLine($"    Updated: {memoryItem.UpdatedAt}");
+            }
         }
     }
 }
+finally
+{
+    // Cleanup: Delete the agent and memory store.
+    Console.WriteLine("\nCleaning up...");
+    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+    Console.WriteLine("Agent deleted.");
+    await aiProjectClient.MemoryStores.DeleteMemoryStoreAsync(memoryStoreName);
+    Console.WriteLine("Memory store deleted.");
+}
 
-// Cleanup: Delete the agent (memory store persists and should be cleaned up separately if needed)
-Console.WriteLine("\nCleaning up agent...");
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-Console.WriteLine("Agent deleted successfully.");
-
-// NOTE: Memory stores are long-lived resources and are NOT deleted with the agent.
-// To delete a memory store, use the Azure Portal or Python SDK:
-// await project_client.memory_stores.delete(memory_store.name)
-
-// --- Agent Creation Options ---
 #pragma warning disable CS8321 // Local function is declared but never used
 
 // Option 1 - Using MemorySearchTool wrapped as MEAI AITool
@@ -121,4 +104,37 @@ async Task<AIAgent> CreateAgentWithNativeSDK()
                 Tools = { memorySearchTool }
             })
     );
+}
+
+// Helpers — kept at the bottom so the main agent flow above stays clean.
+async Task EnsureMemoryStoreAsync()
+{
+    Console.WriteLine($"Creating memory store '{memoryStoreName}'...");
+    try
+    {
+        await aiProjectClient.MemoryStores.GetMemoryStoreAsync(memoryStoreName);
+        Console.WriteLine("Memory store already exists.");
+    }
+    catch (System.ClientModel.ClientResultException ex) when (ex.Status == 404)
+    {
+        MemoryStoreDefaultDefinition definition = new(deploymentName, embeddingModelName);
+        await aiProjectClient.MemoryStores.CreateMemoryStoreAsync(memoryStoreName, definition, "Sample memory store for Memory Search demo");
+        Console.WriteLine("Memory store created.");
+    }
+
+    Console.WriteLine("Storing memories from a prior conversation...");
+    MemoryUpdateOptions memoryOptions = new(userScope) { UpdateDelay = 0 };
+    memoryOptions.Items.Add(ResponseItem.CreateUserMessageItem("My name is Alice and I love programming in C#."));
+
+    MemoryUpdateResult updateResult = await aiProjectClient.MemoryStores.WaitForMemoriesUpdateAsync(
+        memoryStoreName: memoryStoreName,
+        options: memoryOptions,
+        pollingInterval: 500);
+
+    if (updateResult.Status == MemoryStoreUpdateStatus.Failed)
+    {
+        throw new InvalidOperationException($"Memory update failed: {updateResult.ErrorDetails}");
+    }
+
+    Console.WriteLine($"Memory update completed (status: {updateResult.Status}).\n");
 }

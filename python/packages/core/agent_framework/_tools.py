@@ -59,6 +59,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._mcp import MCPTool
     from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
@@ -1811,6 +1812,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -1821,6 +1824,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1831,6 +1836,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1841,6 +1848,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import FunctionMiddlewarePipeline
@@ -1869,6 +1878,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             middleware_pipeline=function_middleware_pipeline,
         )
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
+        if compaction_strategy is not None:
+            filtered_kwargs["compaction_strategy"] = compaction_strategy
+        if tokenizer is not None:
+            filtered_kwargs["tokenizer"] = tokenizer
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}

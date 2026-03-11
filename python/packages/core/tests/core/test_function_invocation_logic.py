@@ -15,7 +15,25 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._compaction import (
+    EXCLUDED_KEY,
+    GROUP_ANNOTATION_KEY,
+    GROUP_ID_KEY,
+    CharacterEstimatorTokenizer,
+    SlidingWindowStrategy,
+    TokenBudgetComposedStrategy,
+    annotate_message_groups,
+    included_token_count,
+)
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
+
+
+def _group_id(message: Message) -> str | None:
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if not isinstance(annotation, dict):
+        return None
+    value = annotation.get(GROUP_ID_KEY)
+    return value if isinstance(value, str) else None
 
 
 async def test_base_client_with_function_calling(chat_client_base: SupportsChatGetResponse):
@@ -129,6 +147,127 @@ async def test_base_client_with_function_calling_resets(chat_client_base: Suppor
     assert response.messages[1].contents[0].type == "function_result"
     assert response.messages[2].contents[0].type == "function_call"
     assert response.messages[3].contents[0].type == "function_result"
+
+
+async def test_function_loop_applies_compaction_projection_each_model_call(chat_client_base: SupportsChatGetResponse):
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    class _ExcludeOldestGroupAfterFirstTurn:
+        async def __call__(self, messages: list[Message]) -> bool:
+            groups = annotate_message_groups(messages)
+            if len(groups) <= 1:
+                return False
+            oldest_group_id = groups[0]
+            changed = False
+            for message in messages:
+                if _group_id(message) == oldest_group_id:
+                    if message.additional_properties.get(EXCLUDED_KEY) is not True:
+                        changed = True
+                    message.additional_properties[EXCLUDED_KEY] = True
+            return changed
+
+    captured_roles: list[list[str]] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        captured_roles.append([message.role for message in messages])
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base.compaction_strategy = _ExcludeOldestGroupAfterFirstTurn()  # type: ignore[attr-defined]
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    await chat_client_base.get_response(
+        [Message(role="user", text="hello")], options={"tool_choice": "auto", "tools": [ai_func]}
+    )
+
+    assert len(captured_roles) >= 2
+    assert "user" in captured_roles[0]
+    assert "user" not in captured_roles[1]
+
+
+async def test_function_loop_token_budget_strategy_caps_tokens_each_iteration(
+    chat_client_base: SupportsChatGetResponse,
+):
+    exec_counter = 0
+    token_budget = 500
+    tokenizer = CharacterEstimatorTokenizer()
+
+    @tool(name="test_function", approval_mode="never_require")
+    def ai_func(arg1: str) -> str:
+        nonlocal exec_counter
+        exec_counter += 1
+        return f"Processed {arg1}. " + ("result " * 120)
+
+    captured_token_counts: list[int] = []
+    original = chat_client_base._get_non_streaming_response  # type: ignore[attr-defined]
+
+    async def _capture(
+        *,
+        messages: list[Message],
+        options: dict[str, Any],
+        **kwargs: Any,
+    ) -> ChatResponse:
+        annotate_message_groups(messages, force_reannotate=True, tokenizer=tokenizer)
+        captured_token_counts.append(included_token_count(messages))
+        return await original(messages=messages, options=options, **kwargs)
+
+    chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
+    chat_client_base.tokenizer = tokenizer  # type: ignore[attr-defined]
+    chat_client_base.function_invocation_configuration["max_iterations"] = 3  # type: ignore[attr-defined]
+    chat_client_base.compaction_strategy = TokenBudgetComposedStrategy(  # type: ignore[attr-defined]
+        token_budget=token_budget,
+        tokenizer=tokenizer,
+        strategies=[SlidingWindowStrategy(keep_last_groups=2)],
+    )
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="test_function", arguments='{"arg1": "value1"}')
+                ],
+            )
+        ),
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="2", name="test_function", arguments='{"arg1": "value2"}')
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="done")),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="hello " * 160)],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+    )
+
+    assert response.messages[-1].text == "done"
+    assert exec_counter == 2
+    assert len(captured_token_counts) >= 3
+    assert all(token_count > 0 for token_count in captured_token_counts)
+    assert all(token_count <= token_budget for token_count in captured_token_counts)
 
 
 async def test_base_client_with_streaming_function_calling(chat_client_base: SupportsChatGetResponse):
