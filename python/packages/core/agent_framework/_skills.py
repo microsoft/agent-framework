@@ -29,10 +29,12 @@ import inspect
 import logging
 import os
 import re
+import typing
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, TypeVar, get_origin
 
 from ._sessions import BaseContextProvider
 from ._tools import FunctionTool
@@ -44,6 +46,90 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # region Models
+
+DepsT = TypeVar("DepsT")
+
+
+@dataclass
+class SkillContext(Generic[DepsT]):
+    """Typed context provided to skill resource functions.
+
+    .. warning:: Experimental
+
+        This API is experimental and subject to change or removal
+        in future versions without notice.
+
+    A generic context object that carries typed dependencies into resource
+    functions.  Resource functions that declare a ``SkillContext[DepsT]``
+    first parameter receive this context automatically when invoked.
+
+    The context is mutable so that resources can enrich :attr:`deps` with
+    new state for subsequent resources (e.g. one resource loads data into
+    ``deps.db``, and a later resource queries it).
+
+    Attributes:
+        deps: The dependency object supplied to :class:`SkillsProvider`.
+
+    Examples:
+        .. code-block:: python
+
+            from dataclasses import dataclass
+            from agent_framework import Skill, SkillContext, SkillsProvider
+
+
+            @dataclass
+            class MyDeps:
+                db: DatabaseClient
+                api_key: str
+
+
+            skill = Skill(name="my-skill", description="...", content="...")
+
+
+            @skill.resource
+            async def get_data(ctx: SkillContext[MyDeps]) -> str:
+                result = await ctx.deps.db.query("SELECT ...")
+                return str(result)
+
+
+            provider = SkillsProvider(skills=[skill], deps=MyDeps(db=conn, api_key="..."))
+    """
+
+    deps: DepsT
+
+
+def _is_skill_ctx(annotation: Any) -> bool:
+    """Return whether *annotation* is the ``SkillContext`` class, parameterized or not."""
+    return annotation is SkillContext or get_origin(annotation) is SkillContext
+
+
+def _resolve_takes_ctx(func: Callable[..., Any]) -> bool:
+    """Return whether *func*'s first positional parameter is :class:`SkillContext`.
+
+    Uses :func:`typing.get_type_hints` to resolve annotations, including
+    stringified forms produced by ``from __future__ import annotations``.
+
+    .. note::
+
+        Deps classes must be defined at **module level** so that
+        :func:`typing.get_type_hints` can resolve them.
+    """
+    sig = inspect.signature(func)
+    first = next(
+        (p for p in sig.parameters.values() if p.kind in (_POS_ONLY, _POS_OR_KW)),
+        None,
+    )
+    if first is None or first.annotation is inspect.Parameter.empty:
+        return False
+    try:
+        resolved = typing.get_type_hints(func).get(first.name)
+        return resolved is not None and _is_skill_ctx(resolved)
+    except Exception:
+        return False
+
+
+_POS_ONLY = inspect.Parameter.POSITIONAL_ONLY
+_POS_OR_KW = inspect.Parameter.POSITIONAL_OR_KEYWORD
 
 
 class SkillResource:
@@ -107,12 +193,9 @@ class SkillResource:
         self.content = content
         self.function = function
 
-        # Precompute whether the function accepts **kwargs to avoid
-        # repeated inspect.signature() calls on every invocation.
-        self._accepts_kwargs: bool = False
-        if function is not None:
-            sig = inspect.signature(function)
-            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        # Precompute whether the first positional parameter is typed as
+        # SkillContext to avoid repeated inspection at invocation time.
+        self._takes_ctx: bool = _resolve_takes_ctx(function) if function is not None else False
 
 
 class Skill:
@@ -370,6 +453,28 @@ class SkillsProvider(BaseContextProvider):
                 skills=[my_skill],
             )
 
+        With typed dependencies:
+
+        .. code-block:: python
+
+            from dataclasses import dataclass
+
+
+            @dataclass
+            class MyDeps:
+                db: DatabaseClient
+
+
+            skill = Skill(name="db-skill", description="DB operations", content="...")
+
+
+            @skill.resource
+            async def get_data(ctx: SkillContext[MyDeps]) -> str:
+                return str(await ctx.deps.db.query("SELECT ..."))
+
+
+            provider = SkillsProvider(skills=[skill], deps=MyDeps(db=conn))
+
     Attributes:
         DEFAULT_SOURCE_ID: Default value for the ``source_id`` used by this provider.
     """
@@ -384,6 +489,7 @@ class SkillsProvider(BaseContextProvider):
         instruction_template: str | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         source_id: str | None = None,
+        deps: Any = None,
     ) -> None:
         """Initialize a SkillsProvider.
 
@@ -402,9 +508,14 @@ class SkillsProvider(BaseContextProvider):
                 resources.  Defaults to ``DEFAULT_RESOURCE_EXTENSIONS``
                 (``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``).
             source_id: Unique identifier for this provider instance.
+            deps: Dependency object passed to resource functions that declare a
+                :class:`SkillContext` first parameter.  Can be any type; type
+                safety is enforced at the resource function annotation site
+                (e.g. ``SkillContext[MyDeps]``).
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
+        self._deps = deps
         self._skills = _load_skills(skill_paths, skills, resource_extensions or DEFAULT_RESOURCE_EXTENSIONS)
 
         self._instructions = _create_instructions(instruction_template, self._skills)
@@ -518,19 +629,18 @@ class SkillsProvider(BaseContextProvider):
 
         return content
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
+    async def _read_skill_resource(self, skill_name: str, resource_name: str) -> str:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
         ``content`` is returned directly; callable resources are invoked
-        (awaited if async).
+        (awaited if async).  Resource functions that declare a
+        :class:`SkillContext` first parameter receive a context carrying
+        the provider's ``deps``.
 
         Args:
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
-            **kwargs: Runtime keyword arguments forwarded to resource functions
-                that accept ``**kwargs`` (e.g. arguments passed via
-                ``agent.run(user_id="123")``).
 
         Returns:
             The resource content string, or a user-facing error message on
@@ -559,12 +669,15 @@ class SkillsProvider(BaseContextProvider):
 
         if resource.function is not None:
             try:
+                # Build positional args: prepend SkillContext if the resource expects it.
+                args: tuple[Any, ...] = ()
+                if resource._takes_ctx:  # pyright: ignore[reportPrivateUsage]
+                    args = (SkillContext(deps=self._deps),)
+
                 if inspect.iscoroutinefunction(resource.function):
-                    result = (
-                        await resource.function(**kwargs) if resource._accepts_kwargs else await resource.function()  # pyright: ignore[reportPrivateUsage]
-                    )
+                    result = await resource.function(*args)
                 else:
-                    result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()  # pyright: ignore[reportPrivateUsage]
+                    result = resource.function(*args)
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)

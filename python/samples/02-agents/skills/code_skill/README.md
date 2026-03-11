@@ -8,7 +8,7 @@ While file-based skills use `SKILL.md` files discovered on disk, code-defined sk
 
 1. **Basic Code Skill** — Create a `Skill` directly with static resources (inline content)
 2. **Dynamic Resources** — Attach callable resources via the `@skill.resource` decorator that generate content at invocation time
-3. **Dynamic Resources with kwargs** — Attach a callable resource that accepts `**kwargs` to receive runtime arguments passed via `agent.run()`, useful for injecting request-scoped context (user tokens, session data)
+3. **Typed Dependencies via `SkillContext`** — Declare a `SkillContext[DepsT]` first parameter on a resource function to receive typed dependencies injected by the `SkillsProvider`
 
 All patterns can be combined with file-based skills in a single `SkillsProvider`.
 
@@ -48,7 +48,7 @@ uv run samples/02-agents/skills/code_skill/code_skill.py
 The sample runs two examples:
 
 1. **Code style question** — Uses Pattern 1 (static resources): the agent loads the `code-style` skill and reads the `style-guide` resource to answer naming convention questions
-2. **Project info question** — Uses Patterns 2 & 3 (dynamic resources with kwargs): the agent reads the dynamically generated `team-roster` resource and the `environment` resource which receives `app_version` via runtime kwargs
+2. **Project info question** — Uses Patterns 2 & 3 (dynamic resources with `SkillContext`): the agent reads the dynamically generated `team-roster` resource and the `environment` resource which receives `app_version` via typed dependencies
 
 ## Learn More
 

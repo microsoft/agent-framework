@@ -59,7 +59,7 @@ from ._sessions import (
     register_state_type,
 )
 from ._settings import SecretString, load_settings
-from ._skills import Skill, SkillResource, SkillsProvider
+from ._skills import Skill, SkillContext, SkillResource, SkillsProvider
 from ._telemetry import (
     AGENT_FRAMEWORK_USER_AGENT,
     APP_INFO,
@@ -270,6 +270,7 @@ __all__ = [
     "SessionContext",
     "SingleEdgeGroup",
     "Skill",
+    "SkillContext",
     "SkillResource",
     "SkillsProvider",
     "SubWorkflowRequestMessage",
