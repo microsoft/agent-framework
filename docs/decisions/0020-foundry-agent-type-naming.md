@@ -211,8 +211,9 @@ This option was chosen because it:
 - `FoundryAgent` (renamed from `FoundryResponsesAgent`) exists in `Microsoft.Agents.AI.AzureAI` — wraps the Responses API path with explicit constructors.
 - `FoundryVersionedAgent` exists in `Microsoft.Agents.AI.AzureAI` — wraps the versioned agent path with async static factory methods.
 - `FoundryAITool` exists in `Microsoft.Agents.AI.AzureAI` — static factory for creating `AITool` from Azure SDK and OpenAI SDK tool types.
-- Existing `AIProjectClient` extension methods (`CreateAIAgentAsync`, `GetAIAgentAsync`, `AsAIAgent`) remain available for compatibility but are marked obsolete.
+- Existing `AIProjectClient` extension methods (`CreateAIAgentAsync`, `GetAIAgentAsync`, `AsAIAgent`) remain available for compatibility but are marked `[Obsolete]` with messages pointing to `FoundryVersionedAgent`.
 - Samples are organized under `FoundryAgents/` (Responses API samples) and `FoundryVersionedAgents/` (versioned agent samples), and they read environment variables explicitly at the start of `Program.cs`.
+- Integration tests exist for both `FoundryAgent` and `FoundryVersionedAgent`, covering run, streaming, structured output, and agent creation scenarios. Old tests targeting the obsolete extension methods are themselves marked `[Obsolete]`.
 
 ### Azure SDK Entry Points for Reference
 
