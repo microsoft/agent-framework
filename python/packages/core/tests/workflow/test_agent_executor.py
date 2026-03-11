@@ -383,3 +383,60 @@ async def test_agent_executor_run_with_messages_kwarg_does_not_raise() -> None:
     result = await workflow.run("hello", messages=["stale"])
     assert result is not None
     assert agent.call_count == 1
+
+
+class _NonCopyableRaw:
+    """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
+
+    def __deepcopy__(self, memo: dict) -> Any:
+        raise TypeError("Cannot deepcopy this object")
+
+
+class _AgentWithRawRepr(BaseAgent):
+    """Agent that returns responses with a non-copyable raw_representation."""
+
+    def __init__(self, raw: Any, **kwargs: Any):
+        super().__init__(**kwargs)
+        self._raw = raw
+
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def _run() -> AgentResponse:
+            return AgentResponse(
+                messages=[Message("assistant", [f"reply from {self.name}"])],
+                raw_representation=self._raw,
+            )
+
+        return _run()
+
+
+async def test_agent_executor_workflow_with_non_copyable_raw_representation() -> None:
+    """Workflow should complete when AgentResponse contains a raw_representation that cannot be deep-copied."""
+    raw = _NonCopyableRaw()
+
+    agent_a = _AgentWithRawRepr(raw=raw, id="a", name="AgentA")
+    agent_b = _CountingAgent(id="b", name="AgentB")
+
+    exec_a = AgentExecutor(agent_a, id="exec_a")
+    exec_b = AgentExecutor(agent_b, id="exec_b")
+
+    workflow = SequentialBuilder(participants=[exec_a, exec_b]).build()
+    events = await workflow.run("hello")
+
+    completed = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
+    completed_a = [e for e in completed if e.executor_id == "exec_a"]
+
+    assert len(completed_a) == 1
+    assert completed_a[0].data is not None
+
+    # The yielded AgentResponse should preserve its raw_representation reference
+    agent_responses = [d for d in completed_a[0].data if isinstance(d, AgentResponse)]
+    assert len(agent_responses) > 0
+    assert agent_responses[0].text == "reply from AgentA"
+    assert agent_responses[0].raw_representation is raw
