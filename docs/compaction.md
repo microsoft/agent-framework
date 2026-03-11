@@ -52,3 +52,4 @@ PipelineCompactionStrategy compactionPipeline =
 ```
 
 See the [Agent_Step18_CompactionPipeline](https://github.com/microsoft/agent-framework/dotnet/samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Program.cs) sample for a complete working example.
+See the [Learn Documentation](https://review.learn.microsoft.com/agent-framework/agents/conversations/compaction) for a more comprehensive walk-through.
