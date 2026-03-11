@@ -585,6 +585,60 @@ async def test_tool_result_compaction_bidirectional_tracing() -> None:
         if m.additional_properties.get(EXCLUDED_KEY):
             assert _group_unknown_value(m, SUMMARIZED_BY_SUMMARY_ID_KEY) == summary_id
 
+    # Core compaction annotations must be present on the summary message.
+    assert _group_id(summary) is not None
+    assert _group_kind(summary) is not None
+    assert summary.additional_properties.get(EXCLUDED_KEY) is False
+
+
+async def test_tool_result_compaction_summary_has_full_annotations() -> None:
+    """Summary messages inserted by ToolResultCompactionStrategy must have all compaction annotations."""
+    messages = [
+        Message(role="user", text="u"),
+        _assistant_function_call("c1"),
+        _tool_result("c1", "r1"),
+        Message(role="assistant", text="done"),
+    ]
+    strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
+    annotate_message_groups(messages)
+
+    await strategy(messages)
+
+    summary = next(m for m in messages if (m.text or "").startswith("[Tool results:"))
+    annotation = summary.additional_properties.get(GROUP_ANNOTATION_KEY)
+    assert isinstance(annotation, dict)
+    assert GROUP_ID_KEY in annotation
+    assert GROUP_KIND_KEY in annotation
+    assert GROUP_HAS_REASONING_KEY in annotation
+    assert SUMMARY_OF_MESSAGE_IDS_KEY in annotation
+    assert summary.additional_properties.get(EXCLUDED_KEY) is False
+
+
+async def test_summarization_strategy_summary_has_full_annotations() -> None:
+    """Summary messages inserted by SummarizationStrategy must have all compaction annotations."""
+    messages = [
+        Message(role="user", text="u1"),
+        Message(role="assistant", text="a1"),
+        Message(role="user", text="u2"),
+        Message(role="assistant", text="a2"),
+        Message(role="user", text="u3"),
+        Message(role="assistant", text="a3"),
+    ]
+    strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
+    annotate_message_groups(messages)
+
+    changed = await strategy(messages)
+
+    assert changed is True
+    summary = next(m for m in messages if _group_unknown_value(m, SUMMARY_OF_MESSAGE_IDS_KEY) is not None)
+    annotation = summary.additional_properties.get(GROUP_ANNOTATION_KEY)
+    assert isinstance(annotation, dict)
+    assert GROUP_ID_KEY in annotation
+    assert GROUP_KIND_KEY in annotation
+    assert GROUP_HAS_REASONING_KEY in annotation
+    assert SUMMARY_OF_MESSAGE_IDS_KEY in annotation
+    assert summary.additional_properties.get(EXCLUDED_KEY) is False
+
 
 async def test_tool_result_compaction_multiple_groups_combined() -> None:
     """Multiple tool-call groups collapsed independently, each with its own summary.

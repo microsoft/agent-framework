@@ -708,6 +708,8 @@ class SlidingWindowStrategy:
             keep_last_groups: Number of most-recent non-system groups to keep.
             preserve_system: Whether system groups should always remain included.
         """
+        if keep_last_groups <= 0:
+            raise ValueError(f"keep_last_groups must be more than 0, got {keep_last_groups}")
         self.keep_last_groups = keep_last_groups
         self.preserve_system = preserve_system
 
@@ -1052,6 +1054,7 @@ class SummarizationStrategy:
 
         insertion_index = min(starts[group_id] for group_id in group_ids_to_summarize if group_id in starts)
         messages.insert(insertion_index, summary_message)
+        annotate_message_groups(messages, from_index=insertion_index, force_reannotate=False)
         return True
 
 
@@ -1205,7 +1208,7 @@ class CompactionProvider(BaseContextProvider):
             source_id: Provider source id (default ``"compaction"``).
             history_source_id: The ``source_id`` of the history provider whose
                 stored messages the ``after_strategy`` should compact
-                (default ``"in_memory_history"``).
+                (default ``"in_memory"``).
         """
         super().__init__(source_id)
         self.before_strategy = before_strategy
