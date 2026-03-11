@@ -7,9 +7,7 @@ using Microsoft.Agents.AI;
 
 namespace AzureAI.IntegrationTests;
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
-[Obsolete("Use FoundryVersionedAgentRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientAgentRunPreviousResponseTests() : RunTests<AIProjectClientFixture>(() => new())
+public class FoundryVersionedAgentRunStreamingPreviousResponseTests() : RunStreamingTests<FoundryVersionedAgentFixture>(() => new())
 {
     public override Task RunWithNoMessageDoesNotFailAsync()
     {
@@ -18,8 +16,7 @@ public class AIProjectClientAgentRunPreviousResponseTests() : RunTests<AIProject
     }
 }
 
-[Obsolete("Use FoundryVersionedAgentRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientAgentRunConversationTests() : RunTests<AIProjectClientFixture>(() => new())
+public class FoundryVersionedAgentRunStreamingConversationTests() : RunTests<FoundryVersionedAgentFixture>(() => new())
 {
     public override Func<Task<AgentRunOptions?>> AgentRunOptionsFactory => async () =>
     {

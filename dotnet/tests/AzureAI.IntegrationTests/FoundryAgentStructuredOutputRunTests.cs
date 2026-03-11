@@ -1,34 +1,31 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
-[Obsolete("Use FoundryVersionedAgentStructuredOutputRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRunTests<AIProjectClientStructuredOutputFixture<CityInfo>>(() => new AIProjectClientStructuredOutputFixture<CityInfo>())
+public class FoundryAgentStructuredOutputRunTests() : StructuredOutputRunTests<FoundryAgentStructuredOutputFixture<CityInfo>>(() => new())
 {
-    private const string NotSupported = "AIProjectClient does not support specifying structured output type at invocation time.";
+    private const string NotSupported = "FoundryAgent does not support specifying structured output type at invocation time.";
 
     /// <summary>
     /// Verifies that response format provided at agent initialization is used when invoking RunAsync.
     /// </summary>
-    /// <returns></returns>
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public async Task RunWithResponseFormatAtAgentInitializationReturnsExpectedResultAsync()
     {
         // Arrange
-        var agent = this.Fixture.Agent;
-        var session = await agent.CreateSessionAsync();
+        AIAgent agent = this.Fixture.Agent;
+        AgentSession session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
-        var response = await agent.RunAsync(new ChatMessage(ChatRole.User, "Provide information about the capital of France."), session);
+        AgentResponse response = await agent.RunAsync(new ChatMessage(ChatRole.User, "Provide information about the capital of France."), session);
 
         // Assert
         Assert.NotNull(response);
@@ -39,19 +36,14 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
     }
 
     /// <summary>
-    /// Verifies that generic RunAsync works with AIProjectClient when structured output is configured at agent initialization.
+    /// Verifies that generic RunAsync works when structured output is configured at agent initialization.
     /// </summary>
-    /// <remarks>
-    /// AIProjectClient does not support specifying the structured output type at invocation time yet.
-    /// The type T provided to RunAsync&lt;T&gt; is ignored by AzureAIProjectChatClient and is only used
-    /// for deserializing the agent response by AgentResponse&lt;T&gt;.Result.
-    /// </remarks>
     [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
     public async Task RunGenericWithResponseFormatAtAgentInitializationReturnsExpectedResultAsync()
     {
         // Arrange
-        var agent = this.Fixture.Agent;
-        var session = await agent.CreateSessionAsync();
+        AIAgent agent = this.Fixture.Agent;
+        AgentSession session = await agent.CreateSessionAsync();
         await using var cleanup = new SessionCleanup(session, this.Fixture);
 
         // Act
@@ -88,21 +80,21 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
 }
 
 /// <summary>
-/// Represents a fixture for testing AIProjectClient with structured output of type <typeparamref name="T"/> provided at agent initialization.
+/// Fixture for testing <see cref="Microsoft.Agents.AI.AzureAI.FoundryAgent"/> with structured output of type <typeparamref name="T"/> provided at agent initialization.
 /// </summary>
-[Obsolete("Use FoundryVersionedAgentStructuredOutputFixture instead.")]
-public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
+public class FoundryAgentStructuredOutputFixture<T> : FoundryAgentFixture
 {
-    public override async ValueTask InitializeAsync()
+    public override ValueTask InitializeAsync()
     {
-        var agentOptions = new ChatClientAgentOptions
+        ChatClientAgentOptions agentOptions = new()
         {
             ChatOptions = new ChatOptions()
             {
+                ModelId = TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 ResponseFormat = ChatResponseFormat.ForJsonSchema<T>(AgentAbstractionsJsonUtilities.DefaultOptions)
             },
         };
 
-        await this.InitializeAsync(agentOptions);
+        return this.InitializeAsync(agentOptions);
     }
 }

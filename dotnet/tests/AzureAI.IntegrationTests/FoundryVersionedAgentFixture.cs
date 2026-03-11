@@ -1,45 +1,46 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-[Obsolete("Use FoundryVersionedAgentFixture instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientFixture : IChatClientAgentFixture
+/// <summary>
+/// Integration test fixture that creates agents via <see cref="FoundryVersionedAgent"/> factory methods.
+/// </summary>
+public class FoundryVersionedAgentFixture : IChatClientAgentFixture
 {
-    private ChatClientAgent _agent = null!;
-    private AIProjectClient _client = null!;
+    private FoundryVersionedAgent _agent = null!;
 
-    public IChatClient ChatClient => this._agent.ChatClient;
+    public IChatClient ChatClient => this._agent.GetService<ChatClientAgent>()!.ChatClient;
 
     public AIAgent Agent => this._agent;
 
     public async Task<string> CreateConversationAsync()
     {
-        var response = await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync();
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
+        var response = await client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync();
         return response.Value.Id;
     }
 
     public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var chatClientSession = (ChatClientAgentSession)session;
+        ChatClientAgentSession chatClientSession = (ChatClientAgentSession)session;
 
         if (chatClientSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            // Conversation sessions do not persist message history.
             return await this.GetChatHistoryFromConversationAsync(chatClientSession.ConversationId);
         }
 
@@ -48,7 +49,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
             return await this.GetChatHistoryFromResponsesChainAsync(chatClientSession.ConversationId);
         }
 
-        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
+        ChatHistoryProvider? chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
         if (chatHistoryProvider is null)
         {
@@ -60,23 +61,19 @@ public class AIProjectClientFixture : IChatClientAgentFixture
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
     {
-        var openAIResponseClient = this._client.GetProjectOpenAIClient().GetProjectResponsesClient();
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
+        var openAIResponseClient = client.GetProjectOpenAIClient().GetProjectResponsesClient();
         var inputItems = await openAIResponseClient.GetResponseInputItemsAsync(conversationId).ToListAsync();
         var response = await openAIResponseClient.GetResponseAsync(conversationId);
-        var responseItem = response.Value.OutputItems.FirstOrDefault()!;
+        ResponseItem responseItem = response.Value.OutputItems.FirstOrDefault()!;
 
-        // Take the messages that were the chat history leading up to the current response
-        // remove the instruction messages, and reverse the order so that the most recent message is last.
         var previousMessages = inputItems
             .Select(ConvertToChatMessage)
             .Where(x => x.Text != "You are a helpful assistant.")
             .Reverse();
 
-        // Convert the response item to a chat message.
-        var responseMessage = ConvertToChatMessage(responseItem);
+        ChatMessage responseMessage = ConvertToChatMessage(responseItem);
 
-        // Concatenate the previous messages with the response message to get a full chat history
-        // that includes the current response.
         return [.. previousMessages, responseMessage];
     }
 
@@ -84,7 +81,7 @@ public class AIProjectClientFixture : IChatClientAgentFixture
     {
         if (item is MessageResponseItem messageResponseItem)
         {
-            var role = messageResponseItem.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant;
+            ChatRole role = messageResponseItem.Role == MessageRole.User ? ChatRole.User : ChatRole.Assistant;
             return new ChatMessage(role, messageResponseItem.Content.FirstOrDefault()?.Text);
         }
 
@@ -93,8 +90,9 @@ public class AIProjectClientFixture : IChatClientAgentFixture
 
     private async Task<List<ChatMessage>> GetChatHistoryFromConversationAsync(string conversationId)
     {
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
         List<ChatMessage> messages = [];
-        await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
+        await foreach (AgentResponseItem item in client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
             var openAIItem = item.AsResponseResultItem();
             if (openAIItem is MessageResponseItem messageItem)
@@ -118,28 +116,47 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools);
+        FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
+            new DefaultAzureCredential(),
+            GenerateUniqueAgentName(name),
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+            instructions: instructions,
+            tools: aiTools);
+
+        return agent.GetService<ChatClientAgent>()!;
     }
 
     public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        return await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
+        FoundryVersionedAgent agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
+            new DefaultAzureCredential(),
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+            options: options);
+
+        return agent.GetService<ChatClientAgent>()!;
     }
 
     public static string GenerateUniqueAgentName(string baseName) =>
         $"{baseName}-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
-    public Task DeleteAgentAsync(ChatClientAgent agent) =>
-        this._client.Agents.DeleteAgentAsync(agent.Name);
+    public Task DeleteAgentAsync(ChatClientAgent agent)
+    {
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
+        return client.Agents.DeleteAgentAsync(agent.Name);
+    }
 
     public async Task DeleteSessionAsync(AgentSession session)
     {
-        var typedSession = (ChatClientAgentSession)session;
+        ChatClientAgentSession typedSession = (ChatClientAgentSession)session;
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
+
         if (typedSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedSession.ConversationId);
+            await client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedSession.ConversationId);
         }
         else if (typedSession.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
         {
@@ -149,8 +166,9 @@ public class AIProjectClientFixture : IChatClientAgentFixture
 
     private async Task DeleteResponseChainAsync(string lastResponseId)
     {
-        var response = await this._client.GetProjectOpenAIClient().GetProjectResponsesClient().GetResponseAsync(lastResponseId);
-        await this._client.GetProjectOpenAIClient().GetProjectResponsesClient().DeleteResponseAsync(lastResponseId);
+        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
+        var response = await client.GetProjectOpenAIClient().GetProjectResponsesClient().GetResponseAsync(lastResponseId);
+        await client.GetProjectOpenAIClient().GetProjectResponsesClient().DeleteResponseAsync(lastResponseId);
 
         if (response.Value.PreviousResponseId is not null)
         {
@@ -162,9 +180,9 @@ public class AIProjectClientFixture : IChatClientAgentFixture
     {
         GC.SuppressFinalize(this);
 
-        if (this._client is not null && this._agent is not null)
+        if (this._agent is not null)
         {
-            return new ValueTask(this._client.Agents.DeleteAgentAsync(this._agent.Name));
+            return new ValueTask(FoundryVersionedAgent.DeleteAIAgentAsync(this._agent));
         }
 
         return default;
@@ -172,13 +190,22 @@ public class AIProjectClientFixture : IChatClientAgentFixture
 
     public virtual async ValueTask InitializeAsync()
     {
-        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
-        this._agent = await this.CreateChatClientAgentAsync();
+        this._agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
+            new DefaultAzureCredential(),
+            GenerateUniqueAgentName("HelpfulAssistant"),
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+            instructions: "You are a helpful assistant.");
     }
 
     public async Task InitializeAsync(ChatClientAgentOptions options)
     {
-        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
-        this._agent = await this.CreateChatClientAgentAsync(options);
+        options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
+
+        this._agent = await FoundryVersionedAgent.CreateAIAgentAsync(
+            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
+            new DefaultAzureCredential(),
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+            options: options);
     }
 }
