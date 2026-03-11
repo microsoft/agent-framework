@@ -68,7 +68,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         }
 
         return new ToolApprovalRequestContent(
-            id: request.ApprovalId,
+            requestId: request.ApprovalId,
             new FunctionCallContent(
                 callId: request.ApprovalId,
                 name: request.FunctionName,

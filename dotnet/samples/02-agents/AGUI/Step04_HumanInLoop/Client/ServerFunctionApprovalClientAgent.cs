@@ -199,7 +199,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                     .Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
 
                 var approvalRequestContent = new ToolApprovalRequestContent(
-                    id: approvalRequest.ApprovalId,
+                    requestId: approvalRequest.ApprovalId,
                     new FunctionCallContent(
                         callId: approvalRequest.ApprovalId,
                         name: approvalRequest.FunctionName,

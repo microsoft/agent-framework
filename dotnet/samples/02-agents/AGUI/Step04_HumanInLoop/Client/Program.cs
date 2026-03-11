@@ -135,12 +135,13 @@ static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest)
     Console.WriteLine("============================================================");
     Console.WriteLine("APPROVAL REQUIRED");
     Console.WriteLine("============================================================");
-    Console.WriteLine($"Function: {((FunctionCallContent)approvalRequest.ToolCall).Name}");
+    Console.WriteLine($"Function: {((FunctionCallContent)approvalRequest.ToolCall!).Name}");
 
-    if (((FunctionCallContent)approvalRequest.ToolCall).Arguments != null)
+    var funcCallArgs = ((FunctionCallContent)approvalRequest.ToolCall!).Arguments;
+    if (funcCallArgs != null)
     {
         Console.WriteLine("Arguments:");
-        foreach (var arg in ((FunctionCallContent)approvalRequest.ToolCall).Arguments)
+        foreach (var arg in funcCallArgs)
         {
             Console.WriteLine($"  {arg.Key} = {arg.Value}");
         }
