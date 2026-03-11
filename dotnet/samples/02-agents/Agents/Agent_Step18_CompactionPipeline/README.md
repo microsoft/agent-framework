@@ -24,7 +24,9 @@ The compaction engine organizes messages into atomic *groups* that are treated a
 | `User` | A single user message |
 | `ToolCall` | One assistant message with tool calls + the matching tool result messages |
 | `AssistantText` | A single assistant text-only message |
+| `Summary` | One or more messages summarizing earlier conversation spans, produced by compaction strategies |
 
+`Summary` groups (`CompactionGroupKind.Summary`) are created by compaction strategies (for example, `SummarizationCompactionStrategy`) and do not originate directly from user or assistant messages.
 Strategies exclude entire groups rather than individual messages, preserving the tool-call/result pairing required by most model APIs.
 
 ### Compaction triggers
