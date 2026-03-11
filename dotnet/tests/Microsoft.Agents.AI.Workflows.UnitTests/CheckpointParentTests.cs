@@ -142,7 +142,7 @@ public class CheckpointParentTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint to resume from
-        await using StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
+        StreamingRun run = await env.WithCheckpointing(checkpointManager).RunStreamingAsync(workflow, "Hello");
 
         List<CheckpointInfo> firstRunCheckpoints = [];
         using CancellationTokenSource cts = new();
@@ -170,7 +170,7 @@ public class CheckpointParentTests
         await run.DisposeAsync();
 
         // Act: Resume from the first checkpoint
-        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
+        await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         using CancellationTokenSource cts2 = new();
@@ -236,7 +236,7 @@ public class CheckpointParentTests
         await run.DisposeAsync();
 
         // Act: Resume from the second checkpoint
-        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
+        await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
@@ -293,7 +293,7 @@ public class CheckpointParentTests
         await run.DisposeAsync();
 
         // Act: Resume from the second checkpoint
-        StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
+        await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
         using CancellationTokenSource cts2 = new();

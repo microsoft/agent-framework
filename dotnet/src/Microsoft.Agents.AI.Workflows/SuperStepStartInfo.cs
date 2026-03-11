@@ -20,7 +20,7 @@ public sealed class SuperStepStartInfo(HashSet<string>? sendingExecutors = null)
     public bool HasExternalMessages { get; init; }
 
     /// <summary>
-    /// Gets the <see cref="CheckpointInfo"/> corresponding to the checkpoint restored at the start of this SuperStep, if any.
+    /// Gets the <see cref="CheckpointInfo"/> corresponding to the checkpoint created at the start of this SuperStep, if any.
     /// <see langword="null"/> if checkpointing was not enabled when the run was started.
     /// </summary>
     public CheckpointInfo? Checkpoint { get; init; }
