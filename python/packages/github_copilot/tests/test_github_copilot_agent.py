@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import sys
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -7,6 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+if sys.version_info < (3, 11):
+    pytest.skip("agent-framework-github-copilot tests require Python 3.11+.", allow_module_level=True)
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,

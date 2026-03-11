@@ -54,18 +54,6 @@ environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
 ]
-override-dependencies = [
-  # A conflict between the dependency of litellm[proxy] < 0.30.0, which is a dependency of agent-lightning
-  # and uvicorn >= 0.34.0, which is a dependency of tau2
-  "uvicorn==0.38.0",
-  # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
-  "websockets==15.0.1",
-  # grpcio 1.67.x has no Python 3.14 wheels; grpcio 1.76.0+ supports Python 3.14
-  # litellm constrains grpcio<1.68.0 due to resource exhaustion bug (https://github.com/grpc/grpc/issues/38290)
-  # Use version-specific overrides to satisfy both constraints
-  "grpcio>=1.76.0; python_version >= '3.14'",
-  "grpcio>=1.62.3,<1.68.0; python_version < '3.14'",
-]
 
 [tool.uv.workspace]
 members = [ "packages/*" ]
@@ -219,10 +207,11 @@ lint = "python scripts/run_tasks_in_packages_if_exists.py lint"
 samples-lint = "ruff check samples --fix --exclude samples/autogen-migration,samples/semantic-kernel-migration --ignore E501,ASYNC,B901,TD002"
 pyright = "python scripts/run_tasks_in_packages_if_exists.py pyright"
 mypy = "python scripts/run_tasks_in_packages_if_exists.py mypy"
-samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
 typing = "python scripts/run_tasks_in_packages_if_exists.py mypy pyright"
 validate-dependency-ranges = "python scripts/validate_dependency_ranges.py"
 validate-dependency-lower-bounds = "python scripts/validate_dependency_lower_bounds.py"
+samples-syntax.shell = "pyright -p $(python -c \"import sys; print('pyrightconfig.samples.py310.json' if sys.version_info < (3,11) else 'pyrightconfig.samples.json')\") --warnings"
+samples-syntax.interpreter = "posix"
 # cleaning
 clean-dist-packages = "python scripts/run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"

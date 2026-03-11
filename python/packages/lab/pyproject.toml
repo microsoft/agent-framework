@@ -32,7 +32,7 @@ gaia = [
   "opentelemetry-api>=1.39.0",
   "tqdm>=4.60.0",
   "huggingface-hub>=0.20.0",
-  "orjson>=3.8.0",
+  "orjson>=3.10.7,<4",
   "pyarrow>=18.0.0",  # For reading parquet files
 ]
 

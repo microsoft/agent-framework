@@ -63,7 +63,8 @@ uv run poe add-dependency-and-validate-bounds --project <workspace-package-name>
 ### Dependency Bound Notes
 
 - Stable dependencies (`>=1.0`) should typically be bounded as `>=<known-good>,<next-major>`.
-- Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds on a known-good line (avoid open-ended ranges).
+- Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds with an explicit upper cap (avoid open-ended ranges).
+- For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may be a patch line, a minor line, or multiple minor lines when checks/tests show the broader lane is compatible.
 - Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
 - For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--project "*"` and omitting `--dependency`.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.

@@ -21,7 +21,10 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
-from scripts.dependencies._dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
+from scripts.dependencies._dependency_bounds_runtime import (
+    extend_command_with_runtime_tools,
+    extend_command_with_task,
+)
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 from rich import print
@@ -540,7 +543,9 @@ def _build_trial_lower_bounds(
     max_candidates: int,
 ) -> list[Version]:
     # Lower-bound probing stays inside the currently supported compatibility lane:
-    # stable tracks never cross a major boundary and 0.x tracks never cross a minor boundary.
+    # stable tracks never cross a major boundary, and 0.x tracks may walk across
+    # multiple minor lines. The final bound is only rewritten after an exact-version
+    # probe passes via `uv run --with <dependency>==<candidate>`.
     candidates = [version for version in versions if version < lower and version < current_upper]
     # `packaging` treats .dev/.a/.b/.rc as prereleases; only probe them when current spec already uses them.
     if not allow_prerelease:
@@ -548,13 +553,8 @@ def _build_trial_lower_bounds(
     if lower.major >= 1:
         major_floor = Version(f"{lower.major}.0.0")
         candidates = [version for version in candidates if version.major == lower.major and version >= major_floor]
-    else:
-        minor_floor = Version(f"0.{lower.minor}.0")
-        candidates = [
-            version
-            for version in candidates
-            if version.major == 0 and version.minor == lower.minor and version >= minor_floor
-        ]
+    elif lower.major == 0:
+        candidates = [version for version in candidates if version.major == 0]
 
     candidates.sort()
     if max_candidates > 0:
@@ -579,6 +579,8 @@ def _run_tasks(
     # leaking the caller's active environment into the subprocess and suppresses uv mismatch warnings.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
+    # Avoid letting nested uv commands target the caller's active environment; validation should
+    # stay inside uv's isolated throwaway environment instead of mutating `.venv`.
     env.pop("VIRTUAL_ENV", None)
     for task_name in tasks:
         command = [
@@ -587,7 +589,6 @@ def _run_tasks(
             "--directory",
             str(project_dir),
             "run",
-            "--active",
             "--isolated",
             "--resolution",
             resolution,
@@ -662,11 +663,13 @@ def _optimize_dependency(
         max_candidates=max_candidates,
     )
     candidate_versions = [str(candidate) for candidate in candidates]
-    current_requirements = list(dependency.original_requirements)
     attempted_versions: list[str] = []
     attempts: list[DependencyAttempt] = []
+    best_lower = dependency.lower_version
 
     # Establish a validated baseline before searching for lower acceptable bounds.
+    # Lower-bound discovery should mirror the repo smoke gate, so probe candidates
+    # under `lowest-direct` rather than `highest`.
     baseline_version = dependency.lower_version
     attempted_versions.append(str(baseline_version))
     print(f"[cyan]{package_label} :: {dependency.name} :: baseline current_lower [{baseline_version}] [/cyan]")
@@ -675,7 +678,7 @@ def _optimize_dependency(
         workspace_root=temp_pyproject.parent.parent.parent,
         tasks=tasks,
         internal_editables=internal_editables,
-        resolution="highest",
+        resolution="lowest-direct",
         dependency_pin=(dependency.name, baseline_version),
         include_dev_group=include_dev_group,
         include_dev_extra=include_dev_extra,
@@ -727,9 +730,6 @@ def _optimize_dependency(
         midpoint = (low + high) // 2
         candidate = candidates[midpoint]
         attempted_versions.append(str(candidate))
-        trial_requirements = [entry.with_lower(candidate) for entry in dependency.entries]
-        replacements = list(zip(current_requirements, trial_requirements, strict=True))
-        _replace_requirements(temp_pyproject, [(old, new) for old, new in replacements])
 
         print(f"[cyan]{package_label} :: {dependency.name} -> >={candidate}[/cyan]")
         success, error = _run_tasks(
@@ -737,7 +737,7 @@ def _optimize_dependency(
             workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
-            resolution="highest",
+            resolution="lowest-direct",
             dependency_pin=(dependency.name, candidate),
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
@@ -746,20 +746,24 @@ def _optimize_dependency(
         )
         if success:
             attempts.append(DependencyAttempt(trial_lower=str(candidate), status="passed"))
-            current_requirements = trial_requirements
+            best_lower = candidate
             high = midpoint - 1
             continue
 
         attempts.append(DependencyAttempt(trial_lower=str(candidate), status="failed", error=error))
-        _replace_requirements(temp_pyproject, [(new, old) for old, new in replacements])
         low = midpoint + 1
 
-    changed = current_requirements != dependency.original_requirements
+    final_requirements = (
+        [entry.with_lower(best_lower) for entry in dependency.entries]
+        if best_lower != dependency.lower_version
+        else dependency.original_requirements
+    )
+    changed = final_requirements != dependency.original_requirements
     return DependencyOutcome(
         name=dependency.name,
         changed=changed,
         original_requirements=dependency.original_requirements,
-        final_requirements=current_requirements,
+        final_requirements=final_requirements,
         candidate_versions=candidate_versions,
         attempted_versions=attempted_versions,
         attempts=attempts,

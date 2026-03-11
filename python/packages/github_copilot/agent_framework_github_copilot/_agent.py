@@ -25,20 +25,27 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
-from copilot import CopilotClient, CopilotSession
-from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
-from copilot.types import (
-    CopilotClientOptions,
-    MCPServerConfig,
-    MessageOptions,
-    PermissionRequestResult,
-    ResumeSessionConfig,
-    SessionConfig,
-    SystemMessageConfig,
-    ToolInvocation,
-    ToolResult,
-)
-from copilot.types import Tool as CopilotTool
+
+try:
+    from copilot import CopilotClient, CopilotSession
+    from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
+    from copilot.types import (
+        CopilotClientOptions,
+        MCPServerConfig,
+        MessageOptions,
+        PermissionRequestResult,
+        ResumeSessionConfig,
+        SessionConfig,
+        SystemMessageConfig,
+        ToolInvocation,
+        ToolResult,
+    )
+    from copilot.types import Tool as CopilotTool
+except ImportError as _copilot_import_error:
+    raise ImportError(
+        "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
+        "Please use Python 3.11 or later."
+    ) from _copilot_import_error
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar

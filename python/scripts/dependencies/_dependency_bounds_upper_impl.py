@@ -22,7 +22,11 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 import tomli
-from scripts.dependencies._dependency_bounds_runtime import extend_command_with_runtime_tools, extend_command_with_task
+from scripts.dependencies._dependency_bounds_runtime import (
+    extend_command_with_runtime_tools,
+    extend_command_with_task,
+    next_zero_major_minor_boundary,
+)
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 from rich import print
@@ -634,8 +638,9 @@ def _build_trial_bounds(
     max_candidates: int,
 ) -> list[Version]:
     # Candidate generation mirrors the policy encoded in pyproject bounds:
-    # prerelease tracks only advance one prerelease step, 0.x tracks stay within the
-    # current minor, and stable tracks probe newer versions from highest to lowest.
+    # prerelease tracks only advance one prerelease step, any 0.x dependency may
+    # span multiple validated minor lines, and stable tracks probe newer versions
+    # from highest to lowest.
     if lower is not None and lower.is_prerelease:
         if lower.pre is not None:
             pre_tag, pre_num = lower.pre
@@ -649,17 +654,20 @@ def _build_trial_bounds(
         return [version for version in versions if version == next_prerelease and version > current_upper]
 
     if lower is not None and lower.major == 0:
-        candidates = [
-            version
-            for version in versions
-            if version > current_upper and version.major == 0 and version.minor == lower.minor and version > lower
-        ]
+        candidates = [version for version in versions if version.major == 0 and version > lower]
         if not allow_prerelease:
             candidates = [version for version in candidates if not version.is_prerelease]
-        candidates.sort(reverse=True)
+        candidate_bounds = sorted(
+            {
+                Version(next_zero_major_minor_boundary(str(version)))
+                for version in candidates
+                if version >= current_upper
+            },
+            reverse=True,
+        )
         if max_candidates > 0:
-            return candidates[:max_candidates]
-        return candidates
+            return candidate_bounds[:max_candidates]
+        return candidate_bounds
 
     candidates = [version for version in versions if version > current_upper and (lower is None or version > lower)]
     # `packaging` treats .dev/.a/.b/.rc as prereleases; only probe them when current spec already uses them.
@@ -669,6 +677,22 @@ def _build_trial_bounds(
     if max_candidates > 0:
         return candidates[:max_candidates]
     return candidates
+
+
+def _select_upper_probe_version(
+    versions: list[Version],
+    *,
+    lower: Version | None,
+    upper_bound: Version,
+    allow_prerelease: bool,
+) -> Version | None:
+    """Return the newest concrete version that would be allowed by a candidate upper bound."""
+    probe_versions = [
+        version for version in versions if version < upper_bound and (lower is None or version >= lower)
+    ]
+    if not allow_prerelease:
+        probe_versions = [version for version in probe_versions if not version.is_prerelease]
+    return probe_versions[-1] if probe_versions else None
 
 
 def _run_tasks(
@@ -685,7 +709,8 @@ def _run_tasks(
     timeout_seconds: int,
 ) -> tuple[bool, str | None]:
     # Every probe runs inside a fresh isolated uv environment. Clearing VIRTUAL_ENV avoids
-    # leaking the caller's active environment into the subprocess and suppresses uv mismatch warnings.
+    # leaking the caller's active environment into the subprocess and keeps validation from
+    # mutating the repo's active `.venv`.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
     env.pop("VIRTUAL_ENV", None)
@@ -696,7 +721,6 @@ def _run_tasks(
             "--directory",
             str(project_dir),
             "run",
-            "--active",
             "--isolated",
             "--resolution",
             resolution,
@@ -760,9 +784,9 @@ def _optimize_dependency(
         max_candidates=max_candidates,
     )
     candidate_versions = [str(candidate) for candidate in candidates]
-    current_requirements = list(dependency.original_requirements)
     attempted_versions: list[str] = []
     attempts: list[DependencyAttempt] = []
+    final_requirements = dependency.original_requirements
 
     # Baselines answer two questions before the script widens any range:
     # does the current floor still work, and does the newest version already in range still work?
@@ -847,19 +871,31 @@ def _optimize_dependency(
 
     # Probe candidates from highest to lowest; keep the first passing upper-bound rewrite.
     for candidate in candidates:
-        attempted_versions.append(str(candidate))
-        trial_requirements = [entry.with_upper(candidate) for entry in dependency.entries]
-        replacements = list(zip(current_requirements, trial_requirements, strict=True))
-        _replace_requirements(temp_pyproject, [(old, new) for old, new in replacements])
+        probe_version = _select_upper_probe_version(
+            available_versions,
+            lower=dependency.lower_version,
+            upper_bound=candidate,
+            allow_prerelease=dependency.allow_prerelease_candidates,
+        )
+        if probe_version is None:
+            attempts.append(
+                DependencyAttempt(
+                    trial_upper=str(candidate),
+                    status="skipped",
+                    error="No concrete version available within the candidate upper bound.",
+                )
+            )
+            continue
+        attempted_versions.append(str(probe_version))
 
-        print(f"[cyan]{package_label} :: {dependency.name} -> <{candidate}[/cyan]")
+        print(f"[cyan]{package_label} :: {dependency.name} -> <{candidate} (probe {probe_version})[/cyan]")
         success, error = _run_tasks(
             temp_pyproject.parent,
             workspace_root=temp_pyproject.parent.parent.parent,
             tasks=tasks,
             internal_editables=internal_editables,
             resolution="highest",
-            dependency_pin=None,
+            dependency_pin=(dependency.name, probe_version),
             include_dev_group=include_dev_group,
             include_dev_extra=include_dev_extra,
             optional_extras=optional_extras,
@@ -867,19 +903,18 @@ def _optimize_dependency(
         )
         if success:
             attempts.append(DependencyAttempt(trial_upper=str(candidate), status="passed"))
-            current_requirements = trial_requirements
+            final_requirements = [entry.with_upper(candidate) for entry in dependency.entries]
             break
 
         attempts.append(DependencyAttempt(trial_upper=str(candidate), status="failed", error=error))
-        _replace_requirements(temp_pyproject, [(new, old) for old, new in replacements])
         continue
 
-    changed = current_requirements != dependency.original_requirements
+    changed = final_requirements != dependency.original_requirements
     return DependencyOutcome(
         name=dependency.name,
         changed=changed,
         original_requirements=dependency.original_requirements,
-        final_requirements=current_requirements,
+        final_requirements=final_requirements,
         candidate_versions=candidate_versions,
         attempted_versions=attempted_versions,
         attempts=attempts,

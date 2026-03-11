@@ -76,3 +76,11 @@ def extend_command_with_task(command: list[str], task_name: str) -> None:
         return
 
     command.extend(["python", "-m", "poethepoet", task_name])
+
+
+def next_zero_major_minor_boundary(version_text: str) -> str:
+    """Return the exclusive upper bound for the next 0.x minor after the given version."""
+    from packaging.version import Version
+
+    version = Version(version_text)
+    return f"0.{version.minor + 1}.0"

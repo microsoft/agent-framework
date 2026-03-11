@@ -133,6 +133,8 @@ def _run_package_tasks(
     # so the smoke gate matches the environment that lower/upper probes will run in.
     env = dict(os.environ)
     env["UV_PRERELEASE"] = "allow"
+    # Avoid letting nested uv commands target the caller's active environment; validation should
+    # stay inside uv's isolated throwaway environment instead of mutating `.venv`.
     env.pop("VIRTUAL_ENV", None)
 
     for task_name in ("test", "pyright"):
@@ -142,7 +144,6 @@ def _run_package_tasks(
             "--directory",
             str(workspace_root / plan.project_path),
             "run",
-            "--active",
             "--isolated",
             "--resolution",
             resolution,

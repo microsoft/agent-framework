@@ -295,6 +295,7 @@ Validate and extend dependency bounds for a single dependency in a single packag
 uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
 ```
 `--project` defaults to `*`, and `--dependency` is optional. Automation can use `--mode upper --project "*"` to run the upper-bound pass across the workspace.
+For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may still be a single patch or minor line, but multi-minor ranges are fine when the package's checks/tests prove they work.
 
 #### `add-dependency-and-validate-bounds`
 Add an external dependency to a workspace project and run both validators for that same project/dependency:

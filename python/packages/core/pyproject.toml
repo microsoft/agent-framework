@@ -24,19 +24,19 @@ classifiers = [
 ]
 dependencies = [
     # utilities
-    "typing-extensions==4.15.0",
+    "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     # telemetry
-    "opentelemetry-api>=1.39.0",
-    "opentelemetry-sdk>=1.39.0",
-    "opentelemetry-semantic-conventions-ai>=0.4.13",
+    "opentelemetry-api>=1.39.0,<2",
+    "opentelemetry-sdk>=1.39.0,<2",
+    "opentelemetry-semantic-conventions-ai>=0.4.13,<0.4.14",
     # connectors and functions
-    "openai>=1.99.0",
+    "openai>=1.99.0,<3",
     "azure-identity>=1,<2",
     "azure-ai-projects>=2.0.0,<3.0",
     "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1",
+    "packaging>=24.1,<25",
 ]
 
 [project.optional-dependencies]
