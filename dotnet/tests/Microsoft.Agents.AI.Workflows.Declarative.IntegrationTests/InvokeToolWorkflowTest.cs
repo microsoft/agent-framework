@@ -123,9 +123,9 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         foreach (ChatMessage message in toolRequest.AgentResponse.Messages)
         {
             // Handle approval requests if present
-            foreach (FunctionApprovalRequestContent approvalRequest in message.Contents.OfType<FunctionApprovalRequestContent>())
+            foreach (ToolApprovalRequestContent approvalRequest in message.Contents.OfType<ToolApprovalRequestContent>())
             {
-                this.Output.WriteLine($"APPROVAL REQUEST: {approvalRequest.FunctionCall.Name}");
+                this.Output.WriteLine($"APPROVAL REQUEST: {((FunctionCallContent)approvalRequest.ToolCall).Name}");
                 // Auto-approve for testing
                 results.Add(approvalRequest.CreateResponse(approved: true));
             }

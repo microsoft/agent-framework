@@ -1273,7 +1273,6 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
     private ResponsesClient CreateResponseClient(string agentName)
     {
         return new ResponsesClient(
-            model: "test-model",
             credential: new ApiKeyCredential("test-api-key"),
             options: new OpenAIClientOptions
             {

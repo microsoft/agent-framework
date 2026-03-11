@@ -34,7 +34,7 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
                         ChatRole.Assistant,
                         [
                             new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")),
-                            new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
+                            new ToolApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
                             new FunctionCallContent("call3", "myfunc"),
                             new TextContent("Heya"),
                         ])));
@@ -49,8 +49,8 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
         McpServerToolApprovalRequestContent mcpRequest = AssertContent<McpServerToolApprovalRequestContent>(messageCopy);
         Assert.Equal("call1", mcpRequest.Id);
 
-        FunctionApprovalRequestContent functionRequest = AssertContent<FunctionApprovalRequestContent>(messageCopy);
-        Assert.Equal("call2", functionRequest.Id);
+        ToolApprovalRequestContent functionRequest = AssertContent<ToolApprovalRequestContent>(messageCopy);
+        Assert.Equal("call2", functionRequest.RequestId);
 
         FunctionCallContent functionCall = AssertContent<FunctionCallContent>(messageCopy);
         Assert.Equal("call3", functionCall.CallId);
