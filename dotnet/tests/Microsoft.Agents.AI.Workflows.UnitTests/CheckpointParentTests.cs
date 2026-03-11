@@ -297,8 +297,7 @@ public class CheckpointParentTests
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager).ResumeStreamingAsync(workflow, resumePoint);
 
         List<CheckpointInfo> resumedCheckpoints = [];
-        using CancellationTokenSource cts2 = new();
-        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync(cts2.Token))
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
         {
             if (evt is SuperStepStartedEvent superStepStartEvt && superStepStartEvt.StartInfo?.Checkpoint is { } startCp)
             {
