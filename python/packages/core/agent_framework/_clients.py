@@ -463,13 +463,13 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                     **kwargs,
                 )
                 if isinstance(stream_response, ResponseStream):
-                    return stream_response
+                    return stream_response  # type: ignore[reportUnknownVariableType]
                 awaited_stream_response = await stream_response
                 if isinstance(awaited_stream_response, ResponseStream):
                     return awaited_stream_response
                 raise ValueError("Streaming responses must return a ResponseStream.")
 
-            return ResponseStream.from_awaitable(_get_stream())
+            return ResponseStream.from_awaitable(_get_stream())  # type: ignore[reportUnknownVariableType]
 
         async def _get_response() -> ChatResponse[Any]:
             prepared_messages = await self._prepare_messages_for_model_call(messages)

@@ -16,7 +16,7 @@ from typing import (
 )
 
 from ._sessions import BaseContextProvider
-from ._types import Content, Message
+from ._types import ChatResponse, Content, Message
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
@@ -27,7 +27,7 @@ GROUP_ID_KEY = "id"
 GROUP_KIND_KEY = "kind"
 GROUP_INDEX_KEY = "index"
 GROUP_HAS_REASONING_KEY = "has_reasoning"
-GROUP_TOKEN_COUNT_KEY = "token_count"  # noqa: S105 - compaction metadata key, not a credential
+GROUP_TOKEN_COUNT_KEY = "token_count"  # noqa: S105 # nosec B105 - compaction metadata key, not a credential
 EXCLUDED_KEY = "_excluded"
 EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
@@ -253,13 +253,9 @@ def _read_group_annotation(message: Message) -> dict[str, Any] | None:
 
 
 def _read_group_annotation_raw(message: Message) -> dict[str, Any] | None:
-    raw_annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
-    if isinstance(raw_annotation, dict):
-        return raw_annotation
-    if isinstance(raw_annotation, Mapping):
-        annotation = dict(raw_annotation)
-        message.additional_properties[GROUP_ANNOTATION_KEY] = annotation
-        return annotation
+    annotation = message.additional_properties.get(GROUP_ANNOTATION_KEY)
+    if isinstance(annotation, Mapping):
+        return annotation  # type: ignore[reportUnknownVariableType]
     return None
 
 
@@ -358,13 +354,6 @@ def _ordered_group_ids_from_annotations(messages: Sequence[Message]) -> list[str
             seen.add(group_id)
             ordered_group_ids.append(group_id)
     return ordered_group_ids
-
-
-def _first_unannotated_index(messages: Sequence[Message]) -> int | None:
-    for index, message in enumerate(messages):
-        if _group_id(message) is None:
-            return index
-    return None
 
 
 def _first_untokenized_index(messages: Sequence[Message]) -> int | None:
@@ -680,7 +669,7 @@ class TruncationStrategy:
 
         grouped = _group_messages_by_id(messages)
         kinds = _group_kind_map(messages)
-        protected_ids = set()
+        protected_ids: set[str] = set()
         if self.preserve_system:
             protected_ids = {group_id for group_id in ordered_group_ids if kinds.get(group_id) == "system"}
 
@@ -782,7 +771,7 @@ class SelectiveToolCallCompactionStrategy:
         if len(included_tool_group_ids) <= self.keep_last_tool_call_groups:
             return False
 
-        keep_ids = (
+        keep_ids: set[str] = (
             set(included_tool_group_ids[-self.keep_last_tool_call_groups :])
             if self.keep_last_tool_call_groups > 0
             else set()
@@ -838,7 +827,7 @@ class ToolResultCompactionStrategy:
         if len(included_tool_group_ids) <= self.keep_last_tool_call_groups:
             return False
 
-        keep_ids = (
+        keep_ids: set[str] = (
             set(included_tool_group_ids[-self.keep_last_tool_call_groups :])
             if self.keep_last_tool_call_groups > 0
             else set()
@@ -1019,7 +1008,7 @@ class SummarizationStrategy:
             return False
 
         try:
-            summary_response = await self.client.get_response(
+            summary_response: ChatResponse[None] = await self.client.get_response(
                 [
                     Message(role="system", text=self.prompt),
                     Message(
@@ -1028,7 +1017,6 @@ class SummarizationStrategy:
                     ),
                 ],
                 stream=False,
-                options={},
             )
         except Exception as exc:
             logger.warning(
