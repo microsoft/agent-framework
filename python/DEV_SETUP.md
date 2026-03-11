@@ -289,21 +289,10 @@ uv run poe validate-dependency-bounds-test
 uv run poe validate-dependency-bounds-test --project <workspace-package-name>
 ```
 
-#### `validate-dependency-lower-bounds`
-Validate and extend external dependency lower bounds for a single package:
+#### `validate-dependency-bounds-project`
+Validate and extend dependency bounds for a single dependency in a single package. Use `--mode lower`, `--mode upper`, or the default `--mode both`:
 ```bash
-uv run poe validate-dependency-lower-bounds-project --project <workspace-package-name> --dependency "<dependency-name>"
-```
-
-#### `validate-dependency-ranges`
-Validate and extend external dependency upper bounds for a single package:
-```bash
-uv run poe validate-dependency-ranges-project --project <workspace-package-name> --dependency "<dependency-name>"
-```
-
-To run lower then upper expansion in one command for a package:
-```bash
-uv run poe validate-dependency-bounds-expand --mode both --project <workspace-package-name> --dependency "<dependency-name>"
+uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
 ```
 
 #### `add-dependency-and-validate-bounds`

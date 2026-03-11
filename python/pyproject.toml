@@ -314,21 +314,7 @@ args = [
 shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
 args = [{ name = "project", default = "*", options = ["-p", "--project"] }]
 
-[tool.poe.tasks.validate-dependency-lower-bounds-project]
-cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode lower --package ${project} --dependencies ${dependency}"
-args = [
-    { name = "project", options = ["-p", "--project"] },
-    { name = "dependency", options = ["-d", "--dependency"] },
-]
-
-[tool.poe.tasks.validate-dependency-ranges-project]
-cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode upper --package ${project} --dependencies ${dependency}"
-args = [
-    { name = "project", options = ["-p", "--project"] },
-    { name = "dependency", options = ["-d", "--dependency"] },
-]
-
-[tool.poe.tasks.validate-dependency-bounds-expand]
+[tool.poe.tasks.validate-dependency-bounds-project]
 cmd = "python -m scripts.dependencies.validate_dependency_bounds --mode ${mode} --package ${project} --dependencies ${dependency}"
 args = [
     { name = "mode", default = "both", options = ["-m", "--mode"] },
@@ -339,7 +325,7 @@ args = [
 [tool.poe.tasks.add-dependency-and-validate-bounds]
 sequence = [
     { ref = "add-dependency-to-project --project ${project} --dependency ${dependency}" },
-    { ref = "validate-dependency-bounds-expand --mode both --project ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-bounds-project --mode both --project ${project} --dependency ${dependency}" },
 ]
 args = [
     { name = "project", options = ["-p", "--project"] },

@@ -50,8 +50,8 @@ uv run poe validate-dependency-bounds-test
 # Defaults to --project "*"; pass a package to scope test mode
 uv run poe validate-dependency-bounds-test --project <workspace-package-name>
 
-# Then expand bounds for the target package
-uv run poe validate-dependency-bounds-expand --mode both --project <workspace-package-name> --dependency "<dependency-name>"
+# Then expand bounds for one dependency in the target package
+uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
 
 # Add a dependency to one project and run both validators for that project/dependency
 uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
@@ -62,7 +62,7 @@ uv run poe add-dependency-and-validate-bounds --project <workspace-package-name>
 - Stable dependencies (`>=1.0`) should typically be bounded as `>=<known-good>,<next-major>`.
 - Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds on a known-good line (avoid open-ended ranges).
 - Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
-- For dependency changes, run workspace-wide bound gates first, then package-scoped bound expansion (`--mode both`) to keep minimum and maximum constraints current.
+- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current.
 - Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
 - Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
 - Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
@@ -107,8 +107,7 @@ Recommended dependency workflow during connector implementation:
    `uv run poe add-dependency-to-project --project <workspace-package-name> --dependency "<dependency-spec>"`
 2. Implement connector code and tests.
 3. Validate dependency bounds for that package/dependency:
-   - `uv run poe validate-dependency-lower-bounds-project --project <workspace-package-name> --dependency "<dependency-name>"`
-   - `uv run poe validate-dependency-ranges-project --project <workspace-package-name> --dependency "<dependency-name>"`
+   `uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"`
 4. If the package has meaningful tests/checks that validate dependency compatibility, you can use the add + validation flow in one command:
    `uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"`
    If compatibility checks are not in place yet, add the dependency first, then implement tests before running bound validation.
