@@ -645,7 +645,7 @@ async def test_integration_function_call_roundtrip_preserves_fidelity():
         name="WeatherAgent",
         instructions="You help check weather. Use get_weather when asked about weather.",
         tools=[get_weather_tool],
-        default_options={"store": False},  # Store messages to test fidelity across messages
+        default_options={"store": False},  # Store messages locally to test fidelity across messages
     ) as agent:
         session = agent.create_session()
 
