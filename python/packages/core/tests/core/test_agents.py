@@ -1017,7 +1017,7 @@ async def test_chat_agent_as_tool_propagate_session_rejects_non_agent_session(
     tool = agent.as_tool(propagate_session=True)
 
     # A plain dict is truthy but not an AgentSession — should raise TypeError.
-    with raises(TypeError, match="not a AgentSession object"):
+    with raises(TypeError, match="The provided session is not an ``AgentSession`` object"):
         await tool.invoke(
             context=FunctionInvocationContext(
                 function=tool,
@@ -1027,7 +1027,7 @@ async def test_chat_agent_as_tool_propagate_session_rejects_non_agent_session(
         )
 
     # A string is also truthy and not an AgentSession.
-    with raises(TypeError, match="not a AgentSession object"):
+    with raises(TypeError, match="The provided session is not an ``AgentSession`` object"):
         await tool.invoke(
             context=FunctionInvocationContext(
                 function=tool,
