@@ -1476,7 +1476,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                     )
                 case "function_call":  # ResponseOutputFunctionCall
-                    item = cast(ResponseFunctionToolCall, item)
                     contents.append(
                         Content.from_function_call(
                             call_id=item.call_id,
