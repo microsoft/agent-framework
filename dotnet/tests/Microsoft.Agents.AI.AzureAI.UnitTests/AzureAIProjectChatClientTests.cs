@@ -43,14 +43,15 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
-
-        var agent = await client.GetAIAgentAsync(
+        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_12345" }
-            });
+            },
+            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -92,14 +93,15 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
-
-        var agent = await client.GetAIAgentAsync(
+        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions" },
-            });
+            },
+            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -141,14 +143,15 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
-
-        var agent = await client.GetAIAgentAsync(
+        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_should_not_use_default" }
-            });
+            },
+            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -190,14 +193,15 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
-
-        var agent = await client.GetAIAgentAsync(
+        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions" },
-            });
+            },
+            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
         // Act
         var session = await agent.CreateSessionAsync();

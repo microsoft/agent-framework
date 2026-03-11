@@ -6,6 +6,7 @@ using System.ClientModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Files;
@@ -39,10 +40,12 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
 
 var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreCreate.Value.Id)] };
 
-AIAgent agent = await aiProjectClient
+FoundryVersionedAgent agent = await FoundryVersionedAgent
     .CreateAIAgentAsync(
-        model: deploymentName,
+        new Uri(endpoint),
+        new DefaultAzureCredential(),
         name: "AskContoso",
+        model: deploymentName,
         instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
         tools: [fileSearchTool]);
 

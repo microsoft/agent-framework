@@ -14,6 +14,7 @@ using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Core;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -175,7 +176,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AIProjectClient client = this.GetAgentClient();
 
-        agent = client.AsAIAgent(agentVersion, tools: null, clientFactory: null, services: null);
+        agent = FoundryVersionedAgent.AsAIAgent(projectEndpoint, projectCredentials, agentVersion);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)

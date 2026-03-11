@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -30,14 +31,14 @@ var createdAgentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName: J
 //      agentVersion.Name = <agentName>
 
 // You can use an AIAgent with an already created server side agent version.
-AIAgent existingJokerAgent = aiProjectClient.AsAIAgent(createdAgentVersion);
+FoundryVersionedAgent existingJokerAgent = FoundryVersionedAgent.AsAIAgent(new Uri(endpoint), new DefaultAzureCredential(), createdAgentVersion);
 
 // You can also create another AIAgent version by providing the same name with a different definition.
-AIAgent newJokerAgent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: "You are extremely hilarious at telling jokes.");
+FoundryVersionedAgent newJokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(new Uri(endpoint), new DefaultAzureCredential(), name: JokerName, model: deploymentName, instructions: "You are extremely hilarious at telling jokes.");
 
 // You can also get the AIAgent latest version just providing its name.
-AIAgent jokerAgentLatest = await aiProjectClient.GetAIAgentAsync(name: JokerName);
-var latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
+FoundryVersionedAgent jokerAgentLatest = await FoundryVersionedAgent.GetAIAgentAsync(new Uri(endpoint), new DefaultAzureCredential(), name: JokerName);
+AgentVersion latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
 
 // The AIAgent version can be accessed via the GetService method.
 Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");
