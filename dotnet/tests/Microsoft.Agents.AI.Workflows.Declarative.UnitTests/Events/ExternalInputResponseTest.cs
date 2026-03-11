@@ -33,7 +33,7 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
                 ChatRole.Assistant,
                 [
                     new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")).CreateResponse(approved: true),
-                    new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")).CreateResponse(approved: true),
+                    new ToolApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")).CreateResponse(approved: true),
                     new FunctionResultContent("call3", 33),
                     new TextContent("Heya"),
                 ]));
@@ -48,8 +48,8 @@ public sealed class ExternalInputResponseTest(ITestOutputHelper output) : EventT
         McpServerToolApprovalResponseContent mcpApproval = AssertContent<McpServerToolApprovalResponseContent>(responseMessage);
         Assert.Equal("call1", mcpApproval.Id);
 
-        FunctionApprovalResponseContent functionApproval = AssertContent<FunctionApprovalResponseContent>(responseMessage);
-        Assert.Equal("call2", functionApproval.Id);
+        ToolApprovalResponseContent functionApproval = AssertContent<ToolApprovalResponseContent>(responseMessage);
+        Assert.Equal("call2", functionApproval.RequestId);
 
         FunctionResultContent functionResult = AssertContent<FunctionResultContent>(responseMessage);
         Assert.Equal("call3", functionResult.CallId);

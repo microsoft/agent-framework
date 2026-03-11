@@ -59,14 +59,14 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             {
                 switch (content)
                 {
-                    case FunctionApprovalRequestContent approvalRequest:
+                    case ToolApprovalRequestContent approvalRequest:
                         DisplayApprovalRequest(approvalRequest);
 
-                        Console.Write($"\nApprove '{approvalRequest.FunctionCall.Name}'? (yes/no): ");
+                        Console.Write($"\nApprove '{((FunctionCallContent)approvalRequest.ToolCall).Name}'? (yes/no): ");
                         string? userInput = Console.ReadLine();
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
-                        FunctionApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
+                        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
 
                         if (approvalRequest.AdditionalProperties != null)
                         {
@@ -128,19 +128,19 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
 }
 
 #pragma warning disable MEAI001
-static void DisplayApprovalRequest(FunctionApprovalRequestContent approvalRequest)
+static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest)
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine();
     Console.WriteLine("============================================================");
     Console.WriteLine("APPROVAL REQUIRED");
     Console.WriteLine("============================================================");
-    Console.WriteLine($"Function: {approvalRequest.FunctionCall.Name}");
+    Console.WriteLine($"Function: {((FunctionCallContent)approvalRequest.ToolCall).Name}");
 
-    if (approvalRequest.FunctionCall.Arguments != null)
+    if (((FunctionCallContent)approvalRequest.ToolCall).Arguments != null)
     {
         Console.WriteLine("Arguments:");
-        foreach (var arg in approvalRequest.FunctionCall.Arguments)
+        foreach (var arg in ((FunctionCallContent)approvalRequest.ToolCall).Arguments)
         {
             Console.WriteLine($"  {arg.Key} = {arg.Value}");
         }

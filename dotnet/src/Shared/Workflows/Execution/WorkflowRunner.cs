@@ -306,7 +306,7 @@ internal sealed class WorkflowRunner
                 requestItem switch
                 {
                     FunctionCallContent functionCall when !functionCall.InformationalOnly => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
-                    FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
+                    ToolApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
                     McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
                     _ => HandleUnknown(requestItem),
                 };
@@ -325,9 +325,9 @@ internal sealed class WorkflowRunner
             return null;
         }
 
-        ChatMessage ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
+        ChatMessage ApproveFunction(ToolApprovalRequestContent functionApprovalRequest)
         {
-            Notify($"INPUT - Approving Function: {functionApprovalRequest.FunctionCall.Name}");
+            Notify($"INPUT - Approving Function: {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
             return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]);
         }
 
