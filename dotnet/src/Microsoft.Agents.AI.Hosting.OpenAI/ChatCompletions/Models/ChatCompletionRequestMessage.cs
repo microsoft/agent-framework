@@ -40,6 +40,7 @@ internal abstract record ChatCompletionRequestMessage
     public virtual ChatMessage ToChatMessage()
     {
         var role = new ChatRole(this.Role);
+
         if (this.Content.IsText)
         {
             return new(role, this.Content.Text);
@@ -166,9 +167,11 @@ internal sealed record FunctionMessage : ChatCompletionRequestMessage
     /// <exception cref="InvalidOperationException">Thrown when the content is not text.</exception>
     public override ChatMessage ToChatMessage()
     {
+        var role = new ChatRole(this.Role);
+
         if (this.Content.IsText)
         {
-            return new(new ChatRole(this.Role), this.Content.Text);
+            return new(role, this.Content.Text);
         }
 
         throw new InvalidOperationException("FunctionMessage Content must be text");
