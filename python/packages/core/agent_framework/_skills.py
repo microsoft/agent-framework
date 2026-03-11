@@ -196,9 +196,7 @@ class SkillScript:
         self._accepts_kwargs: bool = False
         if function is not None:
             sig = inspect.signature(function)
-            self._accepts_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            )
+            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
     @property
     def parameters_schema(self) -> dict[str, Any] | None:
@@ -454,9 +452,7 @@ class SkillScriptRunner(Protocol):
     satisfies this protocol.
     """
 
-    def __call__(
-        self, skill: Skill, script: SkillScript, args: dict[str, Any] | None = None
-    ) -> Any:
+    def __call__(self, skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> Any:
         """Run a skill script.
 
         The :class:`SkillsProvider` resolves skill and script names
@@ -677,7 +673,7 @@ class SkillsProvider(BaseContextProvider):
         self._instructions = _create_instructions(
             prompt_template=instruction_template,
             skills=self._skills,
-            include_script_runner_instructions=has_file_scripts or has_code_scripts
+            include_script_runner_instructions=has_file_scripts or has_code_scripts,
         )
 
         self._tools = self._create_tools(

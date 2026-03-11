@@ -35,7 +35,7 @@ from agent_framework._skills import (
 
 async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None:
     """No-op script runner for tests that need a SkillScriptRunner."""
-    return None
+    return
 
 
 def _symlinks_supported(tmp: Path) -> bool:
@@ -1994,7 +1994,7 @@ class TestSkillScriptRunnerProtocol:
     """Tests for the SkillScriptRunner protocol."""
 
     async def test_async_callable_satisfies_protocol(self) -> None:
-        from agent_framework import SkillScriptRunner, SkillScript
+        from agent_framework import SkillScript, SkillScriptRunner
 
         results: list[tuple] = []
 
@@ -2015,7 +2015,7 @@ class TestSkillScriptRunnerProtocol:
         assert results[0] == ("test-skill", "my-script", {"key": "val"})
 
     async def test_callable_class_satisfies_protocol(self) -> None:
-        from agent_framework import SkillScriptRunner, SkillScript
+        from agent_framework import SkillScript, SkillScriptRunner
 
         class _CustomRunner:
             async def __call__(self, skill, script, args=None):
@@ -2056,7 +2056,7 @@ class TestSkillScriptRunnerProtocol:
         assert result == {"exit_code": 0, "output": "ok"}
 
     def test_sync_callable_satisfies_protocol(self) -> None:
-        from agent_framework import SkillScriptRunner, SkillScript
+        from agent_framework import SkillScript, SkillScriptRunner
 
         results: list[tuple] = []
 
@@ -2077,7 +2077,7 @@ class TestSkillScriptRunnerProtocol:
         assert results[0] == ("test-skill", "my-script", {"key": "val"})
 
     def test_sync_callable_class_satisfies_protocol(self) -> None:
-        from agent_framework import SkillScriptRunner, SkillScript
+        from agent_framework import SkillScript, SkillScriptRunner
 
         class _SyncRunner:
             def __call__(self, skill, script, args=None):
@@ -2116,6 +2116,7 @@ class TestSkillScriptRunnerProtocol:
 
         result = dict_runner(skill, script)
         assert result == {"exit_code": 0, "output": "ok"}
+
 
 # ---------------------------------------------------------------------------
 # SkillsProvider static factory tests

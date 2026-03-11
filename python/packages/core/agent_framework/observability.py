@@ -1169,14 +1169,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         super_get_response = super().get_response  # type: ignore[misc]
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_get_response(
+            return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
                 stream=stream,
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
                 **kwargs,
-            )  # type: ignore[no-any-return]
+            )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
