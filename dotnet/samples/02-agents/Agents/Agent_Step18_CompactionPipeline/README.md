@@ -6,7 +6,7 @@ This sample demonstrates how to use a `CompactionProvider` with a `PipelineCompa
 
 - **`CompactionProvider`** — an `AIContextProvider` that applies a compaction strategy before each agent invocation, keeping only the most relevant messages within the model's context window
 - **`PipelineCompactionStrategy`** — chains multiple compaction strategies into an ordered pipeline; each strategy evaluates its own trigger independently and operates on the output of the previous one
-- **`ToolResultCompactionStrategy`** — collapses older tool-call groups into concise inline summaries (e.g., `[Tool calls: LookupPrice]`), activated by a message-count trigger
+- **`ToolResultCompactionStrategy`** — collapses older tool-call groups into concise inline summaries, activated by a message-count trigger
 - **`SummarizationCompactionStrategy`** — uses an LLM to compress older conversation spans into a single summary message, activated by a token-count trigger
 - **`SlidingWindowCompactionStrategy`** — retains only the most recent N user turns and their responses, activated by a turn-count trigger
 - **`TruncationCompactionStrategy`** — emergency backstop that drops the oldest groups until the conversation fits within a hard token budget
