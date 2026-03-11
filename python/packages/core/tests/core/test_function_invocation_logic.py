@@ -3775,10 +3775,7 @@ async def test_user_input_request_empty_contents_returns_fallback(chat_client_ba
     # With empty contents, the handler returns a function_result with an error message
     # and the loop continues to the next chat response.
     function_results = [
-        content
-        for msg in response.messages
-        for content in msg.contents
-        if content.type == "function_result"
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
     ]
     assert len(function_results) >= 1
     assert any("user input" in (fr.result or "").lower() for fr in function_results)

@@ -495,7 +495,7 @@ class BaseAgent(SerializationMixin):
                 If None, defaults to "Task for {tool_name}".
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
-            propagate_session: If True, this agent's get's a ``session`` from the
+            propagate_session: If True, this agent gets a ``session`` object from the
                 calling agents, when one is supplied explicitly (for example via
                 ``function_invocation_kwargs={"session": session}``). Defaults
                 to False, meaning this agent runs without a session.
@@ -555,7 +555,8 @@ class BaseAgent(SerializationMixin):
                 session = ctx.kwargs.get("session")
                 if session and not isinstance(session, AgentSession):
                     raise TypeError(
-                        "The provided session is not a AgentSession object, please make sure to "
+                        "The provided session is not an ``AgentSession`` object, "
+                        f"got {type(session).__name__!r}, please make sure to "
                         "pass it through the function_invocation_kwargs."
                     )
             stream = self.run(
