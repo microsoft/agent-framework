@@ -1159,14 +1159,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 # OpenAI Responses API requires IDs to start with `fc_`
                 if not fc_id.startswith("fc_"):
                     fc_id = f"fc_{fc_id}"
-                return {
+
+                function_call_obj = {
                     "call_id": content.call_id,
                     "id": fc_id,
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
-                    "status": content.additional_properties.get("status"),
                 }
+                if status := content.additional_properties.get("status"):
+                    function_call_obj["status"] = status
+                return function_call_obj
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
