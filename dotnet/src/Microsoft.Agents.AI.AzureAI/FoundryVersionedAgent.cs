@@ -6,7 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
+
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -23,16 +23,14 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// </para>
 /// <para>
 /// This class has a private constructor and can only be instantiated via the static
-/// <see cref="CreateAIAgentAsync(string, string, string, string?, IList{AITool}?, AIProjectClientOptions?, Func{IChatClient, IChatClient}?, IServiceProvider?, CancellationToken)">CreateAIAgentAsync</see>
-/// or <see cref="GetAIAgentAsync(string, IList{AITool}?, AIProjectClientOptions?, Func{IChatClient, IChatClient}?, IServiceProvider?, CancellationToken)">GetAIAgentAsync</see> factory methods.
+/// <see cref="CreateAIAgentAsync(Uri, AuthenticationTokenProvider, string, string, string, string?, IList{AITool}?, AIProjectClientOptions?, Func{IChatClient, IChatClient}?, IServiceProvider?, CancellationToken)">CreateAIAgentAsync</see>,
+/// <see cref="GetAIAgentAsync(Uri, AuthenticationTokenProvider, string, IList{AITool}?, AIProjectClientOptions?, Func{IChatClient, IChatClient}?, IServiceProvider?, CancellationToken)">GetAIAgentAsync</see>,
+/// or <see cref="AsAIAgent(Uri, AuthenticationTokenProvider, AgentVersion, IList{AITool}?, AIProjectClientOptions?, Func{IChatClient, IChatClient}?, IServiceProvider?)">AsAIAgent</see> factory methods.
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryVersionedAgent : AIAgent
 {
-    private const string ProjectEndpointEnvVar = "AZURE_AI_PROJECT_ENDPOINT";
-    private const string ModelDeploymentEnvVar = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
-
     private readonly AIProjectClient _aiProjectClient;
     private readonly ChatClientAgent _innerAgent;
     private readonly AgentVersion? _agentVersion;
@@ -49,44 +47,6 @@ public sealed class FoundryVersionedAgent : AIAgent
     }
 
     #region CreateAIAgentAsync
-
-    /// <summary>
-    /// Creates a new versioned agent in the Foundry service using environment variables for connection settings.
-    /// </summary>
-    /// <param name="name">The name for the agent.</param>
-    /// <param name="instructions">The instructions that guide the agent's behavior.</param>
-    /// <param name="model">The model deployment name. When not provided, resolved from the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable.</param>
-    /// <param name="description">Optional description for the agent.</param>
-    /// <param name="tools">Optional tools to use when interacting with the agent.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="FoundryVersionedAgent"/> wrapping the newly created agent.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method reads the following environment variables:
-    /// <list type="bullet">
-    /// <item><c>AZURE_AI_PROJECT_ENDPOINT</c> (required) — The Microsoft Foundry project endpoint URL.</item>
-    /// <item><c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> (optional) — The model deployment name, used when <paramref name="model"/> is not provided.</item>
-    /// </list>
-    /// </para>
-    /// <para>Authentication uses <see cref="DefaultAzureCredential"/>.</para>
-    /// </remarks>
-    public static Task<FoundryVersionedAgent> CreateAIAgentAsync(
-        string name,
-        string instructions,
-        string? model = null,
-        string? description = null,
-        IList<AITool>? tools = null,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-        => CreateAIAgentAsync(
-            GetRequiredEndpoint(),
-            new DefaultAzureCredential(),
-            name, ResolveModel(model), instructions, description, tools, clientOptions, chatClientFactory, services, cancellationToken);
 
     /// <summary>
     /// Creates a new versioned agent in the Foundry service using the specified endpoint and credentials.
@@ -141,38 +101,6 @@ public sealed class FoundryVersionedAgent : AIAgent
     }
 
     /// <summary>
-    /// Creates a new versioned agent in the Foundry service using environment variables and the specified options.
-    /// </summary>
-    /// <param name="options">Configuration options for the agent, including name, tools, instructions, etc.</param>
-    /// <param name="model">The model deployment name. When not provided, resolved from the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="FoundryVersionedAgent"/> wrapping the newly created agent.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method reads the following environment variables:
-    /// <list type="bullet">
-    /// <item><c>AZURE_AI_PROJECT_ENDPOINT</c> (required) — The Microsoft Foundry project endpoint URL.</item>
-    /// <item><c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> (optional) — The model deployment name, used when <paramref name="model"/> is not provided.</item>
-    /// </list>
-    /// </para>
-    /// <para>Authentication uses <see cref="DefaultAzureCredential"/>.</para>
-    /// </remarks>
-    public static Task<FoundryVersionedAgent> CreateAIAgentAsync(
-        ChatClientAgentOptions options,
-        string? model = null,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-        => CreateAIAgentAsync(
-            GetRequiredEndpoint(),
-            new DefaultAzureCredential(),
-            ResolveModel(model), options, clientOptions, chatClientFactory, services, cancellationToken);
-
-    /// <summary>
     /// Creates a new versioned agent in the Foundry service using the specified endpoint, credentials, and options.
     /// </summary>
     /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
@@ -215,36 +143,6 @@ public sealed class FoundryVersionedAgent : AIAgent
         var innerAgent = AzureAIProjectChatClientExtensions.CreateChatClientAgent(aiProjectClient, agentVersion, agentOptions, chatClientFactory, services);
         return new FoundryVersionedAgent(aiProjectClient, innerAgent, agentVersion);
     }
-
-    /// <summary>
-    /// Creates a new versioned agent in the Foundry service using environment variables and native SDK creation options.
-    /// </summary>
-    /// <param name="name">The name for the agent.</param>
-    /// <param name="creationOptions">Settings that control the creation of the agent.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="FoundryVersionedAgent"/> wrapping the newly created agent.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method reads the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable (required) and
-    /// uses <see cref="DefaultAzureCredential"/> for authentication.
-    /// </para>
-    /// <para>
-    /// When using this method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
-    /// Invocation of any in-process tools will need to be handled manually.
-    /// </para>
-    /// </remarks>
-    public static Task<FoundryVersionedAgent> CreateAIAgentAsync(
-        string name,
-        AgentVersionCreationOptions creationOptions,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        CancellationToken cancellationToken = default)
-        => CreateAIAgentAsync(
-            GetRequiredEndpoint(),
-            new DefaultAzureCredential(),
-            name, creationOptions, clientOptions, chatClientFactory, cancellationToken);
 
     /// <summary>
     /// Creates a new versioned agent in the Foundry service using the specified endpoint, credentials, and native SDK creation options.
@@ -294,34 +192,6 @@ public sealed class FoundryVersionedAgent : AIAgent
     #region GetAIAgentAsync
 
     /// <summary>
-    /// Retrieves an existing versioned agent from the Foundry service using environment variables for connection settings.
-    /// </summary>
-    /// <param name="name">The name of the server-side agent to retrieve.</param>
-    /// <param name="tools">Optional tools to use when interacting with the agent.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="FoundryVersionedAgent"/> wrapping the retrieved agent.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method reads the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable (required) and
-    /// uses <see cref="DefaultAzureCredential"/> for authentication.
-    /// </para>
-    /// </remarks>
-    public static Task<FoundryVersionedAgent> GetAIAgentAsync(
-        string name,
-        IList<AITool>? tools = null,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-        => GetAIAgentAsync(
-            GetRequiredEndpoint(),
-            new DefaultAzureCredential(),
-            name, tools, clientOptions, chatClientFactory, services, cancellationToken);
-
-    /// <summary>
     /// Retrieves an existing versioned agent from the Foundry service using the specified endpoint and credentials.
     /// </summary>
     /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
@@ -363,32 +233,6 @@ public sealed class FoundryVersionedAgent : AIAgent
     }
 
     /// <summary>
-    /// Retrieves an existing versioned agent from the Foundry service using environment variables and the specified options.
-    /// </summary>
-    /// <param name="options">Configuration options for the agent. The <see cref="ChatClientAgentOptions.Name"/> property must be set.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/>.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
-    /// <returns>A <see cref="FoundryVersionedAgent"/> wrapping the retrieved agent.</returns>
-    /// <remarks>
-    /// <para>
-    /// This method reads the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable (required) and
-    /// uses <see cref="DefaultAzureCredential"/> for authentication.
-    /// </para>
-    /// </remarks>
-    public static Task<FoundryVersionedAgent> GetAIAgentAsync(
-        ChatClientAgentOptions options,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        IServiceProvider? services = null,
-        CancellationToken cancellationToken = default)
-        => GetAIAgentAsync(
-            GetRequiredEndpoint(),
-            new DefaultAzureCredential(),
-            options, clientOptions, chatClientFactory, services, cancellationToken);
-
-    /// <summary>
     /// Retrieves an existing versioned agent from the Foundry service using the specified endpoint, credentials, and options.
     /// </summary>
     /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
@@ -427,6 +271,92 @@ public sealed class FoundryVersionedAgent : AIAgent
         var agentOptions = AzureAIProjectChatClientExtensions.CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: !options.UseProvidedChatClientAsIs);
         var innerAgent = AzureAIProjectChatClientExtensions.CreateChatClientAgent(aiProjectClient, agentVersion, agentOptions, chatClientFactory, services);
         return new FoundryVersionedAgent(aiProjectClient, innerAgent, agentVersion);
+    }
+
+    #endregion
+
+    #region AsAIAgent
+
+    /// <summary>
+    /// Wraps an existing <see cref="AgentVersion"/> as a <see cref="FoundryVersionedAgent"/> without making any server calls.
+    /// </summary>
+    public static FoundryVersionedAgent AsAIAgent(
+        Uri endpoint,
+        AuthenticationTokenProvider tokenProvider,
+        AgentVersion agentVersion,
+        IList<AITool>? tools = null,
+        AIProjectClientOptions? clientOptions = null,
+        Func<IChatClient, IChatClient>? chatClientFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(endpoint);
+        Throw.IfNull(tokenProvider);
+        Throw.IfNull(agentVersion);
+
+        var aiProjectClient = CreateProjectClient(endpoint, tokenProvider, clientOptions);
+        var allowDeclarativeMode = tools is not { Count: > 0 };
+        var agentOptions = AzureAIProjectChatClientExtensions.CreateChatClientAgentOptions(
+            agentVersion,
+            new ChatOptions() { Tools = tools },
+            requireInvocableTools: !allowDeclarativeMode);
+
+        var innerAgent = AzureAIProjectChatClientExtensions.CreateChatClientAgent(aiProjectClient, agentVersion, agentOptions, chatClientFactory, services);
+        return new FoundryVersionedAgent(aiProjectClient, innerAgent, agentVersion);
+    }
+
+    /// <summary>
+    /// Wraps an existing <see cref="AgentRecord"/> as a <see cref="FoundryVersionedAgent"/> using the latest version, without making any server calls.
+    /// </summary>
+    public static FoundryVersionedAgent AsAIAgent(
+        Uri endpoint,
+        AuthenticationTokenProvider tokenProvider,
+        AgentRecord agentRecord,
+        IList<AITool>? tools = null,
+        AIProjectClientOptions? clientOptions = null,
+        Func<IChatClient, IChatClient>? chatClientFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(agentRecord);
+        return AsAIAgent(endpoint, tokenProvider, agentRecord.Versions.Latest, tools, clientOptions, chatClientFactory, services);
+    }
+
+    /// <summary>
+    /// Wraps an existing <see cref="AgentReference"/> as a <see cref="FoundryVersionedAgent"/> without making any server calls.
+    /// </summary>
+    /// <remarks>
+    /// When using an <see cref="AgentReference"/>, minimal information will be available about the agent.
+    /// <see cref="AIAgent.GetService{TService}(object?)"/> for <see cref="AgentVersion"/> will return <see langword="null"/>.
+    /// </remarks>
+    public static FoundryVersionedAgent AsAIAgent(
+        Uri endpoint,
+        AuthenticationTokenProvider tokenProvider,
+        AgentReference agentReference,
+        IList<AITool>? tools = null,
+        AIProjectClientOptions? clientOptions = null,
+        Func<IChatClient, IChatClient>? chatClientFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(endpoint);
+        Throw.IfNull(tokenProvider);
+        Throw.IfNull(agentReference);
+        AzureAIProjectChatClientExtensions.ThrowIfInvalidAgentName(agentReference.Name);
+
+        var aiProjectClient = CreateProjectClient(endpoint, tokenProvider, clientOptions);
+
+        var agentOptions = new ChatClientAgentOptions()
+        {
+            Id = $"{agentReference.Name}:{agentReference.Version}",
+            Name = agentReference.Name,
+            ChatOptions = new() { Tools = tools },
+        };
+
+        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
+        if (chatClientFactory is not null)
+        {
+            chatClient = chatClientFactory(chatClient);
+        }
+        var innerAgent = new ChatClientAgent(chatClient, agentOptions, services: services);
+        return new FoundryVersionedAgent(aiProjectClient, innerAgent);
     }
 
     #endregion
@@ -560,14 +490,6 @@ public sealed class FoundryVersionedAgent : AIAgent
     #endregion
 
     #region Private helpers
-
-    private static Uri GetRequiredEndpoint()
-        => new(Environment.GetEnvironmentVariable(ProjectEndpointEnvVar)
-            ?? throw new InvalidOperationException($"Environment variable '{ProjectEndpointEnvVar}' is not set."));
-
-    private static string ResolveModel(string? model)
-        => model ?? Environment.GetEnvironmentVariable(ModelDeploymentEnvVar)
-            ?? throw new InvalidOperationException($"Model deployment name must be provided or set via the '{ModelDeploymentEnvVar}' environment variable.");
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider tokenProvider, AIProjectClientOptions? clientOptions)
     {

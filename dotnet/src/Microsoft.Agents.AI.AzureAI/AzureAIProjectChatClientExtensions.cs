@@ -42,6 +42,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
     /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
+    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentReference agentReference,
@@ -79,6 +80,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty or whitespace, or when the agent with the specified name was not found.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
+    [Obsolete("Use FoundryVersionedAgent.GetAIAgentAsync instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,
@@ -110,6 +112,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentRecord"/> is <see langword="null"/>.</exception>
+    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentRecord agentRecord,
@@ -141,6 +144,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the provided version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
+    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentVersion agentVersion,
@@ -172,6 +176,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    [Obsolete("Use FoundryVersionedAgent.GetAIAgentAsync instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AIProjectClient aiProjectClient,
         ChatClientAgentOptions options,
@@ -218,6 +223,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/>, <paramref name="model"/>, or <paramref name="instructions"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> or <paramref name="instructions"/> is empty or whitespace.</exception>
     /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
+    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
     public static Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,
@@ -256,6 +262,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace, or when the agent name is not provided in the options.</exception>
+    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string model,
@@ -302,6 +309,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// When using this extension method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
     /// Invocation of any in-process tools will need to be handled manually.
     /// </remarks>
+    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
     public static Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,

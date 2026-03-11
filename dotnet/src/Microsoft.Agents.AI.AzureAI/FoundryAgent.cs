@@ -5,7 +5,6 @@ using System.ClientModel.Primitives;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
@@ -23,128 +22,16 @@ namespace Microsoft.Agents.AI.AzureAI;
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryAgent : AIAgent
 {
-    private const string ProjectEndpointEnvVar = "AZURE_AI_PROJECT_ENDPOINT";
-    private const string ModelDeploymentEnvVar = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
-
     private readonly AIProjectClient _aiProjectClient;
     private readonly ChatClientAgent _innerAgent;
     private readonly AIAgentMetadata _metadata = new("microsoft.foundry");
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryAgent"/> class using environment variables for configuration.
-    /// </summary>
-    /// <param name="instructions">Optional system instructions that guide the agent's behavior.</param>
-    /// <param name="name">Optional name for the agent.</param>
-    /// <param name="description">Optional human-readable description of the agent's purpose and capabilities.</param>
-    /// <param name="tools">Optional collection of tools that the agent can invoke during conversations.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <exception cref="InvalidOperationException">The <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable is not set.</exception>
-    /// <remarks>
-    /// <para>
-    /// This constructor reads the following environment variables:
-    /// <list type="bullet">
-    /// <item><c>AZURE_AI_PROJECT_ENDPOINT</c> (required) — The Microsoft Foundry project endpoint URL.</item>
-    /// <item><c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> (optional) — The model deployment name to use.</item>
-    /// </list>
-    /// </para>
-    /// <para>Authentication uses <see cref="DefaultAzureCredential"/>.</para>
-    /// <para>
-    /// The following parameters are auto-resolved from the environment and do not need to be provided:
-    /// <list type="bullet">
-    /// <item><b>Endpoint</b> — resolved from the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable.</item>
-    /// <item><b>Model deployment name</b> — resolved from the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable.</item>
-    /// <item><b>Authentication</b> — uses <see cref="DefaultAzureCredential"/> automatically.</item>
-    /// </list>
-    /// </para>
-    /// </remarks>
-    public FoundryAgent(
-        string? instructions = null,
-        string? name = null,
-        string? description = null,
-        IList<AITool>? tools = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        ILoggerFactory? loggerFactory = null,
-        IServiceProvider? services = null)
-        : this(
-              new Uri(Environment.GetEnvironmentVariable(ProjectEndpointEnvVar)
-                ?? throw new InvalidOperationException($"Environment variable '{ProjectEndpointEnvVar}' is not set.")),
-              new DefaultAzureCredential(),
-              clientOptions: null,
-              new ChatClientAgentOptions
-              {
-                  ChatOptions = new ChatOptions
-                  {
-                      ModelId = Environment.GetEnvironmentVariable(ModelDeploymentEnvVar),
-                      Tools = tools,
-                      Instructions = instructions
-                  },
-                  Name = name,
-                  Description = description
-              },
-              chatClientFactory,
-              loggerFactory,
-              services)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryAgent"/> class using environment variables for
-    /// connection settings and the specified options for agent behavior configuration.
-    /// </summary>
-    /// <param name="options">Configuration options that control all aspects of the agent's behavior,
-    /// including model selection, instructions, tools, and response format.</param>
-    /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
-    /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
-    /// <param name="services">Optional service provider for resolving dependencies required by AI functions.</param>
-    /// <exception cref="InvalidOperationException">The <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable is not set.</exception>
-    /// <exception cref="ArgumentNullException"><paramref name="options"/> is <see langword="null"/>.</exception>
-    /// <remarks>
-    /// <para>
-    /// This constructor reads the following environment variables:
-    /// <list type="bullet">
-    /// <item><c>AZURE_AI_PROJECT_ENDPOINT</c> (required) — The Microsoft Foundry project endpoint URL.</item>
-    /// <item><c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> (optional) — The model deployment name, used as a fallback
-    /// when <see cref="ChatOptions.ModelId"/> is not set in <paramref name="options"/>.</item>
-    /// </list>
-    /// </para>
-    /// <para>Authentication uses <see cref="DefaultAzureCredential"/>.</para>
-    /// <para>
-    /// The following parameters are auto-resolved from the environment and do not need to be provided:
-    /// <list type="bullet">
-    /// <item><b>Endpoint</b> — resolved from the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable.</item>
-    /// <item><b>Model deployment name</b> — resolved from the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable
-    /// when <see cref="ChatOptions.ModelId"/> is not set in <paramref name="options"/>.</item>
-    /// <item><b>Authentication</b> — uses <see cref="DefaultAzureCredential"/> automatically.</item>
-    /// </list>
-    /// </para>
-    /// </remarks>
-    public FoundryAgent(
-        ChatClientAgentOptions options,
-        AIProjectClientOptions? clientOptions = null,
-        Func<IChatClient, IChatClient>? chatClientFactory = null,
-        ILoggerFactory? loggerFactory = null,
-        IServiceProvider? services = null)
-        : this(
-              new Uri(Environment.GetEnvironmentVariable(ProjectEndpointEnvVar)
-                ?? throw new InvalidOperationException($"Environment variable '{ProjectEndpointEnvVar}' is not set.")),
-              new DefaultAzureCredential(),
-              clientOptions,
-              ApplyModelDeploymentFallback(Throw.IfNull(options)),
-              chatClientFactory,
-              loggerFactory,
-              services)
-    {
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class.
     /// </summary>
-    /// <param name="endpoint">The Microsoft Foundry project endpoint. Can be auto-resolved from the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable by using an environment-based constructor overload.</param>
-    /// <param name="tokenProvider">The authentication token provider used to authenticate with the Microsoft Foundry service. Can be auto-resolved as <see cref="DefaultAzureCredential"/> by using an environment-based constructor overload.</param>
-    /// <param name="model">The model deployment name to use for the agent (e.g., "gpt-4o-mini"). Can be auto-resolved from the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable by using an environment-based constructor overload.</param>
+    /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
+    /// <param name="tokenProvider">The authentication token provider used to authenticate with the Microsoft Foundry service.</param>
+    /// <param name="model">The model deployment name to use for the agent (e.g., "gpt-4o-mini").</param>
     /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
     /// <param name="instructions">Optional system instructions that guide the agent's behavior.</param>
     /// <param name="name">Optional name for the agent.</param>
@@ -190,8 +77,8 @@ public sealed class FoundryAgent : AIAgent
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class.
     /// </summary>
-    /// <param name="endpoint">The Microsoft Foundry project endpoint. Can be auto-resolved from the <c>AZURE_AI_PROJECT_ENDPOINT</c> environment variable by using an environment-based constructor overload.</param>
-    /// <param name="tokenProvider">The authentication token provider used to authenticate with the Microsoft Foundry service. Can be auto-resolved as <see cref="DefaultAzureCredential"/> by using an environment-based constructor overload.</param>
+    /// <param name="endpoint">The Microsoft Foundry project endpoint.</param>
+    /// <param name="tokenProvider">The authentication token provider used to authenticate with the Microsoft Foundry service.</param>
     /// <param name="clientOptions">Optional configuration options for the <see cref="AIProjectClient"/>.</param>
     /// <param name="options">Configuration options that control all aspects of the agent's behavior.</param>
     /// <param name="chatClientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
@@ -302,19 +189,4 @@ public sealed class FoundryAgent : AIAgent
     /// <inheritdoc/>
     protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => this._innerAgent.DeserializeSessionAsync(serializedState, jsonSerializerOptions, cancellationToken);
-
-    /// <summary>
-    /// Applies the <c>AZURE_AI_MODEL_DEPLOYMENT_NAME</c> environment variable as a fallback
-    /// when <see cref="ChatOptions.ModelId"/> is not already set in the options.
-    /// </summary>
-    private static ChatClientAgentOptions ApplyModelDeploymentFallback(ChatClientAgentOptions options)
-    {
-        if (string.IsNullOrEmpty(options.ChatOptions?.ModelId))
-        {
-            options.ChatOptions ??= new ChatOptions();
-            options.ChatOptions.ModelId = Environment.GetEnvironmentVariable(ModelDeploymentEnvVar);
-        }
-
-        return options;
-    }
 }

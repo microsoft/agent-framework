@@ -6,11 +6,8 @@
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 
-const string JokerInstructions = "You are good at telling jokes.";
-const string JokerName = "JokerAgent";
-
 // Create a FoundryVersionedAgent for the server side agent version.
-FoundryVersionedAgent jokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(name: JokerName, instructions: JokerInstructions);
+FoundryVersionedAgent jokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(instructions: "You are good at telling jokes.", name: "JokerAgent");
 
 // Create a conversation session — this creates a server-side conversation that appears in the Foundry Project UI.
 ChatClientAgentSession session = await jokerAgent.CreateConversationSessionAsync();
@@ -23,10 +20,15 @@ await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell 
 {
     Console.WriteLine(update);
 }
+
+Console.WriteLine();
+
 await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session))
 {
     Console.WriteLine(update);
 }
+
+Console.WriteLine();
 
 // Cleanup: deletes the agent and all its versions.
 await FoundryVersionedAgent.DeleteAIAgentAsync(jokerAgent);
