@@ -21,6 +21,7 @@ from agent_framework_azurefunctions._serialization import (
     deserialize_value,
     reconstruct_to_type,
     serialize_value,
+    strip_pickle_markers,
 )
 
 
@@ -353,7 +354,11 @@ class TestReconstructToType:
         assert result.comment == "Great"
 
     def test_reconstruct_from_checkpoint_markers(self) -> None:
-        """Test that data with checkpoint markers is decoded via deserialize_value."""
+        """Test that data with checkpoint markers is decoded via deserialize_value.
+
+        reconstruct_to_type is general-purpose and handles trusted checkpoint
+        data.  Untrusted HITL callers must call strip_pickle_markers() first.
+        """
         original = SampleData(value=99, name="marker-test")
         encoded = serialize_value(original)
 
@@ -372,3 +377,73 @@ class TestReconstructToType:
         result = reconstruct_to_type(data, Unrelated)
 
         assert result == data
+
+    def test_reconstruct_strips_injected_pickle_markers(self) -> None:
+        """End-to-end: strip_pickle_markers + reconstruct_to_type blocks attack.
+
+        This mirrors the real HITL flow where callers sanitize before reconstruction.
+        """
+        malicious = {"__pickled__": "gASVDgAAAAAAAACMBHRlc3SULg==", "__type__": "builtins:str"}
+        sanitized = strip_pickle_markers(malicious)
+        result = reconstruct_to_type(sanitized, str)
+        assert result is None
+
+
+class TestStripPickleMarkers:
+    """Security tests for strip_pickle_markers — the defence-in-depth layer
+    that prevents untrusted HTTP input from reaching pickle.loads()."""
+
+    def test_strips_top_level_pickle_marker(self) -> None:
+        """A dict containing __pickled__ must be replaced with None."""
+        data = {"__pickled__": "PAYLOAD", "__type__": "os:system"}
+        assert strip_pickle_markers(data) is None
+
+    def test_strips_top_level_type_marker_only(self) -> None:
+        """Even __type__ alone (without __pickled__) must be neutralised."""
+        data = {"__type__": "os:system", "other": "value"}
+        assert strip_pickle_markers(data) is None
+
+    def test_strips_nested_pickle_marker(self) -> None:
+        """Pickle markers nested inside a dict must be neutralised."""
+        data = {"safe": "value", "nested": {"__pickled__": "PAYLOAD", "__type__": "os:system"}}
+        result = strip_pickle_markers(data)
+        assert result == {"safe": "value", "nested": None}
+
+    def test_strips_pickle_marker_in_list(self) -> None:
+        """Pickle markers inside a list element must be neutralised."""
+        data = [{"__pickled__": "PAYLOAD"}, "safe"]
+        result = strip_pickle_markers(data)
+        assert result == [None, "safe"]
+
+    def test_strips_deeply_nested_marker(self) -> None:
+        """Deeply nested pickle markers must be neutralised."""
+        data = {"a": {"b": {"c": {"__pickled__": "deep"}}}}
+        result = strip_pickle_markers(data)
+        assert result == {"a": {"b": {"c": None}}}
+
+    def test_preserves_safe_dict(self) -> None:
+        """Dicts without pickle markers must be left untouched."""
+        data = {"approved": True, "reason": "Looks good"}
+        assert strip_pickle_markers(data) == data
+
+    def test_preserves_primitives(self) -> None:
+        """Primitive values must pass through unchanged."""
+        assert strip_pickle_markers("hello") == "hello"
+        assert strip_pickle_markers(42) == 42
+        assert strip_pickle_markers(None) is None
+        assert strip_pickle_markers(True) is True
+
+    def test_preserves_safe_list(self) -> None:
+        """Lists without pickle markers must be left untouched."""
+        data = [1, "two", {"key": "value"}]
+        assert strip_pickle_markers(data) == data
+
+    def test_mixed_safe_and_malicious(self) -> None:
+        """Only the malicious entries should be stripped; safe entries remain."""
+        data = {
+            "user_input": "hello",
+            "evil": {"__pickled__": "PAYLOAD", "__type__": "os:system"},
+            "count": 42,
+        }
+        result = strip_pickle_markers(data)
+        assert result == {"user_input": "hello", "evil": None, "count": 42}
