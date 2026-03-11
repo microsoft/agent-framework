@@ -1,33 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Subprocess-based skill script runner.
+"""Sample subprocess-based skill script runner.
 
-Provides a sample :class:`~agent_framework.SkillScriptRunner` callback for
-:class:`~agent_framework.SkillsProvider` that executes skill scripts as
-**local Python subprocesses** via :func:`subprocess.run`.
-
-Usage::
-
-    from subprocess_script_runner import subprocess_script_runner
-
-    provider = SkillsProvider(
-        skill_paths="./skills",
-        script_runner=subprocess_script_runner,
-    )
-
-The runner resolves the script's absolute path from the owning skill directory,
-converts the ``args`` dict to CLI flags (e.g. ``{"length": 24}`` → ``--length 24``),
-and captures stdout/stderr as the result returned to the LLM.
-
-.. note:: Sample Code Only
-
-    This runner is provided for **demonstration purposes only**. For
-    production use, consider adding:
-
-    * Sandboxing (e.g. containers, ``seccomp``, or ``firejail``)
-    * Resource limits (CPU, memory, wall-clock timeout)
-    * Input validation and allow-listing of executable scripts
-    * Structured logging and audit trails
+Executes file-based skill scripts as local Python subprocesses.
+This is provided for demonstration purposes only.
 """
 
 from __future__ import annotations
@@ -43,35 +19,16 @@ from agent_framework import Skill, SkillScript
 def subprocess_script_runner(skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> str:
     """Run a skill script as a local Python subprocess.
 
-    .. warning:: This runner is provided for **demonstration purposes only**.
-        For production use, implement proper sandboxing, resource limits,
-        input validation, and structured logging.
-
-    Resolves the script's absolute path by joining ``skill.path`` (the skill
-    directory) with ``script.path`` (relative path declared in ``SKILL.md``).
-    The ``args`` dictionary is converted to CLI flags following these rules:
-
-    * **Boolean** values produce a bare flag when ``True`` (e.g.
-      ``{"verbose": True}`` → ``--verbose``), and are omitted when ``False``.
-    * **Other** values produce a flag–value pair (e.g. ``{"length": 24}``
-      → ``--length 24``).  ``None`` values are skipped.
-
-    The script runs with a **30-second timeout** and its working directory
-    set to the script's parent folder so that relative imports and file
-    references inside the script work as expected.
+    Resolves the script's absolute path from the skill directory, converts
+    the ``args`` dict to CLI flags, and returns captured output.
 
     Args:
-        skill: The skill that owns the script.  Must have a non-``None``
-            :attr:`~Skill.path` pointing to the skill directory.
-        script: The script to run.  Must have a non-``None``
-            :attr:`~SkillScript.path` relative to the skill directory.
-        args: Optional keyword arguments forwarded to the script as CLI
-            flags.  Defaults to ``None`` (no extra flags).
+        skill: The skill that owns the script.
+        script: The script to run.
+        args: Optional arguments forwarded as CLI flags.
 
     Returns:
-        The combined stdout and stderr output from the subprocess, or a
-        human-readable error message if the script could not be found,
-        timed out, or failed to launch.
+        The combined stdout/stderr output, or an error message.
     """
     if not skill.path:
         return f"Error: Skill '{skill.name}' has no directory path."

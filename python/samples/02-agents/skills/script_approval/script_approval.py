@@ -4,7 +4,7 @@ import asyncio
 import os
 from textwrap import dedent
 
-from agent_framework import Agent, Message, Skill, SkillsProvider
+from agent_framework import Agent, Skill, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -24,7 +24,7 @@ How it works:
 3. The application inspects each request and calls
    ``request.to_function_approval_response(approved=True|False)`` to approve
    or reject.
-4. The approval response is sent back via ``agent.run(Message(...), session=session)``
+4. The approval response is sent back via ``agent.run(approval_response, session=session)``
    and the agent continues — executing the script if approved, or receiving
    an error if rejected.
 
@@ -100,7 +100,7 @@ async def main() -> None:
 
                 # Send the approval response — session preserves conversation history
                 approval_response = request.to_function_approval_response(approved=approved)
-                result = await agent.run(Message("user", [approval_response]), session=session)
+                result = await agent.run(approval_response, session=session)
 
         print(f"\nAgent: {result}")
 

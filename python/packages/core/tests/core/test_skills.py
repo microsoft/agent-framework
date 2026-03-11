@@ -1957,7 +1957,6 @@ class TestSkillWithScripts:
 class TestSkillScriptRunnerProtocol:
     """Tests for the SkillScriptRunner protocol."""
 
-    @pytest.mark.asyncio
     async def test_async_callable_satisfies_protocol(self) -> None:
         from agent_framework import SkillScriptRunner, SkillScript
 
@@ -1979,7 +1978,6 @@ class TestSkillScriptRunnerProtocol:
         assert len(results) == 1
         assert results[0] == ("test-skill", "my-script", {"key": "val"})
 
-    @pytest.mark.asyncio
     async def test_callable_class_satisfies_protocol(self) -> None:
         from agent_framework import SkillScriptRunner, SkillScript
 
@@ -1997,7 +1995,6 @@ class TestSkillScriptRunnerProtocol:
         result = await runner(skill, script, args={"key": "val"})
         assert result == "custom result"
 
-    @pytest.mark.asyncio
     async def test_runner_returns_none(self) -> None:
         from agent_framework import SkillScript
 
@@ -2010,7 +2007,6 @@ class TestSkillScriptRunnerProtocol:
         result = await noop_runner(skill, script)
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_runner_returns_object(self) -> None:
         from agent_framework import SkillScript
 
@@ -2022,6 +2018,69 @@ class TestSkillScriptRunnerProtocol:
 
         result = await dict_runner(skill, script)
         assert result == {"exit_code": 0, "output": "ok"}
+
+    def test_sync_callable_satisfies_protocol(self) -> None:
+        from agent_framework import SkillScriptRunner, SkillScript
+
+        results: list[tuple] = []
+
+        def my_runner(skill, script, args=None):
+            results.append((skill.name, script.name, args))
+            return "executed"
+
+        assert isinstance(my_runner, SkillScriptRunner)
+
+        skill = Skill(name="test-skill", description="test", content="body")
+        script = SkillScript(name="my-script", path="scripts/run.py")
+        skill.scripts.append(script)
+
+        result = my_runner(skill, script, args={"key": "val"})
+
+        assert result == "executed"
+        assert len(results) == 1
+        assert results[0] == ("test-skill", "my-script", {"key": "val"})
+
+    def test_sync_callable_class_satisfies_protocol(self) -> None:
+        from agent_framework import SkillScriptRunner, SkillScript
+
+        class _SyncRunner:
+            def __call__(self, skill, script, args=None):
+                return "sync result"
+
+        runner = _SyncRunner()
+        assert isinstance(runner, SkillScriptRunner)
+
+        skill = Skill(name="test-skill", description="test", content="body")
+        script = SkillScript(name="my-script", function=lambda: None)
+        skill.scripts.append(script)
+
+        result = runner(skill, script, args={"key": "val"})
+        assert result == "sync result"
+
+    def test_sync_runner_returns_none(self) -> None:
+        from agent_framework import SkillScript
+
+        def noop_runner(skill, script, args=None):
+            return None
+
+        skill = Skill(name="test-skill", description="test", content="body")
+        script = SkillScript(name="s1", function=lambda: None)
+
+        result = noop_runner(skill, script)
+        assert result is None
+
+    def test_sync_runner_returns_object(self) -> None:
+        from agent_framework import SkillScript
+
+        def dict_runner(skill, script, args=None):
+            return {"exit_code": 0, "output": "ok"}
+
+        skill = Skill(name="test-skill", description="test", content="body")
+        script = SkillScript(name="s1", path="scripts/run.py")
+
+        result = dict_runner(skill, script)
+        assert result == {"exit_code": 0, "output": "ok"}
+
 # ---------------------------------------------------------------------------
 # SkillsProvider static factory tests
 # ---------------------------------------------------------------------------
@@ -2048,7 +2107,6 @@ class TestSkillsProviderFactories:
         assert len(provider._tools) == 2
         assert not any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
 
-    @pytest.mark.asyncio
     async def test_code_script_runs_directly(self) -> None:
         from agent_framework import SkillScript
 
@@ -2092,6 +2150,49 @@ class TestSkillsProviderFactories:
             script_runner=_CustomRunner(),
         )
         assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
+
+    def test_file_skills_with_sync_runner(self, tmp_path: Path) -> None:
+        from agent_framework import SkillScriptRunner
+
+        def sync_runner(skill, script, args=None):
+            return "sync result"
+
+        assert isinstance(sync_runner, SkillScriptRunner)
+
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+
+        provider = SkillsProvider(
+            skill_paths=str(tmp_path),
+            script_runner=sync_runner,
+        )
+        assert any(hasattr(t, "name") and t.name == "run_skill_script" for t in provider._tools)
+
+    async def test_file_script_with_sync_runner_executes(self, tmp_path: Path) -> None:
+        """A sync script_runner is awaitable through the provider's run_skill_script."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\nname: my-skill\ndescription: test\n---\nBody",
+            encoding="utf-8",
+        )
+        (skill_dir / "run.py").write_text("print('hi')", encoding="utf-8")
+
+        def sync_runner(skill, script, args=None):
+            return f"sync: {script.name} args={args}"
+
+        provider = SkillsProvider(
+            skill_paths=str(tmp_path),
+            script_runner=sync_runner,
+        )
+        run_tool = next(t for t in provider._tools if hasattr(t, "name") and t.name == "run_skill_script")
+        result = await run_tool.func(skill_name="my-skill", script_name="run.py", args={"key": "val"})
+        assert result == "sync: run.py args={'key': 'val'}"
 
     def test_file_skills_with_callback_runner(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "my-skill"
@@ -2141,7 +2242,6 @@ class TestSkillsProviderFactories:
         with pytest.raises(ValueError, match="script_runner"):
             SkillsProvider(skill_paths=str(tmp_path))
 
-    @pytest.mark.asyncio
     async def test_file_script_error_without_runner(self) -> None:
         from agent_framework import SkillScript
 
@@ -2162,7 +2262,6 @@ class TestSkillsProviderFactories:
         assert "Error" in result
         assert "script_runner" in result
 
-    @pytest.mark.asyncio
     async def test_async_code_script_runs_directly(self) -> None:
         from agent_framework import SkillScript
 
@@ -2177,7 +2276,6 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="s1", args={"x": 42})
         assert result == "async: 42"
 
-    @pytest.mark.asyncio
     async def test_code_script_returns_object(self) -> None:
         """Code-defined scripts can return non-string objects."""
         from agent_framework import SkillScript
@@ -2193,7 +2291,6 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="s1")
         assert result == {"status": "ok", "value": 42}
 
-    @pytest.mark.asyncio
     async def test_code_script_returns_none(self) -> None:
         """Code-defined scripts returning None pass through as None."""
         from agent_framework import SkillScript
@@ -2206,7 +2303,6 @@ class TestSkillsProviderFactories:
         result = await run_tool.func(skill_name="my-skill", script_name="s1")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_script_with_path_and_function_raises_error(self) -> None:
         """A script cannot have both a path and a function."""
         from agent_framework import SkillScript
@@ -2214,7 +2310,6 @@ class TestSkillsProviderFactories:
         with pytest.raises(ValueError, match="must have either function or path, not both"):
             SkillScript(name="s1", function=lambda: "direct", path="scripts/s1.py")
 
-    @pytest.mark.asyncio
     async def test_script_with_path_errors_without_runner(self) -> None:
         """A file-based script without a runner should return an error."""
         from agent_framework import SkillScript
@@ -2235,7 +2330,6 @@ class TestSkillsProviderFactories:
         assert "Error" in result
         assert "script_runner" in result
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_error_on_missing_skill(self) -> None:
         from agent_framework import SkillScript
 
@@ -2248,7 +2342,6 @@ class TestSkillsProviderFactories:
         assert "Error" in result
         assert "nonexistent" in result
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_sync_with_kwargs(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
 
@@ -2261,7 +2354,6 @@ class TestSkillsProviderFactories:
         result = await provider._run_skill_script("my-skill", "greet", args={"name": "Alice"}, user_id="u42")
         assert result == "Hello Alice (user=u42)"
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_async_with_kwargs(self) -> None:
         skill = Skill(name="my-skill", description="test", content="body")
 
@@ -2274,7 +2366,6 @@ class TestSkillsProviderFactories:
         result = await provider._run_skill_script("my-skill", "fetch", args={"url": "http://x"}, auth_token="abc")
         assert result == "fetched http://x with token=abc"
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_without_kwargs_ignores_extra_args(self) -> None:
         """Script functions without **kwargs should still work when runtime kwargs are passed."""
         skill = Skill(name="my-skill", description="test", content="body")
@@ -2287,7 +2378,6 @@ class TestSkillsProviderFactories:
         result = await provider._run_skill_script("my-skill", "simple", args={"query": "test"}, user_id="ignored")
         assert result == "result: test"
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_conflicting_args_and_kwargs_raises(self) -> None:
         """Conflicting keys in args and kwargs should raise TypeError."""
         skill = Skill(name="my-skill", description="test", content="body")
@@ -2302,7 +2392,6 @@ class TestSkillsProviderFactories:
         )
         assert "Error" in result
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_error_on_missing_script(self) -> None:
         from agent_framework import SkillScript
 
@@ -2315,7 +2404,6 @@ class TestSkillsProviderFactories:
         assert "Error" in result
         assert "nonexistent" in result
 
-    @pytest.mark.asyncio
     async def test_run_skill_script_error_on_empty_names(self) -> None:
         from agent_framework import SkillScript
 
@@ -2394,7 +2482,6 @@ class TestSkillsProviderFactories:
         for t in other_tools:
             assert t.approval_mode == "never_require"
 
-    @pytest.mark.asyncio
     async def test_code_script_exception_returns_error(self) -> None:
         """A code script function that raises should return an error string."""
         from agent_framework import SkillScript
@@ -2642,7 +2729,6 @@ class TestLoadSkillWithScripts:
 class TestReadSkillResourceWithScripts:
     """Tests for _read_skill_resource falling back to scripts."""
 
-    @pytest.mark.asyncio
     async def test_reads_script_with_static_content(self) -> None:
         from agent_framework import SkillScript
 
@@ -2654,7 +2740,6 @@ class TestReadSkillResourceWithScripts:
         # Scripts are not returned via _read_skill_resource
         assert "not found" in result
 
-    @pytest.mark.asyncio
     async def test_script_not_accessible_via_read_resource(self) -> None:
         from agent_framework import SkillScript
 
@@ -2666,7 +2751,6 @@ class TestReadSkillResourceWithScripts:
         # Scripts are separate from resources
         assert "not found" in result
 
-    @pytest.mark.asyncio
     async def test_async_script_not_accessible_via_read_resource(self) -> None:
         from agent_framework import SkillScript
 
@@ -2680,7 +2764,6 @@ class TestReadSkillResourceWithScripts:
         result = await provider._read_skill_resource("my-skill", "run.py")
         assert "not found" in result
 
-    @pytest.mark.asyncio
     async def test_script_case_insensitive_not_in_resources(self) -> None:
         from agent_framework import SkillScript
 
@@ -2691,7 +2774,6 @@ class TestReadSkillResourceWithScripts:
         result = await provider._read_skill_resource("my-skill", "generate.py")
         assert "not found" in result
 
-    @pytest.mark.asyncio
     async def test_resource_takes_priority_over_script(self) -> None:
         from agent_framework import SkillResource, SkillScript
 
@@ -2703,7 +2785,6 @@ class TestReadSkillResourceWithScripts:
         result = await provider._read_skill_resource("my-skill", "data.py")
         assert result == "resource content"
 
-    @pytest.mark.asyncio
     async def test_script_function_error_not_exposed_via_resources(self) -> None:
         from agent_framework import SkillScript
 
