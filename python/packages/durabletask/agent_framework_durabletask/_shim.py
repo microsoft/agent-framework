@@ -133,11 +133,11 @@ class DurableAIAgent(SupportsAgentRun, Generic[TaskT]):
             session=session,
         )
 
-    def create_session(self, *, session_id: str | None = None, **kwargs: Any) -> DurableAgentSession:
+    def create_session(self, *, session_id: str | None = None) -> DurableAgentSession:
         """Create a new agent session via the provider."""
-        return self._executor.get_new_session(self.name, **kwargs)
+        return self._executor.get_new_session(self.name)
 
-    def get_session(self, service_session_id: str, *, session_id: str | None = None, **kwargs: Any) -> AgentSession:
+    def get_session(self, service_session_id: str, *, session_id: str | None = None) -> AgentSession:
         """Retrieve an existing session via the provider."""
         return self._executor.get_new_session(self.name, service_session_id=service_session_id, session_id=session_id)
 

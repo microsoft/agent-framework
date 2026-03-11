@@ -198,9 +198,7 @@ class TestDurableAIAgentSessionManagement:
         )
         assert session.service_session_id == "svc-123"
 
-    def test_get_session_without_session_id(
-        self, test_agent: DurableAIAgent[Any], mock_executor: Mock
-    ) -> None:
+    def test_get_session_without_session_id(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
         """Verify get_session works with only service_session_id (session_id defaults to None)."""
         mock_session = DurableAgentSession(service_session_id="svc-789")
         mock_executor.get_new_session.return_value = mock_session
