@@ -29,7 +29,7 @@ Add Purview when you need to:
 
 - Microsoft Azure subscription with Microsoft Purview configured.
 - Microsoft 365 subscription with an E5 license and pay-as-you-go billing setup.
-  - For testing, you can use a Microsoft 365 Developer Program tenant. For more information, see [Join the Microsoft 365 Developer Program](https://developer.microsoft.com/en-us/microsoft-365/dev-program).
+  - For testing, you can use a Microsoft 365 Developer Program tenant. For more information, see [Join the Microsoft 365 Developer Program](https://learn.microsoft.com/en-us/office/developer-program/microsoft-365-developer-program).
 
 ### Authentication
 
