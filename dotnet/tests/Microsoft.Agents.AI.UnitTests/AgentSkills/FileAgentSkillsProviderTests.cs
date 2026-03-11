@@ -108,6 +108,8 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         // Assert
         Assert.NotNull(result.Instructions);
         Assert.StartsWith("Custom template:", result.Instructions);
+        Assert.Contains("custom-prompt-skill", result.Instructions);
+        Assert.Contains("Custom prompt", result.Instructions);
     }
 
     [Fact]

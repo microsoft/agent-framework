@@ -7,7 +7,7 @@ import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -26,11 +26,11 @@ from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
 from copilot import CopilotClient, CopilotSession
-from copilot.generated.session_events import SessionEvent, SessionEventType
+from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
 from copilot.types import (
     CopilotClientOptions,
     MCPServerConfig,
-    PermissionRequest,
+    MessageOptions,
     PermissionRequestResult,
     ResumeSessionConfig,
     SessionConfig,
@@ -266,10 +266,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         if self._client is None:
             client_options: CopilotClientOptions = {}
-            if self._settings["cli_path"]:
-                client_options["cli_path"] = self._settings["cli_path"]
-            if self._settings["log_level"]:
-                client_options["log_level"] = self._settings["log_level"]  # type: ignore[typeddict-item]
+            cli_path = self._settings.get("cli_path")
+            if cli_path:
+                client_options["cli_path"] = cli_path
+
+            log_level = self._settings.get("log_level")
+            if log_level:
+                client_options["log_level"] = log_level  # type: ignore[typeddict-item]
 
             self._client = CopilotClient(client_options if client_options else None)
 
@@ -372,14 +375,15 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        timeout = opts.pop("timeout", None) or self._settings["timeout"] or DEFAULT_TIMEOUT_SECONDS
+        timeout = opts.pop("timeout", None) or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
+        message_options = cast(MessageOptions, {"prompt": prompt})
 
         try:
-            response_event = await copilot_session.send_and_wait({"prompt": prompt}, timeout=timeout)
+            response_event = await copilot_session.send_and_wait(message_options, timeout=timeout)
         except Exception as ex:
             raise AgentException(f"GitHub Copilot request failed: {ex}") from ex
 
@@ -439,6 +443,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
         prompt = "\n".join([message.text for message in input_messages])
+        message_options = cast(MessageOptions, {"prompt": prompt})
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
 
@@ -462,7 +467,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         unsubscribe = copilot_session.on(event_handler)
 
         try:
-            await copilot_session.send({"prompt": prompt})
+            await copilot_session.send(message_options)
 
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
@@ -523,7 +528,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         """Convert an FunctionTool to a Copilot SDK tool."""
 
         async def handler(invocation: ToolInvocation) -> ToolResult:
-            args = invocation.get("arguments", {})
+            args: dict[str, Any] = invocation.arguments or {}
             try:
                 if ai_func.input_model:
                     args_instance = ai_func.input_model(**args)
@@ -531,13 +536,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 else:
                     result = await ai_func.invoke(arguments=args)
                 return ToolResult(
-                    textResultForLlm=str(result),
-                    resultType="success",
+                    text_result_for_llm=str(result),
+                    result_type="success",
                 )
             except Exception as e:
                 return ToolResult(
-                    textResultForLlm=f"Error: {e}",
-                    resultType="failure",
+                    text_result_for_llm=f"Error: {e}",
+                    result_type="failure",
                     error=str(e),
                 )
 
@@ -597,7 +602,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         opts = runtime_options or {}
         config: SessionConfig = {"streaming": streaming}
 
-        model = opts.get("model") or self._settings["model"]
+        model = opts.get("model") or self._settings.get("model")
         if model:
             config["model"] = model  # type: ignore[typeddict-item]
 

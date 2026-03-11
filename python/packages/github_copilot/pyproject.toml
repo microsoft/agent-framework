@@ -3,8 +3,8 @@ name = "agent-framework-github-copilot"
 description = "GitHub Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.10"
-version = "1.0.0b260225"
+requires-python = ">=3.11"
+version = "1.0.0b260304"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -23,8 +22,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc2",
-    "github-copilot-sdk>=0.1.0",
+    "agent-framework-core>=1.0.0rc3",
+    "github-copilot-sdk>=0.1.32",
 ]
 
 [tool.uv]
@@ -61,11 +60,12 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_github_copilot"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
 strict = true
-python_version = "3.10"
+python_version = "3.11"
 ignore_missing_imports = true
 disallow_untyped_defs = true
 no_implicit_optional = true
@@ -86,7 +86,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_github_copilot"
-test = "pytest --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
+test = "pytest -m \"not integration\" --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

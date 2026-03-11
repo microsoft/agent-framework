@@ -31,6 +31,18 @@ namespace Microsoft.Agents.AI;
 /// to the current request messages when forming the search input. This can improve search relevance by providing
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Search results retrieved from external sources are injected into the LLM context and may
+/// contain adversarial content designed to manipulate LLM behavior via indirect prompt injection. Developers should be aware that:
+/// <list type="bullet">
+/// <item><description>The search query may be constructed from user input or LLM-generated content, both of which are untrusted.
+/// Implementers of the search delegate should validate search inputs and apply appropriate access controls to search results.</description></item>
+/// <item><description>Retrieved documents are formatted and injected as messages in the AI request context. If the external data source
+/// is compromised, adversarial content could influence the LLM's responses.</description></item>
+/// <item><description>When using <see cref="TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling"/>, the AI model controls
+/// when and what to search for — the search query text is AI-generated and should be treated as untrusted input by the search implementation.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 public sealed class TextSearchProvider : MessageAIContextProvider
 {
@@ -40,6 +52,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
     private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
@@ -61,7 +74,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<TextSearchProviderState>(
             _ => new TextSearchProviderState(),
@@ -88,7 +101,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)

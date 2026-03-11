@@ -56,7 +56,7 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -66,11 +66,12 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
 
         // Assert
-        Assert.Equal("ChatHistoryMemoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("ChatHistoryMemoryProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -81,7 +82,8 @@ public class ChatHistoryMemoryProviderTests
             new ChatHistoryMemoryProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -452,6 +454,77 @@ public class ChatHistoryMemoryProviderTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task InvokedAsync_CombinedFilterCanBeCompiled_WhenMultipleScopeFiltersProvidedAsync()
+    {
+        // Arrange
+        // This test reproduces a bug where combining multiple scope filters
+        // (e.g. userId + sessionId) produces an expression tree with dangling
+        // ParameterExpression references that fails at compile time.
+        ChatHistoryMemoryProviderOptions providerOptions = new()
+        {
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
+            MaxResults = 2,
+            ContextPrompt = "Here is the relevant chat history:\n"
+        };
+
+        ChatHistoryMemoryProviderScope searchScope = new()
+        {
+            ApplicationId = "app1",
+            AgentId = "agent1",
+            SessionId = "session1",
+            UserId = "user1"
+        };
+
+        System.Linq.Expressions.Expression<Func<Dictionary<string, object?>, bool>>? capturedFilter = null;
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((string query, int maxResults, VectorSearchOptions<Dictionary<string, object?>> options, CancellationToken ct) =>
+                capturedFilter = options.Filter)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        ChatHistoryMemoryProvider provider = new(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(searchScope, searchScope),
+            options: providerOptions);
+
+        ChatMessage requestMsg = new(ChatRole.User, "requesting relevant history");
+        AIContextProvider.InvokingContext invokingContext = new(s_mockAgent, new TestAgentSession(), new AIContext { Messages = new List<ChatMessage> { requestMsg } });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert - The filter must be compilable and executable without expression tree scoping errors
+        Assert.NotNull(capturedFilter);
+        Func<Dictionary<string, object?>, bool> compiledFilter = capturedFilter!.Compile();
+
+        Dictionary<string, object?> matchingRecord = new()
+        {
+            ["ApplicationId"] = "app1",
+            ["AgentId"] = "agent1",
+            ["SessionId"] = "session1",
+            ["UserId"] = "user1"
+        };
+
+        Dictionary<string, object?> nonMatchingRecord = new()
+        {
+            ["ApplicationId"] = "app1",
+            ["AgentId"] = "agent1",
+            ["SessionId"] = "other-session",
+            ["UserId"] = "user1"
+        };
+
+        Assert.True(compiledFilter(matchingRecord));
+        Assert.False(compiledFilter(nonMatchingRecord));
+    }
+
     [Theory]
     [InlineData(false, false, 2)]
     [InlineData(true, false, 2)]
@@ -687,7 +760,7 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: new ChatHistoryMemoryProviderOptions
             {
-                StorageInputMessageFilter = messages => messages // No filtering - store everything
+                StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
             });
 
         var requestMessages = new List<ChatMessage>

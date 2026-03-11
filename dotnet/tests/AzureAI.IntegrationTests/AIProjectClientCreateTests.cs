@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
@@ -17,7 +16,7 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientCreateTests
 {
-    private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), new AzureCliCredential());
+    private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]

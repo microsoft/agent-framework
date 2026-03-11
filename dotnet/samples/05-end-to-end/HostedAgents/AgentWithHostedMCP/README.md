@@ -8,6 +8,8 @@ Key features:
 - Filtering available tools from an MCP server
 - Using Azure OpenAI Responses with MCP tools
 
+> For common prerequisites and setup instructions, see the [Hosted Agent Samples README](../README.md).
+
 ## Prerequisites
 
 Before running this sample, ensure you have:
@@ -16,7 +18,7 @@ Before running this sample, ensure you have:
 2. A deployment of a chat model (e.g., gpt-4o-mini)
 3. Azure CLI installed and authenticated
 
-**Note**: This sample uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
+**Note**: This sample uses `DefaultAzureCredential` for authentication, which probes multiple sources automatically. For local development, make sure you're logged in with `az login` and have access to the Azure OpenAI resource.
 
 ## Environment Variables
 
