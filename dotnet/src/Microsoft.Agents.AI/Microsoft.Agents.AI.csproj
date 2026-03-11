@@ -18,10 +18,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" />
   </ItemGroup>
 
@@ -36,7 +40,7 @@
 
     <InternalsVisibleTo Include="Microsoft.Agents.AI.UnitTests" />
     <InternalsVisibleTo Include="Microsoft.Agents.AI.Declarative.UnitTests" />
-    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests"/>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.UnitTests" />
   </ItemGroup>
 
 </Project>
