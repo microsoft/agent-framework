@@ -5,6 +5,7 @@ import os
 import sys
 from dataclasses import dataclass
 from textwrap import dedent
+from typing import Any
 
 from agent_framework import Agent, Skill, SkillContext, SkillResource, SkillsProvider
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -26,9 +27,14 @@ Pattern 2: Dynamic Resources
   invocation time.
 
 Pattern 3: Typed Dependencies via SkillContext
-  Attach a callable resource whose first parameter is SkillContext[DepsT].
-  The provider injects a typed context object at invocation time, giving
-  the resource access to shared dependencies (database clients, config, etc.).
+  Pass deps to Skill so Pyright/mypy verify that @skill.resource callables
+  declare a matching SkillContext[DepsT] parameter. The provider injects a typed
+  context object at invocation time, giving the resource access to shared
+  dependencies (database clients, config, etc.).
+
+Pattern 4: Runtime kwargs
+  Resource functions with **kwargs receive runtime arguments forwarded from
+  agent.run(). Combine with SkillContext for both typed deps and dynamic args.
 
 All patterns can be combined with file-based skills in a single SkillsProvider.
 """
@@ -67,22 +73,27 @@ code_style_skill = Skill(
 )
 
 # Pattern 2: Dynamic Resources — @skill.resource decorator
-project_info_skill = Skill(
-    name="project-info",
-    description="Project status and configuration information",
-    content=dedent("""\
-        Use this skill for questions about the current project status,
-        environment configuration, or team structure.
-    """),
-)
-
-
 # Pattern 3: Typed Dependencies via SkillContext
+
+
 @dataclass
 class ProjectDeps:
     """Shared dependencies for project-info skill resources."""
 
-    app_version: str = "unknown"
+    app_version: str = "2.4.1"
+
+
+# By passing deps, Pyright/mypy verify that @skill.resource callables
+# declare a matching SkillContext[ProjectDeps] parameter.
+project_info_skill = Skill(
+    name="project-info",
+    description="Project status, configuration, team info, and request context",
+    content=dedent("""\
+        Use this skill for questions about the current project status,
+        environment configuration, team structure, or request context.
+    """),
+    deps=ProjectDeps(),
+)
 
 
 @project_info_skill.resource
@@ -112,6 +123,32 @@ def get_team_roster() -> str:
     """
 
 
+# Pattern 4: Runtime kwargs — resource receives arguments from agent.run()
+@project_info_skill.resource(name="caller-info", description="Information about the caller")
+def get_caller_info(ctx: SkillContext[ProjectDeps], **kwargs: Any) -> str:
+    """Return caller info combining typed deps and runtime kwargs."""
+    caller = kwargs.get("caller_name", "unknown")
+    role = kwargs.get("caller_role", "unknown")
+    return f"""\
+      # Caller Info
+      - Name: {caller}
+      - Role: {role}
+      - App Version: {ctx.deps.app_version}
+    """
+
+
+@project_info_skill.resource(name="request-context", description="Request context from kwargs only")
+def get_request_context(**kwargs: Any) -> str:
+    """Return request context from runtime kwargs only (no SkillContext)."""
+    request_id = kwargs.get("request_id", "none")
+    client_agent = kwargs.get("client_agent", "unknown")
+    return f"""\
+      # Request Context
+      - Request ID: {request_id}
+      - Client Agent: {client_agent}
+    """
+
+
 async def main() -> None:
     """Run the code-defined skills demo."""
     endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
@@ -123,10 +160,9 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the skills provider with both code-defined skills and typed deps
+    # Create the skills provider with both code-defined skills
     skills_provider = SkillsProvider(
         skills=[code_style_skill, project_info_skill],
-        deps=ProjectDeps(app_version="2.4.1"),
     )
 
     async with Agent(
@@ -146,6 +182,26 @@ async def main() -> None:
         response = await agent.run("What environment are we running in and who is on the team?")
         print(f"Agent: {response}\n")
 
+        # Example 3: kwargs forwarding (Pattern 4 — runtime kwargs reach resource functions)
+        print("Example 3: Caller info via kwargs")
+        print("----------------------------------")
+        response = await agent.run(
+            "Who is calling and what app version are we on?",
+            caller_name="Alice Chen",
+            caller_role="Tech Lead",
+        )
+        print(f"Agent: {response}\n")
+
+        # Example 4: kwargs-only resource (no SkillContext, just **kwargs)
+        print("Example 4: Request context via kwargs only")
+        print("-------------------------------------------")
+        response = await agent.run(
+            "What is the current request context?",
+            request_id="req-42",
+            client_agent="cli",
+        )
+        print(f"Agent: {response}\n")
+
     """
     Expected output:
 
@@ -160,6 +216,14 @@ async def main() -> None:
     Agent: We're running app version 2.4.1 in the development environment
     in us-east-1. The team consists of Alice Chen (Tech Lead), Bob Smith
     (Backend Engineer), and Carol Davis (Frontend Engineer).
+
+    Example 3: Caller info via kwargs
+    ----------------------------------
+    Agent: The caller is Alice Chen (Tech Lead), running app version 2.4.1.
+
+    Example 4: Request context via kwargs only
+    -------------------------------------------
+    Agent: The current request context is Request ID req-42 from client agent cli.
     """
 
 

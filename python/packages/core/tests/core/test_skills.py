@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -1015,37 +1016,37 @@ class TestSkillsProviderCodeSkill:
 
     async def test_read_resource_sync_with_skill_context(self) -> None:
         """Sync resource receiving SkillContext gets typed deps."""
-        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=_SyncDeps())
 
         @skill.resource
         def get_info(ctx: SkillContext[_SyncDeps]) -> str:
             return f"info: {ctx.deps.value}"
 
-        provider = SkillsProvider(skills=[skill], deps=_SyncDeps())
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "get_info")
         assert result == "info: hello"
 
     async def test_read_resource_async_with_skill_context(self) -> None:
         """Async resource receiving SkillContext gets typed deps."""
-        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=_AsyncDeps())
 
         @skill.resource
         async def get_data(ctx: SkillContext[_AsyncDeps]) -> str:
             return f"result: {ctx.deps.data}"
 
-        provider = SkillsProvider(skills=[skill], deps=_AsyncDeps())
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "get_data")
         assert result == "result: async-data"
 
-    async def test_read_resource_without_context_backward_compat(self) -> None:
-        """Resources without SkillContext still work with deps set on provider."""
-        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+    async def test_read_resource_without_context_ignores_deps(self) -> None:
+        """Resources without SkillContext still work when skill has deps."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps={"ignored": True})
 
         @skill.resource
         def plain_resource() -> str:
             return "plain"
 
-        provider = SkillsProvider(skills=[skill], deps={"ignored": True})
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "plain_resource")
         assert result == "plain"
 
@@ -1063,18 +1064,102 @@ class TestSkillsProviderCodeSkill:
 
     async def test_read_resource_skill_context_mutates_deps(self) -> None:
         """Resource can mutate deps for use by subsequent resource calls."""
-        skill = Skill(name="prog-skill", description="A skill.", content="Body")
         deps = _MutableDeps()
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=deps)
 
         @skill.resource
         def load_data(ctx: SkillContext[_MutableDeps]) -> str:
             ctx.deps.loaded = True
             return "loaded"
 
-        provider = SkillsProvider(skills=[skill], deps=deps)
+        provider = SkillsProvider(skills=[skill])
         result = await provider._read_skill_resource("prog-skill", "load_data")
         assert result == "loaded"
         assert deps.loaded is True
+
+    async def test_read_resource_sync_with_kwargs(self) -> None:
+        """Sync resource with **kwargs receives forwarded kwargs."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_info(**kwargs: Any) -> str:
+            return f"user={kwargs.get('user_id')}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_info", user_id="alice")
+        assert result == "user=alice"
+
+    async def test_read_resource_async_with_kwargs(self) -> None:
+        """Async resource with **kwargs receives forwarded kwargs."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        async def get_data(**kwargs: Any) -> str:
+            return f"req={kwargs.get('request_id')}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_data", request_id="42")
+        assert result == "req=42"
+
+    async def test_read_resource_kwargs_not_forwarded_when_not_accepted(self) -> None:
+        """Resources without **kwargs don't receive forwarded kwargs."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def plain() -> str:
+            return "ok"
+
+        provider = SkillsProvider(skills=[skill])
+        # Extra kwargs passed but function doesn't accept them; should not fail.
+        result = await provider._read_skill_resource("prog-skill", "plain", user_id="alice")
+        assert result == "ok"
+
+    async def test_read_resource_ctx_and_kwargs_combined(self) -> None:
+        """Resource with both SkillContext and **kwargs gets both."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=_SyncDeps())
+
+        @skill.resource
+        def get_combo(ctx: SkillContext[_SyncDeps], **kwargs: Any) -> str:
+            return f"deps={ctx.deps.value},user={kwargs.get('user_id')}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_combo", user_id="bob")
+        assert result == "deps=hello,user=bob"
+
+    async def test_read_resource_async_ctx_and_kwargs_combined(self) -> None:
+        """Async resource with both SkillContext and **kwargs gets both."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=_AsyncDeps())
+
+        @skill.resource
+        async def get_async_combo(ctx: SkillContext[_AsyncDeps], **kwargs: Any) -> str:
+            return f"data={ctx.deps.data},req={kwargs.get('request_id')}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_async_combo", request_id="99")
+        assert result == "data=async-data,req=99"
+
+    async def test_read_resource_kwargs_empty_when_none_passed(self) -> None:
+        """Resource with **kwargs receives empty dict when no extra kwargs passed."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+
+        @skill.resource
+        def get_info(**kwargs: Any) -> str:
+            return f"count={len(kwargs)}"
+
+        provider = SkillsProvider(skills=[skill])
+        result = await provider._read_skill_resource("prog-skill", "get_info")
+        assert result == "count=0"
+
+    def test_skill_deps_attribute(self) -> None:
+        """Skill.deps stores the provided dependency instance."""
+        deps = _SyncDeps()
+        skill = Skill(name="prog-skill", description="A skill.", content="Body", deps=deps)
+        assert skill.deps is deps
+
+    def test_skill_deps_defaults_to_none(self) -> None:
+        """Skill.deps defaults to None when not provided."""
+        skill = Skill(name="prog-skill", description="A skill.", content="Body")
+        assert skill.deps is None
 
     def test_takes_ctx_false_for_no_params(self) -> None:
         """_takes_ctx is False when function has no parameters."""
@@ -1111,6 +1196,39 @@ class TestSkillsProviderCodeSkill:
 
         resource = SkillResource(name="r", function=with_ctx)
         assert resource._takes_ctx is True
+
+    def test_accepts_kwargs_true(self) -> None:
+        """_accepts_kwargs is True when function has **kwargs."""
+
+        def with_kwargs(**kwargs: Any) -> str:
+            return ""
+
+        resource = SkillResource(name="r", function=with_kwargs)
+        assert resource._accepts_kwargs is True
+
+    def test_accepts_kwargs_false_for_no_kwargs(self) -> None:
+        """_accepts_kwargs is False when function has no **kwargs."""
+
+        def no_kwargs() -> str:
+            return ""
+
+        resource = SkillResource(name="r", function=no_kwargs)
+        assert resource._accepts_kwargs is False
+
+    def test_accepts_kwargs_true_with_ctx(self) -> None:
+        """_accepts_kwargs is True when function has both SkillContext and **kwargs."""
+
+        def with_ctx_and_kwargs(ctx: SkillContext[_SyncDeps], **kwargs: Any) -> str:
+            return ""
+
+        resource = SkillResource(name="r", function=with_ctx_and_kwargs)
+        assert resource._takes_ctx is True
+        assert resource._accepts_kwargs is True
+
+    def test_accepts_kwargs_false_for_static_content(self) -> None:
+        """_accepts_kwargs is False for static-content resources."""
+        resource = SkillResource(name="r", content="static")
+        assert resource._accepts_kwargs is False
 
 
 class TestResolveSkillContextAnnotationForms:
@@ -1153,7 +1271,7 @@ class TestResolveSkillContextAnnotationForms:
     def test_no_positional_params(self) -> None:
         """Function with only **kwargs returns False."""
 
-        def func(**kwargs) -> str:  # noqa: ANN003
+        def func(**kwargs: Any) -> str:
             return ""
 
         assert _resolve_takes_ctx(func) is False

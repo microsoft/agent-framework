@@ -30,11 +30,13 @@ import logging
 import os
 import re
 import typing
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, TypeVar, get_origin
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Union, get_origin, overload
+
+from typing_extensions import TypeVar
 
 from ._sessions import BaseContextProvider
 from ._tools import FunctionTool
@@ -47,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 # region Models
 
-DepsT = TypeVar("DepsT")
+DepsT = TypeVar("DepsT", default=None)
 
 
 @dataclass
@@ -68,7 +70,7 @@ class SkillContext(Generic[DepsT]):
     ``deps.db``, and a later resource queries it).
 
     Attributes:
-        deps: The dependency object supplied to :class:`SkillsProvider`.
+        deps: The dependency object supplied to :class:`Skill`.
 
     Examples:
         .. code-block:: python
@@ -83,7 +85,12 @@ class SkillContext(Generic[DepsT]):
                 api_key: str
 
 
-            skill = Skill(name="my-skill", description="...", content="...")
+            skill = Skill(
+                name="my-skill",
+                description="...",
+                content="...",
+                deps=MyDeps(db=conn, api_key="..."),
+            )
 
 
             @skill.resource
@@ -92,10 +99,20 @@ class SkillContext(Generic[DepsT]):
                 return str(result)
 
 
-            provider = SkillsProvider(skills=[skill], deps=MyDeps(db=conn, api_key="..."))
+            provider = SkillsProvider(skills=[skill])
     """
 
     deps: DepsT
+
+
+# Union of all accepted resource function signatures.
+# Used by the ``@Skill.resource`` overloads to constrain decorated callables.
+ResourceFunc = Union[
+    Callable[[SkillContext[DepsT]], str],
+    Callable[[SkillContext[DepsT]], Awaitable[str]],
+    Callable[[], str],
+    Callable[[], Awaitable[str]],
+]
 
 
 def _is_skill_ctx(annotation: Any) -> bool:
@@ -197,8 +214,15 @@ class SkillResource:
         # SkillContext to avoid repeated inspection at invocation time.
         self._takes_ctx: bool = _resolve_takes_ctx(function) if function is not None else False
 
+        # Precompute whether the function accepts **kwargs to avoid
+        # repeated inspect.signature() calls on every invocation.
+        self._accepts_kwargs: bool = False
+        if function is not None:
+            sig = inspect.signature(function)
+            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
-class Skill:
+
+class Skill(Generic[DepsT]):
     """A skill definition with optional resources.
 
     .. warning:: Experimental
@@ -211,6 +235,10 @@ class Skill:
     supplied at construction time or added later via the :meth:`resource`
     decorator.
 
+    When ``deps`` is provided, the class is parameterized on the
+    dependency type so that Pyright/mypy can verify that ``@skill.resource``
+    functions declare a matching ``SkillContext[DepsT]`` parameter.
+
     Attributes:
         name: Skill name (lowercase letters, numbers, hyphens only).
         description: Human-readable description of the skill.
@@ -218,6 +246,7 @@ class Skill:
         resources: Mutable list of :class:`SkillResource` instances.
         path: Absolute path to the skill directory on disk, or ``None``
             for code-defined skills.
+        deps: The dependency instance, or ``None``.
 
     Examples:
         Direct construction:
@@ -231,20 +260,31 @@ class Skill:
                 resources=[SkillResource(name="ref", content="...")],
             )
 
-        With dynamic resources:
+        With typed dependencies:
 
         .. code-block:: python
+
+            @dataclass
+            class MyDeps:
+                db: DatabaseClient
+
 
             skill = Skill(
                 name="db-skill",
                 description="Database operations",
                 content="Use this skill for DB tasks.",
+                deps=MyDeps(db=conn),
             )
 
 
             @skill.resource
-            def get_schema() -> str:
-                return "CREATE TABLE ..."
+            async def get_schema(ctx: SkillContext[MyDeps]) -> str:
+                return str(await ctx.deps.db.query("SHOW TABLES"))
+
+
+            @skill.resource
+            def get_version() -> str:
+                return "1.0"
     """
 
     def __init__(
@@ -255,6 +295,7 @@ class Skill:
         content: str,
         resources: list[SkillResource] | None = None,
         path: str | None = None,
+        deps: DepsT | None = None,
     ) -> None:
         """Initialize a Skill.
 
@@ -265,6 +306,11 @@ class Skill:
             resources: Pre-built resources to attach to this skill.
             path: Absolute path to the skill directory on disk.  Set automatically
                 for file-based skills; leave as ``None`` for code-defined skills.
+            deps: The dependency instance for this skill.  When provided,
+                Pyright/mypy infer the generic type parameter and verify that
+                ``@skill.resource`` callables declare a matching
+                ``SkillContext[DepsT]`` first parameter.  Passed to resource
+                functions at invocation time.
         """
         if not name or not name.strip():
             raise ValueError("Skill name cannot be empty.")
@@ -276,6 +322,34 @@ class Skill:
         self.content = content
         self.resources: list[SkillResource] = resources if resources is not None else []
         self.path = path
+        self.deps = deps
+
+    # --- Overloads: one per accepted resource function signature ---
+
+    @overload
+    def resource(self, func: Callable[[SkillContext[DepsT]], str], /) -> Callable[[SkillContext[DepsT]], str]: ...
+
+    @overload
+    def resource(
+        self, func: Callable[[SkillContext[DepsT]], Awaitable[str]], /
+    ) -> Callable[[SkillContext[DepsT]], Awaitable[str]]: ...
+
+    @overload
+    def resource(self, func: Callable[[], str], /) -> Callable[[], str]: ...
+
+    @overload
+    def resource(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]: ...
+
+    @overload
+    def resource(
+        self,
+        func: None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Callable[[ResourceFunc[DepsT]], ResourceFunc[DepsT]]: ...
+
+    # --- Implementation ---
 
     def resource(
         self,
@@ -465,7 +539,12 @@ class SkillsProvider(BaseContextProvider):
                 db: DatabaseClient
 
 
-            skill = Skill(name="db-skill", description="DB operations", content="...")
+            skill = Skill(
+                name="db-skill",
+                description="DB operations",
+                content="...",
+                deps=MyDeps(db=conn),
+            )
 
 
             @skill.resource
@@ -473,7 +552,7 @@ class SkillsProvider(BaseContextProvider):
                 return str(await ctx.deps.db.query("SELECT ..."))
 
 
-            provider = SkillsProvider(skills=[skill], deps=MyDeps(db=conn))
+            provider = SkillsProvider(skills=[skill])
 
     Attributes:
         DEFAULT_SOURCE_ID: Default value for the ``source_id`` used by this provider.
@@ -485,11 +564,10 @@ class SkillsProvider(BaseContextProvider):
         self,
         skill_paths: str | Path | Sequence[str | Path] | None = None,
         *,
-        skills: Sequence[Skill] | None = None,
+        skills: Sequence[Skill[Any]] | None = None,
         instruction_template: str | None = None,
         resource_extensions: tuple[str, ...] | None = None,
         source_id: str | None = None,
-        deps: Any = None,
     ) -> None:
         """Initialize a SkillsProvider.
 
@@ -508,14 +586,9 @@ class SkillsProvider(BaseContextProvider):
                 resources.  Defaults to ``DEFAULT_RESOURCE_EXTENSIONS``
                 (``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``).
             source_id: Unique identifier for this provider instance.
-            deps: Dependency object passed to resource functions that declare a
-                :class:`SkillContext` first parameter.  Can be any type; type
-                safety is enforced at the resource function annotation site
-                (e.g. ``SkillContext[MyDeps]``).
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
-        self._deps = deps
         self._skills = _load_skills(skill_paths, skills, resource_extensions or DEFAULT_RESOURCE_EXTENSIONS)
 
         self._instructions = _create_instructions(instruction_template, self._skills)
@@ -629,18 +702,21 @@ class SkillsProvider(BaseContextProvider):
 
         return content
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str) -> str:
+    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
         ``content`` is returned directly; callable resources are invoked
         (awaited if async).  Resource functions that declare a
         :class:`SkillContext` first parameter receive a context carrying
-        the provider's ``deps``.
+        the skill's ``deps``.
 
         Args:
             skill_name: The name of the owning skill.
             resource_name: The resource name to look up (case-insensitive).
+            **kwargs: Runtime keyword arguments forwarded to resource functions
+                that accept ``**kwargs`` (e.g. arguments passed via
+                ``agent.run(user_id="123")``).
 
         Returns:
             The resource content string, or a user-facing error message on
@@ -672,12 +748,15 @@ class SkillsProvider(BaseContextProvider):
                 # Build positional args: prepend SkillContext if the resource expects it.
                 args: tuple[Any, ...] = ()
                 if resource._takes_ctx:  # pyright: ignore[reportPrivateUsage]
-                    args = (SkillContext(deps=self._deps),)
+                    args = (SkillContext(deps=skill.deps),)
+
+                # Forward **kwargs to resource functions that accept them.
+                fwd_kwargs: dict[str, Any] = kwargs if resource._accepts_kwargs else {}  # pyright: ignore[reportPrivateUsage]
 
                 if inspect.iscoroutinefunction(resource.function):
-                    result = await resource.function(*args)
+                    result = await resource.function(*args, **fwd_kwargs)
                 else:
-                    result = resource.function(*args)
+                    result = resource.function(*args, **fwd_kwargs)
                 return str(result)
             except Exception as exc:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
@@ -971,7 +1050,7 @@ def _discover_skill_directories(skill_paths: Sequence[str]) -> list[str]:
     return discovered
 
 
-def _read_file_skill_resource(skill: Skill, resource_name: str) -> str:
+def _read_file_skill_resource(skill: Skill[Any], resource_name: str) -> str:
     """Read a file-based resource from disk with security guards.
 
     Validates that the resolved path stays within the skill directory and
@@ -1015,7 +1094,7 @@ def _read_file_skill_resource(skill: Skill, resource_name: str) -> str:
 def _discover_file_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
     resource_extensions: tuple[str, ...] = DEFAULT_RESOURCE_EXTENSIONS,
-) -> dict[str, Skill]:
+) -> dict[str, Skill[Any]]:
     """Discover, parse, and load all file-based skills from the given paths.
 
     Each discovered ``SKILL.md`` is parsed for metadata, and resource files
@@ -1036,7 +1115,7 @@ def _discover_file_skills(
         [str(skill_paths)] if isinstance(skill_paths, (str, Path)) else [str(p) for p in skill_paths]
     )
 
-    skills: dict[str, Skill] = {}
+    skills: dict[str, Skill[Any]] = {}
 
     discovered = _discover_skill_directories(resolved_paths)
     logger.info("Discovered %d potential skills", len(discovered))
@@ -1056,7 +1135,7 @@ def _discover_file_skills(
             )
             continue
 
-        file_skill = Skill(
+        file_skill: Skill[Any] = Skill(
             name=name,
             description=description,
             content=content,
@@ -1077,9 +1156,9 @@ def _discover_file_skills(
 
 def _load_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
-    skills: Sequence[Skill] | None,
+    skills: Sequence[Skill[Any]] | None,
     resource_extensions: tuple[str, ...],
-) -> dict[str, Skill]:
+) -> dict[str, Skill[Any]]:
     """Discover and merge skills from file paths and code-defined skills.
 
     File-based skills are discovered first.  Code-defined skills are then
@@ -1132,7 +1211,7 @@ def _create_resource_element(resource: SkillResource) -> str:
 
 def _create_instructions(
     prompt_template: str | None,
-    skills: dict[str, Skill],
+    skills: dict[str, Skill[Any]],
 ) -> str | None:
     """Create the system-prompt text that advertises available skills.
 
