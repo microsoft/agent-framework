@@ -495,12 +495,10 @@ class BaseAgent(SerializationMixin):
                 If None, defaults to "Task for {tool_name}".
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
-            propagate_session: If True, the sub-agent's ``run()`` call receives
-                the ``session`` value from ``FunctionInvocationContext.kwargs``
-                when one is supplied explicitly (for example via
+            propagate_session: If True, this agent's get's a ``session`` from the
+                calling agents, when one is supplied explicitly (for example via
                 ``function_invocation_kwargs={"session": session}``). Defaults
-                to False, meaning the sub-agent runs with a new, independent
-                session.
+                to False, meaning this agent runs without a session.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
