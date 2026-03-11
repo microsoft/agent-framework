@@ -277,6 +277,17 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
     return value
 
 
+def _restore_compaction_annotation_in_additional_properties(
+    additional_properties: MutableMapping[str, Any] | None,
+    *,
+    allow_none: bool = False,
+) -> dict[str, Any] | None:
+    if additional_properties is None:
+        return None if allow_none else {}
+
+    return dict(additional_properties)
+
+
 # endregion
 
 # region Constants and types
@@ -509,7 +520,9 @@ class Content:
         """
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
+        self.additional_properties: dict[str, Any] = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
         # Set all content-specific attributes
@@ -1638,7 +1651,9 @@ class Message(SerializationMixin):
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -1989,7 +2004,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
 
@@ -2239,7 +2256,10 @@ class ChatResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -2352,7 +2372,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation = raw_representation
 
@@ -2582,7 +2604,10 @@ class AgentResponseUpdate(SerializationMixin):
         self.message_id = message_id
         self.created_at = created_at
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @property
@@ -3381,7 +3406,9 @@ class Embedding(Generic[EmbeddingT]):
         self._dimensions = dimensions
         self.model_id = model_id
         self.created_at = created_at
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
 
     @property
     def dimensions(self) -> int | None:
@@ -3439,7 +3466,9 @@ class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, Embed
         super().__init__(embeddings or [])
         self.options = options
         self.usage = usage
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
 
 
 # endregion

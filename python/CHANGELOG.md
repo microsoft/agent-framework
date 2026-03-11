@@ -7,9 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0rc4] - 2026-03-11
+
+### Added
+
+- **agent-framework-core**: Add `propagate_session` to `as_tool()` for session sharing in agent-as-tool scenarios ([#4439](https://github.com/microsoft/agent-framework/pull/4439))
+- **agent-framework-core**: Forward runtime kwargs to skill resource functions ([#4417](https://github.com/microsoft/agent-framework/pull/4417))
+- **samples**: Add A2A server sample ([#4528](https://github.com/microsoft/agent-framework/pull/4528))
+
+### Changed
+
+- **agent-framework-github-copilot**: [BREAKING] Update integration to use `ToolInvocation` and `ToolResult` types ([#4551](https://github.com/microsoft/agent-framework/pull/4551))
+- **agent-framework-azure-ai**: [BREAKING] Upgrade to `azure-ai-projects` 2.0+ ([#4536](https://github.com/microsoft/agent-framework/pull/4536))
+
 ### Fixed
 
+- **agent-framework-core**: Propagate MCP `isError` flag through the function middleware pipeline ([#4511](https://github.com/microsoft/agent-framework/pull/4511))
+- **agent-framework-core**: Fix `as_agent()` not defaulting name/description from client properties ([#4484](https://github.com/microsoft/agent-framework/pull/4484))
+- **agent-framework-core**: Exclude `conversation_id` from chat completions API options ([#4517](https://github.com/microsoft/agent-framework/pull/4517))
+- **agent-framework-core**: Fix conversation ID propagation when `chat_options` is a dict ([#4340](https://github.com/microsoft/agent-framework/pull/4340))
+- **agent-framework-core**: Auto-finalize `ResponseStream` on iteration completion ([#4478](https://github.com/microsoft/agent-framework/pull/4478))
+- **agent-framework-core**: Prevent pickle deserialization of untrusted HITL HTTP input ([#4566](https://github.com/microsoft/agent-framework/pull/4566))
+- **agent-framework-core**: Fix `executor_completed` event handling for non-copyable `raw_representation` in mixed workflows ([#4493](https://github.com/microsoft/agent-framework/pull/4493))
+- **agent-framework-core**: Fix `store=False` not overriding client default ([#4569](https://github.com/microsoft/agent-framework/pull/4569))
 - **agent-framework-redis**: Fix `RedisContextProvider` compatibility with redisvl 0.14.0 by using `AggregateHybridQuery` ([#3954](https://github.com/microsoft/agent-framework/pull/3954))
+- **samples**: Fix `chat_response_cancellation` sample to use `Message` objects ([#4532](https://github.com/microsoft/agent-framework/pull/4532))
+- **agent-framework-purview**: Fix broken link in Purview README (Microsoft 365 Dev Program URL) ([#4610](https://github.com/microsoft/agent-framework/pull/4610))
 
 ## [1.0.0rc3] - 2026-03-04
 
@@ -745,7 +768,8 @@ Release candidate for **agent-framework-core** and **agent-framework-azure-ai** 
 
 For more information, see the [announcement blog post](https://devblogs.microsoft.com/foundry/introducing-microsoft-agent-framework-the-open-source-engine-for-agentic-ai-apps/).
 
-[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc3...HEAD
+[Unreleased]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc4...HEAD
+[1.0.0rc4]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc3...python-1.0.0rc4
 [1.0.0rc3]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc2...python-1.0.0rc3
 [1.0.0rc2]: https://github.com/microsoft/agent-framework/compare/python-1.0.0rc1...python-1.0.0rc2
 [1.0.0rc1]: https://github.com/microsoft/agent-framework/compare/python-1.0.0b260212...python-1.0.0rc1
