@@ -19,7 +19,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
 
 from openai import AsyncOpenAI, BadRequestError
-from openai.types.responses import FunctionShellTool
+from openai.types.responses import FunctionShellTool, ResponseFunctionToolCall
 from openai.types.responses.file_search_tool_param import FileSearchToolParam
 from openai.types.responses.function_tool_param import FunctionToolParam
 from openai.types.responses.parsed_response import (
@@ -1019,6 +1019,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     content.type == "function_call"
                     and content.additional_properties
                     and "fc_id" in content.additional_properties
+                    and content.additional_properties["fc_id"]
                 ):
                     call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
         list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
@@ -1150,6 +1151,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     return file_obj
                 return {}
             case "function_call":
+                if isinstance(content.raw_representation, ResponseFunctionToolCall):
+                    # Preserve full object fidelity for function calls that originated from the Responses API.
+                    return content.raw_representation.model_dump(exclude_none=True)
+
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
@@ -1164,7 +1169,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
-                    "status": None,
+                    "status": content.additional_properties.get("status"),
                 }
             case "function_result":
                 shell_output_type = (
@@ -1471,12 +1476,13 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                     )
                 case "function_call":  # ResponseOutputFunctionCall
+                    item = cast(ResponseFunctionToolCall, item)
                     contents.append(
                         Content.from_function_call(
-                            call_id=item.call_id if hasattr(item, "call_id") and item.call_id else "",
-                            name=item.name if hasattr(item, "name") else "",
-                            arguments=item.arguments if hasattr(item, "arguments") else "",
-                            additional_properties={"fc_id": item.id} if hasattr(item, "id") else {},
+                            call_id=item.call_id,
+                            name=item.name,
+                            arguments=item.arguments,
+                            additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
                     )
