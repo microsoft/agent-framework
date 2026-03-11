@@ -44,6 +44,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Deep research with an agent](./Agent_Step15_DeepResearch/)|This sample demonstrates how to use the Deep Research Tool to perform comprehensive research on complex topics|
 |[Declarative agent](./Agent_Step16_Declarative/)|This sample demonstrates how to declaratively define an agent.|
 |[Providing additional AI Context to an agent using multiple AIContextProviders](./Agent_Step17_AdditionalAIContext/)|This sample demonstrates how to inject additional AI context into a ChatClientAgent using multiple custom AIContextProvider components that are attached to the agent.|
+|[Using compaction pipeline with an agent](./Agent_Step18_CompactionPipeline/)|This sample demonstrates how to use a compaction pipeline to efficiently limit the size of the conversation history for an agent.|
 
 ## Running the samples from the console
 

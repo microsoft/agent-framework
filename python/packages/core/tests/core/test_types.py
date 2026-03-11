@@ -28,6 +28,12 @@ from agent_framework import (
     merge_chat_options,
     tool,
 )
+from agent_framework._compaction import (
+    GROUP_ANNOTATION_KEY,
+    GROUP_HAS_REASONING_KEY,
+    GROUP_ID_KEY,
+    GROUP_TOKEN_COUNT_KEY,
+)
 from agent_framework._types import (
     _get_data_bytes,
     _get_data_bytes_as_str,
@@ -1659,6 +1665,78 @@ def test_chat_message_complex_content_serialization():
     assert reconstructed.contents[2].type == "function_result"
 
 
+def test_message_roundtrip_preserves_compaction_annotation_dict() -> None:
+    message = Message(
+        role="assistant",
+        contents=[Content.from_text("Hello")],
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_1",
+                "kind": "assistant_text",
+                "index": 1,
+                "has_reasoning": False,
+                "token_count": 42,
+            }
+        },
+    )
+
+    restored = Message.from_dict(message.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_1"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] == 42
+
+
+def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
+    content = Content.from_text(
+        text="Hello",
+        additional_properties={
+            GROUP_ANNOTATION_KEY: {
+                "id": "group_2",
+                "kind": "assistant_text",
+                "index": 2,
+                "has_reasoning": False,
+                "token_count": None,
+            }
+        },
+    )
+
+    restored = Content.from_dict(content.to_dict())
+    annotation = restored.additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_2"
+    assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
+    response = ChatResponse(
+        messages=[
+            Message(
+                role="assistant",
+                contents=[Content.from_text("Hello")],
+                additional_properties={
+                    GROUP_ANNOTATION_KEY: {
+                        "id": "group_3",
+                        "kind": "assistant_text",
+                        "index": 3,
+                        "has_reasoning": True,
+                        "token_count": 15,
+                    }
+                },
+            )
+        ]
+    )
+
+    restored = ChatResponse.from_dict(response.to_dict())
+    annotation = restored.messages[0].additional_properties.get(GROUP_ANNOTATION_KEY)
+
+    assert isinstance(annotation, dict)
+    assert annotation[GROUP_ID_KEY] == "group_3"
+    assert annotation[GROUP_HAS_REASONING_KEY] is True
+
+
 def test_usage_content_serialization_with_details():
     """Test UsageContent from_dict and to_dict with UsageDetails conversion."""
 
@@ -1863,6 +1941,170 @@ def test_agent_run_response_update_all_content_types():
     update_str = AgentResponseUpdate.from_dict(update_data_str_role)
     assert isinstance(update_str.role, str)  # Role is now a NewType of str
     assert update_str.role == "user"
+
+
+# region DeepCopy
+
+
+class _NonCopyableRaw:
+    """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
+
+    def __deepcopy__(self, memo: dict) -> Any:
+        raise TypeError("Cannot deepcopy this object")
+
+
+def test_content_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of Content keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    content = Content.from_text("hello", raw_representation=raw)
+
+    cloned = copy.deepcopy(content)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.additional_properties is not content.additional_properties
+
+
+def test_message_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of Message keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    msg = Message("assistant", ["hello"], raw_representation=raw)
+
+    cloned = copy.deepcopy(msg)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not msg.contents
+
+
+def test_agent_response_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of AgentResponse keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    response = AgentResponse(
+        messages=[Message("assistant", ["test"])],
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.text == "test"
+    assert cloned.raw_representation is raw
+    assert cloned.messages is not response.messages
+
+
+def test_chat_response_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of ChatResponse keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    response = ChatResponse(
+        messages=[Message("assistant", ["test"])],
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.text == "test"
+    assert cloned.raw_representation is raw
+    assert cloned.messages is not response.messages
+
+
+def test_chat_response_update_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of ChatResponseUpdate keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    update = ChatResponseUpdate(
+        contents=[Content.from_text("hello")],
+        role="assistant",
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(update)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not update.contents
+
+
+def test_agent_response_update_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of AgentResponseUpdate keeps raw_representation by reference."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    update = AgentResponseUpdate(
+        contents=[Content.from_text("hello")],
+        role="assistant",
+        raw_representation=raw,
+    )
+
+    cloned = copy.deepcopy(update)
+
+    assert cloned.text == "hello"
+    assert cloned.raw_representation is raw
+    assert cloned.contents is not update.contents
+
+
+def test_nested_deepcopy_preserves_raw_representation():
+    """Test that deepcopy of an AgentResponse with nested Message raw_representations works."""
+    import copy
+
+    raw_msg = _NonCopyableRaw()
+    raw_response = _NonCopyableRaw()
+    response = AgentResponse(
+        messages=[Message("assistant", ["hello"], raw_representation=raw_msg)],
+        raw_representation=raw_response,
+    )
+
+    cloned = copy.deepcopy(response)
+
+    assert cloned.raw_representation is raw_response
+    assert cloned.messages[0].raw_representation is raw_msg
+    assert cloned.messages is not response.messages
+    assert cloned.text == "hello"
+
+
+def test_content_deepcopy_shallow_copy_fields_identity():
+    """Test that Content._SHALLOW_COPY_FIELDS fields are identity-preserved while others are deep-copied."""
+    import copy
+
+    raw = _NonCopyableRaw()
+    content = Content.from_text("hello", raw_representation=raw)
+    content.additional_properties["key"] = "value"
+
+    cloned = copy.deepcopy(content)
+
+    # _SHALLOW_COPY_FIELDS (raw_representation) should be same object
+    assert cloned.raw_representation is raw
+    # Non-shallow fields should be independent deep copies
+    assert cloned.additional_properties is not content.additional_properties
+    assert cloned.additional_properties == {"key": "value"}
+
+
+def test_chat_response_deepcopy_deep_copies_additional_properties():
+    """Test that ChatResponse deepcopy deep-copies additional_properties despite it being in DEFAULT_EXCLUDE."""
+    import copy
+
+    response = ChatResponse(
+        messages=[Message("assistant", ["test"])],
+        additional_properties={"key": [1, 2, 3]},
+    )
+
+    cloned = copy.deepcopy(response)
+
+    # additional_properties is in DEFAULT_EXCLUDE for serialization but not in _SHALLOW_COPY_FIELDS,
+    # so it should be deep-copied (independent copy)
+    assert cloned.additional_properties is not response.additional_properties
+    assert cloned.additional_properties == {"key": [1, 2, 3]}
+
+
+# endregion
 
 
 # region Serialization
@@ -2811,6 +3053,58 @@ class TestResponseStreamBasicIteration:
         assert len(stream.updates) == 2
         assert stream.updates[0].text == "update_0"
         assert stream.updates[1].text == "update_1"
+
+    async def test_auto_finalize_on_iteration_completion(self) -> None:
+        """Stream auto-finalizes when async iteration completes."""
+        stream = ResponseStream(_generate_updates(2), finalizer=_combine_updates)
+
+        async for _ in stream:
+            pass
+
+        assert stream._finalized is True
+        assert stream._final_result is not None
+        assert stream._final_result.text == "update_0update_1"
+
+    async def test_auto_finalize_runs_result_hooks(self) -> None:
+        """Result hooks run automatically when iteration completes."""
+        hook_called = {"value": False}
+
+        def tracking_hook(response: ChatResponse) -> ChatResponse:
+            hook_called["value"] = True
+            response.additional_properties["auto_finalized"] = True
+            return response
+
+        stream = ResponseStream(
+            _generate_updates(2),
+            finalizer=_combine_updates,
+            result_hooks=[tracking_hook],
+        )
+
+        async for _ in stream:
+            pass
+
+        assert hook_called["value"] is True
+        final = await stream.get_final_response()
+        assert final.additional_properties["auto_finalized"] is True
+
+    async def test_get_final_response_idempotent_after_auto_finalize(self) -> None:
+        """get_final_response returns cached result after auto-finalization."""
+        call_count = {"value": 0}
+
+        def counting_finalizer(updates: list[ChatResponseUpdate]) -> ChatResponse:
+            call_count["value"] += 1
+            return _combine_updates(updates)
+
+        stream = ResponseStream(_generate_updates(2), finalizer=counting_finalizer)
+
+        async for _ in stream:
+            pass
+
+        final1 = await stream.get_final_response()
+        final2 = await stream.get_final_response()
+
+        assert call_count["value"] == 1
+        assert final1.text == final2.text
 
 
 class TestResponseStreamTransformHooks:

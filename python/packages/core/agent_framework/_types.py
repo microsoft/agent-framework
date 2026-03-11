@@ -277,6 +277,17 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
     return value
 
 
+def _restore_compaction_annotation_in_additional_properties(
+    additional_properties: MutableMapping[str, Any] | None,
+    *,
+    allow_none: bool = False,
+) -> dict[str, Any] | None:
+    if additional_properties is None:
+        return None if allow_none else {}
+
+    return dict(additional_properties)
+
+
 # endregion
 
 # region Constants and types
@@ -445,6 +456,8 @@ class Content:
     `Content.from_uri()`, etc. to create instances.
     """
 
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
+
     def __init__(
         self,
         type: ContentType,
@@ -508,7 +521,9 @@ class Content:
         """
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
+        self.additional_properties: dict[str, Any] = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
         # Set all content-specific attributes
@@ -547,6 +562,23 @@ class Content:
         self.user_input_request = user_input_request
         self.approved = approved
         self.consent_link = consent_link
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Content:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        shallow = cls._SHALLOW_COPY_FIELDS
+        for k, v in self.__dict__.items():
+            if k in shallow:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, deepcopy(v, memo))
+        return result
 
     @classmethod
     def from_text(
@@ -1661,7 +1693,9 @@ class Message(SerializationMixin):
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -2012,7 +2046,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
 
@@ -2262,7 +2298,10 @@ class ChatResponseUpdate(SerializationMixin):
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -2375,7 +2414,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation = raw_representation
 
@@ -2605,7 +2646,10 @@ class AgentResponseUpdate(SerializationMixin):
         self.message_id = message_id
         self.created_at = created_at
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @property
@@ -2818,6 +2862,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
+            await self.get_final_response()
             raise
         except Exception:
             await self._run_cleanup_hooks()
@@ -2867,34 +2912,38 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 await self._get_stream()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
-            if not self._finalized:
+            if not self._finalized and not self._consumed:
                 # Consume outer stream (which delegates to inner) if not already consumed
-                if not self._consumed:
-                    async for _ in self:
-                        pass
+                async for _ in self:
+                    pass
 
-                # First, finalize the inner stream and run its result hooks
+            # Re-check: __anext__ auto-finalization may have already finalized this stream
+            if not self._finalized:
                 # This ensures inner post-processing (e.g., context provider notifications) runs
-                inner_stream = self._inner_stream
-                inner_result: Any
-                if inner_stream._finalizer is not None:
-                    inner_finalizer = inner_stream._finalizer
-                    inner_result = inner_finalizer(inner_stream._updates)
-                    if isawaitable(inner_result):
-                        inner_result = await inner_result
-                else:
-                    inner_result = list(inner_stream._updates)
+                # Skip if inner stream was already finalized (e.g., via auto-finalization on iteration)
+                if not self._inner_stream._finalized:
+                    inner_stream = self._inner_stream
+                    inner_result: Any
+                    if inner_stream._finalizer is not None:
+                        inner_finalizer = inner_stream._finalizer
+                        inner_result = inner_finalizer(inner_stream._updates)
+                        if isawaitable(inner_result):
+                            inner_result = await inner_result
+                    else:
+                        inner_result = list(inner_stream._updates)
 
-                # Run inner stream's result hooks
-                inner_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], inner_stream._result_hooks)
-                for hook in inner_hooks:
-                    hooked_result = hook(inner_result)
-                    if isawaitable(hooked_result):
-                        hooked_result = await hooked_result
-                    if hooked_result is not None:
-                        inner_result = hooked_result
-                inner_stream._final_result = inner_result
-                inner_stream._finalized = True
+                    # Run inner stream's result hooks
+                    inner_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], inner_stream._result_hooks)
+                    for hook in inner_hooks:
+                        hooked_result = hook(inner_result)
+                        if isawaitable(hooked_result):
+                            hooked_result = await hooked_result
+                        if hooked_result is not None:
+                            inner_result = hooked_result
+                    inner_stream._final_result = inner_result
+                    inner_stream._finalized = True
+                else:
+                    inner_result = self._inner_stream._final_result
 
                 # Now finalize the outer stream with its own finalizer
                 # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
@@ -2919,12 +2968,12 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 self._finalized = True
             return self._final_result  # type: ignore[return-value]
 
-        if not self._finalized:
-            if not self._consumed:
-                async for _ in self:
-                    pass
+        if not self._finalized and not self._consumed:
+            async for _ in self:
+                pass
 
-            # Use finalizer if configured, otherwise return collected updates
+        # Re-check: __anext__ auto-finalization may have already finalized this stream
+        if not self._finalized:
             result: Any
             if self._finalizer is not None:
                 result = self._finalizer(self._updates)
@@ -3399,7 +3448,9 @@ class Embedding(Generic[EmbeddingT]):
         self._dimensions = dimensions
         self.model_id = model_id
         self.created_at = created_at
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
 
     @property
     def dimensions(self) -> int | None:
@@ -3457,7 +3508,9 @@ class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, Embed
         super().__init__(embeddings or [])
         self.options = options
         self.usage = usage
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
 
 
 # endregion
