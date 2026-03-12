@@ -1051,7 +1051,6 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         if tokenizer is not None:
             kwargs["tokenizer"] = tokenizer
 
-        call_middleware = kwargs.pop("middleware", [])
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         call_middleware = kwargs.pop("middleware", effective_client_kwargs.pop("middleware", []))
         middleware = categorize_middleware(call_middleware)
@@ -1110,12 +1109,17 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         self, context: ChatContext
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Internal middleware handler to adapt to pipeline."""
+        handler_kwargs = dict(context.kwargs)
+        compaction_strategy = handler_kwargs.pop("compaction_strategy", None)
+        tokenizer = handler_kwargs.pop("tokenizer", None)
         return super().get_response(  # type: ignore[misc, no-any-return]
             messages=context.messages,
             stream=context.stream,
             options=context.options or {},
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             function_invocation_kwargs=context.function_invocation_kwargs,
-            client_kwargs=context.kwargs,
+            client_kwargs=handler_kwargs,
         )
 
 

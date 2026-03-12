@@ -2136,11 +2136,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             invocation_session=invocation_session,
             middleware_pipeline=function_middleware_pipeline,
         )
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
-        if compaction_strategy is not None:
-            filtered_kwargs["compaction_strategy"] = compaction_strategy
-        if tokenizer is not None:
-            filtered_kwargs["tokenizer"] = tokenizer
+        filtered_kwargs = {k: v for k, v in {**effective_client_kwargs, **kwargs}.items() if k != "session"}
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}
@@ -2190,6 +2186,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             messages=prepped_messages,
                             stream=False,
                             options=mutable_options,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
                             client_kwargs=filtered_kwargs,
                         ),
                     )
@@ -2259,6 +2257,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         messages=prepped_messages,
                         stream=False,
                         options=mutable_options,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
                         client_kwargs=filtered_kwargs,
                     ),
                 )
@@ -2309,6 +2309,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         messages=prepped_messages,
                         stream=True,
                         options=mutable_options,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
                         client_kwargs=filtered_kwargs,
                     ),
                 )
@@ -2401,6 +2403,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     messages=prepped_messages,
                     stream=True,
                     options=mutable_options,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
                     client_kwargs=filtered_kwargs,
                 ),
             )

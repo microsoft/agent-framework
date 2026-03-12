@@ -300,6 +300,8 @@ async def test_prepare_run_context_handles_function_kwargs(
             "temperature": 0.4,
             "additional_function_arguments": {"from_options": "options-value"},
         },
+        compaction_strategy=None,
+        tokenizer=None,
         legacy_kwargs={"legacy_key": "legacy-value"},
         function_invocation_kwargs={"runtime_key": "runtime-value"},
         client_kwargs={"client_key": "client-value"},

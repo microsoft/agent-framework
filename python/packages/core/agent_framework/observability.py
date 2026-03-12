@@ -1168,6 +1168,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             messages: The message or messages to send to the model.
             stream: Whether to stream the response. Defaults to False.
             options: Chat options as a TypedDict.
+            compaction_strategy: Optional compaction strategy to apply before model calls.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
 
         Keyword Args:
             kwargs: Compatibility keyword arguments from higher client layers. This layer does

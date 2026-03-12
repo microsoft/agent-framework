@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
 
@@ -591,8 +591,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -603,8 +602,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[True],
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -614,8 +612,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        function_invocation_kwargs: Mapping[str, Any] | None = None,
-        client_kwargs: Mapping[str, Any] | None = None,
+        **kwargs: Any,  # type: ignore
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
@@ -628,16 +625,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
             options: Runtime options. Model and permission_mode can be changed per request.
-            function_invocation_kwargs: Present for compatibility with the shared agent interface.
-                ClaudeAgent does not use these values directly.
-            client_kwargs: Present for compatibility with the shared agent interface.
-                ClaudeAgent does not use these values directly.
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by ClaudeAgent.
 
         Returns:
             When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
-        del function_invocation_kwargs, client_kwargs
         response = ResponseStream(
             self._get_stream(messages, session=session, options=options),
             finalizer=self._finalize_response,
