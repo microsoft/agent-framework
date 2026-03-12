@@ -64,6 +64,10 @@ class AgentFrameworkExecutor:
 
         self.checkpoint_manager = CheckpointConversationManager(self.conversation_store)
 
+        # Tracks pending approval requests: request_id -> server-side function_call.
+        # Prevents forged responses from executing arbitrary tools (CWE-863).
+        self._pending_approvals: dict[str, dict[str, Any]] = {}
+
     def _setup_instrumentation_provider(self) -> None:
         """Set up our own TracerProvider so we can add processors."""
         try:
@@ -118,6 +122,18 @@ class AgentFrameworkExecutor:
                 return conversation_id
 
         return None
+
+    def _track_approval_request(self, event: dict[str, Any]) -> None:
+        """Record a server-issued approval request so we can validate the response later."""
+        request_id = event.get("request_id")
+        fc = event.get("function_call", {})
+        if isinstance(request_id, str) and request_id:
+            self._pending_approvals[request_id] = {
+                "call_id": fc.get("id", ""),
+                "name": fc.get("name", ""),
+                "arguments": fc.get("arguments", {}),
+            }
+            logger.debug("Tracked approval request: %s for function: %s", request_id, fc.get("name", "unknown"))
 
     async def _ensure_mcp_connections(self, agent: Any) -> None:
         """Ensure MCP tool connections are healthy before agent execution.
@@ -227,6 +243,12 @@ class AgentFrameworkExecutor:
             async for raw_event in self.execute_entity(entity_id, request):
                 openai_events = await self.message_mapper.convert_event(raw_event, request)
                 for event in openai_events:
+                    # Track outgoing approval requests for server-side validation
+                    if (
+                        isinstance(event, dict)
+                        and cast(dict[str, Any], event).get("type") == "response.function_approval.requested"
+                    ):
+                        self._track_approval_request(cast(dict[str, Any], event))
                     yield event
 
         except Exception as e:
@@ -700,56 +722,55 @@ class AgentFrameworkExecutor:
                                         )
 
                                 elif content_type == "function_approval_response":
-                                    # Handle function approval response (DevUI extension)
+                                    # Handle function approval response with server-side validation
                                     try:
                                         request_id = content_dict.get("request_id", "")
                                         approved = content_dict.get("approved", False)
-                                        function_call_data = content_dict.get("function_call", {})
 
                                         if not isinstance(request_id, str):
                                             request_id = ""
                                         if not isinstance(approved, bool):
                                             approved = False
-                                        if not isinstance(function_call_data, dict):
-                                            function_call_data = {}
 
-                                        function_call_data_dict = cast(dict[str, Any], function_call_data)
+                                        # Only accept responses that match a request we issued.
+                                        # Always use the server-stored function_call data.
+                                        stored_fc = self._pending_approvals.pop(request_id, None)
+                                        if stored_fc is None:
+                                            logger.warning(
+                                                "Rejected function_approval_response with unknown "
+                                                "request_id: %s. No matching approval request was "
+                                                "issued by the server.",
+                                                request_id,
+                                            )
+                                            continue
 
-                                        function_call_id = function_call_data_dict.get("id", "")
-                                        function_call_name = function_call_data_dict.get("name", "")
-                                        function_call_args = function_call_data_dict.get("arguments", {})
-
-                                        if not isinstance(function_call_id, str):
-                                            function_call_id = ""
-                                        if not isinstance(function_call_name, str):
-                                            function_call_name = ""
-                                        if not isinstance(function_call_args, dict):
-                                            function_call_args = {}
-
-                                        # Create FunctionCallContent from the function_call data
+                                        # Reconstruct function_call from server-stored data
                                         function_call = Content.from_function_call(
-                                            call_id=function_call_id,
-                                            name=function_call_name,
-                                            arguments=cast(dict[str, Any], function_call_args),
+                                            call_id=stored_fc["call_id"],
+                                            name=stored_fc["name"],
+                                            arguments=stored_fc["arguments"],
                                         )
 
-                                        # Create FunctionApprovalResponseContent with correct signature
+                                        # Create approval response using server-validated data
                                         approval_response = Content.from_function_approval_response(
-                                            approved,  # positional argument
-                                            id=request_id,  # keyword argument 'id', NOT 'request_id'
-                                            function_call=function_call,  # FunctionCallContent object
+                                            approved,
+                                            id=request_id,
+                                            function_call=function_call,
                                         )
                                         contents.append(approval_response)
                                         logger.info(
-                                            f"Added FunctionApprovalResponseContent: id={request_id}, "
-                                            f"approved={approved}, call_id={function_call.call_id}"
+                                            "Validated FunctionApprovalResponseContent: id=%s, "
+                                            "approved=%s, function=%s",
+                                            request_id,
+                                            approved,
+                                            stored_fc["name"],
                                         )
                                     except ImportError:
                                         logger.warning(
                                             "FunctionApprovalResponseContent not available in agent_framework"
                                         )
                                     except Exception as e:
-                                        logger.error(f"Failed to create FunctionApprovalResponseContent: {e}")
+                                        logger.error(f"Failed to process FunctionApprovalResponseContent: {e}")
 
             # Handle other OpenAI input item types as needed
             # (tool calls, function results, etc.)

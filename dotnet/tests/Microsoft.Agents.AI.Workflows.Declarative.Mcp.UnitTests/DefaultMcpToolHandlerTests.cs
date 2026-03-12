@@ -3,9 +3,12 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.AI;
+using ModelContextProtocol.Protocol;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 
@@ -339,6 +342,150 @@ public sealed class DefaultMcpToolHandlerTests
         // Assert
         handler.Should().BeAssignableTo<IAsyncDisposable>();
         await handler.DisposeAsync();
+    }
+
+    #endregion
+
+    #region ConvertContentBlock Tests
+
+    [Fact]
+    public void ConvertContentBlock_TextContentBlock_ShouldReturnTextContent()
+    {
+        // Arrange
+        TextContentBlock block = new() { Text = "hello world" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        result.Should().BeOfType<TextContent>()
+            .Which.Text.Should().Be("hello world");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ImageContentBlock_WithEmptyData_ShouldReturnDataContentWithEmptyUri()
+    {
+        // Arrange
+        ImageContentBlock block = new() { Data = ReadOnlyMemory<byte>.Empty, MimeType = "image/png" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("image/png");
+        dataContent.Uri.Should().Be("data:image/png;base64,");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ImageContentBlock_WithBase64Payload_ShouldReturnDataContent()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
+        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "image/png" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("image/png");
+        dataContent.Uri.Should().Be("data:image/png;base64,iVBORw0KGgo=");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ImageContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
+    {
+        // Arrange
+        const string DataUri = "data:image/jpeg;base64,/9j/4AAQ";
+        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
+        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "image/jpeg" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("image/jpeg");
+        dataContent.Uri.Should().Be(DataUri);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_ImageContentBlock_WithNullMimeType_ShouldDefaultToImageWildcard()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("iVBORw0KGgo=");
+        ImageContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("image/*");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_AudioContentBlock_WithEmptyData_ShouldReturnDataContentWithEmptyUri()
+    {
+        // Arrange
+        AudioContentBlock block = new() { Data = ReadOnlyMemory<byte>.Empty, MimeType = "audio/wav" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("audio/wav");
+        dataContent.Uri.Should().Be("data:audio/wav;base64,");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_AudioContentBlock_WithBase64Payload_ShouldReturnDataContent()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = "audio/wav" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("audio/wav");
+        dataContent.Uri.Should().Be("data:audio/wav;base64,UklGRiQA");
+    }
+
+    [Fact]
+    public void ConvertContentBlock_AudioContentBlock_WithDataUri_ShouldReturnDataContentDirectly()
+    {
+        // Arrange
+        const string DataUri = "data:audio/mp3;base64,//uQxAAA";
+        byte[] dataUriBytes = Encoding.UTF8.GetBytes(DataUri);
+        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(dataUriBytes), MimeType = "audio/mp3" };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("audio/mp3");
+        dataContent.Uri.Should().Be(DataUri);
+    }
+
+    [Fact]
+    public void ConvertContentBlock_AudioContentBlock_WithNullMimeType_ShouldDefaultToAudioWildcard()
+    {
+        // Arrange
+        byte[] base64Bytes = Encoding.UTF8.GetBytes("UklGRiQA");
+        AudioContentBlock block = new() { Data = new ReadOnlyMemory<byte>(base64Bytes), MimeType = null! };
+
+        // Act
+        AIContent result = DefaultMcpToolHandler.ConvertContentBlock(block);
+
+        // Assert
+        DataContent dataContent = result.Should().BeOfType<DataContent>().Subject;
+        dataContent.MediaType.Should().Be("audio/*");
     }
 
     #endregion
