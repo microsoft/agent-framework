@@ -223,7 +223,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
-    private static AIContent ConvertContentBlock(ContentBlock block)
+    internal static AIContent ConvertContentBlock(ContentBlock block)
     {
         return block switch
         {
@@ -241,7 +241,11 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             return new DataContent($"data:{mediaType};base64,", mediaType);
         }
 
+#if NET8_0_OR_GREATER
+        string base64 = Encoding.UTF8.GetString(base64Utf8Data.Span);
+#else
         string base64 = Encoding.UTF8.GetString(base64Utf8Data.ToArray());
+#endif
 
         // If it's already a data URI, use it directly
         if (base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
