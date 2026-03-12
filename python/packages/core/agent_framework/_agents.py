@@ -29,6 +29,7 @@ from mcp.server.lowlevel import Server
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, Field, create_model
 
+from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
 from ._middleware import AgentMiddlewareLayer, MiddlewareTypes
@@ -40,12 +41,7 @@ from ._sessions import (
     InMemoryHistoryProvider,
     SessionContext,
 )
-from ._tools import (
-    FunctionInvocationLayer,
-    FunctionTool,
-    ToolTypes,
-    normalize_tools,
-)
+from ._tools import FunctionInvocationLayer, FunctionTool, ToolTypes, normalize_tools
 from ._types import (
     AgentResponse,
     AgentResponseUpdate,
@@ -79,6 +75,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework")
 
+_append_unique_tools = _tool_utils._append_unique_tools  # pyright: ignore[reportPrivateUsage]
+_get_tool_name = _tool_utils._get_tool_name  # pyright: ignore[reportPrivateUsage]
+
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 OptionsCoT = TypeVar(
     "OptionsCoT",
@@ -86,19 +85,6 @@ OptionsCoT = TypeVar(
     default="ChatOptions[None]",
     covariant=True,
 )
-
-
-def _get_tool_name(tool: Any) -> str | None:
-    """Extract a tool's name from either an object with a .name attribute or a dict tool definition."""
-    if isinstance(tool, Mapping):
-        tool_mapping = cast(Mapping[str, Any], tool)
-        func = tool_mapping.get("function")
-        if isinstance(func, Mapping):
-            func_mapping = cast(Mapping[str, Any], func)
-            name = func_mapping.get("name")
-            return name if isinstance(name, str) else None
-        return None
-    return getattr(tool, "name", None)
 
 
 def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -115,11 +101,14 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
     for key, value in override.items():
         if value is None:
             continue
-        if key == "tools" and result.get("tools"):
-            # Combine tool lists, avoiding duplicates by name
-            existing_names = {_get_tool_name(t) for t in result["tools"]} - {None}
-            unique_new = [t for t in value if _get_tool_name(t) not in existing_names]
-            result["tools"] = list(result["tools"]) + unique_new
+        if key == "tools" and (result.get("tools") or value):
+            base_tools = normalize_tools(result.get("tools"))
+            override_tools = normalize_tools(value)
+            result["tools"] = _append_unique_tools(
+                list(base_tools),
+                override_tools,
+                duplicate_error_message="Tool names must be unique.",
+            )
         elif key == "logit_bias" and result.get("logit_bias"):
             # Merge logit_bias dicts
             result["logit_bias"] = {**result["logit_bias"], **value}
@@ -1117,25 +1106,34 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
 
         agent_name = self._get_agent_name()
+        base_tools = normalize_tools(chat_options.pop("tools", None))
+        mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
 
         # Normalize tools
         normalized_tools = normalize_tools(tools_)
 
-        # Resolve final tool list (runtime provided tools + local MCP server tools)
-        final_tools: list[FunctionTool | Callable[..., Any] | dict[str, Any] | Any] = []
+        # Resolve final tool list (configured tools + runtime provided tools + local MCP server tools)
+        final_tools = list(base_tools)
         for tool in normalized_tools:
             if isinstance(tool, MCPTool):
                 if not tool.is_connected:
                     await self._async_exit_stack.enter_async_context(tool)
-                final_tools.extend(tool.functions)  # type: ignore
+                _append_unique_tools(
+                    final_tools,
+                    tool.functions,
+                    duplicate_error_message=mcp_duplicate_message,
+                )
             else:
-                final_tools.append(tool)  # type: ignore
+                _append_unique_tools(final_tools, [tool])  # type: ignore[list-item]
 
-        existing_names = {name for t in final_tools if (name := _get_tool_name(t)) is not None}
         for mcp_server in self.mcp_tools:
             if not mcp_server.is_connected:
                 await self._async_exit_stack.enter_async_context(mcp_server)
-            final_tools.extend(f for f in mcp_server.functions if f.name not in existing_names)
+            _append_unique_tools(
+                final_tools,
+                mcp_server.functions,
+                duplicate_error_message=mcp_duplicate_message,
+            )
 
         # Merge runtime kwargs into additional_function_arguments so they're available
         # in function middleware context and tool invocation.
@@ -1164,7 +1162,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "store": opts.pop("store", None),
             "temperature": opts.pop("temperature", None),
             "tool_choice": opts.pop("tool_choice", None),
-            "tools": final_tools,
+            "tools": final_tools or None,
             "top_p": opts.pop("top_p", None),
             "user": opts.pop("user", None),
             **opts,  # Remaining options are provider-specific

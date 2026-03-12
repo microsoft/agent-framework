@@ -30,7 +30,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
-from agent_framework._mcp import MCPTool
+from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 
 
 class _FixedTokenizer:
@@ -39,6 +39,30 @@ class _FixedTokenizer:
 
     def count_tokens(self, text: str) -> int:
         return self.token_count
+
+
+class _ConnectedMCPTool(MCPTool):
+    def __init__(self, name: str, function_names: list[str], *, tool_name_prefix: str | None = None) -> None:
+        super().__init__(name=name, tool_name_prefix=tool_name_prefix)
+        self.is_connected = True
+        self._functions = []
+        for function_name in function_names:
+            normalized_name = _normalize_mcp_name(function_name)
+            exposed_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
+            self._functions.append(
+                FunctionTool(
+                    func=lambda value=function_name: value,
+                    name=exposed_name,
+                    description=f"{function_name} from {name}",
+                    additional_properties={
+                        "_mcp_remote_name": function_name,
+                        "_mcp_normalized_name": normalized_name,
+                    },
+                )
+            )
+
+    def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:
+        raise NotImplementedError
 
 
 def test_agent_session_type(agent_session: AgentSession) -> None:
@@ -949,6 +973,7 @@ async def test_chat_agent_run_with_mcp_tools(client: SupportsChatGetResponse) ->
 
     # Create a mock MCP tool
     mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.name = "mock-mcp"
     mock_mcp_tool.is_connected = False
     mock_mcp_tool.functions = [MagicMock()]
 
@@ -966,6 +991,7 @@ async def test_chat_agent_with_local_mcp_tools(client: SupportsChatGetResponse) 
     """Test agent initialization with local MCP tools."""
     # Create a mock MCP tool
     mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.name = "mock-mcp"
     mock_mcp_tool.is_connected = False
     mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
     mock_mcp_tool.__aexit__ = AsyncMock(return_value=None)
@@ -1005,6 +1031,7 @@ async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(
 
     # Create a mock MCP tool that is already connected (simulates turn 2)
     mock_mcp_tool = MagicMock(spec=MCPTool)
+    mock_mcp_tool.name = "mock-mcp"
     mock_mcp_tool.is_connected = True
     mock_mcp_tool.functions = [mcp_func_a, mcp_func_b]
     mock_mcp_tool.__aenter__ = AsyncMock(return_value=mock_mcp_tool)
@@ -1026,6 +1053,77 @@ async def test_mcp_tools_not_duplicated_when_passed_as_runtime_tools(
     assert tool_names.count("tool_b") == 1, f"tool_b duplicated: {tool_names}"
     assert "client_tool" in tool_names
     assert len(tool_names) == 3
+
+
+async def test_agent_run_raises_on_local_and_agent_mcp_name_conflict(chat_client_base: Any) -> None:
+    local_tool = FunctionTool(
+        func=lambda: "local",
+        name="delete_all_data",
+        description="Local protected tool",
+        approval_mode="always_require",
+    )
+    agent = Agent(
+        client=chat_client_base,
+        name="TestAgent",
+        tools=[_ConnectedMCPTool(name="dangerous-mcp", function_names=["delete_all_data"])],
+    )
+
+    with raises(ValueError, match="tool_name_prefix"):
+        await agent.run("hello", tools=[local_tool])
+
+
+async def test_agent_run_raises_on_runtime_local_and_runtime_mcp_name_conflict(chat_client_base: Any) -> None:
+    local_tool = FunctionTool(
+        func=lambda: "local",
+        name="delete_all_data",
+        description="Local protected tool",
+        approval_mode="always_require",
+    )
+    runtime_mcp = _ConnectedMCPTool(name="dangerous-mcp", function_names=["delete_all_data"])
+    agent = Agent(client=chat_client_base, name="TestAgent")
+
+    with raises(ValueError, match="tool_name_prefix"):
+        await agent.run("hello", tools=[local_tool, runtime_mcp])
+
+
+async def test_agent_run_raises_on_duplicate_agent_mcp_names(chat_client_base: Any) -> None:
+    agent = Agent(
+        client=chat_client_base,
+        name="TestAgent",
+        tools=[
+            _ConnectedMCPTool(name="docs-mcp", function_names=["search"]),
+            _ConnectedMCPTool(name="github-mcp", function_names=["search"]),
+        ],
+    )
+
+    with raises(ValueError, match="tool_name_prefix"):
+        await agent.run("hello")
+
+
+async def test_agent_run_accepts_prefixed_mcp_tools(chat_client_base: Any) -> None:
+    captured_options: list[dict[str, Any]] = []
+
+    original_inner = chat_client_base._inner_get_response
+
+    async def capturing_inner(
+        *, messages: MutableSequence[Message], options: dict[str, Any], **kwargs: Any
+    ) -> ChatResponse:
+        captured_options.append(dict(options))
+        return await original_inner(messages=messages, options=options, **kwargs)
+
+    chat_client_base._inner_get_response = capturing_inner
+
+    local_tool = FunctionTool(func=lambda: "local", name="search", description="Local search tool")
+    agent = Agent(
+        client=chat_client_base,
+        name="TestAgent",
+        tools=[_ConnectedMCPTool(name="docs-mcp", function_names=["search"], tool_name_prefix="docs")],
+    )
+
+    await agent.run("hello", tools=[local_tool])
+
+    tool_names = [tool.name for tool in captured_options[0]["tools"]]
+    assert tool_names == ["search", "docs_search"]
 
 
 async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
@@ -1287,7 +1385,7 @@ def test_merge_options_none_values_ignored():
 
 
 def test_merge_options_tools_combined():
-    """Test _merge_options combines tool lists without duplicates."""
+    """Test _merge_options raises when distinct tools share the same name."""
 
     class MockTool:
         def __init__(self, name):
@@ -1300,13 +1398,8 @@ def test_merge_options_tools_combined():
     base = {"tools": [tool1]}
     override = {"tools": [tool2, tool3]}
 
-    result = _merge_options(base, override)
-
-    # Should have tool1 and tool2, but not duplicate tool3
-    assert len(result["tools"]) == 2
-    tool_names = [t.name for t in result["tools"]]
-    assert "tool1" in tool_names
-    assert "tool2" in tool_names
+    with raises(ValueError, match="Duplicate tool name 'tool1'"):
+        _merge_options(base, override)
 
 
 def test_merge_options_dict_tools_combined():
@@ -1331,7 +1424,7 @@ def test_merge_options_dict_tools_combined():
 
 
 def test_merge_options_dict_tools_deduplicates():
-    """Test _merge_options deduplicates dict-defined tools by function name."""
+    """Test _merge_options raises on duplicate dict-defined tool names."""
     base = {
         "tools": [
             {"type": "function", "function": {"name": "tool_a"}},
@@ -1344,12 +1437,8 @@ def test_merge_options_dict_tools_deduplicates():
         ]
     }
 
-    result = _merge_options(base, override)
-
-    assert len(result["tools"]) == 2
-    names = [_get_tool_name(t) for t in result["tools"]]
-    assert names.count("tool_a") == 1
-    assert "tool_b" in names
+    with raises(ValueError, match="Duplicate tool name 'tool_a'"):
+        _merge_options(base, override)
 
 
 def test_merge_options_mixed_tools_combined():
@@ -1375,7 +1464,7 @@ def test_merge_options_mixed_tools_combined():
 
 
 def test_merge_options_mixed_tools_deduplicates():
-    """Test _merge_options deduplicates when a dict tool and object tool share the same name."""
+    """Test _merge_options raises when a dict tool and object tool share the same name."""
 
     class MockTool:
         def __init__(self, name):
@@ -1388,10 +1477,8 @@ def test_merge_options_mixed_tools_deduplicates():
         ]
     }
 
-    result = _merge_options(base, override)
-
-    assert len(result["tools"]) == 1
-    assert _get_tool_name(result["tools"][0]) == "tool_a"
+    with raises(ValueError, match="Duplicate tool name 'tool_a'"):
+        _merge_options(base, override)
 
 
 def test_merge_options_nameless_tools_not_deduplicated():
@@ -1411,6 +1498,20 @@ def test_merge_options_nameless_tools_not_deduplicated():
 
     # Both nameless tools should be kept (None is excluded from dedup set)
     assert len(result["tools"]) == 2
+
+
+def test_merge_options_same_tool_object_kept_once():
+    """Test _merge_options silently keeps a repeated reference to the same tool object once."""
+
+    class MockTool:
+        def __init__(self, name):
+            self.name = name
+
+    tool_a = MockTool("tool_a")
+
+    result = _merge_options({"tools": [tool_a]}, {"tools": [tool_a]})
+
+    assert result["tools"] == [tool_a]
 
 
 def test_get_tool_name_dict_no_function_key():

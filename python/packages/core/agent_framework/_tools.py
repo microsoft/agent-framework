@@ -71,7 +71,6 @@ if TYPE_CHECKING:
         ResponseStream,
     )
 
-    ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 else:
     MCPTool = Any  # type: ignore[assignment,misc]
 
@@ -83,7 +82,21 @@ DEFAULT_MAX_ITERATIONS: Final[int] = 40
 DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST: Final[int] = 3
 SHELL_TOOL_KIND_VALUE: Final[str] = "shell"
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+
 # region Helpers
+
+
+def _get_tool_name(tool: Any) -> str | None:
+    """Extract a tool name from a tool object or dict tool definition."""
+    if isinstance(tool, Mapping):
+        func = tool.get("function", None)  # type: ignore
+        if func and isinstance(func, Mapping):
+            name = func.get("name")  # type: ignore
+            return name if isinstance(name, str) else None
+        return None
+    name = getattr(tool, "name", None)
+    return name if isinstance(name, str) else None
 
 
 def _parse_inputs(  # pyright: ignore[reportUnusedFunction]
@@ -670,6 +683,51 @@ class FunctionTool(SerializationMixin):
 
 
 ToolTypes: TypeAlias = FunctionTool | MCPTool | Mapping[str, Any] | object
+
+
+def _raise_duplicate_tool_name(tool_name: str, duplicate_error_message: str | None = None) -> None:
+    message = duplicate_error_message or "Tool names must be unique."
+    raise ValueError(f"Duplicate tool name '{tool_name}'. {message}")
+
+
+def _append_unique_tools(
+    existing_tools: list[ToolTypes],
+    new_tools: Sequence[ToolTypes],
+    *,
+    duplicate_error_message: str | None = None,
+) -> list[ToolTypes]:
+    seen_by_name: dict[str, ToolTypes] = {}
+    for tool_item in existing_tools:
+        if tool_name := _get_tool_name(tool_item):
+            seen_by_name[tool_name] = tool_item
+
+    for tool_item in new_tools:
+        tool_name = _get_tool_name(tool_item)
+        if tool_name is None:
+            existing_tools.append(tool_item)
+            continue
+
+        existing_tool = seen_by_name.get(tool_name)
+        if existing_tool is None:
+            seen_by_name[tool_name] = tool_item
+            existing_tools.append(tool_item)
+            continue
+
+        if existing_tool is tool_item:
+            continue
+
+        _raise_duplicate_tool_name(tool_name, duplicate_error_message)
+
+    return existing_tools
+
+
+def _ensure_unique_tool_names(
+    tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
+    *,
+    duplicate_error_message: str | None = None,
+) -> list[ToolTypes]:
+    normalized_tools = normalize_tools(tools)
+    return _append_unique_tools([], normalized_tools, duplicate_error_message=duplicate_error_message)
 
 
 def normalize_tools(
@@ -1291,7 +1349,7 @@ def _get_tool_map(
     tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]],
 ) -> dict[str, FunctionTool]:
     tool_list: dict[str, FunctionTool] = {}
-    for tool_item in normalize_tools(tools):
+    for tool_item in _ensure_unique_tool_names(tools):
         if isinstance(tool_item, FunctionTool):
             tool_list[tool_item.name] = tool_item
     return tool_list
