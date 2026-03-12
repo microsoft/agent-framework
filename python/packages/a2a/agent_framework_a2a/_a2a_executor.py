@@ -39,12 +39,12 @@ class A2AExecutor(AgentExecutor):
             from agent_framework.openai import OpenAIResponsesClient
 
             public_agent_card = AgentCard(
-                name='Food Agent',
-                description='A simple agent that provides food-related information.',
-                url='http://localhost:9999/',
-                version='1.0.0',
-                defaultInputModes=['text'],
-                defaultOutputModes=['text'],
+                name="Food Agent",
+                description="A simple agent that provides food-related information.",
+                url="http://localhost:9999/",
+                version="1.0.0",
+                defaultInputModes=["text"],
+                defaultOutputModes=["text"],
                 capabilities=AgentCapabilities(streaming=True),
                 skills=[],
             )
@@ -70,10 +70,7 @@ class A2AExecutor(AgentExecutor):
         agent: The AI agent to execute.
     """
 
-    def __init__(
-            self,
-            agent: Agent | WorkflowAgent
-    ):
+    def __init__(self, agent: Agent | WorkflowAgent):
         """Initialize the A2AExecutor with the specified agent.
 
         Example:
@@ -184,10 +181,10 @@ class A2AExecutor(AgentExecutor):
         for content in message.contents:
             if content.type == "text" and content.text:
                 parts.append(Part(root=TextPart(text=content.text)))
-            elif content.type == "data":
+            elif content.type == "data" and content.uri:
                 base64_str = content.uri
                 parts.append(Part(root=FilePart(file=FileWithBytes(bytes=base64_str, mime_type=content.media_type))))
-            elif content.type == "uri":
+            elif content.type == "uri" and content.uri:
                 parts.append(Part(root=FilePart(file=FileWithUri(uri=content.uri, mime_type=content.media_type))))
             # Silently skip unsupported content types
 
