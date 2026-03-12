@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
@@ -222,31 +223,36 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
     }
 
-    private static AIContent ConvertContentBlock(ContentBlock block)
+    internal static AIContent ConvertContentBlock(ContentBlock block)
     {
         return block switch
         {
             TextContentBlock text => new TextContent(text.Text),
-            ImageContentBlock image => CreateDataContentFromBase64(image.Data, image.MimeType ?? "image/*"),
-            AudioContentBlock audio => CreateDataContentFromBase64(audio.Data, audio.MimeType ?? "audio/*"),
+            ImageContentBlock image => CreateDataContent(image.Data, image.MimeType ?? "image/*"),
+            AudioContentBlock audio => CreateDataContent(audio.Data, audio.MimeType ?? "audio/*"),
             _ => new TextContent(block.ToString() ?? string.Empty),
         };
     }
 
-    private static DataContent CreateDataContentFromBase64(string? base64Data, string mediaType)
+    private static DataContent CreateDataContent(ReadOnlyMemory<byte> base64Utf8Data, string mediaType)
     {
-        if (string.IsNullOrEmpty(base64Data))
+        if (base64Utf8Data.IsEmpty)
         {
             return new DataContent($"data:{mediaType};base64,", mediaType);
         }
 
+#if NET8_0_OR_GREATER
+        string base64 = Encoding.UTF8.GetString(base64Utf8Data.Span);
+#else
+        string base64 = Encoding.UTF8.GetString(base64Utf8Data.ToArray());
+#endif
+
         // If it's already a data URI, use it directly
-        if (base64Data.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        if (base64.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
         {
-            return new DataContent(base64Data, mediaType);
+            return new DataContent(base64, mediaType);
         }
 
-        // Otherwise, construct a data URI from the base64 data
-        return new DataContent($"data:{mediaType};base64,{base64Data}", mediaType);
+        return new DataContent($"data:{mediaType};base64,{base64}", mediaType);
     }
 }

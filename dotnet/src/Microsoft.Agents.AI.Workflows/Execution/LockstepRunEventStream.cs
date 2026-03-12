@@ -72,6 +72,9 @@ internal sealed class LockstepRunEventStream : IRunEventStream
             this.RunStatus = RunStatus.Running;
             runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowStarted));
 
+            // Emit WorkflowStartedEvent to the event stream for consumers
+            eventSink.Enqueue(new WorkflowStartedEvent());
+
             do
             {
                 while (this._stepRunner.HasUnprocessedMessages &&
