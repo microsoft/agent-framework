@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Linq;
 using System.Text.Json;
@@ -22,7 +22,7 @@ public sealed class ChatCompletionRequestMessageToChatMessageTests
     public void ToChatMessage_PreservesRole_ForTextContent(string expectedRole, string json)
     {
         // Arrange
-        ChatCompletionRequestMessage message = JsonSerializer.Deserialize<ChatCompletionRequestMessage>(
+        ChatCompletionRequestMessage message = JsonSerializer.Deserialize(
             json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
 
         // Act
@@ -37,9 +37,9 @@ public sealed class ChatCompletionRequestMessageToChatMessageTests
     public void ToChatMessage_FunctionMessage_PreservesRole()
     {
         // Arrange
-        const string json = """{"role":"function","name":"get_weather","content":"sunny"}""";
-        ChatCompletionRequestMessage message = JsonSerializer.Deserialize<ChatCompletionRequestMessage>(
-            json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
+        const string Json = """{"role":"function","name":"get_weather","content":"sunny"}""";
+        ChatCompletionRequestMessage message = JsonSerializer.Deserialize(
+            Json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
 
         // Act
         ChatMessage chatMessage = message.ToChatMessage();
@@ -58,7 +58,7 @@ public sealed class ChatCompletionRequestMessageToChatMessageTests
     {
         // Arrange
         string json = $$"""{"role":"{{expectedRole}}","content":[{"type":"text","text":"Hello!"}]}""";
-        ChatCompletionRequestMessage message = JsonSerializer.Deserialize<ChatCompletionRequestMessage>(
+        ChatCompletionRequestMessage message = JsonSerializer.Deserialize(
             json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
 
         // Act
@@ -85,7 +85,7 @@ public sealed class ChatCompletionRequestMessageToChatMessageTests
 
         // Act
         ChatMessage[] chatMessages = jsons
-            .Select(j => JsonSerializer.Deserialize<ChatCompletionRequestMessage>(
+            .Select(j => JsonSerializer.Deserialize(
                 j, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!)
             .Select(m => m.ToChatMessage())
             .ToArray();
@@ -102,9 +102,9 @@ public sealed class ChatCompletionRequestMessageToChatMessageTests
     public void ToChatMessage_PreservesTextContent()
     {
         // Arrange
-        const string json = """{"role":"system","content":"You are a helpful assistant."}""";
-        ChatCompletionRequestMessage message = JsonSerializer.Deserialize<ChatCompletionRequestMessage>(
-            json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
+        const string Json = """{"role":"system","content":"You are a helpful assistant."}""";
+        ChatCompletionRequestMessage message = JsonSerializer.Deserialize(
+            Json, ChatCompletions.ChatCompletionsJsonContext.Default.ChatCompletionRequestMessage)!;
 
         // Act
         ChatMessage chatMessage = message.ToChatMessage();
