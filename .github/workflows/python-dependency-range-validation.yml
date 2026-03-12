@@ -17,6 +17,8 @@ jobs:
     name: Dependency Range Validation
     runs-on: ubuntu-latest
     env:
+      # For now only run 3.13, if we do encounter situations where there are mismatches between packages and python versions (other then 3.10 and 3.14 which are known to not be able to install everything)
+      # then we will have to reevaluate.
       UV_PYTHON: "3.13"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
