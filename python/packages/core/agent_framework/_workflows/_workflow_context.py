@@ -21,6 +21,7 @@ from ._events import (
 )
 from ._runner_context import RunnerContext, WorkflowMessage
 from ._state import State
+from ._typing_utils import is_typevar
 
 if TYPE_CHECKING:
     from ._executor import Executor
@@ -177,7 +178,7 @@ def validate_workflow_context_annotation(
                 continue
 
             # Check for unresolved TypeVar early with an actionable error message
-            if isinstance(type_arg, TypeVar):
+            if is_typevar(type_arg):
                 raise ValueError(
                     f"{context_description} {parameter_name} {param_description} "
                     f"has an unresolved TypeVar '{type_arg}'. "
@@ -189,7 +190,7 @@ def validate_workflow_context_annotation(
             union_origin = get_origin(type_arg)
             if union_origin in (Union, UnionType):
                 union_members = get_args(type_arg)
-                typevar_members = [m for m in union_members if isinstance(m, TypeVar)]
+                typevar_members = [m for m in union_members if is_typevar(m)]
                 if typevar_members:
                     raise ValueError(
                         f"{context_description} {parameter_name} {param_description} "
