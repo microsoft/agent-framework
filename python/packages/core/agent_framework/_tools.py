@@ -521,7 +521,11 @@ class FunctionTool(SerializationMixin):
             if isinstance(parsed, str):
                 parsed = [Content.from_text(parsed)]
             logger.info(f"Function {self.name} succeeded.")
-            logger.debug(f"Function result: {parsed or 'None'}")
+            if parsed:
+                types = [item.type for item in parsed]
+                logger.debug(f"Function result: {len(parsed)} item(s) ({', '.join(types)})")
+            else:
+                logger.debug("Function result: None")
             return parsed
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)

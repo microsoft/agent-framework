@@ -307,7 +307,7 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     """
     client = OpenAIChatClient()
 
-    # Test with empty list serialized as JSON string (as FunctionTool.invoke would produce)
+    # Test with empty list serialized as JSON string (pre-serialized result passed to from_function_result)
     message_with_empty_list = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-123", result="[]")],
@@ -327,7 +327,7 @@ def test_function_result_falsy_values_handling(openai_unit_test_env: dict[str, s
     assert len(openai_messages) == 1
     assert openai_messages[0]["content"] == ""  # Empty string should be preserved
 
-    # Test with False serialized as JSON string (as FunctionTool.invoke would produce)
+    # Test with False serialized as JSON string (pre-serialized result passed to from_function_result)
     message_with_false = Message(
         role="tool",
         contents=[Content.from_function_result(call_id="call-789", result="false")],
