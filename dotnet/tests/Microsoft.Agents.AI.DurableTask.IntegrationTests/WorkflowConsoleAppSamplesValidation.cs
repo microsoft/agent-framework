@@ -10,6 +10,9 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
+    // In CI, `dotnet run` builds samples from scratch and LLM calls add latency, so 60s is not enough.
+    private static readonly TimeSpan s_testTimeout = TimeSpan.FromSeconds(180);
+
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableWorkflows", "ConsoleApps"));
 
@@ -22,7 +25,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task SequentialWorkflowSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "01_SequentialWorkflow");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -71,7 +74,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "02_ConcurrentWorkflow");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -120,7 +123,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task ConditionalEdgesWorkflowSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "03_ConditionalEdges");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -182,7 +185,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task WorkflowEventsSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "05_WorkflowEvents");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -278,7 +281,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task WorkflowSharedStateSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "06_WorkflowSharedState");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -376,7 +379,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task SubWorkflowsSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "07_SubWorkflows");
 
         await this.RunSampleTestAsync(samplePath, async (process, logs) =>
@@ -452,7 +455,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task WorkflowHITLSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "08_WorkflowHITL");
 
         await this.RunSampleTestAsync(samplePath, (process, logs) =>
@@ -505,7 +508,7 @@ public sealed class WorkflowConsoleAppSamplesValidation(ITestOutputHelper output
     [Fact]
     public async Task WorkflowAndAgentsSampleValidationAsync()
     {
-        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts();
+        using CancellationTokenSource testTimeoutCts = this.CreateTestTimeoutCts(s_testTimeout);
         string samplePath = Path.Combine(s_samplesPath, "04_WorkflowAndAgents");
 
         await this.RunSampleTestAsync(samplePath, (process, logs) =>
