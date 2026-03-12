@@ -74,6 +74,7 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._types import ChatOptions
 
 logger = logging.getLogger("agent_framework")
@@ -177,6 +178,8 @@ class _RunContext(TypedDict):
     session_messages: Sequence[Message]
     agent_name: str
     chat_options: MutableMapping[str, Any]
+    compaction_strategy: CompactionStrategy | None
+    tokenizer: TokenizerProtocol | None
     filtered_kwargs: Mapping[str, Any]
     finalize_kwargs: Mapping[str, Any]
 
@@ -665,6 +668,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a Agent instance.
@@ -688,6 +693,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 Note: response_format typing does not flow into run outputs when set via default_options.
                 These can be overridden at runtime via the ``options`` parameter of ``run()``.
             tools: The tools to use for the request.
+            compaction_strategy: Optional agent-level in-run compaction.
+                If both this and a compaction_strategy on the underlying client are set, this one is used.
+            tokenizer: Optional agent-level tokenizer.
+                If both this and a tokenizer on the underlying client are set, this one is used.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
         """
         opts = dict(default_options) if default_options else {}
@@ -705,6 +714,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             **kwargs,
         )
         self.client = client
+        self.compaction_strategy = compaction_strategy
+        self.tokenizer = tokenizer
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -799,6 +810,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
@@ -811,6 +824,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -823,6 +838,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -834,6 +851,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
@@ -857,8 +876,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
                 provider-specific options including temperature, max_tokens, model_id,
                 tool_choice, and provider-specific options like reasoning_effort.
-            kwargs: Additional keyword arguments for the agent.
-                Will only be passed to functions that are called.
+            compaction_strategy: Optional per-run compaction override passed to
+                ``client.get_response()``. When omitted, the agent-level override
+                is used, falling back to the client default.
+            tokenizer: Optional per-run tokenizer override passed to
+                ``client.get_response()``. When omitted, the agent-level override
+                is used, falling back to the client default.
+            kwargs: Additional keyword arguments for the agent. These are only
+                passed to functions that are called.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse] containing the agent's response.
@@ -873,6 +898,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     session=session,
                     tools=tools,
                     options=options,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
                     kwargs=kwargs,
                 )
                 response = cast(
@@ -881,6 +908,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                         messages=ctx["session_messages"],
                         stream=False,
                         options=ctx["chat_options"],  # type: ignore[reportArgumentType]
+                        compaction_strategy=ctx["compaction_strategy"],
+                        tokenizer=ctx["tokenizer"],
                         **ctx["filtered_kwargs"],
                     ),
                 )
@@ -954,6 +983,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 session=session,
                 tools=tools,
                 options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
                 kwargs=kwargs,
             )
             ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
@@ -961,6 +992,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 messages=ctx["session_messages"],
                 stream=True,
                 options=ctx["chat_options"],  # type: ignore[reportArgumentType]
+                compaction_strategy=ctx["compaction_strategy"],
+                tokenizer=ctx["tokenizer"],
                 **ctx["filtered_kwargs"],
             )
 
@@ -1047,6 +1080,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         session: AgentSession | None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
         options: Mapping[str, Any] | None,
+        compaction_strategy: CompactionStrategy | None,
+        tokenizer: TokenizerProtocol | None,
         kwargs: dict[str, Any],
     ) -> _RunContext:
         opts = dict(options) if options else {}
@@ -1081,9 +1116,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             options=opts,
         )
 
+        agent_name = self._get_agent_name()
+
         # Normalize tools
         normalized_tools = normalize_tools(tools_)
-        agent_name = self._get_agent_name()
 
         # Resolve final tool list (runtime provided tools + local MCP server tools)
         final_tools: list[FunctionTool | Callable[..., Any] | dict[str, Any] | Any] = []
@@ -1153,6 +1189,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "session_messages": session_messages,
             "agent_name": agent_name,
             "chat_options": co,
+            "compaction_strategy": compaction_strategy or self.compaction_strategy,
+            "tokenizer": tokenizer or self.tokenizer,
             "filtered_kwargs": filtered_kwargs,
             "finalize_kwargs": finalize_kwargs,
         }
@@ -1408,6 +1446,8 @@ class Agent(
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize a Agent instance."""
@@ -1421,5 +1461,7 @@ class Agent(
             default_options=default_options,
             context_providers=context_providers,
             middleware=middleware,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             **kwargs,
         )
