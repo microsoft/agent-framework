@@ -31,6 +31,7 @@ internal sealed record AuditEntry(string Step, string Timestamp, string Detail);
 /// If the order ID starts with "INVALID", the executor halts the workflow early
 /// using <see cref="IWorkflowContext.RequestHaltAsync"/>.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class ValidateOrder() : Executor<string, OrderDetails>("ValidateOrder")
 {
     public override async ValueTask<OrderDetails> HandleAsync(
@@ -73,6 +74,7 @@ internal sealed class ValidateOrder() : Executor<string, OrderDetails>("Validate
 /// Uses ReadOrInitStateAsync to lazily initialize a shipping tier.
 /// Demonstrates custom scopes by writing shipping details under the "shipping" scope.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class EnrichOrder() : Executor<OrderDetails, OrderDetails>("EnrichOrder")
 {
     public override async ValueTask<OrderDetails> HandleAsync(
