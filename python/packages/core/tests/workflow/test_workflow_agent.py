@@ -312,6 +312,23 @@ class TestWorkflowAgent:
         assert isinstance(agent_no_name, WorkflowAgent)
         assert agent_no_name.workflow is workflow
 
+    def test_workflow_as_agent_with_description_and_context_providers(self) -> None:
+        """Test that Workflow.as_agent() forwards description and context_providers."""
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(start_executor=executor).build()
+
+        history_provider = InMemoryHistoryProvider()
+        agent = workflow.as_agent(
+            name="MyAgent",
+            description="A test agent",
+            context_providers=[history_provider],
+        )
+
+        assert isinstance(agent, WorkflowAgent)
+        assert agent.name == "MyAgent"
+        assert agent.description == "A test agent"
+        assert history_provider in agent.context_providers
+
     def test_workflow_as_agent_cannot_handle_agent_inputs(self) -> None:
         """Test that Workflow.as_agent() raises an error if the start executor cannot handle agent inputs."""
 

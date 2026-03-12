@@ -12,6 +12,7 @@ import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from typing import Any, Literal, overload
 
+from .._sessions import BaseContextProvider
 from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
@@ -853,7 +854,13 @@ class Workflow(DictConvertible):
 
         return list(output_types)
 
-    def as_agent(self, name: str | None = None) -> WorkflowAgent:
+    def as_agent(
+        self,
+        name: str | None = None,
+        description: str | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
+        **kwargs: Any,
+    ) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
 
         The returned agent converts standard agent inputs (strings, Message, or lists of these)
@@ -867,7 +874,10 @@ class Workflow(DictConvertible):
         initialization will fail with a ValueError.
 
         Args:
-            name: Optional name for the agent. If None, a default name will be generated.
+            name: Optional name for the agent.
+            description: Optional description of the agent.
+            context_providers: Optional sequence of context providers for the agent.
+            **kwargs: Additional keyword arguments passed to BaseAgent.
 
         Returns:
             A WorkflowAgent instance that wraps this workflow.
@@ -878,4 +888,10 @@ class Workflow(DictConvertible):
         # Import here to avoid circular imports
         from ._agent import WorkflowAgent
 
-        return WorkflowAgent(workflow=self, name=name)
+        return WorkflowAgent(
+            workflow=self,
+            name=name,
+            description=description,
+            context_providers=context_providers,
+            **kwargs,
+        )
