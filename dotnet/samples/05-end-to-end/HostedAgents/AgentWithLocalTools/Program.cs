@@ -15,21 +15,21 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string deploymentName = Environment.GetEnvironmentVariable("MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 Console.WriteLine($"Project Endpoint: {endpoint}");
 Console.WriteLine($"Model Deployment: {deploymentName}");
 
-var seattleHotels = new[]
-{
+Hotel[] seattleHotels =
+[
     new Hotel("Contoso Suites", 189, 4.5, "Downtown"),
     new Hotel("Fabrikam Residences", 159, 4.2, "Pike Place Market"),
     new Hotel("Alpine Ski House", 249, 4.7, "Seattle Center"),
     new Hotel("Margie's Travel Lodge", 219, 4.4, "Waterfront"),
     new Hotel("Northwind Inn", 139, 4.0, "Capitol Hill"),
     new Hotel("Relecloud Hotel", 99, 3.8, "University District"),
-};
+];
 
 [Description("Get available hotels in Seattle for the specified dates. This simulates a call to a hotel availability API.")]
 string GetAvailableHotels(
@@ -54,21 +54,21 @@ string GetAvailableHotels(
             return "Error: Check-out date must be after check-in date.";
         }
 
-        var nights = (checkOut - checkIn).Days;
-        var availableHotels = seattleHotels.Where(h => h.PricePerNight <= maxPrice).ToList();
+        int nights = (checkOut - checkIn).Days;
+        List<Hotel> availableHotels = seattleHotels.Where(h => h.PricePerNight <= maxPrice).ToList();
 
         if (availableHotels.Count == 0)
         {
             return $"No hotels found in Seattle within your budget of ${maxPrice}/night.";
         }
 
-        var result = new StringBuilder();
+        StringBuilder result = new();
         result.AppendLine($"Available hotels in Seattle from {checkInDate} to {checkOutDate} ({nights} nights):");
         result.AppendLine();
 
-        foreach (var hotel in availableHotels)
+        foreach (Hotel hotel in availableHotels)
         {
-            var totalCost = hotel.PricePerNight * nights;
+            int totalCost = hotel.PricePerNight * nights;
             result.AppendLine($"**{hotel.Name}**");
             result.AppendLine($"   Location: {hotel.Location}");
             result.AppendLine($"   Rating: {hotel.Rating}/5");
@@ -84,7 +84,10 @@ string GetAvailableHotels(
     }
 }
 
-var credential = new AzureCliCredential();
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+DefaultAzureCredential credential = new();
 AIProjectClient projectClient = new(new Uri(endpoint), credential);
 
 ClientConnection connection = projectClient.GetConnection(typeof(AzureOpenAIClient).FullName!);
@@ -96,14 +99,14 @@ if (!connection.TryGetLocatorAsUri(out Uri? openAiEndpoint) || openAiEndpoint is
 openAiEndpoint = new Uri($"https://{openAiEndpoint.Host}");
 Console.WriteLine($"OpenAI Endpoint: {openAiEndpoint}");
 
-var chatClient = new AzureOpenAIClient(openAiEndpoint, credential)
+IChatClient chatClient = new AzureOpenAIClient(openAiEndpoint, credential)
     .GetChatClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
     .UseOpenTelemetry(sourceName: "Agents", configure: cfg => cfg.EnableSensitiveData = false)
     .Build();
 
-var agent = new ChatClientAgent(chatClient,
+AIAgent agent = chatClient.AsAIAgent(
     name: "SeattleHotelAgent",
     instructions: """
         You are a helpful travel assistant specializing in finding hotels in Seattle, Washington.

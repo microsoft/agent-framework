@@ -25,7 +25,7 @@ Before running any sample, ensure you have:
 
 ### Authenticate with Azure CLI
 
-All samples use `AzureCliCredential` for authentication. Make sure you're logged in:
+All samples use `DefaultAzureCredential` for authentication, which automatically probes multiple credential sources (environment variables, managed identity, Azure CLI, etc.). For local development, the simplest approach is to authenticate via Azure CLI:
 
 ```powershell
 az login

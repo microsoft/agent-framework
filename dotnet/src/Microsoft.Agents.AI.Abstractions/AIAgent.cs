@@ -20,6 +20,19 @@ namespace Microsoft.Agents.AI;
 /// <see cref="AIAgent"/> serves as the foundational class for implementing AI agents that can participate in conversations
 /// and process user requests. An agent instance may participate in multiple concurrent conversations, and each conversation
 /// may involve multiple agents working together.
+/// <para>
+/// <strong>Security considerations:</strong> An <see cref="AIAgent"/> orchestrates data flow across trust boundaries —
+/// messages are sent to external AI services, context providers, chat history stores, and function tools. Agent Framework
+/// passes messages through as-is without validation or sanitization. Developers must be aware that:
+/// <list type="bullet">
+/// <item><description>User-supplied messages may contain prompt injection attempts designed to manipulate LLM behavior.</description></item>
+/// <item><description>LLM responses should be treated as untrusted output — they may contain hallucinations, malicious payloads (e.g., scripts, SQL),
+/// or content influenced by indirect prompt injection. Always validate and sanitize LLM output before rendering in HTML, executing as code,
+/// or using in database queries.</description></item>
+/// <item><description>Messages with different roles carry different trust levels: <c>system</c> messages have the highest trust and must be developer-controlled;
+/// <c>user</c>, <c>assistant</c>, and <c>tool</c> messages should be treated as untrusted.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 [DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract partial class AIAgent
@@ -165,6 +178,11 @@ public abstract partial class AIAgent
     /// This method enables saving conversation sessions to persistent storage,
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances. Use <see cref="DeserializeSessionAsync"/> to restore the session.
+    /// <para>
+    /// <strong>Security consideration:</strong> Serialized sessions may contain conversation content, session identifiers,
+    /// and other potentially sensitive data including PII. Ensure that serialized session data is stored securely with
+    /// appropriate access controls and encryption at rest.
+    /// </para>
     /// </remarks>
     public ValueTask<JsonElement> SerializeSessionAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => this.SerializeSessionCoreAsync(session, jsonSerializerOptions, cancellationToken);
@@ -194,6 +212,12 @@ public abstract partial class AIAgent
     /// This method enables restoration of conversation sessions from previously saved state,
     /// allowing conversations to resume across application restarts or be migrated between
     /// different agent instances.
+    /// <para>
+    /// <strong>Security consideration:</strong> Restoring a session from an untrusted source is equivalent to accepting untrusted input.
+    /// Serialized sessions may contain conversation content, session identifiers, and potentially sensitive data. A compromised
+    /// storage backend could alter message roles to escalate trust, or inject adversarial content that influences LLM behavior.
+    /// Treat serialized session data as sensitive and ensure it is stored and transmitted securely.
+    /// </para>
     /// </remarks>
     public ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => this.DeserializeSessionCoreAsync(serializedState, jsonSerializerOptions, cancellationToken);
@@ -300,6 +324,11 @@ public abstract partial class AIAgent
     /// <para>
     /// The messages are processed in the order provided and become part of the conversation history.
     /// The agent's response will also be added to <paramref name="session"/> if one is provided.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Agent Framework does not validate or sanitize message content — it is passed through
+    /// to the underlying AI service as-is. If input messages include untrusted user content, developers should be aware of prompt injection risks.
+    /// System-role messages must be developer-controlled and should never contain end-user input.
     /// </para>
     /// </remarks>
     public Task<AgentResponse> RunAsync(
@@ -425,6 +454,11 @@ public abstract partial class AIAgent
     /// <para>
     /// Each <see cref="AgentResponseUpdate"/> represents a portion of the complete response, allowing consumers
     /// to display partial results, implement progressive loading, or provide immediate feedback to users.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Agent Framework does not validate or sanitize message content — it is passed through
+    /// to the underlying AI service as-is. If input messages include untrusted user content, developers should be aware of prompt injection risks.
+    /// System-role messages must be developer-controlled and should never contain end-user input.
     /// </para>
     /// </remarks>
     public async IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(

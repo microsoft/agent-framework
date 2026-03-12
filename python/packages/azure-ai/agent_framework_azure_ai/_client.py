@@ -37,9 +37,8 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
-    CodeInterpreterContainerAuto,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
-    FoundryFeaturesOptInKeys,
     ImageGenTool,
     MCPTool,
     PromptAgentDefinition,
@@ -66,7 +65,6 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
-
 logger = logging.getLogger("agent_framework.azure")
 
 
@@ -78,9 +76,6 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
 
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
-
-    foundry_features: FoundryFeaturesOptInKeys | str
-    """Optional Foundry preview feature opt-in for agent version creation."""
 
 
 AzureAIClientOptionsT = TypeVar(
@@ -123,6 +118,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
+        allow_preview: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         **kwargs: Any,
@@ -148,6 +144,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
             kwargs: Additional keyword arguments passed to the parent class.
@@ -208,11 +205,14 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # Use provided credential
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             should_close_client = True
 
         # Initialize parent
@@ -413,8 +413,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "definition": PromptAgentDefinition(**args),
                 "description": self.agent_description,
             }
-            if foundry_features := run_options.get("foundry_features"):
-                create_version_kwargs["foundry_features"] = foundry_features
 
             created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
@@ -513,7 +511,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
-            "foundry_features": ("foundry_features",),
+            "allow_preview": ("allow_preview",),
         }
 
         for run_keys in agent_level_option_to_run_keys.values():
@@ -939,7 +937,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
         resolved = resolve_file_ids(file_ids)
-        tool_container = CodeInterpreterContainerAuto(file_ids=resolved)
+        tool_container = AutoCodeInterpreterToolParam(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
@@ -1189,8 +1187,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
-            name: The name of the agent.
-            description: A brief description of the agent's purpose.
+            name: The name of the agent. Defaults to the client's ``agent_name`` when None.
+            description: A brief description of the agent's purpose. Defaults to the client's
+                ``agent_description`` when None.
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
@@ -1203,8 +1202,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         """
         return super().as_agent(
             id=id,
-            name=name,
-            description=description,
+            name=self.agent_name if name is None else name,
+            description=self.agent_description if description is None else description,
             instructions=instructions,
             tools=tools,
             default_options=default_options,
@@ -1243,6 +1242,7 @@ class AzureAIClient(
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
+        allow_preview: bool | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
@@ -1267,6 +1267,7 @@ class AzureAIClient(
                 or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
             middleware: Optional sequence of chat middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
@@ -1317,6 +1318,7 @@ class AzureAIClient(
             model_deployment_name=model_deployment_name,
             credential=credential,
             use_latest_version=use_latest_version,
+            allow_preview=allow_preview,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             env_file_path=env_file_path,

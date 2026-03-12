@@ -9,13 +9,16 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-var openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
-var toolConnectionId = Environment.GetEnvironmentVariable("MCP_TOOL_CONNECTION_ID") ?? throw new InvalidOperationException("MCP_TOOL_CONNECTION_ID is not set.");
+string openAiEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+string toolConnectionId = Environment.GetEnvironmentVariable("MCP_TOOL_CONNECTION_ID") ?? throw new InvalidOperationException("MCP_TOOL_CONNECTION_ID is not set.");
 
-var credential = new AzureCliCredential();
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+DefaultAzureCredential credential = new();
 
-var chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
+IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
     .GetChatClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
@@ -23,7 +26,7 @@ var chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credential)
     .UseOpenTelemetry(sourceName: "Agents", configure: (cfg) => cfg.EnableSensitiveData = true)
     .Build();
 
-var agent = new ChatClientAgent(chatClient,
+AIAgent agent = chatClient.AsAIAgent(
       name: "AgentWithTools",
       instructions: @"You are a helpful assistant with access to tools for fetching Microsoft documentation.
 

@@ -86,6 +86,7 @@ class TestInit:
             provider = FoundryMemoryProvider(
                 project_endpoint="https://test.project.endpoint",
                 credential=mock_credential,  # type: ignore[arg-type]
+                allow_preview=True,
                 memory_store_name="test_store",
                 scope="user_123",
             )
@@ -93,6 +94,7 @@ class TestInit:
             mock_ai_project_client.assert_called_once_with(
                 endpoint="https://test.project.endpoint",
                 credential=mock_credential,
+                allow_preview=True,
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
 

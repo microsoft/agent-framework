@@ -292,6 +292,85 @@ public sealed class OpenAIResponseClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent false
+    /// wraps the original ResponsesClient, which remains accessible via the service chain.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningFalse_InnerResponsesClientIsAccessible()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: false);
+
+        // Assert - the inner ResponsesClient should be accessible via GetService
+        var innerClient = chatClient.GetService<ResponsesClient>();
+        Assert.NotNull(innerClient);
+        Assert.Same(responseClient, innerClient);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with default parameter (includeReasoningEncryptedContent = true)
+    /// configures StoredOutputEnabled to false and includes ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_Default_ConfiguresStoredOutputDisabledWithReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.Contains(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent explicitly set to true
+    /// configures StoredOutputEnabled to false and includes ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningTrue_ConfiguresStoredOutputDisabledWithReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: true);
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.Contains(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent set to false
+    /// configures StoredOutputEnabled to false and does not include ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningFalse_ConfiguresStoredOutputDisabledWithoutReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: false);
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.DoesNotContain(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
     /// A simple test IServiceProvider implementation for testing.
     /// </summary>
     private sealed class TestServiceProvider : IServiceProvider
@@ -308,5 +387,25 @@ public sealed class OpenAIResponseClientExtensionsTests
             "FunctionInvocationServices",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         return property?.GetValue(client) as IServiceProvider;
+    }
+
+    /// <summary>
+    /// Extracts the <see cref="CreateResponseOptions"/> produced by the ConfigureOptions pipeline
+    /// by using reflection to access the configure action and invoking it on a test <see cref="ChatOptions"/>.
+    /// </summary>
+    private static CreateResponseOptions? GetCreateResponseOptionsFromPipeline(IChatClient chatClient)
+    {
+        // The ConfigureOptionsChatClient stores the configure action in a private field.
+        var configureField = chatClient.GetType().GetField("_configureOptions", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(configureField);
+
+        var configureAction = configureField.GetValue(chatClient) as Action<ChatOptions>;
+        Assert.NotNull(configureAction);
+
+        var options = new ChatOptions();
+        configureAction(options);
+
+        Assert.NotNull(options.RawRepresentationFactory);
+        return options.RawRepresentationFactory(chatClient) as CreateResponseOptions;
     }
 }
