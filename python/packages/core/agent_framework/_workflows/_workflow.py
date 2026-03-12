@@ -604,10 +604,11 @@ class Workflow(DictConvertible):
 
         Filters out internal events for non-streaming callers.
         """
+        ordered_events = Workflow._normalize_executor_lifecycle_order(events)
         filtered: list[WorkflowEvent] = []
         status_events: list[WorkflowEvent] = []
 
-        for ev in events:
+        for ev in ordered_events:
             # Omit started events from result (telemetry-only)
             if ev.type == "started":
                 continue
@@ -620,6 +621,58 @@ class Workflow(DictConvertible):
             filtered.append(ev)
 
         return WorkflowRunResult(filtered, status_events)
+
+    @staticmethod
+    def _normalize_executor_lifecycle_order(
+        events: Sequence[WorkflowEvent],
+    ) -> list[WorkflowEvent]:
+        """Normalize executor lifecycle ordering in non-streaming results.
+
+        Concurrent fan-out paths can enqueue executor lifecycle events in scheduler-dependent
+        order. To keep run results reproducible, sort lifecycle events by executor id
+        within each superstep window while preserving non-lifecycle event positions.
+        """
+
+        def is_lifecycle_event(event: WorkflowEvent) -> bool:
+            return event.type in {"executor_invoked", "executor_completed", "executor_failed"}
+
+        normalized: list[WorkflowEvent] = []
+        segment: list[WorkflowEvent] = []
+
+        def flush_segment() -> None:
+            if not segment:
+                return
+
+            sorted_by_type = {
+                lifecycle_type: iter(
+                    sorted(
+                        [event for event in segment if event.type == lifecycle_type],
+                        key=lambda event: event.executor_id or "",
+                    )
+                )
+                for lifecycle_type in (
+                    "executor_invoked",
+                    "executor_completed",
+                    "executor_failed",
+                )
+            }
+
+            for event in segment:
+                if is_lifecycle_event(event):
+                    normalized.append(next(sorted_by_type[event.type]))
+                else:
+                    normalized.append(event)
+            segment.clear()
+
+        for event in events:
+            if event.type in {"superstep_started", "superstep_completed"}:
+                flush_segment()
+                normalized.append(event)
+                continue
+            segment.append(event)
+
+        flush_segment()
+        return normalized
 
     @staticmethod
     def _validate_run_params(

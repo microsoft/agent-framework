@@ -226,6 +226,39 @@ async def test_fan_out_multiple_completed_events():
     assert len(outputs) == 2
 
 
+async def test_parallel_executor_lifecycle_order_is_deterministic_in_run_results():
+    """Ensure non-streaming run results are stable across repeated fan-out runs."""
+    executor_a = IncrementExecutor(id="executor_a")
+    executor_b = IncrementExecutor(id="executor_b", limit=1)
+    executor_c = IncrementExecutor(id="executor_c", limit=1)
+
+    workflow = (
+        WorkflowBuilder(start_executor=executor_a)
+        # Intentionally reverse registration order to verify canonical ordering in results.
+        .add_fan_out_edges(executor_a, [executor_c, executor_b])
+        .build()
+    )
+
+    observed_signatures: list[list[tuple[str, str | None]]] = []
+    for _ in range(5):
+        events = await workflow.run(NumberMessage(data=0))
+        signature = [
+            (event.type, event.executor_id)
+            for event in events
+            if event.type in {"executor_invoked", "executor_completed", "executor_failed"}
+        ]
+        observed_signatures.append(signature)
+
+    assert all(signature == observed_signatures[0] for signature in observed_signatures)
+
+    completed_ids = [
+        executor_id
+        for event_type, executor_id in observed_signatures[0]
+        if event_type == "executor_completed" and executor_id in {"executor_b", "executor_c"}
+    ]
+    assert completed_ids == sorted(completed_ids)
+
+
 async def test_fan_in():
     """Test a fan-in workflow."""
     executor_a = IncrementExecutor(id="executor_a")
