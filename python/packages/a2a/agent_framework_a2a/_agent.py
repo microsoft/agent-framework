@@ -130,8 +130,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """
         # Default name/description from agent_card when not explicitly provided
         if agent_card is not None:
-            name = name or agent_card.name
-            description = description or agent_card.description
+            if name is None:
+                name = agent_card.name
+            if description is None:
+                description = agent_card.description
 
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
