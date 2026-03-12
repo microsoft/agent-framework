@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
@@ -100,6 +101,14 @@ public sealed class CompactionMessageGroup
     /// </remarks>
     public int? TurnIndex { get; }
 
+    private bool _isExcluded;
+
+    /// <summary>
+    /// An optional callback invoked when <see cref="IsExcluded"/> changes value.
+    /// Used internally by <see cref="CompactionMessageIndex"/> to invalidate cached aggregates.
+    /// </summary>
+    internal Action? ExclusionChanged;
+
     /// <summary>
     /// Gets or sets a value indicating whether this group is excluded from the projected message list.
     /// </summary>
@@ -107,7 +116,18 @@ public sealed class CompactionMessageGroup
     /// Excluded groups are preserved in the collection for diagnostics or storage purposes
     /// but are not included when calling <see cref="CompactionMessageIndex.GetIncludedMessages"/>.
     /// </remarks>
-    public bool IsExcluded { get; set; }
+    public bool IsExcluded
+    {
+        get => _isExcluded;
+        set
+        {
+            if (_isExcluded != value)
+            {
+                _isExcluded = value;
+                ExclusionChanged?.Invoke();
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets an optional reason explaining why this group was excluded.

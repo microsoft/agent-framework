@@ -27,6 +27,20 @@ public sealed class CompactionMessageIndex
     private int _currentTurn;
     private ChatMessage? _lastProcessedMessage;
 
+    // Cached values for derived properties — invalidated whenever groups are added/removed
+    // or a group's IsExcluded state changes.
+    private int? _cachedTotalMessageCount;
+    private int? _cachedTotalByteCount;
+    private int? _cachedTotalTokenCount;
+    private int? _cachedIncludedGroupCount;
+    private int? _cachedIncludedMessageCount;
+    private int? _cachedIncludedByteCount;
+    private int? _cachedIncludedTokenCount;
+    private int? _cachedTotalTurnCount;
+    private int? _cachedIncludedTurnCount;
+    private int? _cachedIncludedNonSystemGroupCount;
+    private int? _cachedRawMessageCount;
+
     /// <summary>
     /// Gets the list of message groups in this collection.
     /// </summary>
@@ -46,6 +60,12 @@ public sealed class CompactionMessageIndex
     {
         this.Groups = Throw.IfNull(groups, nameof(groups));
         this.Tokenizer = tokenizer;
+
+        // Register all pre-existing groups so that IsExcluded changes invalidate the cache.
+        for (int i = 0; i < groups.Count; i++)
+        {
+            this.RegisterGroup(groups[i]);
+        }
 
         // Restore turn counter and last processed message from the groups
         for (int index = groups.Count - 1; index >= 0; --index)
@@ -123,6 +143,7 @@ public sealed class CompactionMessageIndex
             this.Groups.Clear();
             this._currentTurn = 0;
             this._lastProcessedMessage = null;
+            this.InvalidateCache();
             return;
         }
 
@@ -184,13 +205,13 @@ public sealed class CompactionMessageIndex
             if (message.Role == ChatRole.System)
             {
                 // System messages are not part of any turn
-                this.Groups.Add(CreateGroup(CompactionGroupKind.System, [message], this.Tokenizer, turnIndex: null));
+                this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.System, [message], this.Tokenizer, turnIndex: null));
                 index++;
             }
             else if (message.Role == ChatRole.User)
             {
                 this._currentTurn++;
-                this.Groups.Add(CreateGroup(CompactionGroupKind.User, [message], this.Tokenizer, this._currentTurn));
+                this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.User, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasToolCalls(message))
@@ -207,11 +228,11 @@ public sealed class CompactionMessageIndex
                     index++;
                 }
 
-                this.Groups.Add(CreateGroup(CompactionGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
+                this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
             }
             else if (message.Role == ChatRole.Assistant && IsSummaryMessage(message))
             {
-                this.Groups.Add(CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
+                this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.Summary, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
             else if (message.Role == ChatRole.Assistant && HasOnlyReasoning(message))
@@ -247,17 +268,17 @@ public sealed class CompactionMessageIndex
                         index++;
                     }
 
-                    this.Groups.Add(CreateGroup(CompactionGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
+                    this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.ToolCall, groupMessages, this.Tokenizer, this._currentTurn));
                 }
                 else
                 {
-                    this.Groups.Add(CreateGroup(CompactionGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
+                    this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
                     index++;
                 }
             }
             else
             {
-                this.Groups.Add(CreateGroup(CompactionGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
+                this.AddAndRegisterGroup(CreateGroup(CompactionGroupKind.AssistantText, [message], this.Tokenizer, this._currentTurn));
                 index++;
             }
         }
@@ -266,6 +287,8 @@ public sealed class CompactionMessageIndex
         {
             this._lastProcessedMessage = messages[^1];
         }
+
+        this.InvalidateCache();
     }
 
     /// <summary>
@@ -281,6 +304,8 @@ public sealed class CompactionMessageIndex
     {
         CompactionMessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
         this.Groups.Insert(index, group);
+        this.RegisterGroup(group);
+        this.InvalidateCache();
         return group;
     }
 
@@ -296,6 +321,8 @@ public sealed class CompactionMessageIndex
     {
         CompactionMessageGroup group = CreateGroup(kind, messages, this.Tokenizer, turnIndex);
         this.Groups.Add(group);
+        this.RegisterGroup(group);
+        this.InvalidateCache();
         return group;
     }
 
@@ -320,57 +347,57 @@ public sealed class CompactionMessageIndex
     /// <summary>
     /// Gets the total number of messages across all groups, including excluded ones.
     /// </summary>
-    public int TotalMessageCount => this.Groups.Sum(group => group.MessageCount);
+    public int TotalMessageCount => _cachedTotalMessageCount ??= this.Groups.Sum(group => group.MessageCount);
 
     /// <summary>
     /// Gets the total UTF-8 byte count across all groups, including excluded ones.
     /// </summary>
-    public int TotalByteCount => this.Groups.Sum(group => group.ByteCount);
+    public int TotalByteCount => _cachedTotalByteCount ??= this.Groups.Sum(group => group.ByteCount);
 
     /// <summary>
     /// Gets the total token count across all groups, including excluded ones.
     /// </summary>
-    public int TotalTokenCount => this.Groups.Sum(group => group.TokenCount);
+    public int TotalTokenCount => _cachedTotalTokenCount ??= this.Groups.Sum(group => group.TokenCount);
 
     /// <summary>
     /// Gets the total number of groups that are not excluded.
     /// </summary>
-    public int IncludedGroupCount => this.Groups.Count(group => !group.IsExcluded);
+    public int IncludedGroupCount => _cachedIncludedGroupCount ??= this.Groups.Count(group => !group.IsExcluded);
 
     /// <summary>
     /// Gets the total number of messages across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedMessageCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.MessageCount);
+    public int IncludedMessageCount => _cachedIncludedMessageCount ??= this.Groups.Where(group => !group.IsExcluded).Sum(group => group.MessageCount);
 
     /// <summary>
     /// Gets the total UTF-8 byte count across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedByteCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.ByteCount);
+    public int IncludedByteCount => _cachedIncludedByteCount ??= this.Groups.Where(group => !group.IsExcluded).Sum(group => group.ByteCount);
 
     /// <summary>
     /// Gets the total token count across all included (non-excluded) groups.
     /// </summary>
-    public int IncludedTokenCount => this.Groups.Where(group => !group.IsExcluded).Sum(group => group.TokenCount);
+    public int IncludedTokenCount => _cachedIncludedTokenCount ??= this.Groups.Where(group => !group.IsExcluded).Sum(group => group.TokenCount);
 
     /// <summary>
     /// Gets the total number of user turns across all groups (including those with excluded groups).
     /// </summary>
-    public int TotalTurnCount => this.Groups.Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null && turnIndex > 0);
+    public int TotalTurnCount => _cachedTotalTurnCount ??= this.Groups.Select(group => group.TurnIndex).Distinct().Count(turnIndex => turnIndex is not null && turnIndex > 0);
 
     /// <summary>
     /// Gets the number of user turns that have at least one non-excluded group.
     /// </summary>
-    public int IncludedTurnCount => this.Groups.Where(group => !group.IsExcluded && group.TurnIndex is not null && group.TurnIndex > 0).Select(group => group.TurnIndex).Distinct().Count();
+    public int IncludedTurnCount => _cachedIncludedTurnCount ??= this.Groups.Where(group => !group.IsExcluded && group.TurnIndex is not null && group.TurnIndex > 0).Select(group => group.TurnIndex).Distinct().Count();
 
     /// <summary>
     /// Gets the total number of groups across all included (non-excluded) groups that are not <see cref="CompactionGroupKind.System"/>.
     /// </summary>
-    public int IncludedNonSystemGroupCount => this.Groups.Count(group => !group.IsExcluded && group.Kind != CompactionGroupKind.System);
+    public int IncludedNonSystemGroupCount => _cachedIncludedNonSystemGroupCount ??= this.Groups.Count(group => !group.IsExcluded && group.Kind != CompactionGroupKind.System);
 
     /// <summary>
     /// Gets the total number of original messages (that are not summaries).
     /// </summary>
-    public int RawMessageCount => this.Groups.Where(group => group.Kind != CompactionGroupKind.Summary).Sum(group => group.MessageCount);
+    public int RawMessageCount => _cachedRawMessageCount ??= this.Groups.Where(group => group.Kind != CompactionGroupKind.Summary).Sum(group => group.MessageCount);
 
     /// <summary>
     /// Returns all groups that belong to the specified user turn.
@@ -378,6 +405,37 @@ public sealed class CompactionMessageIndex
     /// <param name="turnIndex">The desired turn index.</param>
     /// <returns>The groups belonging to the turn, in order.</returns>
     public IEnumerable<CompactionMessageGroup> GetTurnGroups(int turnIndex) => this.Groups.Where(group => group.TurnIndex == turnIndex);
+
+    private void InvalidateCache()
+    {
+        _cachedTotalMessageCount = null;
+        _cachedTotalByteCount = null;
+        _cachedTotalTokenCount = null;
+        _cachedIncludedGroupCount = null;
+        _cachedIncludedMessageCount = null;
+        _cachedIncludedByteCount = null;
+        _cachedIncludedTokenCount = null;
+        _cachedTotalTurnCount = null;
+        _cachedIncludedTurnCount = null;
+        _cachedIncludedNonSystemGroupCount = null;
+        _cachedRawMessageCount = null;
+    }
+
+    private void RegisterGroup(CompactionMessageGroup group)
+    {
+        // Each group is owned by exactly one index, so assignment rather than
+        // += is intentional — no need to chain callbacks.
+        group.ExclusionChanged = this.InvalidateCache;
+    }
+
+    // Adds the group to the list and registers it for cache invalidation.
+    // Callers that add many groups in a loop (e.g. AppendFromMessages) call
+    // InvalidateCache() once at the end rather than per-group for efficiency.
+    private void AddAndRegisterGroup(CompactionMessageGroup group)
+    {
+        this.Groups.Add(group);
+        this.RegisterGroup(group);
+    }
 
     /// <summary>
     /// Computes the UTF-8 byte count for a set of messages across all content types.
