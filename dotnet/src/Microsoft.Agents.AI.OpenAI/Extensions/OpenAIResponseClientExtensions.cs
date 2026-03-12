@@ -100,15 +100,23 @@ public static class OpenAIResponseClientExtensions
     /// This corresponds to setting the "store" property in the JSON representation to false.
     /// </remarks>
     /// <param name="responseClient">The client.</param>
+    /// <param name="includeReasoningEncryptedContent">
+    /// Includes an encrypted version of reasoning tokens in reasoning item outputs.
+    /// This enables reasoning items to be used in multi-turn conversations when using the Responses API statelessly
+    /// (like when the store parameter is set to false, or when an organization is enrolled in the zero data retention program).
+    /// Defaults to <see langword="true"/>.
+    /// </param>
     /// <returns>An <see cref="IChatClient"/> that can be used to converse via the <see cref="ResponsesClient"/> that does not store responses for later retrieval.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="responseClient"/> is <see langword="null"/>.</exception>
     [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-    public static IChatClient AsIChatClientWithStoredOutputDisabled(this ResponsesClient responseClient)
+    public static IChatClient AsIChatClientWithStoredOutputDisabled(this ResponsesClient responseClient, bool includeReasoningEncryptedContent = true)
     {
         return Throw.IfNull(responseClient)
             .AsIChatClient()
             .AsBuilder()
-            .ConfigureOptions(x => x.RawRepresentationFactory = _ => new CreateResponseOptions() { StoredOutputEnabled = false })
+            .ConfigureOptions(x => x.RawRepresentationFactory = _ => includeReasoningEncryptedContent
+                ? new CreateResponseOptions() { StoredOutputEnabled = false, IncludedProperties = { IncludedResponseProperty.ReasoningEncryptedContent } }
+                : new CreateResponseOptions() { StoredOutputEnabled = false })
             .Build();
     }
 }

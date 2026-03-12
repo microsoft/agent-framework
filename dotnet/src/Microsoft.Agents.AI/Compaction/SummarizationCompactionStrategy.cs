@@ -161,7 +161,10 @@ public sealed class SummarizationCompactionStrategy : CompactionStrategy
 
         // Generate summary using the chat client (single LLM call for all marked groups)
         int summarized = excludedGroups.Count;
-        logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 1, this.ChatClient.GetType().Name);
+        if (logger.IsEnabled(LogLevel.Debug))
+        {
+            logger.LogSummarizationStarting(summarized, summarizationMessages.Count - 1, this.ChatClient.GetType().Name);
+        }
 
         using Activity? summarizeActivity = CompactionTelemetry.ActivitySource.StartActivity(CompactionTelemetry.ActivityNames.Summarize);
         summarizeActivity?.SetTag(CompactionTelemetry.Tags.GroupsSummarized, summarized);
