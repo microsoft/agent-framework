@@ -11,10 +11,9 @@ import os
 from datetime import datetime
 from typing import Annotated
 
-from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.agentserver.agentframework import from_agent_framework
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
 
@@ -117,18 +116,26 @@ def get_available_hotels(
         return f"Error parsing dates. Please use YYYY-MM-DD format. Details: {str(e)}"
 
 
+def get_credential():
+    """Will use Managed Identity when running in Azure, otherwise falls back to Azure CLI Credential."""
+    return (
+        ManagedIdentityCredential()
+        if os.getenv("MSI_ENDPOINT")
+        else AzureCliCredential()
+    )
+
+
 async def main():
     """Main function to run the agent as a web server."""
     async with (
-        DefaultAzureCredential() as credential,
-        AzureAIAgentClient(
+        get_credential() as credential,
+        AzureAIProjectAgentProvider(
             project_endpoint=PROJECT_ENDPOINT,
-            model_deployment_name=MODEL_DEPLOYMENT_NAME,
+            model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
-        ) as client,
+        ) as provider,
     ):
-        agent = Agent(
-            client,
+        agent = await provider.create_agent(
             name="SeattleHotelAgent",
             instructions="""You are a helpful travel assistant specializing in finding hotels in Seattle, Washington.
 

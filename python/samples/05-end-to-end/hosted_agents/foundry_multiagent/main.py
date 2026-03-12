@@ -4,10 +4,10 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
-from agent_framework import Agent, WorkflowBuilder
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import WorkflowBuilder
+from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.ai.agentserver.agentframework import from_agent_framework
-from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
+from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -23,11 +23,11 @@ MODEL_DEPLOYMENT_NAME = os.getenv(
 
 
 def get_credential():
-    """Will use Managed Identity when running in Azure, otherwise falls back to DefaultAzureCredential."""
+    """Will use Managed Identity when running in Azure, otherwise falls back to Azure CLI Credential."""
     return (
         ManagedIdentityCredential()
         if os.getenv("MSI_ENDPOINT")
-        else DefaultAzureCredential()
+        else AzureCliCredential()
     )
 
 
@@ -35,24 +35,17 @@ def get_credential():
 async def create_agents():
     async with (
         get_credential() as credential,
-        AzureAIAgentClient(
+        AzureAIProjectAgentProvider(
             project_endpoint=PROJECT_ENDPOINT,
-            model_deployment_name=MODEL_DEPLOYMENT_NAME,
+            model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
-        ) as writer_client,
-        AzureAIAgentClient(
-            project_endpoint=PROJECT_ENDPOINT,
-            model_deployment_name=MODEL_DEPLOYMENT_NAME,
-            credential=credential,
-        ) as reviewer_client,
+        ) as provider,
     ):
-        writer = Agent(
-            writer_client,
+        writer = await provider.create_agent(
             name="Writer",
             instructions="You are an excellent content writer. You create new content and edit contents based on the feedback.",
         )
-        reviewer = Agent(
-            reviewer_client,
+        reviewer = await provider.create_agent(
             name="Reviewer",
             instructions="You are an excellent content reviewer. Provide actionable feedback to the writer about the provided content in the most concise manner possible.",
         )
@@ -60,15 +53,7 @@ async def create_agents():
 
 
 def create_workflow(writer, reviewer):
-    workflow = (
-        WorkflowBuilder(
-            name="Writer-Reviewer",
-            start_executor=writer,
-            output_executors=[writer, reviewer],
-        )
-        .add_edge(writer, reviewer)
-        .build()
-    )
+    workflow = WorkflowBuilder(start_executor=writer).add_edge(writer, reviewer).build()
     return workflow.as_agent()
 
 
