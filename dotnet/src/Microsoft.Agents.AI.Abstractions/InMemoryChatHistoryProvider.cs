@@ -27,6 +27,7 @@ namespace Microsoft.Agents.AI;
 public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 {
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InMemoryChatHistoryProvider"/> class.
@@ -38,7 +39,8 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     public InMemoryChatHistoryProvider(InMemoryChatHistoryProviderOptions? options = null)
         : base(
             options?.ProvideOutputMessageFilter,
-            options?.StorageInputMessageFilter)
+            options?.StorageInputRequestMessageFilter,
+            options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<State>(
             options?.StateInitializer ?? (_ => new State()),
@@ -49,7 +51,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <summary>
     /// Gets the chat reducer used to process or reduce chat messages. If null, no reduction logic will be applied.
@@ -77,20 +79,21 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// <exception cref="ArgumentNullException"><paramref name="messages"/> is <see langword="null"/>.</exception>
     public void SetMessages(AgentSession? session, List<ChatMessage> messages)
     {
-        _ = Throw.IfNull(messages);
+        Throw.IfNull(messages);
 
-        var state = this._sessionState.GetOrInitializeState(session);
+        State state = this._sessionState.GetOrInitializeState(session);
         state.Messages = messages;
     }
 
     /// <inheritdoc />
     protected override async ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        State state = this._sessionState.GetOrInitializeState(context.Session);
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.BeforeMessagesRetrieval && this.ChatReducer is not null)
         {
-            state.Messages = (await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)).ToList();
+            // Apply pre-retrieval reduction if configured
+            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
 
         return state.Messages;
@@ -99,7 +102,7 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     /// <inheritdoc />
     protected override async ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
-        var state = this._sessionState.GetOrInitializeState(context.Session);
+        State state = this._sessionState.GetOrInitializeState(context.Session);
 
         // Add request and response messages to the provider
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
@@ -107,8 +110,14 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
 
         if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
         {
-            state.Messages = (await this.ChatReducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)).ToList();
+            // Apply pre-write reduction strategy if configured
+            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private static async Task ReduceMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
+    {
+        state.Messages = [.. await reducer.ReduceAsync(state.Messages, cancellationToken).ConfigureAwait(false)];
     }
 
     /// <summary>

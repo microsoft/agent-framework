@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -25,8 +25,10 @@ from agent_framework import (
     ResponseStream,
     TextSpanRegion,
     UsageDetails,
+    tool,
 )
 from agent_framework._settings import SecretString, load_settings
+from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
 from anthropic import AsyncAnthropic
@@ -300,15 +302,18 @@ class AnthropicClient(
             env_file_encoding=env_file_encoding,
         )
 
+        api_key_secret = anthropic_settings.get("api_key")
+        model_id_setting = anthropic_settings.get("chat_model_id")
+
         if anthropic_client is None:
-            if not anthropic_settings["api_key"]:
+            if api_key_secret is None:
                 raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings["api_key"].get_secret_value(),
+                api_key=api_key_secret.get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
@@ -322,10 +327,11 @@ class AnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings["chat_model_id"]
+        self.model_id = model_id_setting
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
+        self._tool_name_aliases: dict[str, str] = {}
 
     # region Static factory methods for hosted tools
 
@@ -378,6 +384,57 @@ class AnthropicClient(
                 agent = AnthropicClient().as_agent(tools=[tool])
         """
         return {"type": type_name or "web_search_20250305", "name": name}
+
+    @staticmethod
+    def get_shell_tool(
+        *,
+        func: Callable[..., Any] | FunctionTool,
+        description: str | None = None,
+        type_name: str | None = None,
+        approval_mode: Literal["always_require", "never_require"] | None = None,
+    ) -> FunctionTool:
+        """Create a local shell FunctionTool for Anthropic.
+
+        This helper wraps ``func`` as a shell-enabled ``FunctionTool`` for local
+        execution and configures Anthropic API declaration details via metadata.
+
+        Anthropic always exposes this tool to the model as ``name="bash"`` and
+        executes it using a ``bash_*`` tool type.
+
+        Keyword Args:
+            func: Python callable or ``FunctionTool`` that executes the requested shell command.
+            description: Optional tool description shown to the model.
+            type_name: Optional Anthropic shell tool type override.
+                Defaults to ``"bash_20250124"`` when omitted.
+            approval_mode: Optional approval mode for local execution.
+
+        Returns:
+            A shell-enabled ``FunctionTool`` suitable for ``ChatOptions.tools``.
+        """
+        base_tool: FunctionTool
+        if isinstance(func, FunctionTool):
+            base_tool = func
+            if description is not None:
+                base_tool.description = description
+            if approval_mode is not None:
+                base_tool.approval_mode = approval_mode
+        else:
+            base_tool = tool(
+                func=func,
+                description=description,
+                approval_mode=approval_mode,
+            )
+
+        additional_properties: dict[str, Any] = dict(base_tool.additional_properties or {})
+        if type_name:
+            additional_properties["type"] = type_name
+
+        if base_tool.func is None:
+            raise ValueError("Shell tool requires an executable function.")
+
+        base_tool.additional_properties = additional_properties
+        base_tool.kind = SHELL_TOOL_KIND_VALUE
+        return base_tool
 
     @staticmethod
     def get_mcp_tool(
@@ -715,26 +772,38 @@ class AnthropicClient(
         if tools:
             tool_list: list[Any] = []
             mcp_server_list: list[Any] = []
+            tool_name_aliases: dict[str, str] = {}
             for tool in tools:
-                if isinstance(tool, FunctionTool):
+                if isinstance(tool, FunctionTool) and tool.kind == SHELL_TOOL_KIND_VALUE:
+                    api_type = (tool.additional_properties or {}).get("type", "bash_20250124")
+                    tool_name_aliases["bash"] = tool.name
+                    tool_list.append({
+                        "type": api_type,
+                        "name": "bash",
+                    })
+                elif isinstance(tool, FunctionTool):
                     tool_list.append({
                         "type": "custom",
                         "name": tool.name,
                         "description": tool.description,
                         "input_schema": tool.parameters(),
                     })
-                elif isinstance(tool, MutableMapping) and tool.get("type") == "mcp":
+                elif isinstance(tool, Mapping) and tool.get("type") == "mcp":  # type: ignore[reportUnknownMemberType]
                     # MCP servers must be routed to separate mcp_servers parameter
                     server_def: dict[str, Any] = {
                         "type": "url",
-                        "name": tool.get("server_label", ""),
-                        "url": tool.get("server_url", ""),
+                        "name": tool.get("server_label", ""),  # type: ignore[reportUnknownMemberType]
+                        "url": tool.get("server_url", ""),  # type: ignore[reportUnknownMemberType]
                     }
-                    if allowed_tools := tool.get("allowed_tools"):
-                        server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
-                    headers = tool.get("headers")
-                    if isinstance(headers, dict) and (auth := headers.get("authorization")):
-                        server_def["authorization_token"] = auth
+                    allowed_tools = tool.get("allowed_tools")  # type: ignore[reportUnknownMemberType]
+                    if isinstance(allowed_tools, Sequence) and not isinstance(allowed_tools, str):
+                        server_def["tool_configuration"] = {
+                            "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
+                        }
+                    headers = tool.get("headers")  # type: ignore[reportUnknownMemberType]
+                    authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                    if isinstance(authorization, str):
+                        server_def["authorization_token"] = authorization
                     mcp_server_list.append(server_def)
                 else:
                     # Pass through all other tools (dicts, SDK types) unchanged
@@ -744,6 +813,9 @@ class AnthropicClient(
                 result["tools"] = tool_list
             if mcp_server_list:
                 result["mcp_servers"] = mcp_server_list
+            self._tool_name_aliases = tool_name_aliases
+        else:
+            self._tool_name_aliases = {}
 
         # Process tool choice
         if options.get("tool_choice") is None:
@@ -760,9 +832,18 @@ class AnthropicClient(
                 result["tool_choice"] = tool_choice
             case "required":
                 if "required_function_name" in tool_mode:
+                    required_name = tool_mode["required_function_name"]
+                    api_tool_name = next(
+                        (
+                            api_name
+                            for api_name, local_name in self._tool_name_aliases.items()
+                            if local_name == required_name
+                        ),
+                        required_name,
+                    )
                     tool_choice = {
                         "type": "tool",
-                        "name": tool_mode["required_function_name"],
+                        "name": api_tool_name,
                     }
                 else:
                     tool_choice = {"type": "any"}
@@ -820,6 +901,7 @@ class AnthropicClient(
                     usage_details.append(Content.from_usage(usage_details=details))
 
                 return ChatResponseUpdate(
+                    role="assistant",
                     response_id=event.message.id,
                     contents=[
                         *self._parse_contents_from_anthropic(event.message.content),
@@ -914,10 +996,11 @@ class AnthropicClient(
                             )
                         )
                     else:
+                        resolved_tool_name = self._tool_name_aliases.get(content_block.name, content_block.name)
                         contents.append(
                             Content.from_function_call(
                                 call_id=content_block.id,
-                                name=content_block.name,
+                                name=resolved_tool_name,
                                 arguments=content_block.input,
                                 raw_representation=content_block,
                             )
@@ -1006,33 +1089,29 @@ class AnthropicClient(
                         )
                     )
                 case "bash_code_execution_tool_result":
-                    bash_outputs: list[Content] = []
+                    shell_outputs: list[Content] = []
                     if content_block.content:
                         if isinstance(
                             content_block.content,
                             BetaBashCodeExecutionToolResultError,
                         ):
-                            bash_outputs.append(
-                                Content.from_error(
-                                    message=content_block.content.error_code,
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stderr=content_block.content.error_code,
+                                    timed_out=content_block.content.error_code == "execution_time_exceeded",
                                     raw_representation=content_block.content,
                                 )
                             )
                         else:
-                            if content_block.content.stdout:
-                                bash_outputs.append(
-                                    Content.from_text(
-                                        text=content_block.content.stdout,
-                                        raw_representation=content_block.content,
-                                    )
+                            shell_outputs.append(
+                                Content.from_shell_command_output(
+                                    stdout=content_block.content.stdout or None,
+                                    stderr=content_block.content.stderr or None,
+                                    exit_code=int(content_block.content.return_code),
+                                    timed_out=False,
+                                    raw_representation=content_block.content,
                                 )
-                            if content_block.content.stderr:
-                                bash_outputs.append(
-                                    Content.from_error(
-                                        message=content_block.content.stderr,
-                                        raw_representation=content_block.content,
-                                    )
-                                )
+                            )
                             for bash_file_content in content_block.content.content:
                                 contents.append(
                                     Content.from_hosted_file(
@@ -1041,9 +1120,9 @@ class AnthropicClient(
                                     )
                                 )
                     contents.append(
-                        Content.from_function_result(
+                        Content.from_shell_tool_result(
                             call_id=content_block.tool_use_id,
-                            result=bash_outputs,
+                            outputs=shell_outputs,
                             raw_representation=content_block,
                         )
                     )

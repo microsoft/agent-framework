@@ -425,11 +425,28 @@ internal sealed class InMemoryResponsesService : IResponsesService, IDisposable
             // Create agent invocation context
             var context = new AgentInvocationContext(new IdGenerator(responseId: responseId, conversationId: state.Response?.Conversation?.Id));
 
+            // Load conversation history if a conversation ID is provided
+            IReadOnlyList<Extensions.AI.ChatMessage>? conversationHistory = null;
+            if (this._conversationStorage is not null && request.Conversation?.Id is not null)
+            {
+                var itemsResult = await this._conversationStorage.ListItemsAsync(
+                    request.Conversation.Id,
+                    limit: 100,
+                    order: SortOrder.Ascending,
+                    cancellationToken: linkedCts.Token).ConfigureAwait(false);
+
+                var history = ItemResourceConversions.ToChatMessages(itemsResult.Data);
+                if (history.Count > 0)
+                {
+                    conversationHistory = history;
+                }
+            }
+
             // Collect output items for conversation storage
             List<ItemResource> outputItems = [];
 
             // Execute using the injected executor
-            await foreach (var streamingEvent in this._executor.ExecuteAsync(context, request, linkedCts.Token).ConfigureAwait(false))
+            await foreach (var streamingEvent in this._executor.ExecuteAsync(context, request, conversationHistory, linkedCts.Token).ConfigureAwait(false))
             {
                 state.AddStreamingEvent(streamingEvent);
 

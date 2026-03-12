@@ -6,7 +6,6 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -26,11 +25,11 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
     private static bool s_infrastructureStarted;
     private static readonly string s_samplesPath = Path.GetFullPath(
-        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "Durable", "Agents", "ConsoleApps"));
+        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "ConsoleApps"));
 
     private readonly ITestOutputHelper _outputHelper = outputHelper;
 
-    async Task IAsyncLifetime.InitializeAsync()
+    async ValueTask IAsyncLifetime.InitializeAsync()
     {
         if (!s_infrastructureStarted)
         {
@@ -39,7 +38,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         }
     }
 
-    async Task IAsyncLifetime.DisposeAsync()
+    async ValueTask IAsyncDisposable.DisposeAsync()
     {
         // Nothing to clean up
         await Task.CompletedTask;
@@ -736,6 +735,9 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
     private async Task RunSampleTestAsync(string samplePath, Func<Process, BlockingCollection<OutputLog>, Task> testAction)
     {
+        // Build the sample project first (it may not have been built as part of the solution)
+        await this.BuildSampleAsync(samplePath);
+
         // Generate a unique TaskHub name for this sample test to prevent cross-test interference
         // when multiple tests run together and share the same DTS emulator.
         string uniqueTaskHubName = $"sample-{Guid.NewGuid().ToString("N").Substring(0, 6)}";
@@ -814,12 +816,44 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         return null;
     }
 
+    private async Task BuildSampleAsync(string samplePath)
+    {
+        this._outputHelper.WriteLine($"Building sample at {samplePath}...");
+
+        ProcessStartInfo buildInfo = new()
+        {
+            FileName = "dotnet",
+            Arguments = $"build --framework {s_dotnetTargetFramework}",
+            WorkingDirectory = samplePath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        using Process buildProcess = new() { StartInfo = buildInfo };
+        buildProcess.Start();
+
+        // Read both streams asynchronously to avoid deadlocks from filled pipe buffers
+        Task<string> stdoutTask = buildProcess.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = buildProcess.StandardError.ReadToEndAsync();
+        await buildProcess.WaitForExitAsync();
+
+        string stderr = await stderrTask;
+        if (buildProcess.ExitCode != 0)
+        {
+            string stdout = await stdoutTask;
+            throw new InvalidOperationException($"Failed to build sample at {samplePath}:\n{stdout}\n{stderr}");
+        }
+
+        this._outputHelper.WriteLine($"Build completed for {samplePath}.");
+    }
+
     private Process StartConsoleApp(string samplePath, BlockingCollection<OutputLog> logs, string taskHubName)
     {
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run --framework {s_dotnetTargetFramework}",
+            Arguments = $"run --no-build --framework {s_dotnetTargetFramework}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -829,8 +863,8 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
         string openAiEndpoint = s_configuration["AZURE_OPENAI_ENDPOINT"] ??
             throw new InvalidOperationException("The required AZURE_OPENAI_ENDPOINT env variable is not set.");
-        string openAiDeployment = s_configuration["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"] ??
-            throw new InvalidOperationException("The required AZURE_OPENAI_CHAT_DEPLOYMENT_NAME env variable is not set.");
+        string openAiDeployment = s_configuration["AZURE_OPENAI_DEPLOYMENT_NAME"] ??
+            throw new InvalidOperationException("The required AZURE_OPENAI_DEPLOYMENT_NAME env variable is not set.");
 
         void SetAndLogEnvironmentVariable(string key, string value)
         {
@@ -840,7 +874,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
 
         // Set required environment variables for the app
         SetAndLogEnvironmentVariable("AZURE_OPENAI_ENDPOINT", openAiEndpoint);
-        SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", openAiDeployment);
+        SetAndLogEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME", openAiDeployment);
         SetAndLogEnvironmentVariable("DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
             $"Endpoint=http://localhost:{DtsPort};TaskHub={taskHubName};Authentication=None");
         SetAndLogEnvironmentVariable("REDIS_CONNECTION_STRING", $"localhost:{RedisPort}");

@@ -16,7 +16,6 @@ Required variables:
 - `AZURE_OPENAI_ENDPOINT`
 - `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
 - `AZURE_OPENAI_API_KEY` (optional if using Azure CLI authentication)
-- `RUN_INTEGRATION_TESTS` (set to `true`)
 - `ENDPOINT` (default: http://localhost:8080)
 - `TASKHUB` (default: default)
 
@@ -75,7 +74,7 @@ pytestmark = [
 ## Troubleshooting
 
 **Tests are skipped:**
-Ensure `RUN_INTEGRATION_TESTS=true` is set in your `.env` file.
+Ensure the required environment variables (e.g., `AZURE_OPENAI_ENDPOINT`) are set in your `.env` file.
 
 **DTS connection failed:**
 Check that the DTS emulator container is running: `docker ps | grep dts-emulator`

@@ -43,23 +43,25 @@ public class InMemoryChatHistoryProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new InMemoryChatHistoryProvider();
 
         // Assert
-        Assert.Equal("InMemoryChatHistoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("InMemoryChatHistoryProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new InMemoryChatHistoryProvider(new() { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -418,7 +420,7 @@ public class InMemoryChatHistoryProviderTests
         var session = CreateMockSession();
         var provider = new InMemoryChatHistoryProvider(new InMemoryChatHistoryProviderOptions
         {
-            StorageInputMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
+            StorageInputRequestMessageFilter = messages => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External)
         });
         var requestMessages = new List<ChatMessage>
         {
