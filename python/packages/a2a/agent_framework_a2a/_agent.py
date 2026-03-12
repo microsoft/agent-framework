@@ -114,9 +114,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """Initialize the A2AAgent.
 
         Keyword Args:
-            name: The name of the agent.
+            name: The name of the agent. Defaults to agent_card.name if agent_card is provided.
             id: The unique identifier for the agent, will be created automatically if not provided.
-            description: A brief description of the agent's purpose.
+            description: A brief description of the agent's purpose. Defaults to agent_card.description
+                if agent_card is provided.
             agent_card: The agent card for the agent.
             url: The URL for the A2A server.
             client: The A2A client for the agent.
@@ -127,6 +128,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
+        # Default name/description from agent_card when not explicitly provided
+        if agent_card is not None:
+            name = name or agent_card.name
+            description = description or agent_card.description
+
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
         self._timeout_config = self._create_timeout_config(timeout)
