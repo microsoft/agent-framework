@@ -1854,7 +1854,7 @@ def _replace_approval_contents_with_results(
                         if result_idx < len(approved_function_results):
                             msg.contents[content_idx] = approved_function_results[result_idx]
                             result_idx += 1
-                            msg.role = Role.TOOL
+                            msg.role = "tool"
                 else:
                     # Create a "not approved" result for rejected calls
                     # Use function_call.call_id (the function's ID), not content.id (approval's ID)
@@ -1862,7 +1862,7 @@ def _replace_approval_contents_with_results(
                         call_id=content.function_call.call_id,  # type: ignore[union-attr, arg-type]
                         result="Error: Tool call invocation was rejected by user.",
                     )
-                    msg.role = Role.TOOL
+                    msg.role = "tool"
             elif content.type == "function_result":
                 # Check if this is a placeholder result that should be replaced
                 if (
