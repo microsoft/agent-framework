@@ -1161,6 +1161,21 @@ def test_prepare_options_removes_parallel_tool_calls_when_no_tools(openai_unit_t
     assert "parallel_tool_calls" not in prepared_options
 
 
+def test_prepare_options_excludes_conversation_id(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that conversation_id is excluded from prepared options for chat completions."""
+    client = OpenAIChatClient()
+
+    messages = [Message(role="user", text="test")]
+    options = {"conversation_id": "12345", "temperature": 0.7}
+
+    prepared_options = client._prepare_options(messages, options)
+
+    # conversation_id is not a valid parameter for AsyncCompletions.create()
+    assert "conversation_id" not in prepared_options
+    # Other options should still be present
+    assert prepared_options["temperature"] == 0.7
+
+
 async def test_streaming_exception_handling(openai_unit_test_env: dict[str, str]) -> None:
     """Test that streaming errors are properly handled."""
     client = OpenAIChatClient()

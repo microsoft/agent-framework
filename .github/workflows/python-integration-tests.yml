@@ -170,7 +170,7 @@ jobs:
     environment: integration
     timeout-minutes: 60
     env:
-      UV_PYTHON: "3.10"
+      UV_PYTHON: "3.11"
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
