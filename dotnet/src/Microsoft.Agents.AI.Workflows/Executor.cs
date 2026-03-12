@@ -284,7 +284,11 @@ public abstract class Executor : IIdentified
 
         if (!result.IsSuccess)
         {
-            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}", result.Exception);
+            // Include inner exception details for diagnostics (otherwise hidden by DTS FailureDetails)
+            string innerDetails = result.Exception is not null
+                ? $" --> {result.Exception.GetType().Name}: {result.Exception.Message}"
+                : string.Empty;
+            throw new TargetInvocationException($"Error invoking handler for {message.GetType()}{innerDetails}", result.Exception);
         }
 
         if (result.IsVoid)

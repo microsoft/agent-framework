@@ -39,6 +39,23 @@ internal sealed class ValidateOrder() : Executor<string, OrderDetails>("Validate
         IWorkflowContext context,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await HandleAsyncCore(message, context, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DIAG] ValidateOrder.HandleAsync failed: {ex.GetType().FullName}: {ex.Message}");
+            Console.Error.WriteLine($"[DIAG]   StackTrace: {ex.StackTrace}");
+            throw;
+        }
+    }
+
+    private async ValueTask<OrderDetails> HandleAsyncCore(
+        string message,
+        IWorkflowContext context,
+        CancellationToken cancellationToken = default)
+    {
         await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
 
         // Halt the workflow early if the order ID is invalid.

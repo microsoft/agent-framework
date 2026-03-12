@@ -46,14 +46,46 @@ internal static class DurableActivityExecutor
         object typedInput = DeserializeInput(executorInput, inputType);
 
         DurableWorkflowContext workflowContext = new(sharedState, executor);
-        object? result = await executor.ExecuteCoreAsync(
-            typedInput,
-            new TypeId(inputType),
-            workflowContext,
-            WorkflowTelemetryContext.Disabled,
-            cancellationToken).ConfigureAwait(false);
 
-        return SerializeActivityOutput(result, workflowContext);
+        object? result;
+        try
+        {
+            result = await executor.ExecuteCoreAsync(
+                typedInput,
+                new TypeId(inputType),
+                workflowContext,
+                WorkflowTelemetryContext.Disabled,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Diagnostic logging to surface inner exception details in CI
+            Console.Error.WriteLine($"[DIAG] DurableActivityExecutor: ExecuteCoreAsync failed for '{binding.Id}' (inputType={inputType.FullName})");
+            Console.Error.WriteLine($"[DIAG]   Exception: {ex.GetType().FullName}: {ex.Message}");
+            for (Exception? inner = ex.InnerException; inner is not null; inner = inner.InnerException)
+            {
+                Console.Error.WriteLine($"[DIAG]   Inner: {inner.GetType().FullName}: {inner.Message}");
+                Console.Error.WriteLine($"[DIAG]   StackTrace: {inner.StackTrace}");
+            }
+
+            throw;
+        }
+
+        string serialized;
+        try
+        {
+            serialized = SerializeActivityOutput(result, workflowContext);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[DIAG] DurableActivityExecutor: SerializeActivityOutput failed for '{binding.Id}'");
+            Console.Error.WriteLine($"[DIAG]   Result type: {result?.GetType().FullName ?? "null"}");
+            Console.Error.WriteLine($"[DIAG]   Exception: {ex.GetType().FullName}: {ex.Message}");
+            Console.Error.WriteLine($"[DIAG]   StackTrace: {ex.StackTrace}");
+            throw;
+        }
+
+        return serialized;
     }
 
     private static string SerializeActivityOutput(object? result, DurableWorkflowContext context)
