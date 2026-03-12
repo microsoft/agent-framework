@@ -50,7 +50,7 @@ from agent_framework import (
     LabelTrackingFunctionMiddleware,
     SecureAgentConfig,
     TextContent,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -146,7 +146,7 @@ def get_github_token() -> str:
 # Tools with security policies
 # =============================================================================
 
-@ai_function(
+@tool(
     description="Post a message to a public Slack channel.",
     additional_properties={
         # This tool only accepts PUBLIC data - blocks exfiltration of private data
@@ -276,7 +276,7 @@ async def main():
             )
             
             # Create agent with GitHub MCP tools
-            agent = chat_client.create_agent(
+            agent = chat_client.as_agent(
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.
@@ -402,7 +402,7 @@ def run_demo():
                 allow_untrusted_tools=GITHUB_READ_TOOLS,
             )
             
-            agent = chat_client.create_agent(
+            agent = chat_client.as_agent(
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.
@@ -547,7 +547,7 @@ def run_devui():
                 allow_untrusted_tools=GITHUB_READ_TOOLS,
             )
             
-            agent = chat_client.create_agent(
+            agent = chat_client.as_agent(
                 name="github_assistant",
                 instructions="""You are a helpful GitHub assistant. You can read issues, search repositories, 
 read file contents, and help users with their GitHub tasks.

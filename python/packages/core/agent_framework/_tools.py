@@ -1467,27 +1467,20 @@ async def _auto_invoke_function(
     # MiddlewareTermination bubbles up to signal loop termination
     try:
         function_result = await middleware_pipeline.execute(
-            function=tool,
-            arguments=args,
             context=middleware_context,
             final_handler=final_function_handler,
         )
         
-        # Pass through FunctionApprovalRequestContent directly (e.g., from security middleware)
-        from ._types import FunctionApprovalRequestContent
-        if isinstance(function_result, FunctionApprovalRequestContent):
-            return FunctionExecutionResult(
-                content=function_result,
-                terminate=False,
-            )
+        # Pass through function_approval_request directly (e.g., from security middleware)
+        if isinstance(function_result, Content) and function_result.type == "function_approval_request":
+            return function_result
         
-        return FunctionExecutionResult(
-            content=FunctionResultContent(
-                call_id=function_call_content.call_id,
-                result=function_result,
-            ),
-            terminate=middleware_context.terminate,
+        result_content = Content.from_function_result(
+            call_id=function_call_content.call_id,
+            result=function_result,
         )
+        
+        return result_content
     except MiddlewareTermination as term_exc:
         # Re-raise to signal loop termination, but first capture any result set by middleware
         if middleware_context.result is not None:
@@ -1848,7 +1841,7 @@ def _replace_approval_contents_with_results(
                 else:
                     # Put back the function call content only if it doesn't exist
                     msg.contents[content_idx] = content.function_call
-            elif isinstance(content, FunctionApprovalResponseContent):
+            elif content.type == "function_approval_response":
                 call_id = content.function_call.call_id
                 if content.approved and content.id in fcc_todo:
                     # Check if we already replaced a placeholder for this call_id
@@ -1870,7 +1863,7 @@ def _replace_approval_contents_with_results(
                         result="Error: Tool call invocation was rejected by user.",
                     )
                     msg.role = Role.TOOL
-            elif isinstance(content, FunctionResultContent):
+            elif content.type == "function_result":
                 # Check if this is a placeholder result that should be replaced
                 if (
                     hasattr(content, "result") 
@@ -2390,10 +2383,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     #     yield ChatResponseUpdate(contents=function_call_results, role="tool")
                     #     return
 
-                    if any(
-                        fcr.exception is not None
-                        for fcr in function_call_results
-                        if isinstance(fcr, FunctionResultContent)
+                    # When tool_choice is 'required', reset tool_choice after one iteration to avoid infinite loops
+                    if mutable_options.get("tool_choice") == "required" or (
+                        isinstance(mutable_options.get("tool_choice"), dict)
+                        and mutable_options.get("tool_choice", {}).get("mode") == "required"
                     ):
                         mutable_options["tool_choice"] = None  # reset to default for next iteration
 

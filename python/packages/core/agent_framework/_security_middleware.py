@@ -25,7 +25,7 @@ from ._security import (
 from ._types import Content
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
 
 __all__ = [
     "LabelTrackingFunctionMiddleware",
@@ -188,16 +188,16 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
         
-            from agent_framework import ChatAgent, LabelTrackingFunctionMiddleware
+            from agent_framework import Agent, LabelTrackingFunctionMiddleware
             
             # Create agent with automatic hiding enabled
             middleware = LabelTrackingFunctionMiddleware(
                 auto_hide_untrusted=True  # Enabled by default
             )
-            agent = ChatAgent(
-                chat_client=client,
+            agent = Agent(
+                client=client,
                 name="assistant",
-                middleware=middleware
+                middleware=[middleware]
             )
             
             # Run agent - untrusted tool results are automatically hidden
@@ -519,7 +519,7 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """Process function invocation with data-flow based label tracking.
         
@@ -597,14 +597,14 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             )
             
             # Execute the function
-            await next(context)
+            await call_next()
             
-            # If middleware set a FunctionApprovalRequestContent (e.g., policy violation approval),
+            # If middleware set a function_approval_request (e.g., policy violation approval),
             # skip all result processing and let it pass through unchanged
-            from ._types import FunctionApprovalRequestContent
-            if isinstance(context.result, FunctionApprovalRequestContent):
+            from ._types import Content
+            if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 logger.info(
-                    f"Tool '{function_name}' returned FunctionApprovalRequestContent - "
+                    f"Tool '{function_name}' returned function_approval_request - "
                     f"skipping result processing"
                 )
                 return
@@ -616,11 +616,23 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             if context.result is not None:
                 original_result = context.result
                 
+                # FunctionTool.invoke() returns a JSON string via parse_result().
+                # We need to parse it back into structured data so we can inspect
+                # per-item security labels, then re-serialize after processing.
+                import json as _json
+                _was_string = isinstance(context.result, str)
+                _parsed_result = context.result
+                if _was_string:
+                    try:
+                        _parsed_result = _json.loads(context.result)
+                    except (ValueError, TypeError):
+                        pass  # Not valid JSON — treat as a plain string
+                
                 # First, process for per-item embedded labels
                 # This allows tools to return mixed-trust data (e.g., some emails trusted, others not)
                 # Items with additional_properties.security_label.integrity="untrusted" are auto-hidden
                 context.result, result_label = self._process_result_with_embedded_labels(
-                    context.result,
+                    _parsed_result,
                     function_name,
                     fallback_label=call_label,  # Use call label for items without embedded labels
                 )
@@ -638,8 +650,9 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 # However, CONFIDENTIALITY should ALWAYS be updated even for hidden content,
                 # because the data still exists and could be revealed by approving the variable.
                 entire_result_hidden = (
-                    isinstance(context.result, VariableReferenceContent) and 
-                    not isinstance(original_result, VariableReferenceContent)
+                    (isinstance(context.result, VariableReferenceContent) or
+                     (isinstance(context.result, dict) and context.result.get("type") == "variable_reference")) and
+                    not isinstance(_parsed_result, VariableReferenceContent)
                 )
                 
                 if entire_result_hidden:
@@ -671,6 +684,11 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                         f"{self._context_label.integrity.value}, "
                         f"{self._context_label.confidentiality.value}"
                     )
+                
+                # Ensure result is JSON-serializable for the LLM API.
+                # VariableReferenceContent objects must be converted to dicts
+                # so they can be serialized in tool result messages.
+                context.result = self._make_serializable(context.result)
         finally:
             # Clear thread-local reference
             _current_middleware.instance = None
@@ -728,6 +746,30 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         else:
             context.metadata["result_label"] = label
             logger.debug(f"Stored label in context metadata: {label}")
+    
+    def _make_serializable(self, result: Any) -> str:
+        """Convert the processed result to a JSON string for the LLM API.
+        
+        FunctionTool.invoke() returns a JSON string, and the OpenAI API expects
+        tool message content to be a string. This method converts any
+        VariableReferenceContent objects to dicts, then JSON-serializes
+        the entire result back to a string.
+        """
+        import json as _json
+
+        def _to_plain(obj: Any) -> Any:
+            if isinstance(obj, VariableReferenceContent):
+                return obj.to_dict()
+            elif isinstance(obj, list):
+                return [_to_plain(item) for item in obj]
+            elif isinstance(obj, dict):
+                return {k: _to_plain(v) for k, v in obj.items()}
+            return obj
+
+        plain = _to_plain(result)
+        if isinstance(plain, str):
+            return plain
+        return _json.dumps(plain)
     
     def _process_result_with_embedded_labels(
         self,
@@ -1056,8 +1098,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             
                 middleware = LabelTrackingFunctionMiddleware()
                 
-                agent = ChatAgent(
-                    chat_client=client,
+                agent = Agent(
+                    client=client,
                     tools=[my_tool, *middleware.get_security_tools()],
                     middleware=[middleware],
                 )
@@ -1079,8 +1121,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             
                 middleware = LabelTrackingFunctionMiddleware()
                 
-                agent = ChatAgent(
-                    chat_client=client,
+                agent = Agent(
+                    client=client,
                     instructions=base_instructions + middleware.get_security_instructions(),
                     tools=[my_tool, *middleware.get_security_tools()],
                     middleware=[middleware],
@@ -1134,15 +1176,15 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     Examples:
         .. code-block:: python
         
-            from agent_framework import ChatAgent, PolicyEnforcementFunctionMiddleware
+            from agent_framework import Agent, PolicyEnforcementFunctionMiddleware
             
             # Create policy enforcement middleware
             policy = PolicyEnforcementFunctionMiddleware(
                 allow_untrusted_tools={"search_web", "get_news"}
             )
             
-            agent = ChatAgent(
-                chat_client=client,
+            agent = Agent(
+                client=client,
                 name="assistant",
                 middleware=[label_tracker, policy]  # Apply both middlewares
             )
@@ -1181,7 +1223,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
     async def process(
         self,
         context: FunctionInvocationContext,
-        next: Callable[[FunctionInvocationContext], Awaitable[None]],
+        call_next: Callable[[], Awaitable[None]],
     ) -> None:
         """Process function invocation with policy enforcement.
         
@@ -1191,7 +1233,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         
         Args:
             context: The function invocation context.
-            next: Callback to continue to next middleware or function execution.
+            call_next: Callback to continue to next middleware or function execution.
         """
         function_name = context.function.name
         
@@ -1206,7 +1248,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 "Ensure LabelTrackingFunctionMiddleware runs before PolicyEnforcementFunctionMiddleware."
             )
             # Continue execution without policy check
-            await next(context)
+            await call_next()
             return
         
         # Convert context label to ContentLabel if it's a dict
@@ -1216,7 +1258,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
             context_label = context_label_data
         else:
             logger.error(f"Invalid context label type: {type(context_label_data)}")
-            await next(context)
+            await call_next()
             return
         
         logger.debug(
@@ -1269,18 +1311,18 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                         context.metadata["user_approved_violation"] = True
                     elif self.approval_on_violation:
                         # Request user approval instead of blocking
-                        # Create FunctionApprovalRequestContent directly in middleware
+                        # Create function_approval_request Content directly in middleware
                         logger.info(
                             f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
                             f"due to UNTRUSTED context."
                         )
-                        from ._types import FunctionApprovalRequestContent, FunctionCallContent
+                        from ._types import Content
                         
                         # Track that we're requesting approval for this call_id
                         self._pending_policy_approvals.add(call_id)
                         
-                        # Reconstruct FunctionCallContent from context
-                        func_call = FunctionCallContent(
+                        # Reconstruct function_call Content from context
+                        func_call = Content.from_function_call(
                             call_id=call_id,
                             name=function_name,
                             arguments=context.arguments.model_dump() if hasattr(context.arguments, 'model_dump') else dict(context.arguments),
@@ -1293,7 +1335,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                             f"continue with a warning about untrusted context)."
                         )
                         
-                        context.result = FunctionApprovalRequestContent(
+                        context.result = Content.from_function_approval_request(
                             id=call_id,
                             function_call=func_call,
                             additional_properties={
@@ -1362,18 +1404,17 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                 context.metadata["user_approved_violation"] = True
             elif self.approval_on_violation:
                 # Request user approval instead of blocking
-                # Create FunctionApprovalRequestContent directly in middleware
                 logger.info(
                     f"APPROVAL REQUESTED: Tool '{function_name}' requires user approval "
                     f"due to confidentiality policy violation."
                 )
-                from ._types import FunctionApprovalRequestContent, FunctionCallContent
+                from ._types import Content
                 
                 # Track that we're requesting approval for this call_id
                 self._pending_policy_approvals.add(call_id)
                 
-                # Reconstruct FunctionCallContent from context
-                func_call = FunctionCallContent(
+                # Reconstruct function call content from context
+                func_call = Content.from_function_call(
                     call_id=call_id,
                     name=function_name,
                     arguments=context.arguments.model_dump() if hasattr(context.arguments, 'model_dump') else dict(context.arguments),
@@ -1384,7 +1425,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
                     f"{conf_result['reason']}. Approve to proceed anyway."
                 )
                 
-                context.result = FunctionApprovalRequestContent(
+                context.result = Content.from_function_approval_request(
                     id=call_id,
                     function_call=func_call,
                     additional_properties={
@@ -1412,7 +1453,7 @@ class PolicyEnforcementFunctionMiddleware(FunctionMiddleware):
         
         # Policy check passed, continue execution
         logger.debug(f"Policy check passed for tool '{function_name}'")
-        await next(context)
+        await call_next()
     
     def _check_confidentiality_policy(
         self,
@@ -1516,7 +1557,7 @@ class SecureAgentConfig:
     Examples:
         .. code-block:: python
         
-            from agent_framework import ChatAgent, SecureAgentConfig
+            from agent_framework import Agent, SecureAgentConfig
             
             # Create security configuration
             config = SecureAgentConfig(
@@ -1525,8 +1566,8 @@ class SecureAgentConfig:
             )
             
             # Create secure agent
-            agent = ChatAgent(
-                chat_client=client,
+            agent = Agent(
+                client=client,
                 instructions=base_instructions + config.get_instructions(),
                 tools=[my_tool, *config.get_tools()],
                 middleware=config.get_middleware(),
@@ -1543,7 +1584,7 @@ class SecureAgentConfig:
         approval_on_violation: bool = False,
         enable_audit_log: bool = True,
         enable_policy_enforcement: bool = True,
-        quarantine_chat_client: "ChatClientProtocol | None" = None,
+        quarantine_chat_client: "SupportsChatGetResponse | None" = None,
     ) -> None:
         """Initialize secure agent configuration.
         
@@ -1648,10 +1689,10 @@ class SecureAgentConfig:
         """
         return self.label_tracker.list_variables()
     
-    def get_quarantine_client(self) -> "ChatClientProtocol | None":
+    def get_quarantine_client(self) -> "SupportsChatGetResponse | None":
         """Get the quarantine chat client.
         
         Returns:
-            The ChatClientProtocol instance for quarantine calls, or None if not configured.
+            The SupportsChatGetResponse instance for quarantine calls, or None if not configured.
         """
         return self._quarantine_chat_client

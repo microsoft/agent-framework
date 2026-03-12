@@ -24,13 +24,14 @@ To run this example:
 
 import asyncio
 import os
+import sys
 from typing import Any
 
 from pydantic import Field
 
 from agent_framework import (
     SecureAgentConfig,
-    ai_function,
+    tool,
 )
 from agent_framework.azure import AzureOpenAIChatClient
 from azure.identity import AzureCliCredential
@@ -127,7 +128,7 @@ HR Department""",
 # Tool Definitions
 # =============================================================================
 
-@ai_function(
+@tool(
     description="Send an email to the specified recipient. This is a privileged operation.",
     additional_properties={
         "confidentiality": "private",
@@ -160,7 +161,7 @@ async def send_email(
     }
 
 
-@ai_function(
+@tool(
     description="Fetch emails from the inbox. Returns a list of email objects.",
     # No tool-level source_integrity needed - labels are per-item in additional_properties
 )
@@ -200,24 +201,15 @@ async def fetch_emails(
 # Main Example
 # =============================================================================
 
-def main():
-    """Run the email security demonstration."""
-    print("=" * 70)
-    print("Email Security Example - Prompt Injection Defense Demo")
-    print("=" * 70)
-    print()
-    print("This example demonstrates how the Agent Framework protects against")
-    print("prompt injection attacks in emails while still allowing safe processing.")
-    print()
-
-    # Get Azure OpenAI endpoint from environment variable (required)
+def setup_agent():
+    """Create and return the secure email agent with all configuration."""
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     if not endpoint:
         raise ValueError(
             "AZURE_OPENAI_ENDPOINT environment variable is not set. "
             "Please set it to your Azure OpenAI endpoint URL."
         )
-    
+
     credential = AzureCliCredential()
 
     # Create the main agent's chat client (uses gpt-4o for main reasoning)
@@ -248,7 +240,7 @@ def main():
     )
 
     # Create the secure agent
-    agent = main_client.create_agent(
+    agent = main_client.as_agent(
         name="email_assistant",
         instructions="""You are a helpful email assistant. You can:
 1. Fetch and summarize emails from the inbox
@@ -275,12 +267,102 @@ When asked to summarize emails:
         middleware=config.get_middleware(),  # Add security middleware
     )
 
-    # Scenario 1: Fetch and summarize emails (should use quarantined_llm)
-    print("\n" + "=" * 70)
-    print("SCENARIO 1: Summarizing emails safely")
+    return agent, config
+
+
+def run_cli():
+    """Run the email security demo in CLI mode."""
+    print("=" * 70)
+    print("Email Security Example - Prompt Injection Defense Demo (CLI)")
     print("=" * 70)
     print()
-    print("User request: 'Please fetch my recent emails and give me a brief summary of each one.'")
+    print("This example demonstrates how the Agent Framework protects against")
+    print("prompt injection attacks in emails while still allowing safe processing.")
+    print()
+
+    agent, config = setup_agent()
+
+    async def run_scenarios():
+        # Scenario 1: Fetch and summarize emails (should use quarantined_llm)
+        print("\n" + "=" * 70)
+        print("SCENARIO 1: Summarizing emails safely")
+        print("=" * 70)
+        print()
+        print("User request: 'Please fetch my recent emails and give me a brief summary of each one.'")
+        print()
+        print("Expected behavior:")
+        print("- Agent fetches emails (some contain injection attempts)")
+        print("- Email bodies are hidden as VariableReferenceContent")
+        print("- Agent uses quarantined_llm to safely summarize each email")
+        print("- Injection attempts in emails are NOT followed")
+        print()
+
+        response = await agent.run(
+            "Please fetch my recent emails and give me a brief summary of each one."
+        )
+        print(f"\n📋 Agent Response:\n{'-' * 40}")
+        print(response.text)
+
+        # Scenario 2: Try to send an email after context is tainted
+        print("\n" + "=" * 70)
+        print("SCENARIO 2: Attempting to send email after processing untrusted content")
+        print("=" * 70)
+        print()
+        print("User request: 'Now please send an email to colleague@company.com summarizing what you found.'")
+        print()
+        print("Expected behavior:")
+        print("- Context is now tainted (UNTRUSTED) from processing external emails")
+        print("- send_email tool will be BLOCKED by policy enforcement")
+        print("- Agent should explain it cannot send email due to security policy")
+        print()
+
+        response = await agent.run(
+            "Now please send an email to colleague@company.com summarizing what you found."
+        )
+        print(f"\n📋 Agent Response:\n{'-' * 40}")
+        print(response.text)
+
+        # Check audit log for any blocked attempts
+        audit_log = config.get_audit_log()
+        if audit_log:
+            print("\n" + "=" * 70)
+            print("SECURITY AUDIT LOG - Policy Violations")
+            print("=" * 70)
+            for i, entry in enumerate(audit_log, 1):
+                print(f"\n⚠️  Violation #{i}")
+                print(f"   Type: {entry.get('type', 'unknown')}")
+                print(f"   Function: {entry.get('function', 'unknown')}")
+                print(f"   Reason: {entry.get('reason', 'Policy violation')}")
+                print(f"   Blocked: {entry.get('blocked', False)}")
+
+        print("\n" + "=" * 70)
+        print("Demo Complete")
+        print("=" * 70)
+        print()
+        print("Key takeaways:")
+        print("1. Injection attempts in emails were safely processed without being followed")
+        print("2. The quarantined_llm made real LLM calls in isolation (no tools)")
+        print("3. send_email was blocked because context was tainted by untrusted content")
+        print("4. All policy violations were logged for audit purposes")
+
+    asyncio.run(run_scenarios())
+
+
+def run_devui():
+    """Run the email security demo with DevUI web interface."""
+    print("=" * 70)
+    print("Email Security Example - Prompt Injection Defense Demo (DevUI)")
+    print("=" * 70)
+    print()
+    print("This example demonstrates how the Agent Framework protects against")
+    print("prompt injection attacks in emails while still allowing safe processing.")
+    print()
+
+    agent, _config = setup_agent()
+
+    print("\n" + "=" * 70)
+    print("SCENARIO: Summarizing emails safely")
+    print("=" * 70)
     print()
     print("Expected behavior:")
     print("- Agent fetches emails (some contain injection attempts)")
@@ -288,59 +370,20 @@ When asked to summarize emails:
     print("- Agent uses quarantined_llm to safely summarize each email")
     print("- Injection attempts in emails are NOT followed")
     print()
+    print("Query to try: 'Please fetch my recent emails and give me a brief summary of each one.'")
+    print()
 
-    # Launch debug UI - that's it!
+    # Launch debug UI
     serve(entities=[agent], auto_open=True)
-    # → Opens browser to http://localhost:8080
-    
-    # response = await agent.run(
-    #     "Please fetch my recent emails and give me a brief summary of each one."
-    # )
-    # print(f"\n📋 Agent Response:\n{'-' * 40}")
-    # print(response.text)
-
-    # # Scenario 2: Try to send an email after context is tainted
-    # print("\n" + "=" * 70)
-    # print("SCENARIO 2: Attempting to send email after processing untrusted content")
-    # print("=" * 70)
-    # print()
-    # print("User request: 'Now please send an email to colleague@company.com summarizing what you found.'")
-    # print()
-    # print("Expected behavior:")
-    # print("- Context is now tainted (UNTRUSTED) from processing external emails")
-    # print("- send_email tool will be BLOCKED by policy enforcement")
-    # print("- Agent should explain it cannot send email due to security policy")
-    # print()
-
-    # response = await agent.run(
-    #     "Now please send an email to colleague@company.com summarizing what you found."
-    # )
-    # print(f"\n📋 Agent Response:\n{'-' * 40}")
-    # print(response.text)
-
-    # # Check audit log for any blocked attempts
-    # audit_log = config.get_audit_log()
-    # if audit_log:
-    #     print("\n" + "=" * 70)
-    #     print("SECURITY AUDIT LOG - Policy Violations")
-    #     print("=" * 70)
-    #     for i, entry in enumerate(audit_log, 1):
-    #         print(f"\n⚠️  Violation #{i}")
-    #         print(f"   Type: {entry.get('type', 'unknown')}")
-    #         print(f"   Function: {entry.get('function', 'unknown')}")
-    #         print(f"   Reason: {entry.get('reason', 'Policy violation')}")
-    #         print(f"   Blocked: {entry.get('blocked', False)}")
-
-    # print("\n" + "=" * 70)
-    # print("Demo Complete")
-    # print("=" * 70)
-    # print()
-    # print("Key takeaways:")
-    # print("1. Injection attempts in emails were safely processed without being followed")
-    # print("2. The quarantined_llm made real LLM calls in isolation (no tools)")
-    # print("3. send_email was blocked because context was tainted by untrusted content")
-    # print("4. All policy violations were logged for audit purposes")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        run_cli()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--devui":
+        run_devui()
+    else:
+        print("Usage: python email_security_example.py [--cli|--devui]")
+        print("  --cli    Run in command line mode (automated scenarios)")
+        print("  --devui  Run with DevUI web interface (interactive)")
+        sys.exit(1)

@@ -23,11 +23,11 @@ from ._security import (
     VariableReferenceContent,
     combine_labels,
 )
-from ._tools import ai_function
-from ._types import ChatMessage, FunctionResultContent
+from ._tools import tool
+from ._types import Content, Message
 
 if TYPE_CHECKING:
-    from ._clients import ChatClientProtocol
+    from ._clients import SupportsChatGetResponse
 
 __all__ = [
     "QuarantinedLLMInput",
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _global_variable_store = ContentVariableStore()
 
 # Global quarantine chat client (set via set_quarantine_client or SecureAgentConfig)
-_quarantine_chat_client: "ChatClientProtocol | None" = None
+_quarantine_chat_client: "SupportsChatGetResponse | None" = None
 
 
 @runtime_checkable
@@ -59,7 +59,7 @@ class QuarantineChatClientProtocol(Protocol):
         ...
 
 
-def set_quarantine_client(client: "ChatClientProtocol | None") -> None:
+def set_quarantine_client(client: "SupportsChatGetResponse | None") -> None:
     """Set the global quarantine chat client.
 
     This client will be used by quarantined_llm to make actual LLM calls
@@ -92,7 +92,7 @@ def set_quarantine_client(client: "ChatClientProtocol | None") -> None:
         logger.info("Quarantine chat client cleared")
 
 
-def get_quarantine_client() -> "ChatClientProtocol | None":
+def get_quarantine_client() -> "SupportsChatGetResponse | None":
     """Get the current quarantine chat client.
 
     Returns:
@@ -193,7 +193,7 @@ class QuarantinedLLMInput(BaseModel):
     )
 
 
-@ai_function(
+@tool(
     description=(
         "Make an isolated LLM call with labeled data in a quarantined context. "
         "This prevents potentially untrusted content from reaching the main agent context. "
@@ -397,8 +397,8 @@ async def quarantined_llm(
         user_message_text = f"{prompt}{content_section}"
         
         messages = [
-            ChatMessage(role="system", text=quarantine_system_prompt),
-            ChatMessage(role="user", text=user_message_text),
+            Message("system", [quarantine_system_prompt]),
+            Message("user", [user_message_text]),
         ]
         
         try:
@@ -509,7 +509,7 @@ class InspectVariableInput(BaseModel):
     )
 
 
-@ai_function(
+@tool(
     description=(
         "Inspect the content of a variable stored in the ContentVariableStore. "
         "WARNING: This adds the untrusted content to the context, which may contain "
@@ -711,9 +711,9 @@ def get_security_tools() -> list:
     Examples:
         .. code-block:: python
         
-            from agent_framework import ChatAgent, get_security_tools
+            from agent_framework import Agent, get_security_tools
             
-            agent = ChatAgent(
+            agent = Agent(
                 chat_client=client,
                 instructions="You are a helpful assistant.",
                 tools=[my_tool, *get_security_tools()],
