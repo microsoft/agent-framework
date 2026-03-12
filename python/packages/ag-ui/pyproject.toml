@@ -25,7 +25,7 @@ dependencies = [
     "agent-framework-core>=1.0.0rc4",
     "ag-ui-protocol==0.1.13",
     "fastapi>=0.115.0,<0.133.1",
-    "uvicorn>=0.30.0,<0.30.6"
+    "uvicorn[standard]>=0.30.0,<0.42.0"
 ]
 
 [project.optional-dependencies]

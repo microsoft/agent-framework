@@ -208,8 +208,6 @@ samples-lint = "ruff check samples --fix --exclude samples/autogen-migration,sam
 pyright = "python scripts/run_tasks_in_packages_if_exists.py pyright"
 mypy = "python scripts/run_tasks_in_packages_if_exists.py mypy"
 typing = "python scripts/run_tasks_in_packages_if_exists.py mypy pyright"
-validate-dependency-ranges = "python scripts/validate_dependency_ranges.py"
-validate-dependency-lower-bounds = "python scripts/validate_dependency_lower_bounds.py"
 samples-syntax.shell = "pyright -p $(python -c \"import sys; print('pyrightconfig.samples.py310.json' if sys.version_info < (3,11) else 'pyrightconfig.samples.json')\") --warnings"
 samples-syntax.interpreter = "posix"
 # cleaning

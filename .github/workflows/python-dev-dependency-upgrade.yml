@@ -51,9 +51,7 @@ jobs:
           fi
 
           git commit -F- <<'EOF'
-          chore(python): upgrade dev dependencies
-
-          Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+          Python: chore: upgrade dev dependencies
           EOF
           git push --force-with-lease --set-upstream origin "${BRANCH}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
@@ -62,7 +60,7 @@ jobs:
         if: steps.commit_updates.outputs.has_changes == 'true'
         run: |
           BRANCH="automation/python-dev-dependency-updates"
-          PR_TITLE="chore(python): upgrade dev dependencies"
+          PR_TITLE="Python: chore: upgrade dev dependencies"
           PR_BODY_FILE="$(mktemp)"
 
           cat > "${PR_BODY_FILE}" <<'EOF'

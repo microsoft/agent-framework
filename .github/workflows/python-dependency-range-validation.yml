@@ -188,7 +188,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore(python): update dependency ranges"
+          git commit -m "chore: update dependency ranges"
           git push --force-with-lease --set-upstream origin "${BRANCH}"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 

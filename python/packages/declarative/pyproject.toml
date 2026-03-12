@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
-    "powerfx>=0.0.31,<0.0.32; python_version < '3.14'",
+    "powerfx>=0.0.32,<0.0.35; python_version < '3.14'",
     "pyyaml>=6.0,<7.0",
 ]
 [dependency-groups]
