@@ -15,22 +15,57 @@ from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv
 
+
 load_dotenv(override=True)
 
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file
-PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT")  # e.g., "https://<project>.services.ai.azure.com"
-MODEL_DEPLOYMENT_NAME = os.getenv("MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini")  # Your model deployment name e.g., "gpt-4.1-mini"
+PROJECT_ENDPOINT = os.getenv(
+    "PROJECT_ENDPOINT"
+)  # e.g., "https://<project>.services.ai.azure.com"
+MODEL_DEPLOYMENT_NAME = os.getenv(
+    "MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"
+)  # Your model deployment name e.g., "gpt-4.1-mini"
 
 
 # Simulated hotel data for Seattle
 SEATTLE_HOTELS = [
-    {"name": "Contoso Suites", "price_per_night": 189, "rating": 4.5, "location": "Downtown"},
-    {"name": "Fabrikam Residences", "price_per_night": 159, "rating": 4.2, "location": "Pike Place Market"},
-    {"name": "Alpine Ski House", "price_per_night": 249, "rating": 4.7, "location": "Seattle Center"},
-    {"name": "Margie's Travel Lodge", "price_per_night": 219, "rating": 4.4, "location": "Waterfront"},
-    {"name": "Northwind Inn", "price_per_night": 139, "rating": 4.0, "location": "Capitol Hill"},
-    {"name": "Relecloud Hotel", "price_per_night": 99, "rating": 3.8, "location": "University District"},
+    {
+        "name": "Contoso Suites",
+        "price_per_night": 189,
+        "rating": 4.5,
+        "location": "Downtown",
+    },
+    {
+        "name": "Fabrikam Residences",
+        "price_per_night": 159,
+        "rating": 4.2,
+        "location": "Pike Place Market",
+    },
+    {
+        "name": "Alpine Ski House",
+        "price_per_night": 249,
+        "rating": 4.7,
+        "location": "Seattle Center",
+    },
+    {
+        "name": "Margie's Travel Lodge",
+        "price_per_night": 219,
+        "rating": 4.4,
+        "location": "Waterfront",
+    },
+    {
+        "name": "Northwind Inn",
+        "price_per_night": 139,
+        "rating": 4.0,
+        "location": "Capitol Hill",
+    },
+    {
+        "name": "Relecloud Hotel",
+        "price_per_night": 99,
+        "rating": 3.8,
+        "location": "University District",
+    },
 ]
 
 
@@ -56,12 +91,13 @@ def get_available_hotels(
 
         # Filter hotels by price
         available_hotels = [
-            hotel for hotel in SEATTLE_HOTELS
-            if hotel["price_per_night"] <= max_price
+            hotel for hotel in SEATTLE_HOTELS if hotel["price_per_night"] <= max_price
         ]
 
         if not available_hotels:
-            return f"No hotels found in Seattle within your budget of ${max_price}/night."
+            return (
+                f"No hotels found in Seattle within your budget of ${max_price}/night."
+            )
 
         # Build response
         result = f"Available hotels in Seattle from {check_in_date} to {check_out_date} ({nights} nights):\n\n"
