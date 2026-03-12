@@ -68,7 +68,7 @@ internal sealed class InvokeFunctionToolExecutor(
         // If approval is required, add user input request content
         if (requireApproval)
         {
-            requestMessage.Contents.Add(new FunctionApprovalRequestContent(this.Id, functionCall));
+            requestMessage.Contents.Add(new ToolApprovalRequestContent(this.Id, functionCall));
         }
 
         AgentResponse agentResponse = new([requestMessage]);
