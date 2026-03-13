@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -8,16 +9,28 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
+/// <inheritdoc/>
+[Obsolete("Perfer HandoffWorkflowBuilder (no 's') instead, which has the same API but the preferred name. This will be removed if a future release before GA.")]
+public sealed class HandoffsWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore(initialAgent)
+{
+}
+
+/// <inheritdoc/>
+public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore(initialAgent)
+{
+}
+
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
-public sealed class HandoffsWorkflowBuilder
+public class HandoffWorkflowBuilderCore
 {
     internal const string FunctionPrefix = "handoff_to_";
     private readonly AIAgent _initialAgent;
     private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
     private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
+    private bool _returnToPrevious;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="HandoffsWorkflowBuilder"/> class with no handoff relationships.
@@ -65,6 +78,17 @@ public sealed class HandoffsWorkflowBuilder
     public HandoffsWorkflowBuilder WithToolCallFilteringBehavior(HandoffToolCallFilteringBehavior behavior)
     {
         this._toolCallFilteringBehavior = behavior;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the workflow so that subsequent user turns route directly back to the specialist agent
+    /// that handled the previous turn, rather than always routing through the initial (coordinator) agent.
+    /// </summary>
+    /// <returns>The updated <see cref="HandoffsWorkflowBuilder"/> instance.</returns>
+    public HandoffsWorkflowBuilder EnableReturnToPrevious()
+    {
+        this._returnToPrevious = true;
         return this;
     }
 
@@ -171,17 +195,38 @@ public sealed class HandoffsWorkflowBuilder
     /// <returns>The workflow built based on the handoffs in the builder.</returns>
     public Workflow Build()
     {
-        HandoffsStartExecutor start = new();
-        HandoffsEndExecutor end = new();
+        HandoffsCurrentAgentTracker? tracker = this._returnToPrevious ? new() : null;
+        HandoffsStartExecutor start = new(tracker);
+        HandoffsEndExecutor end = new(tracker);
         WorkflowBuilder builder = new(start);
 
         HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
 
-        // Create an AgentExecutor for each again.
+        // Create an AgentExecutor for each agent.
         Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, options));
 
-        // Connect the start executor to the initial agent.
-        builder.AddEdge(start, executors[this._initialAgent.Id]);
+        // Connect the start executor to the initial agent (or use dynamic routing when ReturnToPrevious is enabled).
+        if (this._returnToPrevious)
+        {
+            string initialAgentId = this._initialAgent.Id;
+            builder.AddSwitch(start, sb =>
+            {
+                foreach (var agent in this._allAgents)
+                {
+                    if (agent.Id != initialAgentId)
+                    {
+                        string agentId = agent.Id;
+                        sb.AddCase<HandoffState>(state => state?.CurrentAgentId == agentId, executors[agentId]);
+                    }
+                }
+
+                sb.WithDefault(executors[initialAgentId]);
+            });
+        }
+        else
+        {
+            builder.AddEdge(start, executors[this._initialAgent.Id]);
+        }
 
         // Initialize each executor with its handoff targets to the other executors.
         foreach (var agent in this._allAgents)
