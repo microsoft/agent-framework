@@ -24,9 +24,9 @@ classifiers = [
 ]
 dependencies = [
     "agent-framework-core>=1.0.0rc4",
-    "azure-ai-agents == 1.2.0b5",
-    "azure-ai-inference>=1.0.0b9",
-    "aiohttp",
+    "azure-ai-agents>=1.2.0b5,<1.2.0b6",
+    "azure-ai-inference>=1.0.0b9,<1.0.0b10",
+    "aiohttp>=3.7.0,<4",
 ]
 
 [tool.uv]
@@ -87,7 +87,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_ai"
-test = "pytest -m \"not integration\" --cov=agent_framework_azure_ai --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_azure_ai --cov-report=term-missing:skip-covered tests'
 
 [tool.poe.tasks.integration-tests]
 cmd = """

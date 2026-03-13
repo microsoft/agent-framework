@@ -26,9 +26,7 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.session import RequestResponder
 from opentelemetry import propagate
 
-from ._tools import (
-    FunctionTool,
-)
+from ._tools import FunctionTool
 from ._types import (
     Content,
     Message,
@@ -59,6 +57,8 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 
 logger = logging.getLogger(__name__)
+_MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
+_MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 
 # region: Helpers
 
@@ -142,69 +142,60 @@ def _parse_message_from_mcp(
 
 def _parse_tool_result_from_mcp(
     mcp_type: types.CallToolResult,
-) -> str:
-    """Parse an MCP CallToolResult directly into a string representation.
+) -> list[Content]:
+    """Parse an MCP CallToolResult into a list of Content items.
 
-    Converts each content item in the MCP result to its string form and combines them.
-    This skips the intermediate Content object step for tool results.
+    Converts each content item in the MCP result to its appropriate
+    Content form.  Text items become ``Content(type="text")`` and media
+    items (images, audio) are preserved as rich Content.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.
 
     Returns:
-        A string representation of the tool result — either plain text or serialized JSON.
+        A list of Content items representing the tool result.
     """
-    import json
-
-    parts: list[str] = []
+    result: list[Content] = []
     for item in mcp_type.content:
         match item:
             case types.TextContent():
-                parts.append(item.text)
+                result.append(Content.from_text(item.text))
             case types.ImageContent() | types.AudioContent():
-                parts.append(
-                    json.dumps(
-                        {
-                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
-                            "data": item.data,
-                            "mimeType": item.mimeType,
-                        },
-                        default=str,
+                decoded = base64.b64decode(item.data)
+                result.append(
+                    Content.from_data(
+                        data=decoded,
+                        media_type=item.mimeType,
                     )
                 )
             case types.ResourceLink():
-                parts.append(
-                    json.dumps(
-                        {
-                            "type": "resource_link",
-                            "uri": str(item.uri),
-                            "mimeType": item.mimeType,
-                        },
-                        default=str,
+                result.append(
+                    Content.from_uri(
+                        uri=str(item.uri),
+                        media_type=item.mimeType,
                     )
                 )
             case types.EmbeddedResource():
                 match item.resource:
                     case types.TextResourceContents():
-                        parts.append(item.resource.text)
+                        result.append(Content.from_text(item.resource.text))
                     case types.BlobResourceContents():
-                        parts.append(
-                            json.dumps(
-                                {
-                                    "type": "blob",
-                                    "data": item.resource.blob,
-                                    "mimeType": item.resource.mimeType,
-                                },
-                                default=str,
+                        blob = item.resource.blob
+                        mime = item.resource.mimeType or "application/octet-stream"
+                        if not blob.startswith("data:"):
+                            blob = f"data:{mime};base64,{blob}"
+                        result.append(
+                            Content.from_uri(
+                                uri=blob,
+                                media_type=mime,
                             )
                         )
             case _:
-                parts.append(str(item))
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return json.dumps(parts, default=str)
+                result.append(Content.from_text(str(item)))
+
+    if not result:
+        result.append(Content.from_text(""))
+    return result
 
 
 def _parse_content_from_mcp(
@@ -381,6 +372,20 @@ def _normalize_mcp_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "-", name)
 
 
+def _build_prefixed_mcp_name(
+    normalized_name: str,
+    tool_name_prefix: str | None,
+) -> str:
+    """Build the exposed MCP function name from a normalized name and optional prefix."""
+    if not tool_name_prefix:
+        return normalized_name
+    normalized_prefix = _normalize_mcp_name(tool_name_prefix).rstrip("_.-")
+    if not normalized_prefix:
+        return normalized_name
+    trimmed_name = normalized_name.lstrip("_.-")
+    return f"{normalized_prefix}_{trimmed_name}" if trimmed_name else normalized_prefix
+
+
 def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Inject OpenTelemetry trace context into MCP request _meta via the global propagator(s)."""
     carrier: dict[str, str] = {}
@@ -424,8 +429,9 @@ class MCPTool:
         description: str | None = None,
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
+        tool_name_prefix: str | None = None,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         session: ClientSession | None = None,
@@ -444,6 +450,7 @@ class MCPTool:
             description: A description of the MCP tool.
             approval_mode: Whether approval is required to run tools.
             allowed_tools: A collection of tool names to allow.
+            tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
                 ``Callable[[types.CallToolResult], str]`` that overrides the default result
@@ -467,6 +474,7 @@ class MCPTool:
         self.description = description or ""
         self.approval_mode = approval_mode
         self.allowed_tools = allowed_tools
+        self.tool_name_prefix = _normalize_mcp_name(tool_name_prefix).rstrip("_.-") if tool_name_prefix else None
         self.additional_properties = additional_properties
         self.load_tools_flag = load_tools
         self.parse_tool_results = parse_tool_results
@@ -489,7 +497,19 @@ class MCPTool:
         """Get the list of functions that are allowed."""
         if not self.allowed_tools:
             return self._functions
-        return [func for func in self._functions if func.name in self.allowed_tools]
+        allowed_names = set(self.allowed_tools)
+        filtered_functions: list[FunctionTool] = []
+        for func in self._functions:
+            additional_properties = func.additional_properties or {}
+            normalized_name = additional_properties.get(_MCP_NORMALIZED_NAME_KEY)
+            remote_name = additional_properties.get(_MCP_REMOTE_NAME_KEY)
+            if (
+                func.name in allowed_names
+                or (isinstance(normalized_name, str) and normalized_name in allowed_names)
+                or (isinstance(remote_name, str) and remote_name in allowed_names)
+            ):
+                filtered_functions.append(func)
+        return filtered_functions
 
     async def _safe_close_exit_stack(self) -> None:
         """Safely close the exit stack, handling cross-task boundary errors.
@@ -715,12 +735,16 @@ class MCPTool:
 
     def _determine_approval_mode(
         self,
-        local_name: str,
+        *candidate_names: str,
     ) -> Literal["always_require", "never_require"] | None:
         if isinstance(self.approval_mode, dict):
-            if (always_require := self.approval_mode.get("always_require_approval")) and local_name in always_require:
+            if (always_require := self.approval_mode.get("always_require_approval")) and any(
+                name in always_require for name in candidate_names
+            ):
                 return "always_require"
-            if (never_require := self.approval_mode.get("never_require_approval")) and local_name in never_require:
+            if (never_require := self.approval_mode.get("never_require_approval")) and any(
+                name in never_require for name in candidate_names
+            ):
                 return "never_require"
             return None
         return self.approval_mode  # type: ignore[reportReturnType]
@@ -745,20 +769,25 @@ class MCPTool:
             prompt_list = await self.session.list_prompts(params=params)  # type: ignore[union-attr]
 
             for prompt in prompt_list.prompts:
-                local_name = _normalize_mcp_name(prompt.name)
+                normalized_name = _normalize_mcp_name(prompt.name)
+                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
                 # Skip if already loaded
                 if local_name in existing_names:
                     continue
 
                 input_model = _get_input_model_from_mcp_prompt(prompt)
-                approval_mode = self._determine_approval_mode(local_name)
+                approval_mode = self._determine_approval_mode(local_name, normalized_name, prompt.name)
                 func: FunctionTool = FunctionTool(
                     func=partial(self.get_prompt, prompt.name),
                     name=local_name,
                     description=prompt.description or "",
                     approval_mode=approval_mode,
                     input_model=input_model,
+                    additional_properties={
+                        _MCP_REMOTE_NAME_KEY: prompt.name,
+                        _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                    },
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)
@@ -788,13 +817,14 @@ class MCPTool:
             tool_list = await self.session.list_tools(params=params)  # type: ignore[union-attr]
 
             for tool in tool_list.tools:
-                local_name = _normalize_mcp_name(tool.name)
+                normalized_name = _normalize_mcp_name(tool.name)
+                local_name = _build_prefixed_mcp_name(normalized_name, self.tool_name_prefix)
 
                 # Skip if already loaded
                 if local_name in existing_names:
                     continue
 
-                approval_mode = self._determine_approval_mode(local_name)
+                approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
@@ -802,6 +832,10 @@ class MCPTool:
                     description=tool.description or "",
                     approval_mode=approval_mode,
                     input_model=tool.inputSchema,
+                    additional_properties={
+                        _MCP_REMOTE_NAME_KEY: tool.name,
+                        _MCP_NORMALIZED_NAME_KEY: normalized_name,
+                    },
                 )
                 self._functions.append(func)
                 existing_names.add(local_name)
@@ -850,7 +884,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> str:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
 
         Args:
@@ -860,7 +894,9 @@ class MCPTool:
             kwargs: Arguments to pass to the tool.
 
         Returns:
-            A string representation of the tool result — either plain text or serialized JSON.
+            A list of Content items representing the tool output.  The default
+            ``parse_tool_results`` always returns ``list[Content]``; a custom
+            callback may return a plain ``str`` which is also accepted.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
@@ -902,7 +938,13 @@ class MCPTool:
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 if result.isError:
-                    raise ToolExecutionException(parser(result))
+                    parsed = parser(result)
+                    text = (
+                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                        if isinstance(parsed, list)
+                        else str(parsed)
+                    )
+                    raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
                 raise
@@ -1056,8 +1098,9 @@ class MCPStdioTool(MCPTool):
         name: str,
         command: str,
         *,
+        tool_name_prefix: str | None = None,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
@@ -1084,6 +1127,7 @@ class MCPStdioTool(MCPTool):
             command: The command to run the MCP server.
 
         Keyword Args:
+            tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
                 ``Callable[[types.CallToolResult], str]`` that overrides the default result
@@ -1120,6 +1164,7 @@ class MCPStdioTool(MCPTool):
             description=description,
             approval_mode=approval_mode,
             allowed_tools=allowed_tools,
+            tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
             session=session,
             client=client,
@@ -1181,8 +1226,9 @@ class MCPStreamableHTTPTool(MCPTool):
         name: str,
         url: str,
         *,
+        tool_name_prefix: str | None = None,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
@@ -1209,6 +1255,7 @@ class MCPStreamableHTTPTool(MCPTool):
             url: The URL of the MCP server.
 
         Keyword Args:
+            tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
                 ``Callable[[types.CallToolResult], str]`` that overrides the default result
@@ -1247,6 +1294,7 @@ class MCPStreamableHTTPTool(MCPTool):
             description=description,
             approval_mode=approval_mode,
             allowed_tools=allowed_tools,
+            tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
             session=session,
             client=client,
@@ -1300,8 +1348,9 @@ class MCPWebsocketTool(MCPTool):
         name: str,
         url: str,
         *,
+        tool_name_prefix: str | None = None,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
@@ -1326,6 +1375,7 @@ class MCPWebsocketTool(MCPTool):
             url: The URL of the MCP server.
 
         Keyword Args:
+            tool_name_prefix: Optional prefix to prepend to exposed MCP function names.
             load_tools: Whether to load tools from the MCP server.
             parse_tool_results: An optional callable with signature
                 ``Callable[[types.CallToolResult], str]`` that overrides the default result
@@ -1359,6 +1409,7 @@ class MCPWebsocketTool(MCPTool):
             description=description,
             approval_mode=approval_mode,
             allowed_tools=allowed_tools,
+            tool_name_prefix=tool_name_prefix,
             additional_properties=additional_properties,
             session=session,
             client=client,

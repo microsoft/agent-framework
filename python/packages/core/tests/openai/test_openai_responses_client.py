@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +37,10 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
 from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
@@ -1313,7 +1317,10 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
                 ),
             ],
         ),
-        Message(role="assistant", contents=[Content.from_text(text="I found hotels for you")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_text(text="I found hotels for you")],
+        ),
     ]
 
     result = client._prepare_messages_for_openai(messages)
@@ -1422,10 +1429,16 @@ def test_response_format_with_conflicting_definitions() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock response_format and text_config that conflict
-    response_format = {"type": "json_schema", "format": {"type": "json_schema", "name": "Test", "schema": {}}}
+    response_format = {
+        "type": "json_schema",
+        "format": {"type": "json_schema", "name": "Test", "schema": {}},
+    }
     text_config = {"format": {"type": "json_object"}}
 
-    with pytest.raises(ChatClientInvalidRequestException, match="Conflicting response_format definitions"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="Conflicting response_format definitions",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=text_config)
 
 
@@ -1457,7 +1470,13 @@ def test_response_format_with_format_key() -> None:
     """Test response_format that already has a format key."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    response_format = {"format": {"type": "json_schema", "name": "MySchema", "schema": {"type": "object"}}}
+    response_format = {
+        "format": {
+            "type": "json_schema",
+            "name": "MySchema",
+            "schema": {"type": "object"},
+        }
+    }
 
     _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
@@ -1487,7 +1506,11 @@ def test_response_format_json_schema_with_strict() -> None:
 
     response_format = {
         "type": "json_schema",
-        "json_schema": {"name": "StrictSchema", "schema": {"type": "object"}, "strict": True},
+        "json_schema": {
+            "name": "StrictSchema",
+            "schema": {"type": "object"},
+            "strict": True,
+        },
     }
 
     _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
@@ -1521,7 +1544,10 @@ def test_response_format_json_schema_missing_schema() -> None:
 
     response_format = {"type": "json_schema", "json_schema": {"name": "NoSchema"}}
 
-    with pytest.raises(ChatClientInvalidRequestException, match="json_schema response_format requires a schema"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="json_schema response_format requires a schema",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1541,7 +1567,10 @@ def test_response_format_invalid_type() -> None:
 
     response_format = "invalid"  # Not a Pydantic model or mapping
 
-    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic model or mapping"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="response_format must be a Pydantic model or mapping",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
 
 
@@ -1845,6 +1874,19 @@ def test_prepare_tools_for_openai_with_image_generation_options() -> None:
     assert image_tool["output_format"] == "png"
     assert image_tool["size"] == "512x512"
     assert image_tool["quality"] == "high"
+
+
+def test_prepare_tools_for_openai_with_custom_image_generation_model() -> None:
+    """Test image generation tool conversion with a custom model string."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    tool = OpenAIResponsesClient.get_image_generation_tool(model="custom-image-model")
+
+    resp_tools = client._prepare_tools_for_openai([tool])
+    assert len(resp_tools) == 1
+    image_tool = resp_tools[0]
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["model"] == "custom-image-model"
 
 
 def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
@@ -2198,7 +2240,9 @@ async def test_get_response_streaming_with_response_format() -> None:
 
         async def run_streaming():
             async for _ in client.get_response(
-                stream=True, messages=messages, options={"response_format": OutputStruct}
+                stream=True,
+                messages=messages,
+                options={"response_format": OutputStruct},
             ):
                 pass
 
@@ -2260,6 +2304,45 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
     text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
     result = client._prepare_content_for_openai("user", text_uri_content, {})  # type: ignore
     assert result == {}
+
+
+def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
+    """Test _prepare_content_for_openai with function_result containing rich items."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    image_content = Content.from_data(data=b"image_bytes", media_type="image/png")
+    content = Content.from_function_result(
+        call_id="call_rich",
+        result=[Content.from_text("Result text"), image_content],
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_rich"
+    # Output should be a list with text and image parts
+    output = result["output"]
+    assert isinstance(output, list)
+    assert len(output) == 2
+    assert output[0]["type"] == "input_text"
+    assert output[0]["text"] == "Result text"
+    assert output[1]["type"] == "input_image"
+
+
+def test_prepare_content_for_openai_function_result_without_items() -> None:
+    """Test _prepare_content_for_openai with plain string function_result."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_plain",
+        result="Simple result",
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_plain"
+    assert result["output"] == "Simple result"
 
 
 def test_parse_chunk_from_openai_code_interpreter() -> None:
@@ -2778,7 +2861,10 @@ async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> N
 
         await client.get_response(
             messages=[Message(role="user", text="Tell me a joke")],
-            options={"instructions": "Reply in uppercase.", "conversation_id": "resp_123"},
+            options={
+                "instructions": "Reply in uppercase.",
+                "conversation_id": "resp_123",
+            },
         )
 
         second_input_messages = mock_create.call_args.kwargs["input"]
@@ -2788,7 +2874,9 @@ async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> N
 
 
 @pytest.mark.parametrize("conversation_id", ["resp_456", "conv_abc123"])
-async def test_instructions_not_repeated_for_continuation_ids(conversation_id: str) -> None:
+async def test_instructions_not_repeated_for_continuation_ids(
+    conversation_id: str,
+) -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     mock_response = _create_mock_responses_text_response(response_id="resp_456")
 
@@ -2889,7 +2977,12 @@ def test_with_callable_api_key() -> None:
                             "temperature_c": {"type": "number"},
                             "advisory": {"type": "string"},
                         },
-                        "required": ["location", "conditions", "temperature_c", "advisory"],
+                        "required": [
+                            "location",
+                            "conditions",
+                            "temperature_c",
+                            "advisory",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -3014,7 +3107,12 @@ async def test_integration_web_search() -> None:
             user_location={"country": "US", "city": "Seattle"},
         )
         content = {
-            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
+            "messages": [
+                Message(
+                    role="user",
+                    text="What is the current weather? Do not ask for my current location.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],
@@ -3105,7 +3203,42 @@ async def test_integration_streaming_file_search() -> None:
     assert "75" in full_message
 
 
-# region Background Response / ContinuationToken Tests
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_tool_rich_content_image() -> None:
+    """Integration test: a tool returns an image and the model describes it."""
+    image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
+    image_bytes = image_path.read_bytes()
+
+    @tool(approval_mode="never_require")
+    def get_test_image() -> Content:
+        """Return a test image for analysis."""
+        return Content.from_data(data=image_bytes, media_type="image/jpeg")
+
+    client = OpenAIResponsesClient()
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    for streaming in [False, True]:
+        messages = [
+            Message(
+                role="user",
+                text="Call the get_test_image tool and describe what you see.",
+            )
+        ]
+        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+
+        if streaming:
+            response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages=messages, options=options)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # sample_image.jpg contains a photo of a house; the model should mention it.
+        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
 def test_continuation_token_json_serializable() -> None:

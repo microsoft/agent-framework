@@ -25,20 +25,27 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
-from copilot import CopilotClient, CopilotSession
-from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
-from copilot.types import (
-    CopilotClientOptions,
-    MCPServerConfig,
-    MessageOptions,
-    PermissionRequestResult,
-    ResumeSessionConfig,
-    SessionConfig,
-    SystemMessageConfig,
-    ToolInvocation,
-    ToolResult,
-)
-from copilot.types import Tool as CopilotTool
+
+try:
+    from copilot import CopilotClient, CopilotSession
+    from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
+    from copilot.types import (
+        CopilotClientOptions,
+        MCPServerConfig,
+        MessageOptions,
+        PermissionRequestResult,
+        ResumeSessionConfig,
+        SessionConfig,
+        SystemMessageConfig,
+        ToolInvocation,
+        ToolResult,
+    )
+    from copilot.types import Tool as CopilotTool
+except ImportError as _copilot_import_error:
+    raise ImportError(
+        "GitHubCopilotAgent requires the 'github-copilot-sdk' package, which is only available on Python 3.11+. "
+        "Please use Python 3.11 or later."
+    ) from _copilot_import_error
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -303,7 +310,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[False] = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -314,7 +320,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[True],
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -324,7 +329,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -339,7 +343,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -354,10 +357,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options, **kwargs),
+                self._stream_updates(messages=messages, session=session, options=options),
                 finalizer=_finalize,
             )
-        return self._run_impl(messages=messages, session=session, options=options, **kwargs)
+        return self._run_impl(messages=messages, session=session, options=options)
 
     async def _run_impl(
         self,
@@ -365,7 +368,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
         if not self._started:
@@ -414,7 +416,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.
 
@@ -424,7 +425,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
 
         Yields:
             AgentResponseUpdate items.
@@ -535,8 +535,15 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     result = await ai_func.invoke(arguments=args_instance)
                 else:
                     result = await ai_func.invoke(arguments=args)
+                rich = [c for c in result if c.type in ("data", "uri")]
+                if rich:
+                    logger.warning(
+                        "GitHub Copilot does not support rich tool content; "
+                        f"dropping {len(rich)} non-text item(s) from '{ai_func.name}'."
+                    )
+                text = "\n".join(c.text for c in result if c.type == "text" and c.text)
                 return ToolResult(
-                    text_result_for_llm=str(result),
+                    text_result_for_llm=text or str(result),
                     result_type="success",
                 )
             except Exception as e:
