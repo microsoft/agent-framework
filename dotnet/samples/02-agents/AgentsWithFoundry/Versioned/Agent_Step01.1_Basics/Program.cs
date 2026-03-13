@@ -13,34 +13,41 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string JokerName = "JokerAgent";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-// Create a server-side agent version explicitly.
-AgentVersion jokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
-    JokerName,
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(deploymentName)
-        {
-            Instructions = "You are good at telling jokes."
-        }));
+// The agent record contains metadata about the agent, including its versions.
+AgentRecord jokerAgentRecord = await GetAgentRecord(deploymentName, JokerName, aiProjectClient);
 
-// You can also create another version by providing the same name with a different instruction.
-AgentVersion newJokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
-    JokerName,
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(deploymentName)
-        {
-            Instructions = "You are extremely hilarious at telling jokes."
-        }));
-
-// You can also get the latest version by just providing its name.
-AgentRecord jokerAgentRecord = await aiProjectClient.Agents.GetAgentAsync(JokerName);
-AgentVersion latestAgentVersion = jokerAgentRecord.Versions.Latest;
+// You can create an AIAgent from the agent record.
 ChatClientAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
 
 // The AgentVersion can be accessed via the GetService method.
-Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");
+Console.WriteLine($"Latest agent version id: {jokerAgentRecord.Versions.Latest.Id}");
 
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate."));
 
 // Cleanup: deletes the agent and all its versions.
 await aiProjectClient.Agents.DeleteAgentAsync(JokerName);
+
+static async Task<AgentRecord> GetAgentRecord(string deploymentName, string JokerName, AIProjectClient aiProjectClient)
+{
+    // Create a server-side agent version explicitly.
+    AgentVersion jokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+        JokerName,
+        new AgentVersionCreationOptions(
+            new PromptAgentDefinition(deploymentName)
+            {
+                Instructions = "You are good at telling jokes."
+            }));
+
+    // You can also create another version by providing the same name with a different instruction.
+    AgentVersion newJokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+        JokerName,
+        new AgentVersionCreationOptions(
+            new PromptAgentDefinition(deploymentName)
+            {
+                Instructions = "You are extremely hilarious at telling jokes."
+            }));
+
+    // You can also get the latest version by just providing its name.
+    return (AgentRecord)await aiProjectClient.Agents.GetAgentAsync(JokerName);
+}

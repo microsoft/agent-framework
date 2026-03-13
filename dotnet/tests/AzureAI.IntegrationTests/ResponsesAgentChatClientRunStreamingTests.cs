@@ -5,7 +5,7 @@ using AgentConformance.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-public class FoundryAgentChatClientRunTests() : ChatClientAgentRunTests<FoundryAgentFixture>(() => new())
+public class ResponsesAgentChatClientRunStreamingTests() : ChatClientAgentRunStreamingTests<ResponsesAgentFixture>(() => new())
 {
     public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
     {

@@ -19,7 +19,7 @@ namespace AzureAI.IntegrationTests;
 /// <summary>
 /// Integration test fixture that creates non-versioned Responses agents via the direct <c>AIProjectClient.AsAIAgent(...)</c> path.
 /// </summary>
-public class FoundryAgentFixture : IChatClientAgentFixture
+public class ResponsesAgentFixture : IChatClientAgentFixture
 {
     private ChatClientAgent _agent = null!;
     private AIProjectClient _client = null!;

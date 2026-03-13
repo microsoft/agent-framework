@@ -9,7 +9,7 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-public class FoundryAgentStructuredOutputRunTests() : StructuredOutputRunTests<FoundryAgentStructuredOutputFixture<CityInfo>>(() => new())
+public class ResponsesAgentStructuredOutputRunTests() : StructuredOutputRunTests<ResponsesAgentStructuredOutputFixture<CityInfo>>(() => new())
 {
     private const string NotSupported = "The direct Responses AsAIAgent path does not support specifying structured output type at invocation time.";
 
@@ -82,7 +82,7 @@ public class FoundryAgentStructuredOutputRunTests() : StructuredOutputRunTests<F
 /// <summary>
 /// Fixture for testing the direct Responses <see cref="ChatClientAgent"/> path with structured output of type <typeparamref name="T"/> provided at agent initialization.
 /// </summary>
-public class FoundryAgentStructuredOutputFixture<T> : FoundryAgentFixture
+public class ResponsesAgentStructuredOutputFixture<T> : ResponsesAgentFixture
 {
     public override ValueTask InitializeAsync()
     {

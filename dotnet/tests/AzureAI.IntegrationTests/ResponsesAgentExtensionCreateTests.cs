@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Threading.Tasks;
@@ -14,7 +14,7 @@ namespace AzureAI.IntegrationTests;
 /// <summary>
 /// Integration tests for non-versioned <see cref="ChatClientAgent"/> creation via <see cref="AIProjectClient"/> extension methods.
 /// </summary>
-public class FoundryAgentExtensionCreateTests
+public class ResponsesAgentExtensionCreateTests
 {
     private static Uri Endpoint => new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint));
 
@@ -26,7 +26,7 @@ public class FoundryAgentExtensionCreateTests
     public async Task AsAIAgent_WithModelAndInstructions_CreatesChatClientAgentAndRunsAsync()
     {
         // Arrange
-        const string agentName = "FoundryAgentExtensionSimple";
+        const string agentName = "ResponsesAgentExtensionSimple";
         const string agentDescription = "Integration test agent created from AIProjectClient.AsAIAgent(model, instructions).";
         const string verificationToken = "integration-extension-ok";
 
@@ -64,7 +64,7 @@ public class FoundryAgentExtensionCreateTests
         const string verificationToken = "integration-options-ok";
         ChatClientAgentOptions options = new()
         {
-            Name = "FoundryAgentExtensionOptions",
+            Name = "ResponsesAgentExtensionOptions",
             Description = "Integration test agent created from AIProjectClient.AsAIAgent(options).",
             ChatOptions = new ChatOptions
             {

@@ -7,7 +7,7 @@ using Microsoft.Agents.AI;
 
 namespace AzureAI.IntegrationTests;
 
-public class FoundryAgentRunPreviousResponseTests() : RunTests<FoundryAgentFixture>(() => new())
+public class ResponsesAgentRunStreamingPreviousResponseTests() : RunStreamingTests<ResponsesAgentFixture>(() => new())
 {
     public override Task RunWithNoMessageDoesNotFailAsync()
     {
@@ -16,7 +16,7 @@ public class FoundryAgentRunPreviousResponseTests() : RunTests<FoundryAgentFixtu
     }
 }
 
-public class FoundryAgentRunConversationTests() : RunTests<FoundryAgentFixture>(() => new())
+public class ResponsesAgentRunStreamingConversationTests() : RunStreamingTests<ResponsesAgentFixture>(() => new())
 {
     public override Func<Task<AgentRunOptions?>> AgentRunOptionsFactory => async () =>
     {
