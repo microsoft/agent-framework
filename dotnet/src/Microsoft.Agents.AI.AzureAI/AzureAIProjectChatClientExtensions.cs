@@ -14,6 +14,7 @@ using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI;
@@ -42,7 +43,6 @@ public static partial class AzureAIProjectChatClientExtensions
     /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
     /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
-    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentReference agentReference,
@@ -80,7 +80,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="name"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty or whitespace, or when the agent with the specified name was not found.</exception>
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
-    [Obsolete("Use FoundryVersionedAgent.GetAIAgentAsync instead.")]
+    [Obsolete("Use native AIProjectClient agent APIs and AsAIAgent(AgentRecord/AgentVersion) instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,
@@ -112,7 +112,6 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the latest version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentRecord"/> is <see langword="null"/>.</exception>
-    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentRecord agentRecord,
@@ -144,7 +143,6 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations based on the provided version of the Azure AI Agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="agentVersion"/> is <see langword="null"/>.</exception>
-    [Obsolete("Use FoundryVersionedAgent.AsAIAgent instead.")]
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
         AgentVersion agentVersion,
@@ -176,7 +174,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <param name="cancellationToken">A <see cref="CancellationToken"/> to cancel the operation if needed.</param>
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
-    [Obsolete("Use FoundryVersionedAgent.GetAIAgentAsync instead.")]
+    [Obsolete("Use native AIProjectClient agent APIs and AsAIAgent(AgentRecord/AgentVersion) instead.")]
     public static async Task<ChatClientAgent> GetAIAgentAsync(
         this AIProjectClient aiProjectClient,
         ChatClientAgentOptions options,
@@ -223,7 +221,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/>, <paramref name="model"/>, or <paramref name="instructions"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> or <paramref name="instructions"/> is empty or whitespace.</exception>
     /// <remarks>When using prompt agent definitions with tools the parameter <paramref name="tools"/> needs to be provided.</remarks>
-    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
+    [Obsolete("Use native AIProjectClient.Agents APIs instead.")]
     public static Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,
@@ -262,7 +260,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <returns>A <see cref="ChatClientAgent"/> instance that can be used to perform operations on the newly created agent.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> is empty or whitespace, or when the agent name is not provided in the options.</exception>
-    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
+    [Obsolete("Use native AIProjectClient.Agents APIs instead.")]
     public static async Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string model,
@@ -309,7 +307,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// When using this extension method with a <see cref="PromptAgentDefinition"/> the tools are only declarative and not invocable.
     /// Invocation of any in-process tools will need to be handled manually.
     /// </remarks>
-    [Obsolete("Use FoundryVersionedAgent.CreateAIAgentAsync instead.")]
+    [Obsolete("Use native AIProjectClient.Agents APIs instead.")]
     public static Task<ChatClientAgent> CreateAIAgentAsync(
         this AIProjectClient aiProjectClient,
         string name,
@@ -329,6 +327,75 @@ public static partial class AzureAIProjectChatClientExtensions
             clientFactory,
             services: null,
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates a non-versioned <see cref="ChatClientAgent"/> backed by the project's Responses API using the specified model and instructions.
+    /// </summary>
+    /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to use for Responses API calls. Cannot be <see langword="null"/>.</param>
+    /// <param name="model">The model deployment name to use for the agent. Cannot be <see langword="null"/> or whitespace.</param>
+    /// <param name="instructions">The instructions that guide the agent's behavior. Cannot be <see langword="null"/> or whitespace.</param>
+    /// <param name="name">Optional name for the agent.</param>
+    /// <param name="description">Optional human-readable description for the agent.</param>
+    /// <param name="tools">Optional collection of tools that the agent can invoke during conversations.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> backed by the project's Responses API.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="model"/> or <paramref name="instructions"/> is empty or whitespace.</exception>
+    public static ChatClientAgent AsAIAgent(
+        this AIProjectClient aiProjectClient,
+        string model,
+        string instructions,
+        string? name = null,
+        string? description = null,
+        IList<AITool>? tools = null,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNullOrWhitespace(model);
+        Throw.IfNullOrWhitespace(instructions);
+
+        ChatClientAgentOptions options = new()
+        {
+            Name = name,
+            Description = description,
+            ChatOptions = new ChatOptions
+            {
+                ModelId = model,
+                Instructions = instructions,
+                Tools = tools,
+            },
+        };
+
+        return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
+    }
+
+    /// <summary>
+    /// Creates a non-versioned <see cref="ChatClientAgent"/> backed by the project's Responses API using the specified options.
+    /// </summary>
+    /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to use for Responses API calls. Cannot be <see langword="null"/>.</param>
+    /// <param name="options">Configuration options that control the agent's behavior. <see cref="ChatOptions.ModelId"/> is required.</param>
+    /// <param name="clientFactory">Provides a way to customize the creation of the underlying <see cref="IChatClient"/> used by the agent.</param>
+    /// <param name="loggerFactory">Optional logger factory for creating loggers used by the agent.</param>
+    /// <param name="services">An optional <see cref="IServiceProvider"/> to use for resolving services required by the <see cref="AIFunction"/> instances being invoked.</param>
+    /// <returns>A <see cref="ChatClientAgent"/> backed by the project's Responses API.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="aiProjectClient"/> or <paramref name="options"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="options"/> does not specify <see cref="ChatOptions.ModelId"/>.</exception>
+    public static ChatClientAgent AsAIAgent(
+        this AIProjectClient aiProjectClient,
+        ChatClientAgentOptions options,
+        Func<IChatClient, IChatClient>? clientFactory = null,
+        ILoggerFactory? loggerFactory = null,
+        IServiceProvider? services = null)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNull(options);
+
+        return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
     }
 
     #region Private
@@ -452,6 +519,28 @@ public static partial class AzureAIProjectChatClientExtensions
         }
 
         return new ChatClientAgent(chatClient, agentOptions, services: services);
+    }
+
+    internal static ChatClientAgent CreateResponsesChatClientAgent(
+        AIProjectClient aiProjectClient,
+        ChatClientAgentOptions agentOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        ILoggerFactory? loggerFactory,
+        IServiceProvider? services)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNull(agentOptions);
+        Throw.IfNull(agentOptions.ChatOptions);
+        Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
+
+        IChatClient chatClient = new AzureAIProjectResponsesChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
     }
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with the specified ChatClientAgentOptions.</summary>

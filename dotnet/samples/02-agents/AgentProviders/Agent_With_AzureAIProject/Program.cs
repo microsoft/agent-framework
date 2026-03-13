@@ -31,14 +31,18 @@ var createdAgentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName: J
 //      agentVersion.Name = <agentName>
 
 // You can use an AIAgent with an already created server side agent version.
-FoundryVersionedAgent existingJokerAgent = FoundryVersionedAgent.AsAIAgent(new Uri(endpoint), new DefaultAzureCredential(), createdAgentVersion);
+ChatClientAgent existingJokerAgent = aiProjectClient.AsAIAgent(createdAgentVersion);
 
 // You can also create another AIAgent version by providing the same name with a different definition.
-FoundryVersionedAgent newJokerAgent = await FoundryVersionedAgent.CreateAIAgentAsync(new Uri(endpoint), new DefaultAzureCredential(), name: JokerName, model: deploymentName, instructions: "You are extremely hilarious at telling jokes.");
+AgentVersion newJokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    JokerName,
+    new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = "You are extremely hilarious at telling jokes." }));
+ChatClientAgent newJokerAgent = aiProjectClient.AsAIAgent(newJokerAgentVersion);
 
 // You can also get the AIAgent latest version just providing its name.
-FoundryVersionedAgent jokerAgentLatest = await FoundryVersionedAgent.GetAIAgentAsync(new Uri(endpoint), new DefaultAzureCredential(), name: JokerName);
-AgentVersion latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
+AgentRecord jokerAgentRecord = await aiProjectClient.Agents.GetAgentAsync(JokerName);
+ChatClientAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
+AgentVersion latestAgentVersion = jokerAgentRecord.Versions.Latest;
 
 // The AIAgent version can be accessed via the GetService method.
 Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");

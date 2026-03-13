@@ -1,0 +1,267 @@
+// Copyright (c) Microsoft. All rights reserved.
+
+// This sample shows multiple middleware layers working together with Microsoft Foundry Agents:
+// agent run (PII filtering and guardrails),
+// function invocation (logging and result overrides), and human-in-the-loop
+// approval workflows for sensitive function calls.
+
+using System.ComponentModel;
+using System.Text.RegularExpressions;
+using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using OpenAI.Responses;
+
+// Get Microsoft Foundry configuration from environment variables
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+const string AssistantInstructions = "You are an AI assistant that helps people find information.";
+const string AssistantName = "InformationAssistant";
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+[Description("Get the weather for a given location.")]
+static string GetWeather([Description("The location to get the weather for.")] string location)
+    => $"The weather in {location} is cloudy with a high of 15°C.";
+
+[Description("The current datetime offset.")]
+static string GetDateTime()
+    => DateTimeOffset.Now.ToString();
+
+AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime));
+AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
+BinaryData getWeatherParameters = BinaryData.FromString(
+    """
+    {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "The location to get the weather for."
+        }
+      },
+      "required": ["location"],
+      "additionalProperties": false
+    }
+    """);
+BinaryData getDateTimeParameters = BinaryData.FromString(
+    """
+    {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+    """);
+
+// Define the agent you want to create. (Prompt Agent in this case)
+AgentVersion originalAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    AssistantName,
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(deploymentName)
+        {
+            Instructions = AssistantInstructions,
+            Tools =
+            {
+                ResponseTool.CreateFunctionTool(nameof(GetWeather), getWeatherParameters, strictModeEnabled: false, functionDescription: "Get the weather for a given location."),
+                ResponseTool.CreateFunctionTool(nameof(GetDateTime), getDateTimeParameters, strictModeEnabled: false, functionDescription: "The current datetime offset.")
+            }
+        }));
+ChatClientAgent originalAgent = aiProjectClient.AsAIAgent(originalAgentVersion, tools: [getWeatherTool, dateTimeTool]);
+
+// Adding middleware to the agent level
+AIAgent middlewareEnabledAgent = originalAgent
+    .AsBuilder()
+    .Use(FunctionCallMiddleware)
+    .Use(FunctionCallOverrideWeather)
+    .Use(PIIMiddleware, null)
+    .Use(GuardrailMiddleware, null)
+    .Build();
+
+AgentSession session = await middlewareEnabledAgent.CreateSessionAsync();
+
+Console.WriteLine("\n\n=== Example 1: Wording Guardrail ===");
+AgentResponse guardRailedResponse = await middlewareEnabledAgent.RunAsync("Tell me something harmful.");
+Console.WriteLine($"Guard railed response: {guardRailedResponse}");
+
+Console.WriteLine("\n\n=== Example 2: PII detection ===");
+AgentResponse piiResponse = await middlewareEnabledAgent.RunAsync("My name is John Doe, call me at 123-456-7890 or email me at john@something.com");
+Console.WriteLine($"Pii filtered response: {piiResponse}");
+
+Console.WriteLine("\n\n=== Example 3: Agent function middleware ===");
+
+// Agent function middleware support is limited to agents that wraps a upstream ChatClientAgent or derived from it.
+
+AgentResponse functionCallResponse = await middlewareEnabledAgent.RunAsync("What's the current time and the weather in Seattle?", session);
+Console.WriteLine($"Function calling response: {functionCallResponse}");
+
+// Special per-request middleware agent.
+Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
+
+AgentVersion humanInTheLoopAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "HumanInTheLoopAgent",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(deploymentName)
+        {
+            Instructions = "You are an Human in the loop testing AI assistant that helps people find information.",
+            Tools = { ResponseTool.CreateFunctionTool(nameof(GetWeather), getWeatherParameters, strictModeEnabled: false, functionDescription: "Get the weather for a given location.") }
+        }));
+AIAgent humanInTheLoopAgent = aiProjectClient.AsAIAgent(
+    humanInTheLoopAgentVersion,
+    tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);
+
+// Using the ConsolePromptingApprovalMiddleware for a specific request to handle user approval during function calls.
+AgentResponse response = await humanInTheLoopAgent
+    .AsBuilder()
+    .Use(ConsolePromptingApprovalMiddleware, null)
+    .Build()
+    .RunAsync("What's the current time and the weather in Seattle?");
+
+Console.WriteLine($"HumanInTheLoopAgent agent middleware response: {response}");
+
+// Function invocation middleware that logs before and after function calls.
+async ValueTask<object?> FunctionCallMiddleware(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+{
+    Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Pre-Invoke");
+    var result = await next(context, cancellationToken);
+    Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 1 Post-Invoke");
+
+    return result;
+}
+
+// Function invocation middleware that overrides the result of the GetWeather function.
+async ValueTask<object?> FunctionCallOverrideWeather(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+{
+    Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Pre-Invoke");
+
+    var result = await next(context, cancellationToken);
+
+    if (context.Function.Name == nameof(GetWeather))
+    {
+        // Override the result of the GetWeather function
+        result = "The weather is sunny with a high of 25°C.";
+    }
+    Console.WriteLine($"Function Name: {context!.Function.Name} - Middleware 2 Post-Invoke");
+    return result;
+}
+
+// This middleware redacts PII information from input and output messages.
+async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+{
+    // Redact PII information from input messages
+    var filteredMessages = FilterMessages(messages);
+    Console.WriteLine("Pii Middleware - Filtered Messages Pre-Run");
+
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken).ConfigureAwait(false);
+
+    // Redact PII information from output messages
+    response.Messages = FilterMessages(response.Messages);
+
+    Console.WriteLine("Pii Middleware - Filtered Messages Post-Run");
+
+    return response;
+
+    static IList<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
+    {
+        return messages.Select(m => new ChatMessage(m.Role, FilterPii(m.Text))).ToList();
+    }
+
+    static string FilterPii(string content)
+    {
+        // Regex patterns for PII detection (simplified for demonstration)
+        Regex[] piiPatterns = [
+            MyRegex(), // Phone number (e.g., 123-456-7890)
+                    EmailRegex(), // Email address
+                    FullNameRegex() // Full name (e.g., John Doe)
+        ];
+
+        foreach (var pattern in piiPatterns)
+        {
+            content = pattern.Replace(content, "[REDACTED: PII]");
+        }
+
+        return content;
+    }
+}
+
+// This middleware enforces guardrails by redacting certain keywords from input and output messages.
+async Task<AgentResponse> GuardrailMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+{
+    // Redact keywords from input messages
+    var filteredMessages = FilterMessages(messages);
+
+    Console.WriteLine("Guardrail Middleware - Filtered messages Pre-Run");
+
+    // Proceed with the agent run
+    var response = await innerAgent.RunAsync(filteredMessages, session, options, cancellationToken);
+
+    // Redact keywords from output messages
+    response.Messages = FilterMessages(response.Messages);
+
+    Console.WriteLine("Guardrail Middleware - Filtered messages Post-Run");
+
+    return response;
+
+    List<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages)
+    {
+        return messages.Select(m => new ChatMessage(m.Role, FilterContent(m.Text))).ToList();
+    }
+
+    static string FilterContent(string content)
+    {
+        foreach (var keyword in new[] { "harmful", "illegal", "violence" })
+        {
+            if (content.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                return "[REDACTED: Forbidden content]";
+            }
+        }
+
+        return content;
+    }
+}
+
+// This middleware handles Human in the loop console interaction for any user approval required during function calling.
+async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+{
+    AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
+
+    // For simplicity, we are assuming here that only function approvals are pending.
+    List<ToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+
+    while (approvalRequests.Count > 0)
+    {
+        // Ask the user to approve each function call request.
+        // Pass the user input responses back to the agent for further processing.
+        response.Messages = approvalRequests
+            .ConvertAll(functionApprovalRequest =>
+            {
+                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
+                bool approved = Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
+                return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved)]);
+            });
+
+        response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
+
+        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
+    }
+
+    return response;
+}
+
+// Cleanup: deletes the agent and all its versions.
+await aiProjectClient.Agents.DeleteAgentAsync(originalAgent.Name);
+await aiProjectClient.Agents.DeleteAgentAsync(humanInTheLoopAgent.Name);
+
+internal partial class Program
+{
+    [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
+    private static partial Regex MyRegex();
+
+    [GeneratedRegex(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled)]
+    private static partial Regex EmailRegex();
+
+    [GeneratedRegex(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled)]
+    private static partial Regex FullNameRegex();
+}

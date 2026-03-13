@@ -8,7 +8,6 @@ using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -18,20 +17,20 @@ using Shared.IntegrationTests;
 namespace AzureAI.IntegrationTests;
 
 /// <summary>
-/// Integration test fixture that creates agents via the <see cref="FoundryAgent"/> constructor (Responses API, no server-side agent).
+/// Integration test fixture that creates non-versioned Responses agents via the direct <c>AIProjectClient.AsAIAgent(...)</c> path.
 /// </summary>
 public class FoundryAgentFixture : IChatClientAgentFixture
 {
-    private FoundryAgent _agent = null!;
+    private ChatClientAgent _agent = null!;
+    private AIProjectClient _client = null!;
 
-    public IChatClient ChatClient => this._agent.GetService<ChatClientAgent>()!.ChatClient;
+    public IChatClient ChatClient => this._agent.ChatClient;
 
     public AIAgent Agent => this._agent;
 
     public async Task<string> CreateConversationAsync()
     {
-        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
-        var response = await client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync();
+        var response = await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync();
         return response.Value.Id;
     }
 
@@ -61,8 +60,7 @@ public class FoundryAgentFixture : IChatClientAgentFixture
 
     private async Task<List<ChatMessage>> GetChatHistoryFromResponsesChainAsync(string conversationId)
     {
-        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
-        var openAIResponseClient = client.GetProjectOpenAIClient().GetProjectResponsesClient();
+        var openAIResponseClient = this._client.GetProjectOpenAIClient().GetProjectResponsesClient();
         var inputItems = await openAIResponseClient.GetResponseInputItemsAsync(conversationId).ToListAsync();
         var response = await openAIResponseClient.GetResponseAsync(conversationId);
         ResponseItem responseItem = response.Value.OutputItems.FirstOrDefault()!;
@@ -90,9 +88,8 @@ public class FoundryAgentFixture : IChatClientAgentFixture
 
     private async Task<List<ChatMessage>> GetChatHistoryFromConversationAsync(string conversationId)
     {
-        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
         List<ChatMessage> messages = [];
-        await foreach (AgentResponseItem item in client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
+        await foreach (AgentResponseItem item in this._client.GetProjectOpenAIClient().GetProjectConversationsClient().GetProjectConversationItemsAsync(conversationId, order: "asc"))
         {
             var openAIItem = item.AsResponseResultItem();
             if (openAIItem is MessageResponseItem messageItem)
@@ -116,38 +113,28 @@ public class FoundryAgentFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        FoundryAgent agent = new(
-            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
-            new DefaultAzureCredential(),
+        return Task.FromResult(this._client.AsAIAgent(
             model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
             instructions: instructions,
             name: name,
-            tools: aiTools);
-
-        return Task.FromResult(agent.GetService<ChatClientAgent>()!);
+            tools: aiTools));
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
-        FoundryAgent agent = new(
-            new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
-            new DefaultAzureCredential(),
-            options: options);
-
-        return Task.FromResult(agent.GetService<ChatClientAgent>()!);
+        return Task.FromResult(this._client.AsAIAgent(options));
     }
 
-    // FoundryAgent has no server-side agent to delete.
+    // Non-versioned Responses agents have no server-side agent to delete.
     public Task DeleteAgentAsync(ChatClientAgent agent) => Task.CompletedTask;
 
     public async Task DeleteSessionAsync(AgentSession session)
     {
         ChatClientAgentSession typedSession = (ChatClientAgentSession)session;
-        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
 
         if (typedSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            await client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedSession.ConversationId);
+            await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().DeleteConversationAsync(typedSession.ConversationId);
         }
         else if (typedSession.ConversationId?.StartsWith("resp_", StringComparison.OrdinalIgnoreCase) == true)
         {
@@ -157,9 +144,8 @@ public class FoundryAgentFixture : IChatClientAgentFixture
 
     private async Task DeleteResponseChainAsync(string lastResponseId)
     {
-        AIProjectClient client = this._agent.GetService<AIProjectClient>()!;
-        var response = await client.GetProjectOpenAIClient().GetProjectResponsesClient().GetResponseAsync(lastResponseId);
-        await client.GetProjectOpenAIClient().GetProjectResponsesClient().DeleteResponseAsync(lastResponseId);
+        var response = await this._client.GetProjectOpenAIClient().GetProjectResponsesClient().GetResponseAsync(lastResponseId);
+        await this._client.GetProjectOpenAIClient().GetProjectResponsesClient().DeleteResponseAsync(lastResponseId);
 
         if (response.Value.PreviousResponseId is not null)
         {
@@ -167,7 +153,7 @@ public class FoundryAgentFixture : IChatClientAgentFixture
         }
     }
 
-    // FoundryAgent has no server-side agent to clean up on dispose.
+    // Non-versioned Responses agents have no server-side agent to clean up on dispose.
     public ValueTask DisposeAsync()
     {
         GC.SuppressFinalize(this);
@@ -176,9 +162,11 @@ public class FoundryAgentFixture : IChatClientAgentFixture
 
     public virtual ValueTask InitializeAsync()
     {
-        this._agent = new FoundryAgent(
+        this._client = new AIProjectClient(
             new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
-            new DefaultAzureCredential(),
+            TestAzureCliCredentials.CreateAzureCliCredential());
+
+        this._agent = this._client.AsAIAgent(
             model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
             instructions: "You are a helpful assistant.",
             name: "HelpfulAssistant");
@@ -188,10 +176,11 @@ public class FoundryAgentFixture : IChatClientAgentFixture
 
     public ValueTask InitializeAsync(ChatClientAgentOptions options)
     {
-        this._agent = new FoundryAgent(
+        this._client = new AIProjectClient(
             new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)),
-            new DefaultAzureCredential(),
-            options: options);
+            TestAzureCliCredentials.CreateAzureCliCredential());
+
+        this._agent = this._client.AsAIAgent(options);
 
         return default;
     }

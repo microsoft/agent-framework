@@ -176,7 +176,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AIProjectClient client = this.GetAgentClient();
 
-        agent = FoundryVersionedAgent.AsAIAgent(projectEndpoint, projectCredentials, agentVersion);
+        agent = client.AsAIAgent(agentVersion);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)

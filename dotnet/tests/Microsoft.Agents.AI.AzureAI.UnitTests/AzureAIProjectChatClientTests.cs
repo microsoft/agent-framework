@@ -10,6 +10,8 @@ using Azure.AI.Projects;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
+#pragma warning disable CS0618
+[Obsolete("Uses obsolete AIProjectClient.GetAIAgentAsync compatibility extensions while validating chat-client behavior.")]
 public class AzureAIProjectChatClientTests
 {
     /// <summary>
@@ -43,15 +45,17 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+        AIProjectClient projectClient = new(
             new Uri("https://test.openai.azure.com/"),
             new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_12345" }
-            },
-            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+            });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -93,15 +97,17 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+        AIProjectClient projectClient = new(
             new Uri("https://test.openai.azure.com/"),
             new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions" },
-            },
-            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+            });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -143,15 +149,17 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+        AIProjectClient projectClient = new(
             new Uri("https://test.openai.azure.com/"),
             new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_should_not_use_default" }
-            },
-            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+            });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -193,15 +201,17 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var agent = await FoundryVersionedAgent.GetAIAgentAsync(
+        AIProjectClient projectClient = new(
             new Uri("https://test.openai.azure.com/"),
             new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
                 ChatOptions = new() { Instructions = "Test instructions" },
-            },
-            clientOptions: new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
+            });
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -212,3 +222,4 @@ public class AzureAIProjectChatClientTests
         Assert.Equal("resp_0888a46cbf2b1ff3006914596e05d08195a77c3f5187b769a7", chatClientSession.ConversationId);
     }
 }
+#pragma warning restore CS0618

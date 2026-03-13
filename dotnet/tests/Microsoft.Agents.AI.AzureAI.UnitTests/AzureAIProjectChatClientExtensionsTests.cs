@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
-
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
@@ -23,11 +21,173 @@ using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
+#pragma warning disable CS0618
 /// <summary>
 /// Unit tests for the <see cref="AzureAIProjectChatClientExtensions"/> class.
 /// </summary>
+[Obsolete("Includes coverage for obsolete AIProjectClient compatibility extension methods.")]
 public sealed class AzureAIProjectChatClientExtensionsTests
 {
+    #region AsAIAgent(AIProjectClient, model, instructions) Tests
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload throws ArgumentNullException when AIProjectClient is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIProjectClient? client = null;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.AsAIAgent("gpt-4o-mini", "You are helpful."));
+
+        Assert.Equal("aiProjectClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        List<AITool> tools =
+        [
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        ];
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            name: "test-agent",
+            description: "A test agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("A test agent", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<IChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload applies the clientFactory.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        TestChatClient? testChatClient = null;
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            clientFactory: innerClient => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that the options-based non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithOptions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        ChatClientAgentOptions options = new()
+        {
+            Name = "options-agent",
+            Description = "Agent from options",
+            ChatOptions = new ChatOptions
+            {
+                ModelId = "gpt-4o-mini",
+                Instructions = "You are helpful.",
+            },
+        };
+
+        // Act
+        ChatClientAgent agent = client.AsAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("options-agent", agent.Name);
+        Assert.Equal("Agent from options", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload adds the MEAI user-agent header to Responses API requests.
+    /// </summary>
+    [Fact]
+    public async Task AsAIAgent_WithModelAndInstructions_UserAgentHeaderAddedToResponsesRequestsAsync()
+    {
+        // Arrange
+        bool userAgentFound = false;
+        using HttpHandlerAssert httpHandler = new(request =>
+        {
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
+            {
+                foreach (string value in values)
+                {
+                    if (value.Contains("MEAI"))
+                    {
+                        userAgentFound = true;
+                    }
+                }
+            }
+
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        TestDataUtil.GetOpenAIDefaultResponseJson(),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+        });
+
+#pragma warning disable CA5399
+        using HttpClient httpClient = new(httpHandler);
+#pragma warning restore CA5399
+
+        AIProjectClient aiProjectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        ChatClientAgent agent = aiProjectClient.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.");
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
+
+        // Assert
+        Assert.True(userAgentFound, "MEAI user-agent header was not found in any request");
+    }
+
+    #endregion
+
     #region AsAIAgent(AIProjectClient, AgentRecord) Tests
 
     /// <summary>
@@ -3262,6 +3422,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         }
     }
 }
+#pragma warning restore CS0618
 
 /// <summary>
 /// Provides test data for invalid agent name validation tests.

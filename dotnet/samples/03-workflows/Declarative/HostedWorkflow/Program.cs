@@ -50,7 +50,7 @@ internal sealed class Program
 
         string workflowInput = GetWorkflowInput(args);
 
-        FoundryVersionedAgent agent = FoundryVersionedAgent.AsAIAgent(foundryEndpoint, new DefaultAzureCredential(), agentVersion);
+        ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
         AgentSession session = await agent.CreateSessionAsync();
 
