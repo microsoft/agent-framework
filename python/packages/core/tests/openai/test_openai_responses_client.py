@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
+    Agent,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -3227,6 +3228,56 @@ async def test_integration_tool_rich_content_image() -> None:
         assert len(response.text) > 0
         # sample_image.jpg contains a photo of a house; the model should mention it.
         assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_agent_replays_local_tool_history_without_stale_fc_id() -> None:
+    """Integration test: persisted local Responses tool history can be replayed on a later turn."""
+    hotel_code = "HOTEL-PERSIST-4672"
+
+    @tool(name="search_hotels", approval_mode="never_require")
+    async def search_hotels(city: Annotated[str, "The city to search for hotels in"]) -> str:
+        return f"The only hotel option in {city} is {hotel_code}."
+
+    client = OpenAIResponsesClient()
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    agent = Agent(
+        client=client,
+        tools=[search_hotels],
+        default_options={"store": False},
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run(
+        "Call the search_hotels tool for Paris and answer with the hotel code you found.",
+        session=session,
+        options={"tool_choice": {"mode": "required", "required_function_name": "search_hotels"}},
+    )
+    assert first_response.text is not None
+    assert hotel_code in first_response.text
+
+    shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
+    shared_function_call = next(
+        content
+        for message in shared_messages
+        for content in message.contents
+        if content.type == "function_call"
+    )
+    assert shared_function_call.additional_properties is not None
+    assert isinstance(shared_function_call.additional_properties.get("fc_id"), str)
+    assert shared_function_call.additional_properties["fc_id"]
+
+    second_response = await agent.run(
+        "What hotel code did you already find for Paris? Answer with the exact code only.",
+        session=session,
+        options={"tool_choice": "none"},
+    )
+    assert second_response.text is not None
+    assert hotel_code in second_response.text
 
 
 def test_continuation_token_json_serializable() -> None:
