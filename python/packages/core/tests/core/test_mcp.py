@@ -2647,16 +2647,19 @@ async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> 
         load_tools=False,
         load_prompts=False,
     )
-    tool._lifecycle_owner_task = asyncio.current_task()
 
-    try:
-        with patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner:
+    async def connect_from_owner_task() -> None:
+        tool._lifecycle_owner_task = asyncio.current_task()
+        try:
             async with tool._lifecycle_request_lock:
-                await asyncio.wait_for(tool.connect(reset=True), timeout=0.1)
+                await tool.connect(reset=True)
+        finally:
+            tool._lifecycle_owner_task = None
 
-        mock_connect_on_owner.assert_awaited_once_with(reset=True)
-    finally:
-        tool._lifecycle_owner_task = None
+    with patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner:
+        await asyncio.wait_for(connect_from_owner_task(), timeout=0.1)
+
+    mock_connect_on_owner.assert_awaited_once_with(reset=True)
 
 
 async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> None:
@@ -2669,16 +2672,19 @@ async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> No
         load_tools=False,
         load_prompts=False,
     )
-    tool._lifecycle_owner_task = asyncio.current_task()
 
-    try:
-        with patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner:
+    async def close_from_owner_task() -> None:
+        tool._lifecycle_owner_task = asyncio.current_task()
+        try:
             async with tool._lifecycle_request_lock:
-                await asyncio.wait_for(tool.close(), timeout=0.1)
+                await tool.close()
+        finally:
+            tool._lifecycle_owner_task = None
 
-        mock_close_on_owner.assert_awaited_once_with()
-    finally:
-        tool._lifecycle_owner_task = None
+    with patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner:
+        await asyncio.wait_for(close_from_owner_task(), timeout=0.1)
+
+    mock_close_on_owner.assert_awaited_once_with()
 
 
 async def test_mcp_tool_safe_close_reraises_other_runtime_errors():
