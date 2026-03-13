@@ -3602,6 +3602,40 @@ async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_fro
     assert restored_function_call["id"] == "fc_call_1"
 
 
+def test_prepare_messages_for_openai_keeps_live_fc_id_separate_from_replayed_history() -> None:
+    """Replayed history must not borrow a live Responses function call ID with the same call_id."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    history_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "Paris"}',
+                additional_properties={"fc_id": "fc_history123"},
+            )
+        ],
+        additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+    )
+    live_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "London"}',
+                additional_properties={"fc_id": "fc_live123"},
+            )
+        ],
+    )
+
+    result = client._prepare_messages_for_openai([history_message, live_message])
+
+    function_calls = [item for item in result if item.get("type") == "function_call"]
+    assert [item["id"] for item in function_calls] == ["fc_call_1", "fc_live123"]
+
+
 def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
     """Test _prepare_messages_for_openai correctly filters empty fc_id values from call_id_to_id mapping."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
