@@ -34,6 +34,8 @@ internal sealed class FanInEdgeState
 
     public IEnumerable<IGrouping<ExecutorIdentity, MessageEnvelope>>? ProcessMessage(string sourceId, MessageEnvelope envelope)
     {
+        List<PortableMessageEnvelope>? takenMessages = null;
+
         // Serialize concurrent calls from parallel executor tasks during superstep execution.
         lock (this._syncLock)
         {
@@ -42,21 +44,20 @@ internal sealed class FanInEdgeState
 
             if (this.Unseen.Count == 0)
             {
-                List<PortableMessageEnvelope> takenMessages = this.PendingMessages;
+                takenMessages = this.PendingMessages;
                 this.PendingMessages = [];
                 this.Unseen = [.. this.SourceIds];
-
-                if (takenMessages.Count == 0)
-                {
-                    return null;
-                }
-
-                return takenMessages.Select(portable => portable.ToMessageEnvelope())
-                                    .GroupBy(keySelector: messageEnvelope => messageEnvelope.Source)
-                                    .ToList();
             }
+        }
 
+        if (takenMessages is null || takenMessages.Count == 0)
+        {
             return null;
         }
+
+        return takenMessages
+            .Select(portable => portable.ToMessageEnvelope())
+            .GroupBy(messageEnvelope => messageEnvelope.Source)
+            .ToList();
     }
 }
