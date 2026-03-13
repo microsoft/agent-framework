@@ -289,6 +289,23 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             **kwargs,
         )
 
+    @staticmethod
+    def get_web_search_tool(
+        *,
+        web_search_options: Any | None = None,
+    ) -> dict[str, Any]:
+        """Web search is not supported by Azure OpenAI's Chat Completions API.
+
+        Use ``OpenAIChatClient`` or ``AzureOpenAIResponsesClient`` for web search support.
+
+        Raises:
+            NotImplementedError: Always, since Azure OpenAI does not support web search.
+        """
+        raise NotImplementedError(
+            "Web search is not supported by Azure OpenAI's Chat Completions API. "
+            "Use OpenAIChatClient or AzureOpenAIResponsesClient for web search support."
+        )
+
     @override
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
         """Parse the choice into a Content object with type='text'.
