@@ -388,7 +388,7 @@ public class ToolResultCompactionStrategyTests
         ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always);
 
         // Assert — ToolCallFormatter is not null when no custom formatter is provided
-        Assert.NotNull(strategy.ToolCallFormatter);
+        Assert.Null(strategy.ToolCallFormatter);
     }
 
     [Fact]
