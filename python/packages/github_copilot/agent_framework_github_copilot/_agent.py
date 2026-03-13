@@ -535,8 +535,15 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     result = await ai_func.invoke(arguments=args_instance)
                 else:
                     result = await ai_func.invoke(arguments=args)
+                rich = [c for c in result if c.type in ("data", "uri")]
+                if rich:
+                    logger.warning(
+                        "GitHub Copilot does not support rich tool content; "
+                        f"dropping {len(rich)} non-text item(s) from '{ai_func.name}'."
+                    )
+                text = "\n".join(c.text for c in result if c.type == "text" and c.text)
                 return ToolResult(
-                    text_result_for_llm=str(result),
+                    text_result_for_llm=text or str(result),
                     result_type="success",
                 )
             except Exception as e:

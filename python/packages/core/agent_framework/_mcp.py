@@ -142,69 +142,60 @@ def _parse_message_from_mcp(
 
 def _parse_tool_result_from_mcp(
     mcp_type: types.CallToolResult,
-) -> str:
-    """Parse an MCP CallToolResult directly into a string representation.
+) -> list[Content]:
+    """Parse an MCP CallToolResult into a list of Content items.
 
-    Converts each content item in the MCP result to its string form and combines them.
-    This skips the intermediate Content object step for tool results.
+    Converts each content item in the MCP result to its appropriate
+    Content form.  Text items become ``Content(type="text")`` and media
+    items (images, audio) are preserved as rich Content.
 
     Args:
         mcp_type: The MCP CallToolResult object to convert.
 
     Returns:
-        A string representation of the tool result — either plain text or serialized JSON.
+        A list of Content items representing the tool result.
     """
-    import json
-
-    parts: list[str] = []
+    result: list[Content] = []
     for item in mcp_type.content:
         match item:
             case types.TextContent():
-                parts.append(item.text)
+                result.append(Content.from_text(item.text))
             case types.ImageContent() | types.AudioContent():
-                parts.append(
-                    json.dumps(
-                        {
-                            "type": "image" if isinstance(item, types.ImageContent) else "audio",
-                            "data": item.data,
-                            "mimeType": item.mimeType,
-                        },
-                        default=str,
+                decoded = base64.b64decode(item.data)
+                result.append(
+                    Content.from_data(
+                        data=decoded,
+                        media_type=item.mimeType,
                     )
                 )
             case types.ResourceLink():
-                parts.append(
-                    json.dumps(
-                        {
-                            "type": "resource_link",
-                            "uri": str(item.uri),
-                            "mimeType": item.mimeType,
-                        },
-                        default=str,
+                result.append(
+                    Content.from_uri(
+                        uri=str(item.uri),
+                        media_type=item.mimeType,
                     )
                 )
             case types.EmbeddedResource():
                 match item.resource:
                     case types.TextResourceContents():
-                        parts.append(item.resource.text)
+                        result.append(Content.from_text(item.resource.text))
                     case types.BlobResourceContents():
-                        parts.append(
-                            json.dumps(
-                                {
-                                    "type": "blob",
-                                    "data": item.resource.blob,
-                                    "mimeType": item.resource.mimeType,
-                                },
-                                default=str,
+                        blob = item.resource.blob
+                        mime = item.resource.mimeType or "application/octet-stream"
+                        if not blob.startswith("data:"):
+                            blob = f"data:{mime};base64,{blob}"
+                        result.append(
+                            Content.from_uri(
+                                uri=blob,
+                                media_type=mime,
                             )
                         )
             case _:
-                parts.append(str(item))
-    if not parts:
-        return ""
-    if len(parts) == 1:
-        return parts[0]
-    return json.dumps(parts, default=str)
+                result.append(Content.from_text(str(item)))
+
+    if not result:
+        result.append(Content.from_text(""))
+    return result
 
 
 def _parse_content_from_mcp(
@@ -425,7 +416,7 @@ class MCPTool:
         approval_mode: (Literal["always_require", "never_require"] | MCPSpecificApproval | None) = None,
         allowed_tools: Collection[str] | None = None,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         session: ClientSession | None = None,
@@ -850,7 +841,7 @@ class MCPTool:
                     inner_exception=ex,
                 ) from ex
 
-    async def call_tool(self, tool_name: str, **kwargs: Any) -> str:
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
         """Call a tool with the given arguments.
 
         Args:
@@ -860,7 +851,9 @@ class MCPTool:
             kwargs: Arguments to pass to the tool.
 
         Returns:
-            A string representation of the tool result — either plain text or serialized JSON.
+            A list of Content items representing the tool output.  The default
+            ``parse_tool_results`` always returns ``list[Content]``; a custom
+            callback may return a plain ``str`` which is also accepted.
 
         Raises:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
@@ -902,7 +895,13 @@ class MCPTool:
             try:
                 result = await self.session.call_tool(tool_name, arguments=filtered_kwargs, meta=otel_meta)  # type: ignore
                 if result.isError:
-                    raise ToolExecutionException(parser(result))
+                    parsed = parser(result)
+                    text = (
+                        "\n".join(c.text for c in parsed if c.type == "text" and c.text)
+                        if isinstance(parsed, list)
+                        else str(parsed)
+                    )
+                    raise ToolExecutionException(text or str(parsed))
                 return parser(result)
             except ToolExecutionException:
                 raise
@@ -1057,7 +1056,7 @@ class MCPStdioTool(MCPTool):
         command: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
@@ -1182,7 +1181,7 @@ class MCPStreamableHTTPTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,
@@ -1301,7 +1300,7 @@ class MCPWebsocketTool(MCPTool):
         url: str,
         *,
         load_tools: bool = True,
-        parse_tool_results: Callable[[types.CallToolResult], str] | None = None,
+        parse_tool_results: Callable[[types.CallToolResult], str | list[Content]] | None = None,
         load_prompts: bool = True,
         parse_prompt_results: Callable[[types.GetPromptResult], str] | None = None,
         request_timeout: int | None = None,

@@ -761,9 +761,10 @@ async def test_chat_agent_as_tool_function_execution(
     # Test function execution
     result = await tool.invoke(arguments=tool.input_model(task="Hello"))
 
-    # Should return the agent's response text
-    assert isinstance(result, str)
-    assert result == "test response"  # From mock chat client
+    # Should return the agent's response text as a list of Content items
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text == "test response"  # From mock chat client
 
 
 async def test_chat_agent_as_tool_with_stream_callback(
@@ -785,10 +786,11 @@ async def test_chat_agent_as_tool_with_stream_callback(
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
-    assert isinstance(result, str)
+    assert isinstance(result, list)
+    result_text = result[0].text
     # Result should be concatenation of all streaming updates
     expected_text = "".join(update.text for update in collected_updates)
-    assert result == expected_text
+    assert result_text == expected_text
 
 
 async def test_chat_agent_as_tool_with_custom_arg_name(
@@ -801,7 +803,8 @@ async def test_chat_agent_as_tool_with_custom_arg_name(
 
     # Test that the custom argument name works
     result = await tool.invoke(arguments=tool.input_model(prompt="Test prompt"))
-    assert result == "test response"
+    assert isinstance(result, list)
+    assert result[0].text == "test response"
 
 
 async def test_chat_agent_as_tool_with_async_stream_callback(
@@ -823,10 +826,11 @@ async def test_chat_agent_as_tool_with_async_stream_callback(
 
     # Should have collected streaming updates
     assert len(collected_updates) > 0
-    assert isinstance(result, str)
+    assert isinstance(result, list)
+    result_text = result[0].text
     # Result should be concatenation of all streaming updates
     expected_text = "".join(update.text for update in collected_updates)
-    assert result == expected_text
+    assert result_text == expected_text
 
 
 async def test_chat_agent_as_tool_name_sanitization(

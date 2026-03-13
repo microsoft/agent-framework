@@ -88,9 +88,16 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
                 // Run all available supersteps continuously
                 // Events are streamed out in real-time as they happen via the event handler
-                while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
+                if (this._stepRunner.HasUnprocessedMessages)
                 {
-                    await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
+                    // Emit WorkflowStartedEvent only when there's actual work to process
+                    // This avoids spurious events on timeout-only loop iterations
+                    await this._eventChannel.Writer.WriteAsync(new WorkflowStartedEvent(), linkedSource.Token).ConfigureAwait(false);
+
+                    while (this._stepRunner.HasUnprocessedMessages && !linkedSource.Token.IsCancellationRequested)
+                    {
+                        await this._stepRunner.RunSuperStepAsync(linkedSource.Token).ConfigureAwait(false);
+                    }
                 }
 
                 // Update status based on what's waiting

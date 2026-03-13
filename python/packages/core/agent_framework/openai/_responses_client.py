@@ -16,7 +16,16 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NoReturn,
+    TypedDict,
+    cast,
+)
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses import FunctionShellTool
@@ -309,23 +318,33 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                         async for chunk in stream_response:
                             yield self._parse_chunk_from_openai(
-                                chunk, options=validated_options, function_call_ids=function_call_ids
+                                chunk,
+                                options=validated_options,
+                                function_call_ids=function_call_ids,
                             )
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
-                    client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+                    (
+                        client,
+                        run_options,
+                        validated_options,
+                    ) = await self._prepare_request(messages, options, **kwargs)
                     try:
                         if "text_format" in run_options:
                             async with client.responses.stream(**run_options) as response:
                                 async for chunk in response:
                                     yield self._parse_chunk_from_openai(
-                                        chunk, options=validated_options, function_call_ids=function_call_ids
+                                        chunk,
+                                        options=validated_options,
+                                        function_call_ids=function_call_ids,
                                     )
                         else:
                             async for chunk in await client.responses.create(stream=True, **run_options):
                                 yield self._parse_chunk_from_openai(
-                                    chunk, options=validated_options, function_call_ids=function_call_ids
+                                    chunk,
+                                    options=validated_options,
+                                    function_call_ids=function_call_ids,
                                 )
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -439,7 +458,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     # region Prep methods
 
     def _prepare_tools_for_openai(
-        self, tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> list[Any]:
         """Prepare tools for the OpenAI Responses API.
 
@@ -1194,10 +1214,22 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
+                output: str | list[dict[str, Any]] = content.result or ""
+                if content.items and any(item.type in ("data", "uri") for item in content.items):
+                    output_parts: list[dict[str, Any]] = []
+                    for item in content.items:
+                        if item.type == "text":
+                            output_parts.append({"type": "input_text", "text": item.text or ""})
+                        else:
+                            part = self._prepare_content_for_openai("user", item, call_id_to_id)  # type: ignore[arg-type]
+                            if part:
+                                output_parts.append(part)
+                    if output_parts:
+                        output = output_parts
                 return {
                     "call_id": content.call_id,
                     "type": "function_call_output",
-                    "output": content.result if content.result is not None else "",
+                    "output": output,
                 }
             case "function_approval_request":
                 return {
@@ -1825,7 +1857,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
-                if event.response.status and event.response.status in ("in_progress", "queued"):
+                if event.response.status and event.response.status in (
+                    "in_progress",
+                    "queued",
+                ):
                     continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
@@ -2003,7 +2038,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 Content.from_shell_tool_call(
                                     call_id=local_call_id,
                                     commands=[local_command] if local_command else [],
-                                    timeout_ms=getattr(getattr(event_item, "action", None), "timeout_ms", None),
+                                    timeout_ms=getattr(
+                                        getattr(event_item, "action", None),
+                                        "timeout_ms",
+                                        None,
+                                    ),
                                     status=getattr(event_item, "status", None),
                                     raw_representation=event_item,
                                 )

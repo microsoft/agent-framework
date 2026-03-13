@@ -1402,11 +1402,20 @@ class AzureAIAgentClient(
                 call_id = run_and_call_ids[1]
 
                 if content.type == "function_result":
+                    if content.items:
+                        text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                        rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                        if rich_items:
+                            logger.warning(
+                                "Azure AI Agents does not support rich content (images, audio) in tool results. "
+                                "Rich content items will be omitted."
+                            )
+                        output_text = "\n".join(text_parts) if text_parts else ""
+                    else:
+                        output_text = content.result if content.result is not None else ""
                     if tool_outputs is None:
                         tool_outputs = []
-                    tool_outputs.append(
-                        ToolOutput(tool_call_id=call_id, output=content.result if content.result is not None else "")
-                    )
+                    tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output_text))
                 elif content.type == "function_approval_response":
                     if tool_approvals is None:
                         tool_approvals = []

@@ -1395,11 +1395,19 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     ),
                 ) from e
 
-            # Convert result to MCP content
-            if isinstance(result, str):
-                return [types.TextContent(type="text", text=result)]  # type: ignore[attr-defined]
-
-            return [types.TextContent(type="text", text=str(result))]  # type: ignore[attr-defined]
+            # Convert result to MCP content.
+            # Currently only text items are forwarded over MCP; rich content
+            # (images, audio) is not yet supported in the MCP server path.
+            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []  # type: ignore[attr-defined]
+            for c in result:
+                if c.type == "text" and c.text:
+                    mcp_content.append(types.TextContent(type="text", text=c.text))  # type: ignore[attr-defined]
+                elif c.type in ("data", "uri"):
+                    logger.warning(
+                        "MCP server does not yet forward rich content (images, audio) "
+                        "in tool results. Rich content items will be omitted."
+                    )
+            return mcp_content or [types.TextContent(type="text", text="")]  # type: ignore[attr-defined]
 
         @server.set_logging_level()  # type: ignore
         async def _set_logging_level(level: types.LoggingLevel) -> None:  # type: ignore

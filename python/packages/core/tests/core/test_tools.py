@@ -124,7 +124,8 @@ async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
         return f"{query}:{max_results}"
 
     result = await search.invoke(arguments={"query": "hello", "max_results": 3})
-    assert result == "hello:3"
+    assert isinstance(result, list)
+    assert result[0].text == "hello:3"
 
 
 async def test_tool_decorator_with_json_schema_invoke_missing_required():
@@ -221,7 +222,8 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == "10"
+    assert isinstance(result, list)
+    assert result[0].text == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -492,11 +494,13 @@ async def test_tool_decorator_shared_state():
 
     # Test with invoke method as well (simulating agent execution)
     result6 = await increment_tool.invoke(amount=5)
-    assert result6 == "Counter incremented by 5. New value: 60"
+    assert isinstance(result6, list)
+    assert result6[0].text == "Counter incremented by 5. New value: 60"
     assert counter_instance.counter == 60
 
     result7 = await get_value_tool.invoke()
-    assert result7 == "Current counter value: 60"
+    assert isinstance(result7, list)
+    assert result7[0].text == "Current counter value: 60"
     assert counter_instance.counter == 60
 
 
@@ -519,7 +523,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -563,7 +568,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -604,7 +610,8 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
         options={"model_id": "dummy"},
     )
 
-    assert result == "HELLO WORLD"
+    assert isinstance(result, list)
+    assert result[0].text == "HELLO WORLD"
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -628,7 +635,8 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == "15"
+    assert isinstance(result, list)
+    assert result[0].text == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -696,7 +704,8 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == "12"
+    assert isinstance(result, list)
+    assert result[0].text == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -932,13 +941,15 @@ async def test_ai_function_with_kwargs_injection():
         arguments=tool_with_kwargs.input_model(x=5),
         user_id="user2",
     )
-    assert result == "x=5, user=user2"
+    assert isinstance(result, list)
+    assert result[0].text == "x=5, user=user2"
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
         arguments=tool_with_kwargs.input_model(x=10),
     )
-    assert result_default == "x=10, user=unknown"
+    assert isinstance(result_default, list)
+    assert result_default[0].text == "x=10, user=unknown"
 
 
 # region _parse_annotation tests

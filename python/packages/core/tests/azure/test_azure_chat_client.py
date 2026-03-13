@@ -89,18 +89,26 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
-def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
-def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_endpoint_and_base_url(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
-@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}],
+    indirect=True,
+)
 def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Note: URL scheme validation was previously handled by pydantic's HTTPsUrl type.
     # After migrating to load_settings with TypedDict, endpoint is a plain string and no longer
@@ -147,7 +155,11 @@ def mock_chat_completion_response() -> ChatCompletion:
     return ChatCompletion(
         id="test_id",
         choices=[
-            Choice(index=0, message=ChatCompletionMessage(content="test", role="assistant"), finish_reason="stop")
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(content="test", role="assistant"),
+                finish_reason="stop",
+            )
         ],
         created=0,
         model="test",
@@ -159,7 +171,13 @@ def mock_chat_completion_response() -> ChatCompletion:
 def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk]:
     content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -546,7 +564,9 @@ async def test_bad_request_non_content_filter(
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
-        "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
+        "The request was bad.",
+        response=Response(400, request=Request("POST", test_endpoint)),
+        body={},
     )
 
     azure_chat_client = AzureOpenAIChatClient()
@@ -605,7 +625,13 @@ async def test_streaming_with_none_delta(
     # Second chunk has actual content
     chunk_with_content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -854,7 +880,10 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
+        async for chunk in agent.run(
+            "Please respond with exactly: 'This is a streaming response test.'",
+            stream=True,
+        ):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
