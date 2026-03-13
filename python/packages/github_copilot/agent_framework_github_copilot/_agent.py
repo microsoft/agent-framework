@@ -21,10 +21,12 @@ from agent_framework import (
     ResponseStream,
     normalize_messages,
 )
+from agent_framework._middleware import AgentMiddlewareLayer
 from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 from copilot import CopilotClient, CopilotSession
 from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
 from copilot.types import (
@@ -41,9 +43,9 @@ from copilot.types import (
 from copilot.types import Tool as CopilotTool
 
 if sys.version_info >= (3, 13):
-    from typing import TypeVar
+    from typing import Self, TypeVar
 else:
-    from typing_extensions import TypeVar
+    from typing_extensions import Self, TypeVar
 
 
 DEFAULT_TIMEOUT_SECONDS: float = 60.0
@@ -121,7 +123,7 @@ OptionsT = TypeVar(
 )
 
 
-class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
+class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
     """A GitHub Copilot Agent.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
@@ -242,7 +244,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> Self:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -302,7 +304,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
-        options: OptionsT | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
@@ -313,7 +315,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        options: OptionsT | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
@@ -323,7 +325,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        options: OptionsT | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
@@ -338,8 +340,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
-            options: Runtime options (model, timeout, etc.).
-            kwargs: Additional keyword arguments.
+            middleware: Runtime middleware parameter accepted for compatibility with middleware layer routing.
+            kwargs: Additional keyword arguments, including ``options`` for runtime options
+                (model, timeout, etc.).
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -348,16 +351,26 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Raises:
             AgentException: If the request fails.
         """
+        options = cast(OptionsT | None, kwargs.pop("options", None))
         if stream:
-
-            def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
-                return AgentResponse.from_updates(updates)
-
-            return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options, **kwargs),
-                finalizer=_finalize,
-            )
+            return self._run_stream_impl(messages=messages, session=session, options=options, **kwargs)
         return self._run_impl(messages=messages, session=session, options=options, **kwargs)
+
+    def _run_stream_impl(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+        def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
+            return AgentResponse.from_updates(updates)
+
+        return ResponseStream(
+            self._stream_updates(messages=messages, session=session, options=options, **kwargs),
+            finalizer=_finalize,
+        )
 
     async def _run_impl(
         self,
@@ -647,3 +660,12 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             config["mcp_servers"] = self._mcp_servers
 
         return await self._client.resume_session(session_id, config)
+
+
+class GitHubCopilotAgent(
+    AgentTelemetryLayer,
+    AgentMiddlewareLayer,
+    RawGitHubCopilotAgent[OptionsT],
+    Generic[OptionsT],
+):
+    """GitHub Copilot agent with middleware and telemetry support."""
