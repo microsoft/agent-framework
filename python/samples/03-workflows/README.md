@@ -43,6 +43,14 @@ Once comfortable with these, explore the rest of the samples below.
 | Workflow as Agent with Session         | [agents/workflow_as_agent_with_session.py](./agents/workflow_as_agent_with_session.py)                           | Use AgentSession to maintain conversation history across workflow-as-agent invocations                |
 | Workflow as Agent kwargs               | [agents/workflow_as_agent_kwargs.py](./agents/workflow_as_agent_kwargs.py)                                     | Pass custom context (data, user tokens) via kwargs through workflow.as_agent() to @ai_function tools |
 
+### background-run
+
+| Sample               | File                                                                                   | Concepts                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Basic Polling        | [background-run/basic_polling.py](./background-run/basic_polling.py)                   | Start a background run, poll for events with `handle.poll()`, check `is_idle` |
+| Error Handling       | [background-run/error_handling.py](./background-run/error_handling.py)                 | Inspect failed events via polling, re-run workflow after failure               |
+| Respond While Running | [background-run/respond_while_running.py](./background-run/respond_while_running.py) | Fan-out hot/cold paths, `handle.respond()` while workflow is still running    |
+
 ### checkpoint
 
 | Sample                         | File                                                                                                                       | Concepts                                                                                           |

@@ -15,6 +15,7 @@ from typing import Any, Literal, overload
 from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
 from ._agent import WorkflowAgent
+from ._background_run import BackgroundRunHandle
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
@@ -540,6 +541,101 @@ class Workflow(DictConvertible):
         if stream:
             return response_stream
         return response_stream.get_final_response()
+
+    def run_in_background(
+        self,
+        message: Any | None = None,
+        *,
+        responses: dict[str, Any] | None = None,
+        checkpoint_id: str | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
+        **kwargs: Any,
+    ) -> BackgroundRunHandle:
+        """Start the workflow in a background asyncio task and return a polling handle.
+
+        The workflow runs as a producer in a background task, buffering events into
+        an internal queue. The caller acts as the single consumer, draining events
+        via :meth:`BackgroundRunHandle.poll`. The workflow always runs in streaming
+        mode internally.
+
+        This is a one-shot execution: the workflow runs until it reaches an idle
+        state (or fails), after which :attr:`BackgroundRunHandle.is_idle` becomes
+        ``True``. To resume, call :meth:`BackgroundRunHandle.respond` which
+        automatically restarts the runner, or call ``run_in_background`` again.
+
+        Args:
+            message: Initial message for the start executor. Required for new workflow runs.
+                Mutually exclusive with responses.
+            responses: Responses to send for pending request info events. Mutually
+                exclusive with message. Can be combined with checkpoint_id.
+            checkpoint_id: ID of checkpoint to restore from.
+            checkpoint_storage: Runtime checkpoint storage.
+            **kwargs: Additional keyword arguments passed through to agent invocations.
+
+        Returns:
+            A :class:`BackgroundRunHandle` for polling events and checking idle state.
+
+        Raises:
+            ValueError: If parameter combination is invalid.
+            RuntimeError: If the workflow is already running.
+        """
+        self._validate_run_params(message, responses, checkpoint_id)
+        self._ensure_not_running()
+
+        event_queue: asyncio.Queue[WorkflowEvent[Any]] = asyncio.Queue()
+
+        async def _background_producer(
+            message: Any | None = None,
+            responses: dict[str, Any] | None = None,
+            checkpoint_id: str | None = None,
+        ) -> None:
+            try:
+                async for event in self._run_core(
+                    message=message,
+                    responses=responses,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_storage=checkpoint_storage,
+                    streaming=True,
+                    **kwargs,
+                ):
+                    await event_queue.put(event)
+            except Exception:
+                # _run_workflow_with_tracing yields failed/status events before
+                # re-raising, so they are already enqueued above. Suppress here
+                # so the task completes cleanly and is_idle becomes True.
+                logger.debug("Background workflow run completed with error; events already enqueued.")
+            finally:
+                await self._run_cleanup(checkpoint_storage)
+
+        async def _resume_producer() -> None:
+            """Producer for resuming after respond() injects messages into the context."""
+            try:
+                async for event in self._run_workflow_with_tracing(
+                    initial_executor_fn=None,
+                    reset_context=False,
+                    streaming=True,
+                    run_kwargs=kwargs if kwargs else None,
+                ):
+                    await event_queue.put(event)
+            except Exception:
+                logger.debug("Background workflow run completed with error; events already enqueued.")
+            finally:
+                await self._run_cleanup(checkpoint_storage)
+
+        async def _resume() -> asyncio.Task[None]:  # noqa: RUF029
+            """Resume the workflow by launching a new producer task.
+
+            The responses have already been injected into the runner context
+            by :meth:`BackgroundRunHandle.respond`, so the messages are ready
+            for the next ``run_until_convergence`` cycle.
+            """
+            self._ensure_not_running()
+            return asyncio.create_task(_resume_producer())
+
+        task = asyncio.create_task(
+            _background_producer(message=message, responses=responses, checkpoint_id=checkpoint_id)
+        )
+        return BackgroundRunHandle(task, event_queue, self._runner_context, _resume)
 
     async def _run_core(
         self,

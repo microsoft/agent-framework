@@ -155,6 +155,7 @@ from ._workflows._agent_executor import (
     AgentExecutorResponse,
 )
 from ._workflows._agent_utils import resolve_agent_id
+from ._workflows._background_run import BackgroundRunHandle
 from ._workflows._checkpoint import (
     CheckpointStorage,
     FileCheckpointStorage,
@@ -252,6 +253,7 @@ __all__ = [
     "AgentRunInputs",
     "AgentSession",
     "Annotation",
+    "BackgroundRunHandle",
     "BaseAgent",
     "BaseChatClient",
     "BaseContextProvider",
