@@ -2,16 +2,19 @@
 
 """Unit tests for orchestration request info support."""
 
-from collections.abc import AsyncIterable
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable
+from typing import Any, Literal, overload
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
+    Content,
     Message,
+    ResponseStream,
     SupportsAgentRun,
 )
 from agent_framework._workflows._agent_executor import AgentExecutorRequest, AgentExecutorResponse
@@ -177,45 +180,59 @@ class TestAgentRequestInfoExecutor:
 class _TestAgent:
     """Simple test agent implementation."""
 
+    id: str
+    name: str | None
+    description: str | None
+
     def __init__(self, id: str, name: str | None = None, description: str | None = None):
-        self._id = id
-        self._name = name
-        self._description = description
+        self.id = id
+        self.name = name
+        self.description = description
 
-    @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def name(self) -> str | None:
-        return self._name
-
-    @property
-    def display_name(self) -> str:
-        return self._name or self._id
-
-    @property
-    def description(self) -> str | None:
-        return self._description
-
-    async def run(
+    @overload
+    def run(
         self,
-        messages: str | Message | list[str] | list[Message] | None = None,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
-        thread: AgentSession | None = None,
+        session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+    ) -> Awaitable[AgentResponse[Any]] | AsyncIterable[AgentResponseUpdate]:
         """Dummy run method."""
         if stream:
             return self._run_stream_impl()
-        return AgentResponse(messages=[Message(role="assistant", text="Test response")])
+
+        async def _run() -> AgentResponse[Any]:
+            return AgentResponse(messages=[Message(role="assistant", text="Test response")])
+
+        return _run()
 
     async def _run_stream_impl(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(messages=[Message(role="assistant", text="Test response stream")])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="Test response stream")])
 
     def create_session(self, **kwargs: Any) -> AgentSession:
         """Creates a new conversation session for the agent."""
+        return AgentSession(**kwargs)
+
+    def get_session(self, *, service_session_id: str, **kwargs: Any) -> AgentSession:
+        """Gets or creates a session for a service-managed session ID."""
         return AgentSession(**kwargs)
 
 

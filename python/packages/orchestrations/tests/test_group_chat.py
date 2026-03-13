@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast, overload
 
 import pytest
 from agent_framework import (
@@ -9,12 +9,12 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
-    ChatResponse,
-    ChatResponseUpdate,
     Content,
     Message,
+    ResponseStream,
     WorkflowEvent,
     WorkflowRunState,
 )
@@ -38,19 +38,39 @@ class StubAgent(BaseAgent):
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
 
-    def run(  # type: ignore[override]
+    @overload
+    def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
-            return self._run_stream_impl()
+            return ResponseStream(self._run_stream_impl(), finalizer=AgentResponse.from_updates)
         return self._run_impl()
 
-    async def _run_impl(self) -> AgentResponse:
+    async def _run_impl(self) -> AgentResponse[Any]:
         response = Message(role="assistant", text=self._reply_text, author_name=self.name)
         return AgentResponse(messages=[response])
 
@@ -63,20 +83,18 @@ class StubAgent(BaseAgent):
 class MockChatClient:
     """Mock chat client that raises NotImplementedError for all methods."""
 
-    additional_properties: dict[str, Any]
+    additional_properties: dict[str, Any] = {}
 
-    async def get_response(
-        self, messages: Any, stream: bool = False, **kwargs: Any
-    ) -> ChatResponse | AsyncIterable[ChatResponseUpdate]:
+    def get_response(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
 
 
 class StubManagerAgent(Agent):
     def __init__(self) -> None:
-        super().__init__(client=MockChatClient(), name="manager_agent", description="Stub manager")
+        super().__init__(client=cast(Any, MockChatClient()), name="manager_agent", description="Stub manager")
         self._call_count = 0
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
@@ -86,7 +104,6 @@ class StubManagerAgent(Agent):
         if self._call_count == 0:
             self._call_count += 1
             # First call: select the agent (using AgentOrchestrationOutput format)
-            payload = {"terminate": False, "reason": "Selecting agent", "next_speaker": "agent", "final_message": None}
             return AgentResponse(
                 messages=[
                     Message(
@@ -98,16 +115,9 @@ class StubManagerAgent(Agent):
                         author_name=self.name,
                     )
                 ],
-                value=payload,
             )
 
         # Second call: terminate
-        payload = {
-            "terminate": True,
-            "reason": "Task complete",
-            "next_speaker": None,
-            "final_message": "agent manager final",
-        }
         return AgentResponse(
             messages=[
                 Message(
@@ -119,7 +129,6 @@ class StubManagerAgent(Agent):
                     author_name=self.name,
                 )
             ],
-            value=payload,
         )
 
 
@@ -127,10 +136,12 @@ class ConcatenatedJsonManagerAgent(Agent):
     """Manager agent that emits concatenated JSON in a single assistant message."""
 
     def __init__(self) -> None:
-        super().__init__(client=MockChatClient(), name="concat_manager", description="Concatenated JSON manager")
+        super().__init__(
+            client=cast(Any, MockChatClient()), name="concat_manager", description="Concatenated JSON manager"
+        )
         self._call_count = 0
 
-    async def run(
+    async def run(  # type: ignore[override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
@@ -347,18 +358,42 @@ class TestGroupChatBuilder:
             def __init__(self) -> None:
                 super().__init__(name="", description="test")
 
+            @overload
             def run(
-                self, messages: Any = None, *, stream: bool = False, session: Any = None, **kwargs: Any
-            ) -> AgentResponse | AsyncIterable[AgentResponseUpdate]:
+                self,
+                messages: AgentRunInputs | None = ...,
+                *,
+                stream: Literal[False] = ...,
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse[Any]]: ...
+
+            @overload
+            def run(
+                self,
+                messages: AgentRunInputs | None = ...,
+                *,
+                stream: Literal[True],
+                session: AgentSession | None = ...,
+                **kwargs: Any,
+            ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+            def run(
+                self,
+                messages: AgentRunInputs | None = None,
+                *,
+                stream: bool = False,
+                session: AgentSession | None = None,
+                **kwargs: Any,
+            ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
                 if stream:
-
-                    async def _stream() -> AsyncIterable[AgentResponseUpdate]:
-                        yield AgentResponseUpdate(contents=[])
-
-                    return _stream()
+                    return ResponseStream(self._run_stream(), finalizer=AgentResponse.from_updates)
                 return self._run_impl()
 
-            async def _run_impl(self) -> AgentResponse:
+            async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
+                yield AgentResponseUpdate(contents=[])
+
+            async def _run_impl(self) -> AgentResponse[Any]:
                 return AgentResponse(messages=[])
 
         agent = AgentWithoutName()
@@ -893,10 +928,10 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
         """Manager agent that dynamically selects from available participants."""
 
         def __init__(self) -> None:
-            super().__init__(client=MockChatClient(), name="dynamic_manager", description="Dynamic manager")
+            super().__init__(client=cast(Any, MockChatClient()), name="dynamic_manager", description="Dynamic manager")
             self._call_count = 0
 
-        async def run(
+        async def run(  # type: ignore[override]
             self,
             messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
@@ -905,12 +940,6 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
         ) -> AgentResponse:
             if self._call_count == 0:
                 self._call_count += 1
-                payload = {
-                    "terminate": False,
-                    "reason": "Selecting alpha",
-                    "next_speaker": "alpha",
-                    "final_message": None,
-                }
                 return AgentResponse(
                     messages=[
                         Message(
@@ -922,15 +951,8 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                             author_name=self.name,
                         )
                     ],
-                    value=payload,
                 )
 
-            payload = {
-                "terminate": True,
-                "reason": "Task complete",
-                "next_speaker": None,
-                "final_message": "dynamic manager final",
-            }
             return AgentResponse(
                 messages=[
                     Message(
@@ -942,7 +964,6 @@ async def test_group_chat_with_orchestrator_factory_returning_chat_agent():
                         author_name=self.name,
                     )
                 ],
-                value=payload,
             )
 
     def agent_factory() -> Agent:
