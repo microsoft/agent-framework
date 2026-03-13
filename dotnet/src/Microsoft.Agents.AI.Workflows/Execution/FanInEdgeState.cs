@@ -57,7 +57,6 @@ internal sealed class FanInEdgeState
 
         return takenMessages
             .Select(portable => portable.ToMessageEnvelope())
-            .GroupBy(messageEnvelope => messageEnvelope.Source)
-            .ToList();
+            .GroupBy(messageEnvelope => messageEnvelope.Source);
     }
 }
