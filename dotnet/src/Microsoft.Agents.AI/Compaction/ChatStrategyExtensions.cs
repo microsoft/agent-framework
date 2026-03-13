@@ -31,7 +31,7 @@ public static class ChatStrategyExtensions
     public static IChatReducer AsChatReducer(this CompactionStrategy strategy)
     {
         Throw.IfNull(strategy);
-        
+
         return new CompactionStrategyChatReducer(strategy);
     }
 
