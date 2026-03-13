@@ -10,7 +10,6 @@ from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
 
-from agent_framework.azure import AzureOpenAIEmbeddingClient
 from agent_framework.openai import (
     OpenAIEmbeddingClient,
     OpenAIEmbeddingOptions,
@@ -190,84 +189,11 @@ async def test_openai_empty_values_returns_empty(openai_unit_test_env: None) -> 
     client.client.embeddings.create.assert_not_called()
 
 
-# --- Azure OpenAI unit tests ---
-
-
-def test_azure_construction_with_deployment_name() -> None:
-    client = AzureOpenAIEmbeddingClient(
-        deployment_name="text-embedding-3-small",
-        api_key="test-key",
-        endpoint="https://test.openai.azure.com/",
-    )
-    assert client.model_id == "text-embedding-3-small"
-
-
-def test_azure_construction_with_existing_client() -> None:
-    mock_client = MagicMock()
-    client = AzureOpenAIEmbeddingClient(
-        deployment_name="my-deployment",
-        async_client=mock_client,
-    )
-    assert client.model_id == "my-deployment"
-    assert client.client is mock_client
-
-
-def test_azure_construction_missing_deployment_name_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", raising=False)
-    with pytest.raises(ValueError, match="deployment name is required"):
-        AzureOpenAIEmbeddingClient(
-            api_key="test-key",
-            endpoint="https://test.openai.azure.com/",
-        )
-
-
-def test_azure_construction_missing_credentials_raises() -> None:
-    with pytest.raises(ValueError, match="api_key, credential, or a client"):
-        AzureOpenAIEmbeddingClient(
-            deployment_name="test",
-            endpoint="https://test.openai.azure.com/",
-        )
-
-
-async def test_azure_get_embeddings() -> None:
-    mock_response = _make_openai_response(
-        embeddings=[[0.1, 0.2]],
-    )
-    mock_async_client = MagicMock()
-    mock_async_client.embeddings = MagicMock()
-    mock_async_client.embeddings.create = AsyncMock(return_value=mock_response)
-
-    client = AzureOpenAIEmbeddingClient(
-        deployment_name="text-embedding-3-small",
-        async_client=mock_async_client,
-    )
-
-    result = await client.get_embeddings(["hello"])
-
-    assert len(result) == 1
-    assert result[0].vector == [0.1, 0.2]
-
-
-def test_azure_otel_provider_name() -> None:
-    mock_client = MagicMock()
-    client = AzureOpenAIEmbeddingClient(
-        deployment_name="test",
-        async_client=mock_client,
-    )
-    assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
-
-
 # --- Integration tests ---
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
     reason="No real OPENAI_API_KEY provided; skipping integration tests.",
-)
-
-skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
-    not os.getenv("AZURE_OPENAI_ENDPOINT")
-    or (not os.getenv("AZURE_OPENAI_API_KEY") and not os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")),
-    reason="No Azure OpenAI credentials provided; skipping integration tests.",
 )
 
 
@@ -309,52 +235,6 @@ async def test_integration_openai_get_embeddings_multiple() -> None:
 async def test_integration_openai_get_embeddings_with_dimensions() -> None:
     """Test embedding generation with custom dimensions."""
     client = OpenAIEmbeddingClient(model_id="text-embedding-3-small")
-
-    options: OpenAIEmbeddingOptions = {"dimensions": 256}
-    result = await client.get_embeddings(["hello world"], options=options)
-
-    assert len(result) == 1
-    assert len(result[0].vector) == 256
-
-
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.flaky
-@pytest.mark.integration
-async def test_integration_azure_openai_get_embeddings() -> None:
-    """End-to-end test of Azure OpenAI embedding generation."""
-    client = AzureOpenAIEmbeddingClient()
-
-    result = await client.get_embeddings(["hello world"])
-
-    assert len(result) == 1
-    assert isinstance(result[0].vector, list)
-    assert len(result[0].vector) > 0
-    assert all(isinstance(v, float) for v in result[0].vector)
-    assert result[0].model_id is not None
-    assert result.usage is not None
-    assert result.usage["input_token_count"] > 0
-
-
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.flaky
-@pytest.mark.integration
-async def test_integration_azure_openai_get_embeddings_multiple() -> None:
-    """Test Azure OpenAI embedding generation for multiple inputs."""
-    client = AzureOpenAIEmbeddingClient()
-
-    result = await client.get_embeddings(["hello", "world", "test"])
-
-    assert len(result) == 3
-    dims = [len(e.vector) for e in result]
-    assert all(d == dims[0] for d in dims)
-
-
-@skip_if_azure_openai_integration_tests_disabled
-@pytest.mark.flaky
-@pytest.mark.integration
-async def test_integration_azure_openai_get_embeddings_with_dimensions() -> None:
-    """Test Azure OpenAI embedding generation with custom dimensions."""
-    client = AzureOpenAIEmbeddingClient()
 
     options: OpenAIEmbeddingOptions = {"dimensions": 256}
     result = await client.get_embeddings(["hello world"], options=options)

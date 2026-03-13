@@ -4,6 +4,9 @@
 // In this case the OpenAI responses service will invoke any MCP tools as required. MCP tools are not invoked by the Agent Framework.
 // The sample demonstrates how to use MCP tools with auto approval by setting ApprovalMode to NeverRequire.
 
+#pragma warning disable MEAI001 // HostedMcpServerTool, HostedMcpServerToolApprovalMode are experimental
+#pragma warning disable OPENAI001 // GetResponsesClient is experimental
+
 using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;

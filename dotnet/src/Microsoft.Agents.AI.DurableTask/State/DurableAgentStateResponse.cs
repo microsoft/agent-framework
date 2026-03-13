@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.DurableTask.State;
 
@@ -28,7 +29,10 @@ internal sealed class DurableAgentStateResponse : DurableAgentStateEntry
         {
             CorrelationId = correlationId,
             CreatedAt = response.CreatedAt ?? response.Messages.Max(m => m.CreatedAt) ?? DateTimeOffset.UtcNow,
-            Messages = response.Messages.Select(DurableAgentStateMessage.FromChatMessage).ToList(),
+            Messages = response.Messages
+                .Where(HasSerializableContent)
+                .Select(DurableAgentStateMessage.FromChatMessage)
+                .ToList(),
             Usage = DurableAgentStateUsage.FromUsage(response.Usage)
         };
     }
@@ -45,5 +49,19 @@ internal sealed class DurableAgentStateResponse : DurableAgentStateEntry
             Messages = this.Messages.Select(m => m.ToChatMessage()).ToList(),
             Usage = this.Usage?.ToUsageDetails(),
         };
+    }
+
+    // Checks whether a ChatMessage has any content that will produce meaningful serialized data.
+    // Known derived AIContent types (TextContent, FunctionCallContent, etc.) are always serializable.
+    // Base AIContent instances only carry RawRepresentation (which is [JsonIgnore]), Annotations, and
+    // AdditionalProperties. We keep the message if any base AIContent has annotations or additional
+    // properties set. NOTE: if AIContent gains new serializable properties in the future, this check
+    // should be updated accordingly.
+    private static bool HasSerializableContent(ChatMessage message)
+    {
+        return message.Contents.Any(c =>
+            c.GetType() != typeof(AIContent) ||
+            c.Annotations?.Count > 0 ||
+            c.AdditionalProperties?.Count > 0);
     }
 }

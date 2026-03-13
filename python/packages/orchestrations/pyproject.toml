@@ -85,7 +85,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_orchestrations"
-test = "pytest -m \"not integration\" --cov=agent_framework_orchestrations --cov-report=term-missing:skip-covered -n auto --dist worksteal tests"
+test = 'pytest -m "not integration" --cov=agent_framework_orchestrations --cov-report=term-missing:skip-covered -n auto --dist worksteal tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
