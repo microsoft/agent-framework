@@ -37,6 +37,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._sessions import AgentSession, InMemoryHistoryProvider, SessionContext
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -3527,6 +3528,78 @@ def test_parse_response_from_openai_function_call_includes_status() -> None:
     assert function_call.additional_properties.get("fc_id") == "fc_456"
     # Verify raw_representation is preserved
     assert function_call.raw_representation is mock_function_call_item
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_from_history() -> None:
+    """Loaded history must not replay provider-ephemeral Responses function call IDs."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    provider = InMemoryHistoryProvider()
+
+    session = AgentSession(session_id="thread-1")
+    session.state[provider.source_id] = {
+        "messages": [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="search_hotels",
+                        arguments='{"city": "Paris"}',
+                        additional_properties={"fc_id": "fc_provider123", "status": "completed"},
+                    ),
+                ],
+            ),
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id="call_1",
+                        result="Found 3 hotels in Paris",
+                    ),
+                ],
+            ),
+        ]
+    }
+
+    next_turn_input = Message(role="user", contents=[Content.from_text(text="Book the cheapest one")])
+
+    live_result = client._prepare_messages_for_openai([*session.state[provider.source_id]["messages"], next_turn_input])
+    live_function_call = next(item for item in live_result if item.get("type") == "function_call")
+    assert live_function_call["id"] == "fc_provider123"
+
+    context = SessionContext(session_id=session.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=session,
+        context=context,
+        state=session.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    loaded_result = client._prepare_messages_for_openai(
+        context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    loaded_function_call = next(item for item in loaded_result if item.get("type") == "function_call")
+    assert loaded_function_call["id"] == "fc_call_1"
+
+    stored_function_call = session.state[provider.source_id]["messages"][0].contents[0]
+    assert stored_function_call.additional_properties is not None
+    assert stored_function_call.additional_properties.get("fc_id") == "fc_provider123"
+
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    restored_context = SessionContext(session_id=restored.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=restored,
+        context=restored_context,
+        state=restored.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    restored_result = client._prepare_messages_for_openai(
+        restored_context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    restored_function_call = next(item for item in restored_result if item.get("type") == "function_call")
+    assert restored_function_call["id"] == "fc_call_1"
 
 
 def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:

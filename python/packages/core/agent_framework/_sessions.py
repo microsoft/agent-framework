@@ -113,6 +113,38 @@ def _deserialize_state(state: dict[str, Any]) -> dict[str, Any]:
     return {k: _deserialize_value(v) for k, v in state.items()}
 
 
+def _strip_provider_ephemeral_history_metadata(messages: Sequence[Message]) -> list[Message]:
+    """Return history messages with provider-ephemeral fields removed for replay.
+
+    Some providers store service-generated metadata such as OpenAI Responses
+    ``fc_id`` values on ``function_call`` content so same-turn tool results can be
+    correlated while the response is live. Once those messages are later replayed
+    as historical context, those IDs must not be sent back to the service because
+    they are only valid for the original response.
+    """
+    sanitized_messages: list[Message] = []
+
+    for message in messages:
+        sanitized_message = message
+
+        for index, content in enumerate(message.contents):
+            additional_properties = getattr(content, "additional_properties", None)
+            if content.type != "function_call" or not additional_properties or "fc_id" not in additional_properties:
+                continue
+
+            if sanitized_message is message:
+                sanitized_message = copy.deepcopy(message)
+
+            sanitized_content = sanitized_message.contents[index]
+            sanitized_additional_properties = dict(sanitized_content.additional_properties)
+            sanitized_additional_properties.pop("fc_id", None)
+            sanitized_content.additional_properties = sanitized_additional_properties
+
+        sanitized_messages.append(sanitized_message)
+
+    return sanitized_messages
+
+
 # Register known types
 _register_state_type(Message)
 
@@ -446,7 +478,7 @@ class BaseHistoryProvider(BaseContextProvider):
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
         history = await self.get_messages(context.session_id, state=state)
-        context.extend_messages(self, history)
+        context.extend_messages(self, _strip_provider_ephemeral_history_metadata(history))
 
     async def after_run(
         self,
