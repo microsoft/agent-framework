@@ -2637,6 +2637,50 @@ async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
         await tool.close()
 
 
+async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> None:
+    """connect(reset=True) should bypass the request queue when already on the owner task."""
+    import asyncio
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+    tool._lifecycle_owner_task = asyncio.current_task()
+
+    try:
+        with patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner:
+            async with tool._lifecycle_request_lock:
+                await asyncio.wait_for(tool.connect(reset=True), timeout=0.1)
+
+        mock_connect_on_owner.assert_awaited_once_with(reset=True)
+    finally:
+        tool._lifecycle_owner_task = None
+
+
+async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> None:
+    """close() should bypass the request queue when already on the owner task."""
+    import asyncio
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+    tool._lifecycle_owner_task = asyncio.current_task()
+
+    try:
+        with patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner:
+            async with tool._lifecycle_request_lock:
+                await asyncio.wait_for(tool.close(), timeout=0.1)
+
+        mock_close_on_owner.assert_awaited_once_with()
+    finally:
+        tool._lifecycle_owner_task = None
+
+
 async def test_mcp_tool_safe_close_reraises_other_runtime_errors():
     """Test that _safe_close_exit_stack re-raises RuntimeErrors that aren't cancel scope related."""
     from contextlib import AsyncExitStack

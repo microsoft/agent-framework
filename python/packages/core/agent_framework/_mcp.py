@@ -572,8 +572,21 @@ class MCPTool:
             self._lifecycle_queue = None
             self._lifecycle_owner_task = None
 
+    def _is_lifecycle_owner_task(self) -> bool:
+        owner_task = self._lifecycle_owner_task
+        return owner_task is not None and asyncio.current_task() is owner_task
+
     async def _run_on_lifecycle_owner(self, action: str, *, reset: bool = False) -> None:
         await self._ensure_lifecycle_owner()
+
+        if self._is_lifecycle_owner_task():
+            if action == "connect":
+                await self._connect_on_owner(reset=reset)
+            elif action == "close":
+                await self._close_on_owner()
+            else:
+                raise RuntimeError(f"Unknown MCP lifecycle action: {action}")
+            return
 
         queue = self._lifecycle_queue
         if queue is None:
@@ -601,6 +614,10 @@ class MCPTool:
             logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
     async def connect(self, *, reset: bool = False) -> None:
+        if self._is_lifecycle_owner_task():
+            await self._connect_on_owner(reset=reset)
+            return
+
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("connect", reset=reset)
 
@@ -917,6 +934,10 @@ class MCPTool:
 
         Closes the connection and cleans up resources.
         """
+        if self._is_lifecycle_owner_task():
+            await self._close_on_owner()
+            return
+
         async with self._lifecycle_request_lock:
             await self._run_on_lifecycle_owner("close")
 
