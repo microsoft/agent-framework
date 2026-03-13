@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlparse
 
 from .models._discovery_models import Deployment, DeploymentConfig, DeploymentEvent
@@ -175,7 +176,7 @@ class DeploymentManager:
 
         # Check required resource providers are registered
         required_providers = ["Microsoft.App", "Microsoft.ContainerRegistry", "Microsoft.OperationalInsights"]
-        unregistered_providers = []
+        unregistered_providers: list[str] = []
 
         # Get list of registered providers
         provider_check = await asyncio.create_subprocess_exec(
@@ -195,7 +196,12 @@ class DeploymentManager:
             import json
 
             try:
-                registered = json.loads(stdout.decode())
+                registered_raw = json.loads(stdout.decode())
+                registered: list[str] = []
+                if isinstance(registered_raw, list):
+                    for item_obj in cast(list[object], registered_raw):
+                        if isinstance(item_obj, str):
+                            registered.append(item_obj)
                 for provider in required_providers:
                     if provider not in registered:
                         unregistered_providers.append(provider)
@@ -385,7 +391,7 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
         )
 
         # Stream output line by line
-        output_lines = []
+        output_lines: list[str] = []
         try:
             if not process.stdout:
                 raise ValueError("Failed to capture process output")
@@ -473,8 +479,11 @@ CMD ["devui", "/app/entity", "--mode", "{config.ui_mode}", "--host", "0.0.0.0", 
                         for url in urls:
                             # Strip common trailing punctuation to ensure clean URL parsing
                             url_clean = url.rstrip(".,;:!?'\")}]")
-                            host = urlparse(url_clean).hostname
-                            if host and (host == "azurecontainerapps.io" or host.endswith(".azurecontainerapps.io")):
+                            parsed_url = urlparse(str(url_clean))
+                            host = parsed_url.hostname
+                            if isinstance(host, str) and (
+                                host == "azurecontainerapps.io" or host.endswith(".azurecontainerapps.io")
+                            ):
                                 await event_queue.put(
                                     DeploymentEvent(type="deploy.progress", message="Deployment URL generated!")
                                 )

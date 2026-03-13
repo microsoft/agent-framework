@@ -25,6 +25,7 @@ See: dotnet/src/Microsoft.Agents.AI.Workflows.Declarative/PowerFx/
 
 from __future__ import annotations
 
+import locale
 import logging
 import sys
 import uuid
@@ -103,6 +104,8 @@ DECLARATIVE_STATE_KEY = "_declarative_workflow_state"
 # Types that PowerFx can serialize directly
 # Note: Decimal is included because PowerFx returns Decimal for numeric values
 _POWERFX_SAFE_TYPES = (str, int, float, bool, type(None), _Decimal)
+_POWERFX_EVAL_LOCALE = "en-US"
+_POWERFX_NUMERIC_LOCALE_CANDIDATES = ("en_US.UTF-8", "en_US", "C")
 
 
 def _make_powerfx_safe(value: Any) -> Any:
@@ -121,10 +124,12 @@ def _make_powerfx_safe(value: Any) -> Any:
         return value
 
     if isinstance(value, dict):
-        return {k: _make_powerfx_safe(v) for k, v in value.items()}
+        value_dict = cast(Mapping[Any, Any], value)
+        return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
 
     if isinstance(value, list):
-        return [_make_powerfx_safe(item) for item in value]
+        value_list = cast(list[Any], value)  # type: ignore[redundant-cast]
+        return [_make_powerfx_safe(item) for item in value_list]
 
     # Try to convert objects with __dict__ or dataclass-style attributes
     if hasattr(value, "__dict__"):
@@ -382,21 +387,33 @@ class DeclarativeWorkflowState:
                 f"Install dotnet and the powerfx package for full PowerFx support."
             )
 
-        engine = Engine()
         symbols = self._to_powerfx_symbols()
+        # Use setlocale(category) query form so we can restore the exact prior value.
+        # getlocale() returns a normalized tuple and is not always a lossless
+        # round-trip for setlocale across platforms/locales.
+        original_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
         try:
-            from System.Globalization import CultureInfo
+            for locale_candidate in _POWERFX_NUMERIC_LOCALE_CANDIDATES:
+                try:
+                    locale.setlocale(locale.LC_NUMERIC, locale_candidate)
+                    break
+                except locale.Error:
+                    continue
 
-            original_culture = CultureInfo.CurrentCulture
-            original_ui_culture = CultureInfo.CurrentUICulture
-            en_us_culture = CultureInfo("en-US")
-            CultureInfo.CurrentCulture = en_us_culture
-            CultureInfo.CurrentUICulture = en_us_culture
+            engine = Engine()
             try:
-                return engine.eval(formula, symbols=symbols)
+                from System.Globalization import (  # pyright: ignore[reportMissingImports]
+                    CultureInfo,  # pyright: ignore[reportUnknownVariableType]
+                )
+            except ImportError:
+                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
+
+            original_culture = cast(Any, CultureInfo.CurrentCulture)  # pyright: ignore[reportUnknownMemberType]
+            try:
+                CultureInfo.CurrentCulture = CultureInfo(_POWERFX_EVAL_LOCALE)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                return engine.eval(formula, symbols=symbols, locale=_POWERFX_EVAL_LOCALE)
             finally:
-                CultureInfo.CurrentCulture = original_culture
-                CultureInfo.CurrentUICulture = original_ui_culture
+                CultureInfo.CurrentCulture = original_culture  # pyright: ignore[reportUnknownMemberType]
         except ValueError as e:
             error_msg = str(e)
             # Handle undefined variable errors gracefully by returning None
@@ -405,6 +422,8 @@ class DeclarativeWorkflowState:
                 logger.debug(f"PowerFx: undefined variable in expression '{formula}', returning None")
                 return None
             raise
+        finally:
+            locale.setlocale(locale.LC_NUMERIC, original_numeric_locale)
 
     def _eval_custom_function(self, formula: str) -> Any | None:
         """Handle custom functions not supported by the Python PowerFx library.
@@ -424,7 +443,7 @@ class DeclarativeWorkflowState:
             args_str = match.group(1)
             # Parse comma-separated arguments (handling nested parentheses)
             args = self._parse_function_args(args_str)
-            evaluated_args = []
+            evaluated_args: list[str] = []
             for arg in args:
                 arg = arg.strip()
                 if arg.startswith('"') and arg.endswith('"'):
@@ -576,37 +595,44 @@ class DeclarativeWorkflowState:
         """
         messages: Any = self.eval(f"={inner_expr}")
         if isinstance(messages, list) and messages:
-            last_msg: Any = messages[-1]
+            message_list = cast(list[Any], messages)  # type: ignore[redundant-cast]
+            last_msg: Any = message_list[-1]
             if isinstance(last_msg, dict):
+                last_msg_dict = cast(dict[str, Any], last_msg)
                 # Try "text" key first (simple dict format)
-                if "text" in last_msg:
-                    return str(last_msg["text"])
+                if "text" in last_msg_dict:
+                    return str(last_msg_dict["text"])
                 # Try extracting from "contents" (Message dict format)
                 # Message.text concatenates text from all TextContent items
-                contents = last_msg.get("contents", [])
-                if isinstance(contents, list):
-                    text_parts = []
+                contents_obj = last_msg_dict.get("contents", [])
+                if isinstance(contents_obj, list):
+                    contents = cast(list[Any], contents_obj)  # type: ignore[redundant-cast]
+                    text_parts: list[str] = []
                     for content in contents:
                         if isinstance(content, dict):
+                            content_dict = cast(dict[str, Any], content)
                             # TextContent has a "text" key
-                            if content.get("type") == "text" or "text" in content:
-                                text_parts.append(str(content.get("text", "")))
-                        elif hasattr(content, "text"):
-                            text_parts.append(str(getattr(content, "text", "")))
+                            if content_dict.get("type") == "text" or "text" in content_dict:
+                                text_parts.append(str(content_dict.get("text", "")))
+                        else:
+                            content_obj: object = content
+                            if hasattr(content_obj, "text"):
+                                text_parts.append(str(getattr(content_obj, "text", "")))
                     if text_parts:
                         return " ".join(text_parts)
                 return ""
-            if hasattr(last_msg, "text"):
-                return str(getattr(last_msg, "text", ""))
+            last_msg_obj: object = last_msg
+            if hasattr(last_msg_obj, "text"):
+                return str(getattr(last_msg_obj, "text", ""))
         return ""
 
     def _parse_function_args(self, args_str: str) -> list[str]:
         """Parse comma-separated function arguments, handling nested parentheses and strings."""
-        args = []
-        current = []
+        args: list[str] = []
+        current: list[str] = []
         depth = 0
         in_string = False
-        string_char = None
+        string_char: str | None = None
 
         for char in args_str:
             if char in ('"', "'") and not in_string:

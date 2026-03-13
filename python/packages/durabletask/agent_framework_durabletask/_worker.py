@@ -29,9 +29,10 @@ class DurableAIAgentWorker:
 
     Example:
         ```python
-        from durabletask import TaskHubGrpcWorker
+        from durabletask.worker import TaskHubGrpcWorker
         from agent_framework import Agent
-        from agent_framework.azure import DurableAIAgentWorker
+        from agent_framework.azure import AzureOpenAIChatClient
+        from agent_framework_durabletask import DurableAIAgentWorker
 
         # Create the underlying worker
         worker = TaskHubGrpcWorker(host_address="localhost:4001")
@@ -40,6 +41,7 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
+        client = AzureOpenAIChatClient()
         my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 

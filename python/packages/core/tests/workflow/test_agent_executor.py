@@ -5,6 +5,7 @@ from collections.abc import AsyncIterable, Awaitable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import pytest
+
 from agent_framework import (
     AgentExecutor,
     AgentResponse,
@@ -59,30 +60,19 @@ class _CountingAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> (
-        Awaitable[AgentResponse[Any]]
-        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
-    ):
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         self.call_count += 1
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
                 yield AgentResponseUpdate(
-                    contents=[
-                        Content.from_text(
-                            text=f"Response #{self.call_count}: {self.name}"
-                        )
-                    ]
+                    contents=[Content.from_text(text=f"Response #{self.call_count}: {self.name}")]
                 )
 
             return ResponseStream(_stream(), finalizer=AgentResponse.from_updates)
 
         async def _run() -> AgentResponse:
-            return AgentResponse(
-                messages=[
-                    Message("assistant", [f"Response #{self.call_count}: {self.name}"])
-                ]
-            )
+            return AgentResponse(messages=[Message("assistant", [f"Response #{self.call_count}: {self.name}"])])
 
         return _run()
 
@@ -120,10 +110,7 @@ class _StreamingHookAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> (
-        Awaitable[AgentResponse[Any]]
-        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
-    ):
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
 
             async def _stream() -> AsyncIterable[AgentResponseUpdate]:
@@ -138,9 +125,9 @@ class _StreamingHookAgent(BaseAgent):
                 self.result_hook_called = True
                 return response
 
-            return ResponseStream(
-                _stream(), finalizer=AgentResponse.from_updates
-            ).with_result_hook(_mark_result_hook_called)
+            return ResponseStream(_stream(), finalizer=AgentResponse.from_updates).with_result_hook(
+                _mark_result_hook_called
+            )
 
         async def _run() -> AgentResponse:
             return AgentResponse(messages=[Message("assistant", ["hook test"])])
@@ -148,9 +135,7 @@ class _StreamingHookAgent(BaseAgent):
         return _run()
 
 
-async def test_agent_executor_streaming_finalizes_stream_and_runs_result_hooks() -> (
-    None
-):
+async def test_agent_executor_streaming_finalizes_stream_and_runs_result_hooks() -> None:
     """AgentExecutor should call get_final_response() so stream result hooks execute."""
     agent = _StreamingHookAgent(id="hook_agent", name="HookAgent")
     executor = AgentExecutor(agent, id="hook_exec")
@@ -217,9 +202,7 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     executor_state = executor_states[executor.id]  # type: ignore[index]
     assert "cache" in executor_state, "Checkpoint should store executor cache state"
-    assert "agent_session" in executor_state, (
-        "Checkpoint should store executor session state"
-    )
+    assert "agent_session" in executor_state, "Checkpoint should store executor session state"
 
     # Verify session state structure
     session_state = executor_state["agent_session"]  # type: ignore[index]
@@ -240,15 +223,11 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
     assert restored_agent.call_count == 0
 
     # Build new workflow with the restored executor
-    wf_resume = SequentialBuilder(
-        participants=[restored_executor], checkpoint_storage=storage
-    ).build()
+    wf_resume = SequentialBuilder(participants=[restored_executor], checkpoint_storage=storage).build()
 
     # Resume from checkpoint
     resumed_output: AgentExecutorResponse | None = None
-    async for ev in wf_resume.run(
-        checkpoint_id=restore_checkpoint.checkpoint_id, stream=True
-    ):
+    async for ev in wf_resume.run(checkpoint_id=restore_checkpoint.checkpoint_id, stream=True):
         if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
         if ev.type == "status" and ev.state in (
@@ -391,11 +370,7 @@ async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
     assert options is not None
     assert options["additional_function_arguments"]["custom"] == 1
 
-    warned_keys = {
-        r.message.split("'")[1]
-        for r in caplog.records
-        if "reserved" in r.message.lower()
-    }
+    warned_keys = {r.message.split("'")[1] for r in caplog.records if "reserved" in r.message.lower()}
     assert warned_keys == {"session", "stream", "messages"}
 
 
@@ -408,3 +383,60 @@ async def test_agent_executor_run_with_messages_kwarg_does_not_raise() -> None:
     result = await workflow.run("hello", messages=["stale"])
     assert result is not None
     assert agent.call_count == 1
+
+
+class _NonCopyableRaw:
+    """Simulates an LLM SDK response object that cannot be deep-copied (e.g., proto/gRPC)."""
+
+    def __deepcopy__(self, memo: dict) -> Any:
+        raise TypeError("Cannot deepcopy this object")
+
+
+class _AgentWithRawRepr(BaseAgent):
+    """Agent that returns responses with a non-copyable raw_representation."""
+
+    def __init__(self, raw: Any, **kwargs: Any):
+        super().__init__(**kwargs)
+        self._raw = raw
+
+    def run(
+        self,
+        messages: str | Message | list[str] | list[Message] | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        async def _run() -> AgentResponse:
+            return AgentResponse(
+                messages=[Message("assistant", [f"reply from {self.name}"])],
+                raw_representation=self._raw,
+            )
+
+        return _run()
+
+
+async def test_agent_executor_workflow_with_non_copyable_raw_representation() -> None:
+    """Workflow should complete when AgentResponse contains a raw_representation that cannot be deep-copied."""
+    raw = _NonCopyableRaw()
+
+    agent_a = _AgentWithRawRepr(raw=raw, id="a", name="AgentA")
+    agent_b = _CountingAgent(id="b", name="AgentB")
+
+    exec_a = AgentExecutor(agent_a, id="exec_a")
+    exec_b = AgentExecutor(agent_b, id="exec_b")
+
+    workflow = SequentialBuilder(participants=[exec_a, exec_b]).build()
+    events = await workflow.run("hello")
+
+    completed = [e for e in events if isinstance(e, WorkflowEvent) and e.type == "executor_completed"]
+    completed_a = [e for e in completed if e.executor_id == "exec_a"]
+
+    assert len(completed_a) == 1
+    assert completed_a[0].data is not None
+
+    # The yielded AgentResponse should preserve its raw_representation reference
+    agent_responses = [d for d in completed_a[0].data if isinstance(d, AgentResponse)]
+    assert len(agent_responses) > 0
+    assert agent_responses[0].text == "reply from AgentA"
+    assert agent_responses[0].raw_representation is raw

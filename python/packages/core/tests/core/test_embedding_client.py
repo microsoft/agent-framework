@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import pytest
+
 from agent_framework import (
     BaseEmbeddingClient,
     Embedding,
@@ -61,6 +63,11 @@ def test_base_additional_properties_default() -> None:
 def test_base_additional_properties_custom() -> None:
     client = MockEmbeddingClient(additional_properties={"key": "value"})
     assert client.additional_properties == {"key": "value"}
+
+
+def test_base_embedding_client_rejects_unknown_kwargs() -> None:
+    with pytest.raises(TypeError):
+        MockEmbeddingClient(legacy_key="value")  # type: ignore[call-arg]
 
 
 # --- SupportsGetEmbeddings protocol tests ---

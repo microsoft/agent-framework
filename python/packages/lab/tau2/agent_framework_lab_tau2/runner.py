@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from agent_framework import (
     Agent,
@@ -37,6 +37,16 @@ from ._sliding_window import SlidingWindowHistoryProvider
 from ._tau2_utils import convert_agent_framework_messages_to_tau2_messages, convert_tau2_tool_to_function_tool
 
 __all__ = ["ASSISTANT_AGENT_ID", "ORCHESTRATOR_ID", "USER_SIMULATOR_ID", "TaskRunner"]
+
+
+def _get_openai_schema(tool: Any) -> dict[str, Any]:
+    schema = getattr(tool, "openai_schema", None)
+    if isinstance(schema, dict):
+        schema_dict = cast(dict[object, Any], schema)
+        if all(isinstance(key, str) for key in schema_dict):
+            return cast(dict[str, Any], schema_dict)
+    raise TypeError(f"Tool {tool} does not expose a dict openai_schema")
+
 
 # Agent instructions matching tau2's LLMAgent
 ASSISTANT_AGENT_INSTRUCTION = """
@@ -205,7 +215,7 @@ class TaskRunner:
             context_providers=[
                 SlidingWindowHistoryProvider(
                     system_message=assistant_system_prompt,
-                    tool_definitions=[tool.openai_schema for tool in tools],
+                    tool_definitions=[_get_openai_schema(tool) for tool in tools],
                     max_tokens=self.assistant_window_size,
                 )
             ],

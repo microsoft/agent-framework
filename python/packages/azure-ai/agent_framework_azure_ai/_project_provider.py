@@ -102,6 +102,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         project_endpoint: str | None = None,
         model: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -117,6 +118,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -146,11 +148,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
 
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             self._should_close_client = True
 
         self._project_client = project_client
@@ -199,7 +204,6 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
-        foundry_features = opts.get("foundry_features")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -224,7 +228,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
                 elif isinstance(tool, (FunctionTool, MutableMapping)):
-                    non_mcp_tools.append(tool)
+                    non_mcp_tools.append(tool)  # type: ignore[reportUnknownArgumentType]
 
         # Connect MCP tools and discover their functions BEFORE creating the agent
         # This is required because Azure AI Responses API doesn't accept tools at request time
@@ -246,8 +250,6 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             "definition": PromptAgentDefinition(**args),
             "description": description,
         }
-        if foundry_features:
-            create_version_kwargs["foundry_features"] = foundry_features
 
         created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 

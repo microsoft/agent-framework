@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, ClassVar, Final, Generic, Literal, TypedDict
 
 from agent_framework import (
@@ -228,11 +228,11 @@ class AnthropicClient(
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
         additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Anthropic Agent client.
 
@@ -244,11 +244,11 @@ class AnthropicClient(
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -302,29 +302,32 @@ class AnthropicClient(
             env_file_encoding=env_file_encoding,
         )
 
+        api_key_secret = anthropic_settings.get("api_key")
+        model_id_setting = anthropic_settings.get("chat_model_id")
+
         if anthropic_client is None:
-            if not anthropic_settings["api_key"]:
+            if api_key_secret is None:
                 raise ValueError(
                     "Anthropic API key is required. Set via 'api_key' parameter "
                     "or 'ANTHROPIC_API_KEY' environment variable."
                 )
 
             anthropic_client = AsyncAnthropic(
-                api_key=anthropic_settings["api_key"].get_secret_value(),
+                api_key=api_key_secret.get_secret_value(),
                 default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
             )
 
         # Initialize parent
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = anthropic_settings["chat_model_id"]
+        self.model_id = model_id_setting
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
@@ -713,12 +716,46 @@ class AnthropicClient(
                         "input": content.parse_arguments(),
                     })
                 case "function_result":
-                    a_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": content.call_id,
-                        "content": content.result if content.result is not None else "",
-                        "is_error": content.exception is not None,
-                    })
+                    if content.items:
+                        tool_content: list[dict[str, Any]] = []
+                        for item in content.items:
+                            if item.type == "text":
+                                tool_content.append({"type": "text", "text": item.text or ""})
+                            elif item.type == "data" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {
+                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "media_type": item.media_type,
+                                        "type": "base64",
+                                    },
+                                })
+                            elif item.type == "uri" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {"type": "url", "url": item.uri},
+                                })
+                            else:
+                                logger.debug(
+                                    "Ignoring unsupported rich content media type in tool result: %s",
+                                    item.media_type,
+                                )
+                        tool_result_content = (
+                            tool_content if tool_content else (content.result if content.result is not None else "")
+                        )
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": tool_result_content,
+                            "is_error": content.exception is not None,
+                        })
+                    else:
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": content.result if content.result is not None else "",
+                            "is_error": content.exception is not None,
+                        })
                 case "mcp_server_tool_call":
                     mcp_call: dict[str, Any] = {
                         "type": "mcp_tool_use",
@@ -785,18 +822,22 @@ class AnthropicClient(
                         "description": tool.description,
                         "input_schema": tool.parameters(),
                     })
-                elif isinstance(tool, MutableMapping) and tool.get("type") == "mcp":
+                elif isinstance(tool, Mapping) and tool.get("type") == "mcp":  # type: ignore[reportUnknownMemberType]
                     # MCP servers must be routed to separate mcp_servers parameter
                     server_def: dict[str, Any] = {
                         "type": "url",
-                        "name": tool.get("server_label", ""),
-                        "url": tool.get("server_url", ""),
+                        "name": tool.get("server_label", ""),  # type: ignore[reportUnknownMemberType]
+                        "url": tool.get("server_url", ""),  # type: ignore[reportUnknownMemberType]
                     }
-                    if allowed_tools := tool.get("allowed_tools"):
-                        server_def["tool_configuration"] = {"allowed_tools": list(allowed_tools)}
-                    headers = tool.get("headers")
-                    if isinstance(headers, dict) and (auth := headers.get("authorization")):
-                        server_def["authorization_token"] = auth
+                    allowed_tools = tool.get("allowed_tools")  # type: ignore[reportUnknownMemberType]
+                    if isinstance(allowed_tools, Sequence) and not isinstance(allowed_tools, str):
+                        server_def["tool_configuration"] = {
+                            "allowed_tools": [str(item) for item in allowed_tools]  # pyright: ignore[reportUnknownArgumentType,reportUnknownVariableType]
+                        }
+                    headers = tool.get("headers")  # type: ignore[reportUnknownMemberType]
+                    authorization = headers.get("authorization") if isinstance(headers, Mapping) else None  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+                    if isinstance(authorization, str):
+                        server_def["authorization_token"] = authorization
                     mcp_server_list.append(server_def)
                 else:
                     # Pass through all other tools (dicts, SDK types) unchanged

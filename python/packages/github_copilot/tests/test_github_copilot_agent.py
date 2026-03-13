@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E402
+
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -7,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+copilot = pytest.importorskip("copilot")
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
@@ -16,6 +21,7 @@ from agent_framework import (
 )
 from agent_framework.exceptions import AgentException
 from copilot.generated.session_events import Data, SessionEvent, SessionEventType
+from copilot.types import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
 
@@ -745,10 +751,11 @@ class TestGitHubCopilotAgentToolConversion:
         config = call_args[0][0]
         copilot_tool = config["tools"][0]
 
-        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+        result = await copilot_tool.handler(ToolInvocation(arguments={"arg": "test"}))
 
-        assert result["resultType"] == "success"
-        assert result["textResultForLlm"] == "Result: test"
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "Result: test"
 
     async def test_tool_handler_returns_failure_result_on_error(
         self,
@@ -770,11 +777,61 @@ class TestGitHubCopilotAgentToolConversion:
         config = call_args[0][0]
         copilot_tool = config["tools"][0]
 
-        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+        result = await copilot_tool.handler(ToolInvocation(arguments={"arg": "test"}))
 
-        assert result["resultType"] == "failure"
-        assert "Something went wrong" in result["textResultForLlm"]
-        assert "Something went wrong" in result["error"]
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "failure"
+        assert "Something went wrong" in result.text_result_for_llm
+        assert "Something went wrong" in result.error
+
+    async def test_tool_handler_rejects_raw_dict_invocation(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler raises TypeError when called with a raw dict instead of ToolInvocation."""
+
+        def my_tool(arg: str) -> str:
+            """A test tool."""
+            return f"Result: {arg}"
+
+        agent = GitHubCopilotAgent(client=mock_client, tools=[my_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        with pytest.raises((TypeError, AttributeError)):
+            await copilot_tool.handler({"arguments": {"arg": "test"}})
+
+    async def test_tool_handler_with_empty_arguments(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler handles ToolInvocation with empty arguments."""
+
+        def no_args_tool() -> str:
+            """A tool with no arguments."""
+            return "no args result"
+
+        agent = GitHubCopilotAgent(client=mock_client, tools=[no_args_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={}))
+
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "no args result"
 
     def test_copilot_tool_passthrough(
         self,
@@ -784,7 +841,7 @@ class TestGitHubCopilotAgentToolConversion:
         from copilot.types import Tool as CopilotTool
 
         async def tool_handler(invocation: Any) -> Any:
-            return {"textResultForLlm": "result", "resultType": "success"}
+            return {"text_result_for_llm": "result", "result_type": "success"}
 
         copilot_tool = CopilotTool(
             name="direct_tool",
@@ -813,7 +870,7 @@ class TestGitHubCopilotAgentToolConversion:
             return arg
 
         async def tool_handler(invocation: Any) -> Any:
-            return {"textResultForLlm": "result", "resultType": "success"}
+            return {"text_result_for_llm": "result", "result_type": "success"}
 
         copilot_tool = CopilotTool(
             name="direct_tool",

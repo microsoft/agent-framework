@@ -225,11 +225,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        tools: ToolTypes
-        | Callable[..., Any]
-        | str
-        | Sequence[ToolTypes | Callable[..., Any] | str]
-        | None = None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None = None,
         default_options: OptionsT | MutableMapping[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -305,11 +301,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
     def _normalize_tools(
         self,
-        tools: ToolTypes
-        | Callable[..., Any]
-        | str
-        | Sequence[ToolTypes | Callable[..., Any] | str]
-        | None,
+        tools: ToolTypes | Callable[..., Any] | str | Sequence[ToolTypes | Callable[..., Any] | str] | None,
     ) -> None:
         """Separate built-in tools (strings) from custom tools.
 
@@ -319,21 +311,17 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if tools is None:
             return
 
-        # Normalize to sequence
-        if isinstance(tools, str):
-            tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, Sequence):
-            tools_list = list(tools)
-        else:
-            tools_list = [tools]
-
-        for tool in tools_list:
+        non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+        for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
             else:
-                # Use normalize_tools for custom tools
-                normalized = normalize_tools(tool)
-                self._custom_tools.extend(normalized)
+                non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
+        if not non_builtin_tools:
+            return
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
 
     async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
@@ -378,9 +366,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             session_id: The session ID to use, or None for a new session.
         """
         needs_new_client = (
-            not self._started
-            or self._client is None
-            or (session_id and session_id != self._current_session_id)
+            not self._started or self._client is None or (session_id and session_id != self._current_session_id)
         )
 
         if needs_new_client:
@@ -403,9 +389,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 self._client = None
                 raise AgentException(f"Failed to start Claude SDK client: {ex}") from ex
 
-    def _prepare_client_options(
-        self, resume_session_id: str | None = None
-    ) -> SDKOptions:
+    def _prepare_client_options(self, resume_session_id: str | None = None) -> SDKOptions:
         """Prepare SDK options for client initialization.
 
         Args:
@@ -445,9 +429,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         # Prepare custom tools (FunctionTool instances)
         custom_tools_server, custom_tool_names = (
-            self._prepare_tools(self._custom_tools)
-            if self._custom_tools
-            else (None, [])
+            self._prepare_tools(self._custom_tools) if self._custom_tools else (None, [])
         )
 
         # MCP servers - merge user-provided servers with custom tools server
@@ -494,13 +476,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         if not sdk_tools:
             return None, []
 
-        return create_sdk_mcp_server(
-            name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools
-        ), tool_names
+        return create_sdk_mcp_server(name=TOOLS_MCP_SERVER_NAME, tools=sdk_tools), tool_names
 
-    def _function_tool_to_sdk_mcp_tool(
-        self, func_tool: FunctionTool
-    ) -> SdkMcpTool[Any]:
+    def _function_tool_to_sdk_mcp_tool(self, func_tool: FunctionTool) -> SdkMcpTool[Any]:
         """Convert a FunctionTool to an SDK MCP tool.
 
         Args:
@@ -518,14 +496,21 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     result = await func_tool.invoke(arguments=args_instance)
                 else:
                     result = await func_tool.invoke(arguments=args)
-                return {"content": [{"type": "text", "text": str(result)}]}
+                content_blocks: list[dict[str, str]] = []
+                for c in result:
+                    if c.type == "text" and c.text:
+                        content_blocks.append({"type": "text", "text": c.text})
+                    elif c.type in ("data", "uri"):
+                        logger.warning(
+                            "Claude Agent SDK does not support rich content (images, audio) "
+                            "in tool results. Rich content items will be omitted."
+                        )
+                return {"content": content_blocks or [{"type": "text", "text": ""}]}
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
         # Get JSON schema from pydantic model
-        schema: dict[str, Any] = (
-            func_tool.input_model.model_json_schema() if func_tool.input_model else {}
-        )
+        schema: dict[str, Any] = func_tool.input_model.model_json_schema() if func_tool.input_model else {}
         input_schema: dict[str, Any] = {
             "type": "object",
             "properties": schema.get("properties", {}),
@@ -586,9 +571,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["instructions"] = system_prompt
         return opts
 
-    def _finalize_response(
-        self, updates: Sequence[AgentResponseUpdate]
-    ) -> AgentResponse[Any]:
+    def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
 
         Args:
@@ -607,6 +590,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -617,6 +601,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -626,11 +611,9 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
-    ) -> (
-        Awaitable[AgentResponse[Any]]
-        | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]
-    ):
+        options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
         Args:
@@ -641,16 +624,16 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 returns an awaitable AgentResponse.
             session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
-            kwargs: Additional keyword arguments including 'options' for runtime options
-                (model, permission_mode can be changed per-request).
+            options: Runtime options. Model and permission_mode can be changed per request.
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by ClaudeAgent.
 
         Returns:
             When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
-        options = kwargs.pop("options", None)
         response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
+            self._get_stream(messages, session=session, options=options),
             finalizer=self._finalize_response,
         )
 
@@ -663,8 +646,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
+        options: OptionsT | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
         session = session or self.create_session()
@@ -696,11 +678,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if text:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[
-                                    Content.from_text(
-                                        text=text, raw_representation=message
-                                    )
-                                ],
+                                contents=[Content.from_text(text=text, raw_representation=message)],
                                 raw_representation=message,
                             )
                     elif delta_type == "thinking_delta":
@@ -708,11 +686,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if thinking:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[
-                                    Content.from_text_reasoning(
-                                        text=thinking, raw_representation=message
-                                    )
-                                ],
+                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
                                 raw_representation=message,
                             )
             elif isinstance(message, AssistantMessage):
@@ -729,9 +703,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         "server_error": "Claude API server error",
                         "unknown": "Unknown error from Claude API",
                     }
-                    error_msg = error_messages.get(
-                        message.error, f"Claude API error: {message.error}"
-                    )
+                    error_msg = error_messages.get(message.error, f"Claude API error: {message.error}")
                     # Extract any error details from content blocks
                     if message.content:
                         for block in message.content:

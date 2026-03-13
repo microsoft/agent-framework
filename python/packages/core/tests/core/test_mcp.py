@@ -14,6 +14,8 @@ from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
     Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -30,6 +32,7 @@ from agent_framework._mcp import (
     _prepare_message_for_mcp,
     logger,
 )
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
@@ -50,6 +53,81 @@ def test_normalize_mcp_name():
     assert _normalize_mcp_name("name/with\\slashes") == "name-with-slashes"
 
 
+def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
+    assert MCPStdioTool(name="stdio", command="python", tool_name_prefix="stdio").tool_name_prefix == "stdio"
+    assert (
+        MCPStreamableHTTPTool(
+            name="http",
+            url="https://example.com/mcp",
+            tool_name_prefix="http",
+        ).tool_name_prefix
+        == "http"
+    )
+    assert (
+        MCPWebsocketTool(
+            name="ws",
+            url="wss://example.com/mcp",
+            tool_name_prefix="ws",
+        ).tool_name_prefix
+        == "ws"
+    )
+
+
+async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration():
+    """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
+    tool = MCPTool(
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=["search_docs"],
+        approval_mode={"always_require_approval": ["search_docs"]},
+    )
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="search_docs",
+            description="Search docs",
+            inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert [function.name for function in tool._functions] == ["docs_search_docs"]
+    assert [function.name for function in tool.functions] == ["docs_search_docs"]
+    assert tool.functions[0].approval_mode == "always_require"
+
+
+async def test_load_prompts_with_tool_name_prefix() -> None:
+    """Prefixed MCP prompt names should be exposed with the configured prefix."""
+    tool = MCPTool(name="docs", tool_name_prefix="docs")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    page = Mock()
+    page.prompts = [
+        types.Prompt(
+            name="summarize docs",
+            description="Summarize docs",
+            arguments=[types.PromptArgument(name="topic", description="Topic", required=True)],
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_prompts = AsyncMock(return_value=page)
+
+    await tool.load_prompts()
+
+    assert [function.name for function in tool._functions] == ["docs_summarize-docs"]
+
+
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
@@ -64,30 +142,31 @@ def test_mcp_prompt_message_to_ai_content():
 
 
 def test_parse_tool_result_from_mcp():
-    """Test conversion from MCP tool result to string representation."""
+    """Test conversion from MCP tool result with images preserves original order."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
             types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.TextContent(type="text", text="After image"),
             types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
         ]
     )
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Multiple items produce a JSON array of strings
-    assert isinstance(result, str)
-    import json
-
-    parsed = json.loads(result)
-    assert len(parsed) == 3
-    assert parsed[0] == "Result text"
-    # Image items are JSON-encoded strings within the array
-    img1 = json.loads(parsed[1])
-    assert img1["type"] == "image"
-    assert img1["data"] == "eHl6"
-    img2 = json.loads(parsed[2])
-    assert img2["type"] == "image"
-    assert img2["data"] == "YWJj"
+    # Results with images return a list of Content objects in original order
+    assert isinstance(result, list)
+    assert len(result) == 4
+    # Order is preserved: text, image, text, image
+    assert result[0].type == "text"
+    assert result[0].text == "Result text"
+    assert result[1].type == "data"
+    assert result[1].media_type == "image/png"
+    assert "eHl6" in result[1].uri
+    assert result[2].type == "text"
+    assert result[2].text == "After image"
+    assert result[3].type == "data"
+    assert result[3].media_type == "image/webp"
+    assert "YWJj" in result[3].uri
 
 
 def test_parse_tool_result_from_mcp_single_text():
@@ -95,26 +174,73 @@ def test_parse_tool_result_from_mcp_single_text():
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Single text item returns just the text
-    assert result == "Simple result"
+    # Single text item returns list with one text Content
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "Simple result"
 
 
 def test_parse_tool_result_from_mcp_meta_not_in_string():
-    """Test that _meta data is not included in the string result (it's tool-level, not content-level)."""
+    """Test that _meta data is not included in the result (it's tool-level, not content-level)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Error occurred")],
         _meta={"isError": True, "errorCode": "TOOL_ERROR"},
     )
 
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == "Error occurred"
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text == "Error occurred"
 
 
 def test_parse_tool_result_from_mcp_empty_content():
-    """Test that empty content produces empty string."""
+    """Test that empty content produces list with empty text Content."""
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == ""
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == ""
+
+
+def test_parse_tool_result_from_mcp_audio_content():
+    """Test conversion from MCP tool result with audio returns rich content list."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.AudioContent(type="audio", data="YXVkaW8=", mimeType="audio/wav"),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "audio/wav"
+    assert "YXVkaW8=" in result[0].uri
+
+
+def test_parse_tool_result_from_mcp_blob_plain_base64():
+    """Test that plain base64 blob (without data: prefix) is wrapped into a data URI."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    uri=AnyUrl("file://test.bin"),
+                    mimeType="application/pdf",
+                    blob="dGVzdCBkYXRh",
+                ),
+            ),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "application/pdf"
+    assert "dGVzdCBkYXRh" in result[0].uri
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -766,7 +892,10 @@ async def test_mcp_tool_call_tool_with_meta_integration():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed with metadata"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert result[0].text == "Tool executed with metadata"
 
 
 async def test_local_mcp_server_function_execution():
@@ -805,7 +934,8 @@ async def test_local_mcp_server_function_execution():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed successfully"
+        assert isinstance(result, list)
+        assert result[0].text == "Tool executed successfully"
 
 
 async def test_local_mcp_server_function_execution_with_nested_object():
@@ -852,7 +982,8 @@ async def test_local_mcp_server_function_execution_with_nested_object():
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
-        assert result == '{"name": "John Doe", "id": 251}'
+        assert isinstance(result, list)
+        assert result[0].text == '{"name": "John Doe", "id": 251}'
 
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
@@ -898,6 +1029,148 @@ async def test_local_mcp_server_function_execution_error():
             await func.invoke(param="test_value")
 
 
+async def test_mcp_tool_call_tool_raises_on_is_error():
+    """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Something went wrong")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        with pytest.raises(ToolExecutionException, match="Something went wrong"):
+            await func.invoke(param="test_value")
+
+
+async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
+    """Test that call_tool returns normally when MCP returns isError=False."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Success")],
+                    isError=False,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+        result = await func.invoke(param="test_value")
+        assert isinstance(result, list)
+        assert result[0].text == "Success"
+
+
+async def test_mcp_tool_is_error_propagates_through_function_middleware():
+    """Test that MCP isError=True propagates as ToolExecutionException through function middleware."""
+    error_seen_in_middleware = False
+
+    class ErrorCheckMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next):
+            nonlocal error_seen_in_middleware
+            try:
+                await call_next()
+            except ToolExecutionException:
+                error_seen_in_middleware = True
+                raise
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="MCP error occurred")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        middleware_pipeline = FunctionMiddlewarePipeline(ErrorCheckMiddleware())
+
+        middleware_context = FunctionInvocationContext(
+            function=func,
+            arguments={"param": "test_value"},
+        )
+
+        with pytest.raises(ToolExecutionException, match="MCP error occurred"):
+            await middleware_pipeline.execute(
+                middleware_context,
+                lambda ctx: func.invoke(arguments=ctx.arguments),
+            )
+
+        assert error_seen_in_middleware, "Middleware should have seen the ToolExecutionException"
+
+
 async def test_local_mcp_server_prompt_execution():
     """Test prompt execution through MCP server."""
 
@@ -936,7 +1209,8 @@ async def test_local_mcp_server_prompt_execution():
         prompt = server.functions[0]
         result = await prompt.invoke(arg="test_value")
 
-        assert result == "Test message"
+        assert isinstance(result, list)
+        assert result[0].text == "Test message"
 
 
 @pytest.mark.parametrize(
@@ -2098,7 +2372,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         tool._tools_loaded = True
 
         # First call should work - connection is valid
-        mock_session.call_tool.return_value = MagicMock(content=[])
+        mock_session.call_tool.return_value = types.CallToolResult(content=[])
         result = await tool.call_tool("test_tool", arg1="value1")
         assert result is not None
 
@@ -2111,7 +2385,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
             call_count += 1
             if call_count == 1:
                 raise ClosedResourceError
-            return MagicMock(content=[])
+            return types.CallToolResult(content=[])
 
         mock_session.call_tool = call_tool_with_error
 

@@ -18,7 +18,7 @@ Start with `01-get-started/` and work through the numbered files:
 
 1. **[01_hello_agent.py](./01-get-started/01_hello_agent.py)** — Create and run your first agent
 2. **[02_add_tools.py](./01-get-started/02_add_tools.py)** — Add function tools with `@tool`
-3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentThread`
+3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentSession`
 4. **[04_memory.py](./01-get-started/04_memory.py)** — Agent memory with `ContextProvider`
 5. **[05_first_workflow.py](./01-get-started/05_first_workflow.py)** — Build a workflow with executors and edges
 6. **[06_host_your_agent.py](./01-get-started/06_host_your_agent.py)** — Host your agent via Azure Functions

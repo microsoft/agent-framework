@@ -19,9 +19,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    TextResponseFormatConfigurationResponseFormatJsonObject,
-    TextResponseFormatConfigurationResponseFormatText,
+    TextResponseFormatJsonObject,
     TextResponseFormatJsonSchema,
+    TextResponseFormatText,
     Tool,
     WebSearchPreviewTool,
 )
@@ -79,7 +79,7 @@ class AzureAISettings(TypedDict, total=False):
     model_deployment_name: str | None
 
 
-def _extract_project_connection_id(additional_properties: dict[str, Any] | None) -> str | None:
+def _extract_project_connection_id(additional_properties: Mapping[str, Any] | None) -> str | None:
     """Extract project_connection_id from tool additional_properties.
 
     Checks for both direct 'project_connection_id' key (programmatic usage)
@@ -95,17 +95,18 @@ def _extract_project_connection_id(additional_properties: dict[str, Any] | None)
         return None
 
     # Check for direct project_connection_id (programmatic usage)
-    project_connection_id = additional_properties.get("project_connection_id")
-    if isinstance(project_connection_id, str):
-        return project_connection_id
+
+    if (proj_conn_id := additional_properties.get("project_connection_id")) and isinstance(proj_conn_id, str):
+        return proj_conn_id  # type: ignore[no-any-return]
 
     # Check for connection.name structure (declarative/YAML usage)
-    if "connection" in additional_properties:
-        conn = additional_properties["connection"]
-        if isinstance(conn, dict):
-            name = conn.get("name")
-            if isinstance(name, str):
-                return name
+    if (
+        (connection := additional_properties.get("connection"))
+        and isinstance(connection, Mapping)
+        and (name := connection.get("name"))  # type: ignore
+        and isinstance(name, str)
+    ):
+        return name  # type: ignore[no-any-return]
 
     return None
 
@@ -189,9 +190,9 @@ def to_azure_ai_agent_tools(
                 and tool.resources
                 and "mcp" not in tool.resources
             ):
-                if "tool_resources" not in run_options:
-                    run_options["tool_resources"] = {}
-                run_options["tool_resources"].update(tool.resources)
+                run_options.setdefault("tool_resources", {})
+                if isinstance(tool.resources, Mapping):
+                    run_options["tool_resources"].update(tool.resources)
         elif isinstance(tool, (dict, MutableMapping)):
             # Handle dict-based tools - pass through directly
             tool_dict = tool if isinstance(tool, dict) else dict(tool)
@@ -422,9 +423,16 @@ def to_azure_ai_tools(
         elif isinstance(tool, Tool):
             # Pass through SDK Tool types directly (CodeInterpreterTool, FileSearchTool, etc.)
             azure_tools.append(tool)
+        elif isinstance(tool, MutableMapping):
+            # Convert mutable mappings into plain dicts for stable typing.
+            tool_dict: dict[str, Any] = dict(tool)
+            if tool_dict.get("type") == "mcp":
+                azure_tools.append(_prepare_mcp_tool_dict_for_azure_ai(tool_dict))
+            else:
+                azure_tools.append(tool_dict)
         else:
-            # Pass through dict-based tools directly
-            azure_tools.append(dict(tool) if isinstance(tool, MutableMapping) else tool)  # type: ignore[arg-type]
+            # Pass through any other supported tool objects unchanged.
+            azure_tools.append(tool)
 
     return azure_tools
 
@@ -446,7 +454,16 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
         mcp["server_description"] = description
 
     # Check for project_connection_id
-    if project_connection_id := tool_dict.get("project_connection_id"):
+    project_connection_id = tool_dict.get("project_connection_id")
+    if not isinstance(project_connection_id, str):
+        additional_properties = tool_dict.get("additional_properties")
+        project_connection_id = (
+            _extract_project_connection_id(additional_properties)  # pyright: ignore[reportUnknownArgumentType]
+            if isinstance(additional_properties, Mapping)
+            else None
+        )
+
+    if project_connection_id:
         mcp["project_connection_id"] = project_connection_id
     elif headers := tool_dict.get("headers"):
         mcp["headers"] = headers
@@ -462,11 +479,7 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
-) -> (
-    TextResponseFormatJsonSchema
-    | TextResponseFormatConfigurationResponseFormatJsonObject
-    | TextResponseFormatConfigurationResponseFormatText
-):
+) -> TextResponseFormatJsonSchema | TextResponseFormatJsonObject | TextResponseFormatText:
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         schema = response_format.model_json_schema()
@@ -496,9 +509,9 @@ def create_text_format_config(
                 config_kwargs["description"] = format_config["description"]
             return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return TextResponseFormatConfigurationResponseFormatJsonObject()
+            return TextResponseFormatJsonObject()
         if format_type == "text":
-            return TextResponseFormatConfigurationResponseFormatText()
+            return TextResponseFormatText()
 
     raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 

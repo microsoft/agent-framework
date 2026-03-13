@@ -28,7 +28,7 @@ from agent_framework.openai._responses_client import RawOpenAIResponsesClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
-    CodeInterpreterContainerAuto,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
     FileSearchTool,
     ImageGenTool,
@@ -544,6 +544,48 @@ def test_update_agent_name_and_description(mock_project_client: MagicMock) -> No
         mock_update.return_value = None
         client._update_agent_name_and_description(None)  # type: ignore
         mock_update.assert_called_once_with(None)
+
+
+def test_as_agent_uses_client_agent_name_as_default(mock_project_client: MagicMock) -> None:
+    """Test that as_agent() defaults Agent.name to client.agent_name when name is not provided."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="my_agent")
+    client.agent_description = "my description"
+
+    agent = client.as_agent(instructions="You are helpful.")
+
+    assert agent.name == "my_agent"
+    assert agent.description == "my description"
+
+
+def test_as_agent_explicit_name_overrides_client_agent_name(mock_project_client: MagicMock) -> None:
+    """Test that an explicit name passed to as_agent() takes precedence over client.agent_name."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="explicit_name", description="explicit description", instructions="You are helpful.")
+
+    assert agent.name == "explicit_name"
+    assert agent.description == "explicit description"
+
+
+def test_as_agent_no_name_anywhere(mock_project_client: MagicMock) -> None:
+    """Test that Agent.name is None when neither as_agent name nor client.agent_name is provided."""
+    client = create_test_azure_ai_client(mock_project_client)
+
+    agent = client.as_agent(instructions="You are helpful.")
+
+    assert agent.name is None
+
+
+def test_as_agent_empty_string_preserves_explicit_value(mock_project_client: MagicMock) -> None:
+    """Test that empty-string name/description are preserved and do not fall back to client defaults."""
+    client = create_test_azure_ai_client(mock_project_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="", description="", instructions="You are helpful.")
+
+    assert agent.name == ""
+    assert agent.description == ""
 
 
 async def test_async_context_manager(mock_project_client: MagicMock) -> None:
@@ -1254,7 +1296,7 @@ def test_from_azure_ai_tools_mcp() -> None:
 
 def test_from_azure_ai_tools_code_interpreter() -> None:
     """Test from_azure_ai_tools with Code Interpreter tool."""
-    ci_tool = CodeInterpreterTool(container=CodeInterpreterContainerAuto(file_ids=["file-1"]))
+    ci_tool = CodeInterpreterTool(container=AutoCodeInterpreterToolParam(file_ids=["file-1"]))
     parsed_tools = from_azure_ai_tools([ci_tool])
     assert len(parsed_tools) == 1
     assert parsed_tools[0]["type"] == "code_interpreter"
