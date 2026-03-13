@@ -3651,3 +3651,131 @@ class TestUpdateConversationId:
 
 
 # endregion
+async def test_user_input_request_propagates_through_as_tool(chat_client_base: SupportsChatGetResponse):
+    """Test that user_input_request content from a sub-agent wrapped as a tool propagates to the parent response."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    @tool(name="delegate_agent", approval_mode="never_require")
+    def delegate_tool(task: str) -> str:
+        del task
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(
+                    consent_link="https://login.microsoftonline.com/consent",
+                )
+            ]
+        )
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="delegate_agent", arguments='{"task": "do it"}'),
+                ],
+            )
+        )
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="delegate this")],
+        options={"tool_choice": "auto", "tools": [delegate_tool]},
+    )
+
+    user_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, Content) and content.user_input_request
+    ]
+    assert len(user_requests) == 1
+    assert user_requests[0].type == "oauth_consent_request"
+    assert user_requests[0].consent_link == "https://login.microsoftonline.com/consent"
+    assert user_requests[0].user_input_request is True
+
+
+async def test_user_input_request_multiple_contents_propagate(chat_client_base: SupportsChatGetResponse):
+    """Test that multiple user_input_request items in a single exception all propagate to the parent response."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    @tool(name="multi_request_tool", approval_mode="never_require")
+    def multi_request(task: str) -> str:
+        del task
+        raise UserInputRequiredException(
+            contents=[
+                Content.from_oauth_consent_request(
+                    consent_link="https://example.com/consent1",
+                ),
+                Content.from_oauth_consent_request(
+                    consent_link="https://example.com/consent2",
+                ),
+                Content.from_oauth_consent_request(
+                    consent_link="https://example.com/consent3",
+                ),
+            ]
+        )
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="multi_request_tool", arguments='{"task": "do it"}'),
+                ],
+            )
+        )
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="do something")],
+        options={"tool_choice": "auto", "tools": [multi_request]},
+    )
+
+    user_requests = [
+        content
+        for msg in response.messages
+        for content in msg.contents
+        if isinstance(content, Content) and content.user_input_request
+    ]
+    assert len(user_requests) == 3
+    consent_links = {r.consent_link for r in user_requests}
+    assert consent_links == {
+        "https://example.com/consent1",
+        "https://example.com/consent2",
+        "https://example.com/consent3",
+    }
+
+
+async def test_user_input_request_empty_contents_returns_fallback(chat_client_base: SupportsChatGetResponse):
+    """Test that UserInputRequiredException with empty contents produces a fallback function_result."""
+    from agent_framework.exceptions import UserInputRequiredException
+
+    @tool(name="empty_request_tool", approval_mode="never_require")
+    def empty_request(task: str) -> str:
+        del task
+        raise UserInputRequiredException(contents=[])
+
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="1", name="empty_request_tool", arguments='{"task": "do it"}'),
+                ],
+            )
+        ),
+        ChatResponse(messages=Message(role="assistant", text="handled")),
+    ]
+
+    response = await chat_client_base.get_response(
+        [Message(role="user", text="do something")],
+        options={"tool_choice": "auto", "tools": [empty_request]},
+    )
+
+    # With empty contents, the handler returns a function_result with an error message
+    # and the loop continues to the next chat response.
+    function_results = [
+        content for msg in response.messages for content in msg.contents if content.type == "function_result"
+    ]
+    assert len(function_results) >= 1
+    assert any("user input" in (fr.result or "").lower() for fr in function_results)

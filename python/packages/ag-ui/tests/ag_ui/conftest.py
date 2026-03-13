@@ -98,7 +98,11 @@ class StreamingChatClientStub(
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        self.last_session = kwargs.get("session")
+        client_kwargs = kwargs.get("client_kwargs")
+        if isinstance(client_kwargs, Mapping):
+            self.last_session = cast(AgentSession | None, client_kwargs.get("session"))
+        else:
+            self.last_session = None
         self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
         return cast(
             Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],

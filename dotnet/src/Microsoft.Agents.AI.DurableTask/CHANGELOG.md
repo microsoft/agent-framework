@@ -4,6 +4,12 @@
 
 ### Changed
 
+- Filter empty `AIContent` from durable agent state responses ([#4670](https://github.com/microsoft/agent-framework/pull/4670))
+
+## v1.0.0-preview.260311.1
+
+### Changed
+
 - Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
 - Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
 - Removed AgentThreadMetadata and used AgentSessionId directly instead ([#3067](https://github.com/microsoft/agent-framework/pull/3067));
@@ -15,6 +21,8 @@
 - Changed ChatHistory and AIContext Providers to have pipeline semantics ([#3806](https://github.com/microsoft/agent-framework/pull/3806))
 - Marked all `RunAsync<T>` overloads as `new`, added missing ones, and added support for primitives and arrays ([#3803](https://github.com/microsoft/agent-framework/pull/3803))
 - Improve session cast error message quality and consistency ([#3973](https://github.com/microsoft/agent-framework/pull/3973))
+
+NOTE: Some of the above changes may have been part of earlier releases not mentioned in this file.
 
 ## v1.0.0-preview.251204.1
 

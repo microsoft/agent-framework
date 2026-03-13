@@ -15,7 +15,7 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Generic, Literal, cast
+from typing import Any, Generic, Literal, cast, overload
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
@@ -30,7 +30,8 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from .._clients import BaseChatClient
-from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
+from .._docstrings import apply_layered_docstring
+from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer, FunctionMiddlewareTypes
 from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
@@ -72,6 +73,7 @@ else:
 
 logger = logging.getLogger("agent_framework.openai")
 
+ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 
 
@@ -212,6 +214,57 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         return tool
 
     # endregion
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: ChatOptions[ResponseModelBoundT],
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: OpenAIChatOptionsT | ChatOptions[None] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[True],
+        options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    @override
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Get a response from the raw OpenAI chat client."""
+        super_get_response = cast(
+            "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
+            super().get_response,  # type: ignore[misc]
+        )
+        return super_get_response(  # type: ignore[no-any-return]
+            messages=messages,
+            stream=stream,
+            options=options,
+            **kwargs,
+        )
 
     @override
     def _inner_get_response(
@@ -727,6 +780,77 @@ class OpenAIChatClient(  # type: ignore[misc]
 ):
     """OpenAI Chat completion class with middleware, telemetry, and function invocation support."""
 
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: ChatOptions[ResponseModelBoundT],
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: OpenAIChatOptionsT | ChatOptions[None] | None = None,
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[True],
+        options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    @override
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
+        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Get a response from the OpenAI chat client with all standard layers enabled."""
+        super_get_response = cast(
+            "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
+            super().get_response,  # type: ignore[misc]
+        )
+        return super_get_response(  # type: ignore[no-any-return]
+            messages=messages,
+            stream=stream,
+            options=options,
+            function_middleware=function_middleware,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            middleware=middleware,
+            **kwargs,
+        )
+
     def __init__(
         self,
         *,
@@ -830,3 +954,25 @@ class OpenAIChatClient(  # type: ignore[misc]
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
+
+
+def _apply_openai_chat_client_docstrings() -> None:
+    """Align OpenAI chat-client docstrings with the raw implementation."""
+    apply_layered_docstring(RawOpenAIChatClient.get_response, BaseChatClient.get_response)
+    apply_layered_docstring(
+        OpenAIChatClient.get_response,
+        RawOpenAIChatClient.get_response,
+        extra_keyword_args={
+            "function_middleware": """
+                Optional per-call function middleware.
+                When omitted, middleware configured on the client or forwarded from higher layers is used.
+            """,
+            "middleware": """
+                Optional per-call chat and function middleware.
+                This is merged with any middleware configured on the client for the current request.
+            """,
+        },
+    )
+
+
+_apply_openai_chat_client_docstrings()

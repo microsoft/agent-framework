@@ -444,11 +444,11 @@ class AzureAIAgentClient(
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         should_cleanup_agent: bool = True,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure AI Agent client.
 
@@ -471,11 +471,11 @@ class AzureAIAgentClient(
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -548,9 +548,9 @@ class AzureAIAgentClient(
 
         # Initialize parent
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
         # Initialize instance variables
