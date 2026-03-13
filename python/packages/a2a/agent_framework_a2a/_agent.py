@@ -493,6 +493,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
+            context_id=message.additional_properties.get("context_id"),
             metadata=metadata,
         )
 
