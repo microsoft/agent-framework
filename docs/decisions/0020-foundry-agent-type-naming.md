@@ -66,7 +66,7 @@ This path is code-first and does not create a persistent server-side agent.
 
 ### Versioned agent path
 
-Use native Foundry APIs first, then wrap with `AsAIAgent(...)`:
+Use the convenience overloads on `AIProjectClient`:
 
 ```csharp
 AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
@@ -80,6 +80,28 @@ AgentVersion version = await aiProjectClient.Agents.CreateAgentVersionAsync(
         }));
 
 ChatClientAgent agent = aiProjectClient.AsAIAgent(version);
+```
+
+Or use composed `ChatClientAgent`
+
+```csharp
+AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
+
+AgentVersion version = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "JokerAgent",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(deploymentName)
+        {
+            Instructions = "You are good at telling jokes."
+        }));
+
+ProjectResponsesClient projectResponsesClient = aiProjectClient
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClientForAgent(new AgentReference(version.Name, version.Version));
+
+ChatClientAgent agent = new(
+    chatClient: projectResponsesClient.AsIChatClient(),
+    name: "JokerAgent");
 ```
 
 ### Samples
