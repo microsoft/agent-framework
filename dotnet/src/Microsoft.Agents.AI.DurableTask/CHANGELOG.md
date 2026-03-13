@@ -33,8 +33,16 @@
 
 ## v1.0.0-preview.251219.1
 
+- Filter empty `AIContent` from durable agent state responses ([#4670](https://github.com/microsoft/agent-framework/pull/4670))
+
+## v1.0.0-preview.260311.1
+
+### Changed
+
 - Added TTL configuration for durable agent entities ([#2679](https://github.com/microsoft/agent-framework/pull/2679))
 - Switch to new "Run" method name ([#2843](https://github.com/microsoft/agent-framework/pull/2843))
+
+NOTE: Some of the above changes may have been part of earlier releases not mentioned in this file.
 
 ## v1.0.0-preview.251204.1
 
