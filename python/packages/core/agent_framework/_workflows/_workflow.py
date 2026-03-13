@@ -874,8 +874,8 @@ class Workflow(DictConvertible):
         initialization will fail with a ValueError.
 
         Args:
-            name: Optional name for the agent.
-            description: Optional description of the agent.
+            name: Optional name for the agent. Defaults to workflow name.
+            description: Optional description of the agent. Defaults to workflow description.
             context_providers: Optional sequence of context providers for the agent.
             **kwargs: Additional keyword arguments passed to BaseAgent.
 
@@ -890,8 +890,8 @@ class Workflow(DictConvertible):
 
         return WorkflowAgent(
             workflow=self,
-            name=name,
-            description=description,
+            name=name if name is not None else self.name,
+            description=description if description is not None else self.description,
             context_providers=context_providers,
             **kwargs,
         )

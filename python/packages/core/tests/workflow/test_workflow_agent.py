@@ -329,6 +329,20 @@ class TestWorkflowAgent:
         assert agent.description == "A test agent"
         assert history_provider in agent.context_providers
 
+    def test_workflow_as_agent_defaults_name_and_description_from_workflow(self) -> None:
+        """Test that as_agent() defaults name and description to the workflow's own values."""
+        executor = SimpleExecutor(id="executor1", response_text="Response")
+        workflow = WorkflowBuilder(
+            start_executor=executor,
+            name="my-workflow",
+            description="Workflow description",
+        ).build()
+
+        agent = workflow.as_agent()
+
+        assert agent.name == "my-workflow"
+        assert agent.description == "Workflow description"
+
     def test_workflow_as_agent_cannot_handle_agent_inputs(self) -> None:
         """Test that Workflow.as_agent() raises an error if the start executor cannot handle agent inputs."""
 
