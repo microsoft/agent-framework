@@ -329,11 +329,11 @@ class OllamaChatClient(
             env_file_path=env_file_path,
         )
 
-        self.model_id = ollama_settings["model_id"]
+        self.model_id = ollama_settings["model_id"]  # type: ignore[assignment, reportTypedDictNotRequiredAccess]
         # we can just pass in None for the host, the default is set by the Ollama package.
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         # Save Host URL for serialization with to_dict()
-        self.host = str(self.client._client.base_url)  # pyright: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
+        self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
 
         super().__init__(
             middleware=middleware,
@@ -500,11 +500,22 @@ class OllamaChatClient(
 
     def _format_tool_message(self, message: Message) -> list[OllamaMessage]:
         # Ollama does not support multiple tool results in a single message, so we create a separate
-        return [
-            OllamaMessage(role="tool", content=str(item.result), tool_name=item.call_id)
-            for item in message.contents
-            if item.type == "function_result"
-        ]
+        messages: list[OllamaMessage] = []
+        for item in message.contents:
+            if item.type == "function_result":
+                if item.items:
+                    text_parts = [c.text or "" for c in item.items if c.type == "text"]
+                    rich_items = [c for c in item.items if c.type in ("data", "uri")]
+                    if rich_items:
+                        logger.warning(
+                            "Ollama does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted."
+                        )
+                    tool_text = "\n".join(text_parts) if text_parts else ""
+                else:
+                    tool_text = str(item.result) if item.result is not None else ""
+                messages.append(OllamaMessage(role="tool", content=tool_text, tool_name=item.call_id))
+        return messages
 
     def _parse_contents_from_ollama(self, response: OllamaChatResponse) -> list[Content]:
         contents: list[Content] = []

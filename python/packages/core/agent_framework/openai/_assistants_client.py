@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from collections.abc import (
     AsyncIterable,
@@ -16,6 +17,10 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.beta.threads import (
+    FileCitationAnnotation,
+    FileCitationDeltaAnnotation,
+    FilePathAnnotation,
+    FilePathDeltaAnnotation,
     ImageURLContentBlockParam,
     ImageURLParam,
     MessageContentPartParam,
@@ -23,6 +28,9 @@ from openai.types.beta.threads import (
     Run,
     TextContentBlockParam,
     TextDeltaBlock,
+)
+from openai.types.beta.threads import (
+    Message as ThreadMessage,
 )
 from openai.types.beta.threads.run_create_params import AdditionalMessage
 from openai.types.beta.threads.run_submit_tool_outputs_params import ToolOutput
@@ -39,12 +47,14 @@ from .._tools import (
     normalize_tools,
 )
 from .._types import (
+    Annotation,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
     ResponseStream,
+    TextSpanRegion,
     UsageDetails,
 )
 from ..observability import ChatTelemetryLayer
@@ -67,6 +77,8 @@ else:
 
 if TYPE_CHECKING:
     from .._middleware import MiddlewareTypes
+
+logger = logging.getLogger("agent_framework.openai")
 
 
 # region OpenAI Assistants Options TypedDict
@@ -348,23 +360,26 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
         )
 
-        if not async_client and not openai_settings["api_key"]:
+        api_key_value = openai_settings.get("api_key")
+        if not async_client and not api_key_value:
             raise ValueError(
                 "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
             )
-        if not openai_settings["chat_model_id"]:
+
+        chat_model_id = openai_settings.get("chat_model_id")
+        if not chat_model_id:
             raise ValueError(
                 "OpenAI model ID is required. "
                 "Set via 'model_id' parameter or 'OPENAI_CHAT_MODEL_ID' environment variable."
             )
 
         super().__init__(
-            model_id=openai_settings["chat_model_id"],
-            api_key=self._get_api_key(openai_settings["api_key"]),
-            org_id=openai_settings["org_id"],
+            model_id=chat_model_id,
+            api_key=self._get_api_key(api_key_value),
+            org_id=openai_settings.get("org_id"),
             default_headers=default_headers,
             client=async_client,
-            base_url=openai_settings["base_url"],
+            base_url=openai_settings.get("base_url"),
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
         )
@@ -391,7 +406,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
         """Clean up any assistants we created."""
         if self._should_delete_assistant and self.assistant_id is not None:
             client = await self._ensure_client()
-            await client.beta.assistants.delete(self.assistant_id)
+            await client.beta.assistants.delete(self.assistant_id)  # type: ignore[reportDeprecated]
             object.__setattr__(self, "assistant_id", None)
             object.__setattr__(self, "_should_delete_assistant", False)
 
@@ -454,7 +469,7 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 raise ValueError("Parameter 'model_id' is required for assistant creation.")
 
             client = await self._ensure_client()
-            created_assistant = await client.beta.assistants.create(
+            created_assistant = await client.beta.assistants.create(  # type: ignore[reportDeprecated]
                 model=self.model_id,
                 description=self.assistant_description,
                 name=self.assistant_name,
@@ -554,14 +569,124 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
 
                     for delta_block in delta.content or []:
                         if isinstance(delta_block, TextDeltaBlock) and delta_block.text and delta_block.text.value:
+                            text_content = Content.from_text(delta_block.text.value)
+                            if delta_block.text.annotations:
+                                annotations: list[Annotation] = []
+                                text_content.annotations = annotations
+                                for annotation in delta_block.text.annotations:
+                                    if isinstance(annotation, FileCitationDeltaAnnotation):
+                                        ann: Annotation = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_citation and annotation.file_citation.file_id:
+                                            ann["file_id"] = annotation.file_citation.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        annotations.append(ann)
+                                    elif isinstance(annotation, FilePathDeltaAnnotation):
+                                        ann = Annotation(
+                                            type="citation",
+                                            additional_properties={
+                                                "text": annotation.text,
+                                                "index": annotation.index,
+                                            },
+                                            raw_representation=annotation,
+                                        )
+                                        if annotation.file_path and annotation.file_path.file_id:
+                                            ann["file_id"] = annotation.file_path.file_id
+                                        if annotation.start_index is not None and annotation.end_index is not None:
+                                            ann["annotated_regions"] = [
+                                                TextSpanRegion(
+                                                    type="text_span",
+                                                    start_index=annotation.start_index,
+                                                    end_index=annotation.end_index,
+                                                )
+                                            ]
+                                        annotations.append(ann)
                             yield ChatResponseUpdate(
                                 role=role,  # type: ignore[arg-type]
-                                contents=[Content.from_text(delta_block.text.value)],
+                                contents=[text_content],
                                 conversation_id=thread_id,
                                 message_id=response_id,
                                 raw_representation=response.data,
                                 response_id=response_id,
                             )
+                elif response.event == "thread.message.completed" and isinstance(response.data, ThreadMessage):
+                    # Process completed message to extract fully resolved annotations.
+                    # Delta events may carry partial/empty annotation data; the completed
+                    # message contains the final text with all citation details populated.
+                    completed_contents: list[Content] = []
+                    for block in response.data.content:
+                        if block.type != "text":
+                            continue
+                        text_content = Content.from_text(block.text.value)
+                        if block.text.annotations:
+                            completed_annotations: list[Annotation] = []
+                            text_content.annotations = completed_annotations
+                            for completed_annotation in block.text.annotations:
+                                if isinstance(completed_annotation, FileCitationAnnotation):
+                                    props: dict[str, Any] = {
+                                        "text": completed_annotation.text,
+                                    }
+                                    ann = Annotation(
+                                        type="citation",
+                                        additional_properties=props,
+                                        raw_representation=completed_annotation,
+                                    )
+                                    if (
+                                        completed_annotation.file_citation
+                                        and completed_annotation.file_citation.file_id
+                                    ):
+                                        ann["file_id"] = completed_annotation.file_citation.file_id
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
+                                    text_content.annotations.append(ann)
+                                elif isinstance(completed_annotation, FilePathAnnotation):
+                                    ann = Annotation(
+                                        type="citation",
+                                        additional_properties={
+                                            "text": completed_annotation.text,
+                                        },
+                                        raw_representation=completed_annotation,
+                                    )
+                                    if completed_annotation.file_path and completed_annotation.file_path.file_id:
+                                        ann["file_id"] = completed_annotation.file_path.file_id
+                                    ann["annotated_regions"] = [
+                                        TextSpanRegion(
+                                            type="text_span",
+                                            start_index=completed_annotation.start_index,
+                                            end_index=completed_annotation.end_index,
+                                        )
+                                    ]
+                                    text_content.annotations.append(ann)
+                                else:
+                                    logger.debug("Unparsed annotation type: %s", completed_annotation.type)
+                        completed_contents.append(text_content)
+                    if completed_contents:
+                        yield ChatResponseUpdate(
+                            role="assistant",
+                            contents=completed_contents,
+                            conversation_id=thread_id,
+                            message_id=response_id,
+                            raw_representation=response.data,
+                            response_id=response_id,
+                        )
                 elif response.event == "thread.run.requires_action" and isinstance(response.data, Run):
                     contents = self._parse_function_calls_from_assistants(response.data, response_id)
                     if contents:
@@ -695,15 +820,16 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
                 tool_definitions.append(tool.to_json_schema_spec())  # type: ignore[reportUnknownArgumentType]
             elif isinstance(tool, MutableMapping):
                 # Pass through dict-based tools directly (from static factory methods)
-                tool_definitions.append(tool)
+                tool_definitions.append(cast(MutableMapping[str, Any], tool))
 
         if len(tool_definitions) > 0:
             run_options["tools"] = tool_definitions
 
         if tool_mode is not None:
-            if (mode := tool_mode["mode"]) == "required" and (
-                func_name := tool_mode.get("required_function_name")
-            ) is not None:
+            mode = tool_mode.get("mode")
+            if mode is None:
+                raise ValueError("tool_choice mode is required")
+            if mode == "required" and (func_name := tool_mode.get("required_function_name")) is not None:
                 run_options["tool_choice"] = {
                     "type": "function",
                     "function": {"name": func_name},

@@ -427,3 +427,103 @@ class TestSerializationMixin:
 
         assert obj.options["existing"] == "value"
         assert obj.options["injected"] == "option"
+
+    def test_deepcopy_preserves_shallow_copy_fields_by_reference(self):
+        """Test that deepcopy keeps _SHALLOW_COPY_FIELDS fields as shallow references."""
+        import copy
+
+        class NonCopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("cannot deepcopy")
+
+        class TestClass(SerializationMixin):
+            _SHALLOW_COPY_FIELDS = {"raw_representation", "other_opaque"}
+
+            def __init__(self, items: list, raw_representation: Any = None, other_opaque: Any = None):
+                self.items = items
+                self.raw_representation = raw_representation
+                self.other_opaque = other_opaque
+
+        raw = NonCopyable()
+        opaque = NonCopyable()
+        original_items = ["a", "b"]
+        obj = TestClass(items=original_items, raw_representation=raw, other_opaque=opaque)
+        cloned = copy.deepcopy(obj)
+
+        # _SHALLOW_COPY_FIELDS fields should be the same object (shallow copy)
+        assert cloned.raw_representation is raw
+        assert cloned.other_opaque is opaque
+        # Normal attributes should be independent copies
+        assert cloned.items is not original_items
+        assert cloned.items == ["a", "b"]
+
+    def test_deepcopy_deep_copies_non_shallow_copy_fields(self):
+        """Test that deepcopy fully copies fields not in _SHALLOW_COPY_FIELDS."""
+        import copy
+
+        class TestClass(SerializationMixin):
+            _SHALLOW_COPY_FIELDS = {"raw_representation"}
+
+            def __init__(self, items: list, raw_representation: Any = None):
+                self.items = items
+                self.raw_representation = raw_representation
+
+        original_list = ["a", "b"]
+        obj = TestClass(items=original_list, raw_representation="raw")
+        cloned = copy.deepcopy(obj)
+
+        # list should be a new object
+        assert cloned.items is not original_list
+        assert cloned.items == ["a", "b"]
+        # raw_representation should be the same object
+        assert cloned.raw_representation is obj.raw_representation
+
+    def test_deepcopy_deep_copies_default_exclude_fields(self):
+        """Test that DEFAULT_EXCLUDE fields are deep-copied unless also in _SHALLOW_COPY_FIELDS."""
+        import copy
+
+        class TestClass(SerializationMixin):
+            DEFAULT_EXCLUDE = {"additional_properties"}
+
+            def __init__(self, items: list, additional_properties: dict | None = None):
+                self.items = items
+                self.additional_properties = additional_properties or {}
+
+        original_props = {"key": "value"}
+        obj = TestClass(items=["a"], additional_properties=original_props)
+        cloned = copy.deepcopy(obj)
+
+        # DEFAULT_EXCLUDE field should be deep-copied (independent copy)
+        assert cloned.additional_properties is not original_props
+        assert cloned.additional_properties == {"key": "value"}
+
+    def test_deepcopy_shallow_copy_fields_override_default_exclude(self):
+        """Test that _SHALLOW_COPY_FIELDS controls deepcopy independently of DEFAULT_EXCLUDE."""
+        import copy
+
+        class NonCopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("cannot deepcopy")
+
+        class TestClass(SerializationMixin):
+            DEFAULT_EXCLUDE = {"opaque", "additional_properties"}
+            _SHALLOW_COPY_FIELDS = {"opaque"}
+
+            def __init__(self, items: list, opaque: Any = None, additional_properties: dict | None = None):
+                self.items = items
+                self.opaque = opaque
+                self.additional_properties = additional_properties or {}
+
+        opaque = NonCopyable()
+        original_props = {"key": "value"}
+        obj = TestClass(items=["a"], opaque=opaque, additional_properties=original_props)
+        cloned = copy.deepcopy(obj)
+
+        # Field in both DEFAULT_EXCLUDE and _SHALLOW_COPY_FIELDS: shallow-copied
+        assert cloned.opaque is opaque
+        # Field in DEFAULT_EXCLUDE only: deep-copied
+        assert cloned.additional_properties is not original_props
+        assert cloned.additional_properties == {"key": "value"}
+        # Normal field: deep-copied
+        assert cloned.items is not obj.items
+        assert cloned.items == ["a"]

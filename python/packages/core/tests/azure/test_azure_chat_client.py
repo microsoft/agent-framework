@@ -37,11 +37,8 @@ from agent_framework.openai import (
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
-    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
+    reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
 
 
@@ -92,18 +89,26 @@ def test_init_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]], indirect=True)
-def test_init_with_empty_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL"]], indirect=True)
-def test_init_with_empty_endpoint_and_base_url(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_endpoint_and_base_url(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     with pytest.raises(ValueError):
         AzureOpenAIChatClient()
 
 
-@pytest.mark.parametrize("override_env_param_dict", [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}], indirect=True)
+@pytest.mark.parametrize(
+    "override_env_param_dict",
+    [{"AZURE_OPENAI_ENDPOINT": "http://test.com"}],
+    indirect=True,
+)
 def test_init_with_invalid_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     # Note: URL scheme validation was previously handled by pydantic's HTTPsUrl type.
     # After migrating to load_settings with TypedDict, endpoint is a plain string and no longer
@@ -150,7 +155,11 @@ def mock_chat_completion_response() -> ChatCompletion:
     return ChatCompletion(
         id="test_id",
         choices=[
-            Choice(index=0, message=ChatCompletionMessage(content="test", role="assistant"), finish_reason="stop")
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(content="test", role="assistant"),
+                finish_reason="stop",
+            )
         ],
         created=0,
         model="test",
@@ -162,7 +171,13 @@ def mock_chat_completion_response() -> ChatCompletion:
 def mock_streaming_chat_completion_response() -> AsyncStream[ChatCompletionChunk]:
     content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -549,7 +564,9 @@ async def test_bad_request_non_content_filter(
     test_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     assert test_endpoint is not None
     mock_create.side_effect = openai.BadRequestError(
-        "The request was bad.", response=Response(400, request=Request("POST", test_endpoint)), body={}
+        "The request was bad.",
+        response=Response(400, request=Request("POST", test_endpoint)),
+        body={},
     )
 
     azure_chat_client = AzureOpenAIChatClient()
@@ -608,7 +625,13 @@ async def test_streaming_with_none_delta(
     # Second chunk has actual content
     chunk_with_content = ChatCompletionChunk(
         id="test_id",
-        choices=[ChunkChoice(index=0, delta=ChunkChoiceDelta(content="test", role="assistant"), finish_reason="stop")],
+        choices=[
+            ChunkChoice(
+                index=0,
+                delta=ChunkChoiceDelta(content="test", role="assistant"),
+                finish_reason="stop",
+            )
+        ],
         created=0,
         model="test",
         object="chat.completion.chunk",
@@ -629,6 +652,73 @@ async def test_streaming_with_none_delta(
     assert any(msg.contents for msg in results)
 
 
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_with_conversation_id(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    """Test that conversation_id is excluded from the completions create call."""
+    mock_create.return_value = mock_chat_completion_response
+    chat_history.append(Message(text="hello world", role="user"))
+
+    azure_chat_client = AzureOpenAIChatClient()
+    await azure_chat_client.get_response(
+        messages=chat_history,
+        options={"conversation_id": "12345"},
+    )
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert "conversation_id" not in call_kwargs
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_streaming_with_conversation_id(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+    mock_streaming_chat_completion_response: AsyncStream[ChatCompletionChunk],
+) -> None:
+    """Test that conversation_id is excluded from the streaming completions create call."""
+    mock_create.return_value = mock_streaming_chat_completion_response
+    chat_history.append(Message(text="hello world", role="user"))
+
+    azure_chat_client = AzureOpenAIChatClient()
+    async for _ in azure_chat_client.get_response(
+        messages=chat_history,
+        options={"conversation_id": "12345"},
+        stream=True,
+    ):
+        pass
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert "conversation_id" not in call_kwargs
+
+
+@patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
+async def test_cmc_agent_with_service_session_id(
+    mock_create: AsyncMock,
+    azure_openai_unit_test_env: dict[str, str],
+    mock_chat_completion_response: ChatCompletion,
+) -> None:
+    """Test that agent.run() with a session containing service_session_id works correctly."""
+    mock_create.return_value = mock_chat_completion_response
+
+    azure_chat_client = AzureOpenAIChatClient()
+    agent = azure_chat_client.as_agent(
+        name="TestAgent",
+        instructions="You are a helpful assistant.",
+    )
+
+    session = agent.get_session(service_session_id="12345")
+    response = await agent.run("hello", session=session)
+
+    assert response is not None
+    call_kwargs = mock_create.call_args.kwargs
+    assert "conversation_id" not in call_kwargs
+
+
 @tool(approval_mode="never_require")
 def get_story_text() -> str:
     """Returns a story about Emily and David."""
@@ -647,6 +737,7 @@ def get_weather(location: str) -> str:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
@@ -677,6 +768,7 @@ async def test_azure_openai_chat_client_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
@@ -698,6 +790,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
@@ -733,6 +826,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
@@ -760,6 +854,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureOpenAIChatClient."""
@@ -776,6 +871,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureOpenAIChatClient."""
@@ -784,7 +880,10 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
     ) as agent:
         # Test streaming run
         full_text = ""
-        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
+        async for chunk in agent.run(
+            "Please respond with exactly: 'This is a streaming response test.'",
+            stream=True,
+        ):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text
@@ -794,6 +893,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_session_persistence():
     """Test Azure OpenAI chat client agent session persistence across runs with AzureOpenAIChatClient."""
@@ -819,6 +919,7 @@ async def test_azure_openai_chat_client_agent_session_persistence():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_openai_chat_client_agent_existing_session():
     """Test Azure OpenAI chat client agent with existing session to continue conversations across agent instances."""
@@ -854,6 +955,7 @@ async def test_azure_openai_chat_client_agent_existing_session():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
 async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""

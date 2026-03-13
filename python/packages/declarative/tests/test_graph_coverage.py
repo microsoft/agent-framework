@@ -21,6 +21,15 @@ from agent_framework_declarative._workflows._declarative_base import (
     LoopIterationResult,
 )
 
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+_requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -250,6 +259,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval([1, 2, 3])  # type: ignore[arg-type]
         assert result == [1, 2, 3]
 
+    @_requires_powerfx
     async def test_eval_simple_and_operator(self, mock_state):
         """Test simple And operator evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -264,6 +274,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Local.a And Local.b")
         assert result is True
 
+    @_requires_powerfx
     async def test_eval_simple_or_operator(self, mock_state):
         """Test simple Or operator evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -278,6 +289,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Local.a Or Local.b")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_negation(self, mock_state):
         """Test negation (!) evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -287,6 +299,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=!Local.flag")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_not_function(self, mock_state):
         """Test Not() function evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -296,6 +309,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Not(Local.flag)")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_comparison_operators(self, mock_state):
         """Test comparison operators."""
         state = DeclarativeWorkflowState(mock_state)
@@ -310,6 +324,7 @@ class TestDeclarativeWorkflowStateExtended:
         assert state.eval("=Local.x <> Local.y") is True
         assert state.eval("=Local.x = 5") is True
 
+    @_requires_powerfx
     async def test_eval_arithmetic_operators(self, mock_state):
         """Test arithmetic operators."""
         state = DeclarativeWorkflowState(mock_state)
@@ -322,6 +337,7 @@ class TestDeclarativeWorkflowStateExtended:
         assert state.eval("=Local.x * Local.y") == 30
         assert state.eval("=Local.x / Local.y") == pytest.approx(3.333, rel=0.01)
 
+    @_requires_powerfx
     async def test_eval_string_literal(self, mock_state):
         """Test string literal evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -330,6 +346,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval('="hello world"')
         assert result == "hello world"
 
+    @_requires_powerfx
     async def test_eval_float_literal(self, mock_state):
         """Test float literal evaluation."""
         from decimal import Decimal
@@ -341,6 +358,7 @@ class TestDeclarativeWorkflowStateExtended:
         # Accepts both float (Python fallback) and Decimal (pythonnet/PowerFx)
         assert result == 3.14 or result == Decimal("3.14")
 
+    @_requires_powerfx
     async def test_eval_variable_reference_with_namespace_mappings(self, mock_state):
         """Test variable reference with PowerFx symbols."""
         state = DeclarativeWorkflowState(mock_state)
@@ -355,6 +373,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Workflow.Inputs.query")
         assert result == "test"
 
+    @_requires_powerfx
     async def test_eval_if_expression_with_dict(self, mock_state):
         """Test eval_if_expression recursively evaluates dicts."""
         state = DeclarativeWorkflowState(mock_state)
@@ -364,6 +383,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval_if_expression({"greeting": "=Local.name", "static": "hello"})
         assert result == {"greeting": "Alice", "static": "hello"}
 
+    @_requires_powerfx
     async def test_eval_if_expression_with_list(self, mock_state):
         """Test eval_if_expression recursively evaluates lists."""
         state = DeclarativeWorkflowState(mock_state)
@@ -449,6 +469,7 @@ class TestBasicExecutorsCoverage:
         result = state.get("Local.nested")
         assert result == 42
 
+    @_requires_powerfx
     async def test_set_text_variable_executor(self, mock_context, mock_state):
         """Test SetTextVariableExecutor."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -591,6 +612,7 @@ class TestBasicExecutorsCoverage:
 
         mock_context.yield_output.assert_called_once_with("Plain text message")
 
+    @_requires_powerfx
     async def test_send_activity_with_expression(self, mock_context, mock_state):
         """Test SendActivityExecutor evaluates expressions."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -909,6 +931,7 @@ class TestAgentExecutorsCoverage:
         assert result_prop == "Local.result"
         assert auto_send is False
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_string_messages(self, mock_context, mock_state):
         """Test _build_input_text with string messages expression."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -925,6 +948,7 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, "=Local.userInput")
         assert input_text == "Hello agent!"
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_message_list(self, mock_context, mock_state):
         """Test _build_input_text extracts text from message list."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -948,6 +972,7 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, "=Conversation.messages")
         assert input_text == "Last message"
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_message_with_text_attr(self, mock_context, mock_state):
         """Test _build_input_text extracts text from message with text attribute."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -1120,83 +1145,6 @@ class TestAgentExecutorsCoverage:
         parsed = state.get("Local.Parsed")
         assert parsed == {"status": "ok", "count": 42}
 
-    async def test_invoke_tool_executor_not_found(self, mock_context, mock_state):
-        """Test InvokeToolExecutor when tool not found."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            InvokeToolExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "MissingTool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool 'MissingTool' not found in registry"}
-
-    async def test_invoke_tool_executor_sync_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with synchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def my_tool(x: int, y: int) -> int:
-            return x + y
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"add": my_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "add",
-            "parameters": {"x": 5, "y": 3},
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == 8
-
-    async def test_invoke_tool_executor_async_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with asynchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        async def my_async_tool(input: str) -> str:
-            return f"Processed: {input}"
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"process": my_async_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "process",
-            "input": "test data",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == "Processed: test data"
-
 
 # ---------------------------------------------------------------------------
 # Control Flow Executors Tests - Additional coverage
@@ -1206,6 +1154,7 @@ class TestAgentExecutorsCoverage:
 class TestControlFlowCoverage:
     """Tests for control flow executors covering uncovered code paths."""
 
+    @_requires_powerfx
     async def test_foreach_with_source_alias(self, mock_context, mock_state):
         """Test ForeachInitExecutor with 'source' alias (interpreter mode)."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1268,6 +1217,7 @@ class TestControlFlowCoverage:
         assert msg.current_index == 1
         assert msg.current_item == "b"
 
+    @_requires_powerfx
     async def test_switch_evaluator_with_value_cases(self, mock_context, mock_state):
         """Test SwitchEvaluatorExecutor with value/cases schema."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1295,6 +1245,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1  # Second case matched
 
+    @_requires_powerfx
     async def test_switch_evaluator_default_case(self, mock_context, mock_state):
         """Test SwitchEvaluatorExecutor falls through to default."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1554,6 +1505,7 @@ class TestControlFlowCoverage:
         # Should NOT send any message
         mock_context.send_message.assert_not_called()
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_first_match(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor returns first match."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1579,6 +1531,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1  # Second condition (x > 5) is first match
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_no_match(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor with no matches."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1603,6 +1556,7 @@ class TestControlFlowCoverage:
         assert msg.matched is False
         assert msg.branch_index == -1
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_boolean_true_condition(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor with boolean True condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1626,6 +1580,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1
 
+    @_requires_powerfx
     async def test_if_condition_evaluator_true(self, mock_context, mock_state):
         """Test IfConditionEvaluatorExecutor with true condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1646,6 +1601,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 0  # Then branch
 
+    @_requires_powerfx
     async def test_if_condition_evaluator_false(self, mock_context, mock_state):
         """Test IfConditionEvaluatorExecutor with false condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1894,6 +1850,7 @@ class TestHumanInputExecutorsCoverage:
 class TestAgentExternalLoopCoverage:
     """Tests for agent executor external loop handling."""
 
+    @_requires_powerfx
     async def test_agent_executor_with_external_loop(self, mock_context, mock_state):
         """Test agent executor with external loop that triggers."""
         from unittest.mock import patch
@@ -1996,39 +1953,13 @@ class TestAgentExternalLoopCoverage:
         result = state.get("Local.result")
         assert result == "Direct string response"
 
-    async def test_invoke_tool_with_error(self, mock_context, mock_state):
-        """Test InvokeToolExecutor handles tool errors."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def failing_tool(**kwargs):
-            raise ValueError("Tool error")
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"bad_tool": failing_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "bad_tool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool error"}
-
 
 # ---------------------------------------------------------------------------
 # PowerFx Functions Coverage
 # ---------------------------------------------------------------------------
 
 
+@_requires_powerfx
 class TestPowerFxFunctionsCoverage:
     """Tests for PowerFx function evaluation coverage."""
 
@@ -2784,6 +2715,7 @@ class TestBuilderValidation:
         assert "activity" in str(exc_info.value)
 
 
+@_requires_powerfx
 class TestExpressionEdgeCases:
     """Tests for expression evaluation edge cases."""
 
@@ -2808,6 +2740,7 @@ class TestExpressionEdgeCases:
         assert result == 42
 
 
+@_requires_powerfx
 class TestLongMessageTextHandling:
     """Tests for handling long MessageText results that exceed PowerFx limits."""
 

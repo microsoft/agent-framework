@@ -141,6 +141,7 @@ class WorkflowFactory:
         self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
+        self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
         self._checkpoint_storage = checkpoint_storage
         self._max_iterations = max_iterations
 
@@ -377,12 +378,13 @@ class WorkflowFactory:
         if description:
             normalized_def["description"] = description
 
-        # Build the graph-based workflow, passing agents for InvokeAzureAgent executors
+        # Build the graph-based workflow, passing agents and tools for specialized executors
         try:
             graph_builder = DeclarativeWorkflowBuilder(
                 normalized_def,
                 workflow_id=name,
                 agents=agents,
+                tools=self._tools,
                 checkpoint_storage=self._checkpoint_storage,
                 max_iterations=self._max_iterations,
             )
@@ -390,9 +392,10 @@ class WorkflowFactory:
         except ValueError as e:
             raise DeclarativeWorkflowError(f"Failed to build graph-based workflow: {e}") from e
 
-        # Store agents and bindings for reference (executors already have them)
+        # Store agents, bindings, and tools for reference (executors already have them)
         workflow._declarative_agents = agents  # type: ignore[attr-defined]
         workflow._declarative_bindings = self._bindings  # type: ignore[attr-defined]
+        workflow._declarative_tools = self._tools  # type: ignore[attr-defined]
 
         # Store input schema if defined in workflow definition
         # This allows DevUI to generate proper input forms
@@ -598,7 +601,64 @@ class WorkflowFactory:
 
                 workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
         """
+        if not callable(func):
+            raise TypeError(f"Expected a callable for binding '{name}', got {type(func).__name__}")
         self._bindings[name] = func
+        return self
+
+    def register_tool(self, name: str, func: Any) -> WorkflowFactory:
+        """Register a function with the factory for use in InvokeFunctionTool actions.
+
+        Registered functions are available to InvokeFunctionTool actions by name via the functionName field.
+        This method supports fluent chaining.
+
+        Args:
+            name: The name to register the function under. Must match the functionName
+                referenced in InvokeFunctionTool actions.
+            func: The function to register (can be sync or async).
+
+        Returns:
+            Self for method chaining.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework_declarative import WorkflowFactory
+
+
+                def get_weather(location: str, unit: str = "F") -> dict:
+                    return {"temp": 72, "unit": unit, "location": location}
+
+
+                async def fetch_data(url: str) -> dict:
+                    # Async function example
+                    return {"data": "..."}
+
+
+                # Register functions for use in InvokeFunctionTool workflow actions
+                factory = (
+                    WorkflowFactory().register_tool("get_weather", get_weather).register_tool("fetch_data", fetch_data)
+                )
+
+                workflow = factory.create_workflow_from_yaml_path("workflow.yaml")
+
+            The workflow YAML can then reference these tools:
+
+            .. code-block:: yaml
+
+                actions:
+                  - kind: InvokeFunctionTool
+                    id: call_weather
+                    functionName: get_weather
+                    arguments:
+                      location: =Local.city
+                      unit: F
+                    output:
+                      result: Local.weatherData
+        """
+        if not callable(func):
+            raise TypeError(f"Expected a callable for tool '{name}', got {type(func).__name__}")
+        self._tools[name] = func
         return self
 
     def _convert_inputs_to_json_schema(self, inputs_def: dict[str, Any]) -> dict[str, Any]:

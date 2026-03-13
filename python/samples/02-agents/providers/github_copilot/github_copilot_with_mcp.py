@@ -15,7 +15,8 @@ of MCP-related actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import MCPServerConfig, PermissionRequestResult
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -24,8 +25,7 @@ load_dotenv()
 
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
+    print(f"\n[Permission Request: {request.kind}]")
 
     response = input("Approve? (y/n): ").strip().lower()
     if response in ("y", "yes"):

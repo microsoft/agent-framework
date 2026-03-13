@@ -140,9 +140,10 @@ This feature ports the vector store abstractions, embedding generator abstractio
 
 ## Implementation Phases
 
-### Phase 1: Core Embedding Abstractions & OpenAI Implementation
+### Phase 1: Core Embedding Abstractions & OpenAI Implementation ✅ DONE
 **Goal:** Establish the embedding generator abstraction and ship one working implementation.
 **Mergeable:** Yes — adds new types/protocols, no breaking changes.
+**Status:** Merged via PR #4153. Closes sub-issue #4163.
 
 #### 1.1 — Embedding types in `_types.py`
 - `EmbeddingInputT` TypeVar (default `str`) — generic input type for embedding generation
@@ -167,7 +168,7 @@ This feature ports the vector store abstractions, embedding generator abstractio
 
 #### 1.4 — Tests and samples
 - Unit tests for types, protocol, base class, OpenAI client, Azure OpenAI client
-- Integration tests for OpenAI and Azure OpenAI (gated behind `RUN_INTEGRATION_TESTS` + credentials, `@pytest.mark.flaky`)
+- Integration tests for OpenAI and Azure OpenAI (gated behind credentials check, `@pytest.mark.flaky`)
 - Samples in `samples/02-agents/embeddings/` — `openai_embeddings.py`, `azure_openai_embeddings.py`
 
 ---

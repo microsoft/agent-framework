@@ -195,6 +195,23 @@ def _emit_tool_call(
         delta = (
             content.arguments if isinstance(content.arguments, str) else json.dumps(make_json_safe(content.arguments))
         )
+
+        if tool_call_id in flow.tool_calls_by_id:
+            accumulated = flow.tool_calls_by_id[tool_call_id]["function"]["arguments"]
+            # Guard against full-argument replay: if the accumulated arguments
+            # already equal the incoming delta, this is a non-delta replay of
+            # the complete arguments string (some providers send the full
+            # arguments again after streaming deltas). Skip the event emission
+            # and accumulation to prevent doubling in MESSAGES_SNAPSHOT.
+            # This mirrors the early-return behaviour of _emit_text().
+            # (Fixes #4194)
+            if accumulated and delta == accumulated:
+                logger.debug(
+                    "Skipping duplicate full-arguments replay for tool_call_id=%s",
+                    tool_call_id,
+                )
+                return events
+
         events.append(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=delta))
 
         if tool_call_id in flow.tool_calls_by_id:
@@ -355,6 +372,15 @@ def _emit_usage(content: Content) -> list[BaseEvent]:
     return [CustomEvent(name="usage", value=usage_details)]
 
 
+def _emit_oauth_consent(content: Content) -> list[BaseEvent]:
+    """Emit an OAuth consent request as a custom event so frontends can render a consent link."""
+    return (
+        [CustomEvent(name="oauth_consent_request", value={"consent_link": content.consent_link})]
+        if content.consent_link
+        else []
+    )
+
+
 def _emit_content(
     content: Any,
     flow: FlowState,
@@ -374,5 +400,7 @@ def _emit_content(
         return _emit_approval_request(content, flow, predictive_handler, require_confirmation)
     if content_type == "usage":
         return _emit_usage(content)
+    if content_type == "oauth_consent_request":
+        return _emit_oauth_consent(content)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return []

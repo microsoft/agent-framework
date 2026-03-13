@@ -27,6 +27,12 @@ Public modules must include a module-level docstring, including `__init__.py` fi
 
 ## Type Annotations
 
+We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targetted cast or ignore.
+In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
+This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
+because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
+use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+
 ### Future Annotations
 
 > **Note:** This convention is being adopted. See [#3578](https://github.com/microsoft/agent-framework/issues/3578) for progress.
@@ -78,6 +84,21 @@ def process_config(config: Mapping[str, Any]) -> None:
 def process_config(config: MutableMapping[str, Any]) -> None:
     ...
 ```
+
+### Typing Ignore and Cast Policy
+
+Use typing as a helper first and suppressions as a last resort:
+
+- **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
+  protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
+- **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
+  unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
+- **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
+- **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
+  (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
+  Never change the global suppression flags for mypy and pyright unless the dev team okays it.
+- **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
 
 ## Function Parameter Guidelines
 
@@ -664,3 +685,31 @@ packages/core/
 - Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
 - Import factory functions explicitly: `from conftest import create_test_request`
 - Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`
+
+### Integration Test Markers
+
+New integration tests that call external services must have all three markers:
+
+```python
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_chat_completion() -> None:
+    ...
+```
+
+- `@pytest.mark.flaky` — marks the test as potentially flaky since it depends on external services
+- `@pytest.mark.integration` — enables selecting/excluding integration tests with `-m integration` / `-m "not integration"`
+- `@skip_if_..._integration_tests_disabled` — skips the test when required API keys or service endpoints are missing
+
+For test modules where all tests are integration tests, use `pytestmark`:
+
+```python
+pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
+    pytest.mark.sample("01_single_agent"),
+]
+```
+
+When adding integration tests for a new provider, update the path filters and job assignments in **both** `python-merge-tests.yml` and `python-integration-tests.yml` — these workflows must be kept in sync. See the `python-testing` skill for details.

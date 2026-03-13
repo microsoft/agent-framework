@@ -18,7 +18,7 @@ from agent_framework._sessions import AgentSession, BaseContextProvider, Session
 from agent_framework._settings import load_settings
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
-from azure.ai.projects.models import ItemParam, ResponsesAssistantMessageItemParam, ResponsesUserMessageItemParam
+from openai.types.responses import ResponseInputItemParam
 
 from ._shared import AzureAISettings
 
@@ -59,6 +59,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         project_client: AIProjectClient | None = None,
         project_endpoint: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         memory_store_name: str,
         scope: str | None = None,
         context_prompt: str | None = None,
@@ -75,6 +76,7 @@ class FoundryMemoryProvider(BaseContextProvider):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             memory_store_name: The name of the memory store to use.
             scope: The namespace that logically groups and isolates memories (e.g., user ID).
                 If None, `session_id` will be used.
@@ -101,11 +103,14 @@ class FoundryMemoryProvider(BaseContextProvider):
                 )
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
 
         if not memory_store_name:
             raise ValueError("memory_store_name is required")
@@ -149,7 +154,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:
-                static_search_result = await self.project_client.memory_stores.search_memories(
+                static_search_result = await self.project_client.beta.memory_stores.search_memories(
                     name=self.memory_store_name,
                     scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 )
@@ -169,15 +174,15 @@ class FoundryMemoryProvider(BaseContextProvider):
         if not has_input:
             return
 
-        # Convert input messages to ItemParam format for search
-        items = [
-            ItemParam({"type": "text", "text": msg.text})
+        # Convert input messages to memory search item format
+        items: list[ResponseInputItemParam] = [
+            {"type": "message", "role": "user", "content": msg.text}
             for msg in context.input_messages
             if msg and msg.text and msg.text.strip()
         ]
 
         try:
-            search_result = await self.project_client.memory_stores.search_memories(
+            search_result = await self.project_client.beta.memory_stores.search_memories(
                 name=self.memory_store_name,
                 scope=self.scope or context.session_id,  # type: ignore[arg-type]
                 items=items,
@@ -224,24 +229,24 @@ class FoundryMemoryProvider(BaseContextProvider):
         if context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
 
-        # Filter and convert messages to ItemParam format
-        items: list[ResponsesUserMessageItemParam | ResponsesAssistantMessageItemParam] = []
+        # Filter and convert messages to memory update item format
+        items: list[ResponseInputItemParam] = []
         for message in messages_to_store:
             if message.role in {"user", "assistant", "system"} and message.text and message.text.strip():
                 if message.role == "user":
-                    items.append(ResponsesUserMessageItemParam(content=message.text))
+                    items.append({"role": "user", "type": "message", "content": message.text})
                 elif message.role == "assistant":
-                    items.append(ResponsesAssistantMessageItemParam(content=message.text))
+                    items.append({"role": "assistant", "type": "message", "content": message.text})
 
         if not items:
             return
 
         try:
             # Fire and forget - don't wait for the update to complete
-            update_poller = await self.project_client.memory_stores.begin_update_memories(
+            update_poller = await self.project_client.beta.memory_stores.begin_update_memories(
                 name=self.memory_store_name,
                 scope=self.scope or context.session_id,  # type: ignore[arg-type]
-                items=items,  # type: ignore[arg-type]
+                items=items,
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
             )

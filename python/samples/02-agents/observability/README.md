@@ -122,6 +122,22 @@ else:
 enable_instrumentation(enable_sensitive_data=False)
 ```
 
+Or with [Comet Opik](https://www.comet.com/docs/opik/integrations/microsoft-agent-framework):
+
+```python
+import os
+
+from agent_framework.observability import enable_instrumentation
+
+# Use Opik OTLP settings from your project settings
+os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "<opik_otlp_endpoint>"
+os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "<opik_otlp_headers>"
+
+# Then activate Agent Framework's telemetry code paths
+# This is optional if ENABLE_INSTRUMENTATION and or ENABLE_SENSITIVE_DATA are set in env vars
+enable_instrumentation(enable_sensitive_data=False)
+```
+
 **4. Manual setup**
 Of course you can also do a complete manual setup of exporters, providers, and instrumentation. Please refer to sample [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) for a comprehensive example of how to manually setup exporters and providers for traces, logs, and metrics that will get sent to the console. This gives you full control over which exporters and providers to use. We do have a helper function `create_resource()` in the `agent_framework.observability` module that you can use to create a resource with the appropriate service name and version based on environment variables or standard defaults for Agent Framework, this is not used in the sample.
 

@@ -7,7 +7,7 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Any, Final, Literal, overload
+from typing import Any, Final, Literal, TypeAlias, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -19,9 +19,11 @@ from a2a.types import (
     FileWithBytes,
     FileWithUri,
     Task,
+    TaskArtifactUpdateEvent,
     TaskIdParams,
     TaskQueryParams,
     TaskState,
+    TaskStatusUpdateEvent,
     TextPart,
     TransportProtocol,
 )
@@ -70,6 +72,9 @@ IN_PROGRESS_TASK_STATES = [
     TaskState.auth_required,
 ]
 
+A2AClientEvent: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
+A2AStreamItem: TypeAlias = A2AMessage | A2AClientEvent
+
 
 def _get_uri_data(uri: str) -> str:
     match = URI_PATTERN.match(uri)
@@ -109,9 +114,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """Initialize the A2AAgent.
 
         Keyword Args:
-            name: The name of the agent.
+            name: The name of the agent. Defaults to agent_card.name if agent_card is provided.
             id: The unique identifier for the agent, will be created automatically if not provided.
-            description: A brief description of the agent's purpose.
+            description: A brief description of the agent's purpose. Defaults to agent_card.description
+                if agent_card is provided.
             agent_card: The agent card for the agent.
             url: The URL for the A2A server.
             client: The A2A client for the agent.
@@ -122,6 +128,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
+        # Default name/description from agent_card when not explicitly provided
+        if agent_card is not None:
+            if name is None:
+                name = agent_card.name
+            if description is None:
+                description = agent_card.description
+
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
         self._timeout_config = self._create_timeout_config(timeout)
@@ -260,7 +273,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         if continuation_token is not None:
-            a2a_stream: AsyncIterable[Any] = self.client.resubscribe(TaskIdParams(id=continuation_token["task_id"]))
+            a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
+                TaskIdParams(id=continuation_token["task_id"])
+            )
         else:
             normalized_messages = normalize_messages(messages)
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
@@ -276,7 +291,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
     async def _map_a2a_stream(
         self,
-        a2a_stream: AsyncIterable[Any],
+        a2a_stream: AsyncIterable[A2AStreamItem],
         *,
         background: bool = False,
     ) -> AsyncIterable[AgentResponseUpdate]:
@@ -300,14 +315,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
-            elif isinstance(item, tuple) and len(item) == 2:  # ClientEvent = (Task, UpdateEvent)
+            elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, _update_event = item
-                if isinstance(task, Task):
-                    for update in self._updates_from_task(task, background=background):
-                        yield update
+                for update in self._updates_from_task(task, background=background):
+                    yield update
             else:
-                msg = f"Only Message and Task responses are supported from A2A agents. Received: {type(item)}"
-                raise NotImplementedError(msg)
+                raise NotImplementedError("Only Message and Task responses are supported")
 
     # ------------------------------------------------------------------
     # Task helpers
@@ -396,6 +409,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         for content in message.contents:
             match content.type:
                 case "text":
+                    if content.text is None:
+                        raise ValueError("Text content requires a non-null text value")
                     parts.append(
                         A2APart(
                             root=TextPart(
@@ -414,6 +429,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         )
                     )
                 case "uri":
+                    if content.uri is None:
+                        raise ValueError("URI content requires a non-null uri value")
                     parts.append(
                         A2APart(
                             root=FilePart(
@@ -426,11 +443,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         )
                     )
                 case "data":
+                    if content.uri is None:
+                        raise ValueError("Data content requires a non-null uri value")
                     parts.append(
                         A2APart(
                             root=FilePart(
                                 file=FileWithBytes(
-                                    bytes=_get_uri_data(content.uri),  # type: ignore[arg-type]
+                                    bytes=_get_uri_data(content.uri),
                                     mime_type=content.media_type,
                                 ),
                                 metadata=content.additional_properties,
@@ -438,6 +457,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                         )
                     )
                 case "hosted_file":
+                    if content.file_id is None:
+                        raise ValueError("Hosted file content requires a non-null file_id value")
                     parts.append(
                         A2APart(
                             root=FilePart(
