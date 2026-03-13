@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -282,5 +283,175 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         Assert.Contains(events, e => e is ToolCallArgsEvent);
         Assert.Contains(events, e => e is ToolCallEndEvent);
         Assert.Contains(events, e => e is RunFinishedEvent);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithFunctionResultContent_EmitsToolCallResultEventAsync()
+    {
+        // Arrange
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionResultContent result = new("call_123", "Sunny, 72°F");
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result]) { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        ToolCallResultEvent? resultEvent = events.OfType<ToolCallResultEvent>().FirstOrDefault();
+        Assert.NotNull(resultEvent);
+        Assert.Equal("call_123", resultEvent.ToolCallId);
+        Assert.NotNull(resultEvent.MessageId);
+        Assert.NotEmpty(resultEvent.MessageId);
+        Assert.Equal(AGUIRoles.Tool, resultEvent.Role);
+        Assert.Contains("Sunny", resultEvent.Content);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_ConsecutiveToolCallResults_HaveDistinctMessageIdsAsync()
+    {
+        // Arrange — Issue #3962: MapAGUI reuses the same messageId for consecutive TOOL_CALL_RESULT SSE events
+        // When an agent executes 2+ server-side tools, the FunctionResultContent items returned
+        // in the same ChatResponseUpdate share the same MessageId. The AG-UI spec requires each
+        // TOOL_CALL_RESULT event to have a distinct messageId.
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        const string SharedMessageId = "msg_shared";
+
+        FunctionResultContent result1 = new("call_1", "Sunny, 72°F");
+        FunctionResultContent result2 = new("call_2", "3:45 PM");
+
+        // Both results come from the same ChatResponseUpdate with the same MessageId
+        // (this is what happens when the LLM returns multiple tool results in one response)
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result1, result2]) { MessageId = SharedMessageId }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        List<ToolCallResultEvent> toolCallResultEvents = events.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(2, toolCallResultEvents.Count);
+
+        // Each TOOL_CALL_RESULT must have a distinct, non-null messageId
+        Assert.All(toolCallResultEvents, e => Assert.NotNull(e.MessageId));
+        Assert.All(toolCallResultEvents, e => Assert.NotEmpty(e.MessageId!));
+        Assert.NotEqual(toolCallResultEvents[0].MessageId, toolCallResultEvents[1].MessageId);
+
+        // Verify the tool call IDs are preserved correctly
+        Assert.Contains(toolCallResultEvents, e => e.ToolCallId == "call_1");
+        Assert.Contains(toolCallResultEvents, e => e.ToolCallId == "call_2");
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_ToolCallResultsFromSeparateUpdates_HaveDistinctMessageIdsAsync()
+    {
+        // Arrange — Variant of #3962: tool results arriving in separate ChatResponseUpdate objects
+        // but with the same MessageId should still get distinct messageIds in the SSE events.
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        const string SharedMessageId = "msg_shared";
+
+        FunctionResultContent result1 = new("call_1", "Sunny");
+        FunctionResultContent result2 = new("call_2", "3:45 PM");
+
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result1]) { MessageId = SharedMessageId },
+            new ChatResponseUpdate(ChatRole.Tool, [result2]) { MessageId = SharedMessageId }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        List<ToolCallResultEvent> toolCallResultEvents = events.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(2, toolCallResultEvents.Count);
+
+        Assert.All(toolCallResultEvents, e => Assert.NotNull(e.MessageId));
+        Assert.All(toolCallResultEvents, e => Assert.NotEmpty(e.MessageId!));
+        Assert.NotEqual(toolCallResultEvents[0].MessageId, toolCallResultEvents[1].MessageId);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_ThreeConsecutiveToolCallResults_AllHaveUniqueMessageIdsAsync()
+    {
+        // Arrange — Edge case: 3+ consecutive tool call results
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+
+        FunctionResultContent result1 = new("call_1", "Result 1");
+        FunctionResultContent result2 = new("call_2", "Result 2");
+        FunctionResultContent result3 = new("call_3", "Result 3");
+
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result1, result2, result3]) { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        List<ToolCallResultEvent> toolCallResultEvents = events.OfType<ToolCallResultEvent>().ToList();
+        Assert.Equal(3, toolCallResultEvents.Count);
+
+        // All messageIds must be distinct
+        HashSet<string?> uniqueMessageIds = new(toolCallResultEvents.Select(e => e.MessageId));
+        Assert.Equal(toolCallResultEvents.Count, uniqueMessageIds.Count);
+
+        // All must be non-null/non-empty
+        Assert.All(toolCallResultEvents, e =>
+        {
+            Assert.NotNull(e.MessageId);
+            Assert.NotEmpty(e.MessageId!);
+        });
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_SingleToolCallResult_HasValidMessageIdAsync()
+    {
+        // Arrange — Single tool call result should still get a valid messageId
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+
+        FunctionResultContent result = new("call_1", "Result 1");
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Tool, [result]) { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        ToolCallResultEvent? resultEvent = events.OfType<ToolCallResultEvent>().Single();
+        Assert.NotNull(resultEvent.MessageId);
+        Assert.NotEmpty(resultEvent.MessageId);
     }
 }

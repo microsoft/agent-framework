@@ -38,6 +38,7 @@ jobs:
             .
             .github
             dotnet
+            python/packages/devui/agent_framework_devui/ui
 
       - name: Get changed files
         id: changed-files
