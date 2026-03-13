@@ -212,6 +212,7 @@ class TestExtractMessageContent:
         response = AgentExecutorResponse(
             executor_id="exec",
             agent_response=AgentResponse(messages=[Message(role="assistant", text="Response text")]),
+            full_conversation=[Message(role="assistant", text="Response text")],
         )
 
         result = _extract_message_content(response)
@@ -228,6 +229,10 @@ class TestExtractMessageContent:
                     Message(role="assistant", text="Last message"),
                 ]
             ),
+            full_conversation=[
+                Message(role="user", text="First"),
+                Message(role="assistant", text="Last message"),
+            ],
         )
 
         result = _extract_message_content(response)

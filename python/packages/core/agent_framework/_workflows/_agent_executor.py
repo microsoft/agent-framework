@@ -4,9 +4,9 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from typing_extensions import Literal, Never
+from typing_extensions import Never
 
 from agent_framework import Content
 
@@ -60,33 +60,8 @@ class AgentExecutorResponse:
     full_conversation: list[Message]
 
 
-@dataclass
 class ContextMode:
-    """Configuration for how AgentExecutor should manage conversation context when receiving new messages.
-
-    Attributes:
-        filter_mode: Determines which incoming messages are included in the context provided to the agent.
-            - "full": Include all incoming messages (default).
-            - "last_agent": Include only messages from the agent response.
-            - "custom": Use the provided messages_filter callable to filter messages.
-        retain_cache: A flag indicating whether the executor should retain its internal cache upon receiving new
-            messages. If False, the cache will be cleared before processing new messages.
-        messages_filter: A callable that takes a list of incoming messages and returns a filtered list
-            to be used as context for the agent. By default, all incoming messages are included. This is only used
-            if filter_mode is set to "custom".
-
-    Note:
-        1. `AgentExecutorRequest` is exempt from the `ContextMode` filtering behavior: its messages are always appended
-        to the cache unfiltered, and the `should_respond` flag controls whether those messages trigger an agent run.
-        2. The cache stores messages received from other executors. It stores the messages until the agent is run,
-        after which the cache is cleared and the messages are added to the full conversation context. It's important
-        for the executor to be able to stage messages because in many multiple agent workflows, one agent may receive
-        many messages from different executors before it runs.
-    """
-
-    filter_mode: Literal["full", "last_agent", "custom"]
-    retain_cache: bool
-    messages_filter: Callable[[list[Message]], list[Message]] | None = None
+    """Configuration for how AgentExecutor should manage conversation context when receiving new messages."""
 
     def __init__(
         self,
@@ -94,6 +69,28 @@ class ContextMode:
         retain_cache: bool = True,
         messages_filter: Callable[[list[Message]], list[Message]] | None = None,
     ):
+        """Create a ContextMode with specified filtering and cache retention behavior.
+
+        Attributes:
+            filter_mode: Determines which incoming messages are included in the context provided to the agent.
+                - "full": Include all incoming messages (default).
+                - "last_agent": Include only messages from the agent response.
+                - "custom": Use the provided messages_filter callable to filter messages.
+            retain_cache: A flag indicating whether the executor should retain its internal cache upon receiving new
+                messages. If False, the cache will be cleared before processing new messages.
+            messages_filter: A callable that takes a list of incoming messages and returns a filtered list
+                to be used as context for the agent. By default, all incoming messages are included. This is only used
+                if filter_mode is set to "custom".
+
+        Note:
+            1. `AgentExecutorRequest` is exempt from the `ContextMode` filtering behavior: its messages are always
+            appended to the cache unfiltered, and the `should_respond` flag controls whether those messages trigger
+            an agent run.
+            2. The cache stores messages received from other executors. It stores the messages until the agent is
+            run, after which the cache is cleared and the messages are added to the full conversation context. It's
+            important for the executor to be able to stage messages because in many multiple agent workflows, one
+            agent may receive many messages from different executors before it runs.
+        """
         self.filter_mode = filter_mode
         self.retain_cache = retain_cache
         self.messages_filter = messages_filter
@@ -101,18 +98,18 @@ class ContextMode:
             raise ValueError("messages_filter must be provided when filter_mode is 'custom'.")
 
     # Some common context modes
-    @staticmethod
-    def default() -> "ContextMode":
+    @classmethod
+    def default(cls) -> "ContextMode":
         """Default context mode that includes all incoming messages and retains cache."""
-        return ContextMode(filter_mode="full", retain_cache=True)
+        return cls(filter_mode="full", retain_cache=True)
 
-    @staticmethod
-    def last_agent(retain_cache: bool = True) -> "ContextMode":
+    @classmethod
+    def last_agent(cls, retain_cache: bool = True) -> "ContextMode":
         """Context mode that includes only messages from the most recent agent response."""
-        return ContextMode(filter_mode="last_agent", retain_cache=retain_cache)
+        return cls(filter_mode="last_agent", retain_cache=retain_cache)
 
-    @staticmethod
-    def last_n(n: int, retain_cache: bool = True) -> "ContextMode":
+    @classmethod
+    def last_n(cls, n: int, retain_cache: bool = True) -> "ContextMode":
         """Context mode that includes only the last n messages from the full conversation so far."""
 
         def _last_n_messages(messages: list[Message]) -> list[Message]:
@@ -121,7 +118,7 @@ class ContextMode:
                 return messages
             return messages[length - n :]
 
-        return ContextMode(filter_mode="custom", retain_cache=retain_cache, messages_filter=_last_n_messages)
+        return cls(filter_mode="custom", retain_cache=retain_cache, messages_filter=_last_n_messages)
 
 
 class AgentExecutor(Executor):
