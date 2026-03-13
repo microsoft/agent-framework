@@ -137,7 +137,7 @@ public class ChatStrategyExtensionsTests
         public TakeLastReducer(int count) => this._count = count;
 
         public Task<IEnumerable<ChatMessage>> ReduceAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
-            => Task.FromResult<IEnumerable<ChatMessage>>(messages.TakeLast(this._count).ToList());
+            => Task.FromResult(messages.Reverse().Take(this._count));
     }
 
     /// <summary>
@@ -152,7 +152,8 @@ public class ChatStrategyExtensionsTests
         public Task<IEnumerable<ChatMessage>> ReduceAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
         {
             this._capture(cancellationToken);
-            return Task.FromResult(messages.TakeLast(1));
+            IEnumerable<ChatMessage> reducedMessages = [messages.Reverse().First()];
+            return Task.FromResult(reducedMessages);
         }
     }
 }
