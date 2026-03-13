@@ -702,14 +702,9 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
     """Test that when use_service_session is True, the AgentSession used to run the agent is set to the service session ID."""
     from agent_framework.ag_ui import AgentFrameworkAgent
 
-    request_service_session_id: str | None = None
-
     async def stream_fn(
         messages: MutableSequence[Message], chat_options: ChatOptions, **kwargs: Any
     ) -> AsyncIterator[ChatResponseUpdate]:
-        nonlocal request_service_session_id
-        session = kwargs.get("session")
-        request_service_session_id = session.service_session_id if session else None
         yield ChatResponseUpdate(
             contents=[Content.from_text(text="Response")], response_id="resp_67890", conversation_id="conv_12345"
         )
@@ -719,11 +714,22 @@ async def test_agent_with_use_service_session_is_true(streaming_chat_client_stub
 
     input_data = {"messages": [{"role": "user", "content": "Hi"}], "thread_id": "conv_123456"}
 
+    # Spy on agent.run to capture the session kwarg at call time (before streaming mutates it)
+    captured_service_session_id: str | None = None
+    original_run = agent.run
+
+    def capturing_run(*args: Any, **kwargs: Any) -> Any:
+        nonlocal captured_service_session_id
+        session = kwargs.get("session")
+        captured_service_session_id = session.service_session_id if session else None
+        return original_run(*args, **kwargs)
+
+    agent.run = capturing_run  # type: ignore[assignment, method-assign]
+
     events: list[Any] = []
     async for event in wrapper.run(input_data):
         events.append(event)
-    request_service_session_id = agent.client.last_service_session_id
-    assert request_service_session_id == "conv_123456"  # type: ignore[attr-defined] (service_session_id should be set)
+    assert captured_service_session_id == "conv_123456"
 
 
 async def test_function_approval_mode_executes_tool(streaming_chat_client_stub):

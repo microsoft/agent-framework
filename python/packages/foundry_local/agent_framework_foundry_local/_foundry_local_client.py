@@ -146,11 +146,11 @@ class FoundryLocalClient(
         timeout: float | None = None,
         prepare_model: bool = True,
         device: DeviceType | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
-        **kwargs: Any,
     ) -> None:
         """Initialize a FoundryLocalClient.
 
@@ -169,12 +169,11 @@ class FoundryLocalClient(
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
                 The values are in the foundry_local.models.DeviceType enum.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-            kwargs: Additional keyword arguments, are passed to the RawOpenAIChatClient.
-                This can include middleware and additional properties.
 
         Examples:
 
@@ -271,8 +270,8 @@ class FoundryLocalClient(
         super().__init__(
             model_id=model_info.id,
             client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self.manager = manager

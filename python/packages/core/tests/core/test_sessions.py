@@ -192,10 +192,10 @@ class ConcreteHistoryProvider(BaseHistoryProvider):
         self.stored: list[Message] = []
         self._stored_messages = stored_messages or []
 
-    async def get_messages(self, session_id: str | None, **kwargs) -> list[Message]:
+    async def get_messages(self, session_id: str | None, *, state=None, **kwargs) -> list[Message]:
         return list(self._stored_messages)
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs) -> None:
+    async def save_messages(self, session_id: str | None, messages: Sequence[Message], *, state=None, **kwargs) -> None:
         self.stored.extend(messages)
 
 

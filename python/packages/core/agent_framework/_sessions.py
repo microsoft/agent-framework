@@ -392,12 +392,16 @@ class BaseHistoryProvider(BaseContextProvider):
         self.store_outputs = store_outputs
 
     @abstractmethod
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
         """Retrieve stored messages for this session.
 
         Args:
             session_id: The session ID to retrieve messages for.
-            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
+            state: Optional session state for providers that persist in session state.
+                Not used by all providers.
+            **kwargs: Additional subclass-specific extensibility arguments.
 
         Returns:
             List of stored messages.
@@ -405,13 +409,22 @@ class BaseHistoryProvider(BaseContextProvider):
         ...
 
     @abstractmethod
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages for this session.
 
         Args:
             session_id: The session ID to store messages for.
             messages: The messages to persist.
-            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
+            state: Optional session state for providers that persist in session state.
+                Not used by all providers.
+            **kwargs: Additional subclass-specific extensibility arguments.
         """
         ...
 

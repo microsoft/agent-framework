@@ -1162,11 +1162,35 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        """Trace chat responses with OpenTelemetry spans and metrics."""
+        """Trace chat responses with OpenTelemetry spans and metrics.
+
+        Args:
+            messages: The message or messages to send to the model.
+            stream: Whether to stream the response. Defaults to False.
+            options: Chat options as a TypedDict.
+            compaction_strategy: Optional compaction strategy to apply before model calls.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
+
+        Keyword Args:
+            kwargs: Compatibility keyword arguments from higher client layers. This layer does
+                not consume ``function_invocation_kwargs`` directly; if present, it is ignored
+                because function invocation has already been processed above. If a ``client_kwargs``
+                mapping is present, it is flattened into ordinary keyword arguments for tracing and
+                forwarding so clients that use those values continue to work while clients that
+                ignore extra kwargs remain compatible.
+        """
         from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
+        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
+        kwargs.pop("function_invocation_kwargs", None)
+        merged_client_kwargs = (
+            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
+            if isinstance(compatibility_client_kwargs, Mapping)
+            else {}
+        )
+        merged_client_kwargs.update(kwargs)
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(  # type: ignore[no-any-return]
@@ -1175,12 +1199,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                **kwargs,
+                **merged_client_kwargs,
             )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        model_id = (
+            merged_client_kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        )
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
@@ -1188,7 +1214,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             provider_name=provider_name,
             model=model_id,
             service_url=service_url,
-            **kwargs,
+            **merged_client_kwargs,
         )
 
         if stream:
@@ -1200,7 +1226,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     options=opts,
                     compaction_strategy=compaction_strategy,
                     tokenizer=tokenizer,
-                    **kwargs,
+                    **merged_client_kwargs,
                 ),
             )
 
@@ -1291,7 +1317,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             options=opts,
                             compaction_strategy=compaction_strategy,
                             tokenizer=tokenizer,
-                            **kwargs,
+                            **merged_client_kwargs,
                         ),
                     )
                 except Exception as exception:
@@ -1420,6 +1446,8 @@ class AgentTelemetryLayer:
         session: AgentSession | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1432,6 +1460,8 @@ class AgentTelemetryLayer:
         session: AgentSession | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1443,6 +1473,8 @@ class AgentTelemetryLayer:
         session: AgentSession | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
@@ -1463,11 +1495,15 @@ class AgentTelemetryLayer:
                 session=session,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
                 **kwargs,
             )
 
         default_options = getattr(self, "default_options", {})
         options = kwargs.get("options")
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        merged_client_kwargs.update(kwargs)
         merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
@@ -1477,7 +1513,7 @@ class AgentTelemetryLayer:
             agent_description=getattr(self, "description", None),
             thread_id=session.service_session_id if session else None,
             all_options=merged_options,
-            **kwargs,
+            **merged_client_kwargs,
         )
 
         if stream:
@@ -1487,6 +1523,8 @@ class AgentTelemetryLayer:
                 session=session,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
@@ -1578,6 +1616,8 @@ class AgentTelemetryLayer:
                         session=session,
                         compaction_strategy=compaction_strategy,
                         tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=client_kwargs,
                         **kwargs,
                     )
                 except Exception as exception:

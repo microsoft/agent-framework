@@ -236,11 +236,11 @@ class BedrockChatClient(
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Create a Bedrock chat client and load AWS credentials.
 
@@ -252,11 +252,11 @@ class BedrockChatClient(
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middlewares to include.
             function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
-            kwargs: Additional arguments forwarded to ``BaseChatClient``.
 
         Examples:
             .. code-block:: python
@@ -303,9 +303,9 @@ class BedrockChatClient(
             )
 
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self.model_id = chat_model_id
         self.region = region

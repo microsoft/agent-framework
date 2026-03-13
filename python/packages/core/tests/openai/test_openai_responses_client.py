@@ -1876,6 +1876,19 @@ def test_prepare_tools_for_openai_with_image_generation_options() -> None:
     assert image_tool["quality"] == "high"
 
 
+def test_prepare_tools_for_openai_with_custom_image_generation_model() -> None:
+    """Test image generation tool conversion with a custom model string."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    tool = OpenAIResponsesClient.get_image_generation_tool(model="custom-image-model")
+
+    resp_tools = client._prepare_tools_for_openai([tool])
+    assert len(resp_tools) == 1
+    image_tool = resp_tools[0]
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["model"] == "custom-image-model"
+
+
 def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
     """Test that a streaming mcp_approval_request event is parsed into FunctionApprovalRequestContent."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
