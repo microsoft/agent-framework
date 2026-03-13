@@ -359,8 +359,10 @@ public class ToolResultCompactionStrategyTests
 
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreservedGroups: 1,
-            toolCallFormatter: CustomFormatter);
+            minimumPreservedGroups: 1)
+        {
+            ToolCallFormatter = CustomFormatter,
+        };
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [
@@ -395,8 +397,10 @@ public class ToolResultCompactionStrategyTests
         // Arrange
         Func<CompactionMessageGroup, string> customFormatter = static _ => "custom";
         ToolResultCompactionStrategy strategy = new(
-            CompactionTriggers.Always,
-            toolCallFormatter: customFormatter);
+            CompactionTriggers.Always)
+        {
+            ToolCallFormatter = customFormatter
+        };
 
         // Assert — ToolCallFormatter is the injected custom function
         Assert.Same(customFormatter, strategy.ToolCallFormatter);
@@ -411,8 +415,10 @@ public class ToolResultCompactionStrategyTests
 
         ToolResultCompactionStrategy strategy = new(
             trigger: _ => true,
-            minimumPreservedGroups: 1,
-            toolCallFormatter: WrappingFormatter);
+            minimumPreservedGroups: 1)
+        {
+            ToolCallFormatter = WrappingFormatter
+        };
 
         CompactionMessageIndex groups = CompactionMessageIndex.Create(
         [

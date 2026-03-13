@@ -65,11 +65,6 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// regardless of the target condition.
     /// Defaults to <see cref="DefaultMinimumPreserved"/>, ensuring the current turn's tool interactions remain visible.
     /// </param>
-    /// <param name="toolCallFormatter">
-    /// An optional custom formatter that converts a <see cref="CompactionMessageGroup"/> into a summary string.
-    /// When <see langword="null"/>, <see cref="DefaultToolCallFormatter"/> is used, which produces a YAML-like
-    /// block listing each tool name and its results.
-    /// </param>
     /// <param name="target">
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
@@ -77,12 +72,10 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public ToolResultCompactionStrategy(
         CompactionTrigger trigger,
         int minimumPreservedGroups = DefaultMinimumPreserved,
-        Func<CompactionMessageGroup, string>? toolCallFormatter = null,
         CompactionTrigger? target = null)
         : base(trigger, target)
     {
         this.MinimumPreservedGroups = EnsureNonNegative(minimumPreservedGroups);
-        this.ToolCallFormatter = toolCallFormatter ?? DefaultToolCallFormatter;
     }
 
     /// <summary>
@@ -92,13 +85,11 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     public int MinimumPreservedGroups { get; }
 
     /// <summary>
-    /// Gets the formatter used to convert a <see cref="CompactionMessageGroup"/> into a summary string.
+    /// An optional custom formatter that converts a <see cref="CompactionMessageGroup"/> into a summary string.
+    /// When <see langword="null"/>, <see cref="DefaultToolCallFormatter"/> is used, which produces a YAML-like
+    /// block listing each tool name and its results.
     /// </summary>
-    /// <remarks>
-    /// Defaults to <see cref="DefaultToolCallFormatter"/>. Supply a custom function via the constructor
-    /// to override the format of collapsed tool call groups.
-    /// </remarks>
-    public Func<CompactionMessageGroup, string> ToolCallFormatter { get; }
+    public Func<CompactionMessageGroup, string>? ToolCallFormatter { get; init; }
 
     /// <inheritdoc/>
     protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
@@ -146,7 +137,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             int idx = eligibleIndices[e] + offset;
             CompactionMessageGroup group = index.Groups[idx];
 
-            string summary = this.ToolCallFormatter(group);
+            string summary = (this.ToolCallFormatter ?? DefaultToolCallFormatter).Invoke(group);
 
             // Exclude the original group and insert a collapsed replacement
             group.IsExcluded = true;
@@ -182,7 +173,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     {
         // Collect function calls (callId, name) and results (callId → result text)
         List<(string CallId, string Name)> functionCalls = [];
-        Dictionary<string, string> resultsByCallId = new();
+        Dictionary<string, string> resultsByCallId = [];
         List<string> plainTextResults = [];
 
         foreach (ChatMessage message in group.Messages)
@@ -217,7 +208,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         // grouping by tool name while preserving first-seen order.
         int plainTextIdx = 0;
         List<string> orderedNames = [];
-        Dictionary<string, List<string>> groupedResults = new();
+        Dictionary<string, List<string>> groupedResults = [];
 
         foreach ((string callId, string name) in functionCalls)
         {
