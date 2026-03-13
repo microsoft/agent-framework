@@ -857,6 +857,7 @@ class Workflow(DictConvertible):
     def as_agent(
         self,
         name: str | None = None,
+        *,
         description: str | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         **kwargs: Any,
