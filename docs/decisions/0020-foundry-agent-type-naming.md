@@ -56,7 +56,7 @@ Or use composed `ChatClientAgent`
 ```csharp
 ProjectResponsesClient projectResponsesClient = new(new Uri(endpoint), new DefaultAzureCredential(), new AgentReference($"model:{deploymentName}"));
 
-ChatClientAgent agent = new(projectResponsesClient.AsIChatClient(),
+ChatClientAgent agent = new(
     chatClient: projectResponsesClient.AsIChatClient(),
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
