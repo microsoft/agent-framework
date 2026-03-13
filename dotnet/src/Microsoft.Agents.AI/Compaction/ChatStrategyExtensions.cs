@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +31,7 @@ public static class ChatStrategyExtensions
     public static IChatReducer AsChatReducer(this CompactionStrategy strategy)
     {
         Throw.IfNull(strategy);
+        
         return new CompactionStrategyChatReducer(strategy);
     }
 
@@ -50,8 +50,7 @@ public static class ChatStrategyExtensions
         /// <inheritdoc/>
         public async Task<IEnumerable<ChatMessage>> ReduceAsync(IEnumerable<ChatMessage> messages, CancellationToken cancellationToken = default)
         {
-            List<ChatMessage> messageList = [.. messages];
-            CompactionMessageIndex index = CompactionMessageIndex.Create(messageList);
+            CompactionMessageIndex index = CompactionMessageIndex.Create([.. messages]);
             await this._strategy.CompactAsync(index, cancellationToken: cancellationToken).ConfigureAwait(false);
             return index.GetIncludedMessages();
         }
