@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import sys
@@ -87,8 +88,6 @@ def _parse_prompt_result_from_mcp(
     Returns:
         A string representation of the prompt result.
     """
-    import json
-
     parts: list[str] = []
     for message in mcp_type.messages:
         content = message.content
@@ -194,7 +193,7 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result:
-        result.append(Content.from_text(""))
+        result.append(Content.from_text("null"))
     return result
 
 
