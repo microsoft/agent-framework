@@ -23,7 +23,7 @@ public class ChatStrategyExtensionsTests
     }
 
     [Fact]
-    public async Task AsChatReducerReturnsIChatReducerAsync()
+    public void AsChatReducerReturnsIChatReducer()
     {
         // Arrange
         ChatReducerCompactionStrategy strategy = new(new IdentityReducer(), CompactionTriggers.Always);
@@ -33,7 +33,6 @@ public class ChatStrategyExtensionsTests
 
         // Assert
         Assert.NotNull(reducer);
-        await Task.CompletedTask;
     }
 
     [Fact]
