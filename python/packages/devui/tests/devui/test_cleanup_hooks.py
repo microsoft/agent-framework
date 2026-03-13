@@ -2,7 +2,7 @@
 
 """Tests for cleanup hook registration and execution."""
 
-import asyncio
+import inspect
 import tempfile
 from pathlib import Path
 
@@ -123,7 +123,7 @@ async def test_register_cleanup_multiple_hooks():
 
     # Execute all hooks
     for hook in hooks:
-        if asyncio.iscoroutinefunction(hook):
+        if inspect.iscoroutinefunction(hook):
             await hook()
         else:
             hook()
@@ -195,8 +195,6 @@ async def test_mixed_async_sync_hooks():
     hooks = discovery.get_cleanup_hooks(entity_info.id)
     assert len(hooks) == 2
 
-    import inspect
-
     for hook in hooks:
         if inspect.iscoroutinefunction(hook):
             await hook()
@@ -229,8 +227,6 @@ async def test_cleanup_hook_error_handling():
     assert len(hooks) == 2
 
     # Execute hooks with error handling (like _server.py does)
-    import inspect
-
     for hook in hooks:
         try:
             if inspect.iscoroutinefunction(hook):

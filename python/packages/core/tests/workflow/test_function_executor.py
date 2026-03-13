@@ -529,11 +529,12 @@ class TestFunctionExecutor:
         assert "@handler on instance methods" in str(exc_info.value)
 
     async def test_async_staticmethod_detection_behavior(self):
-        """Document the behavior of asyncio.iscoroutinefunction with staticmethod descriptors.
+        """Document the behavior of inspect.iscoroutinefunction with staticmethod descriptors.
 
         This test explains why the unwrapping is necessary when decorators are stacked.
         """
         import asyncio
+        import inspect
 
         # When @staticmethod is applied, it creates a descriptor
         async def my_async_func():
@@ -544,19 +545,19 @@ class TestFunctionExecutor:
         static_wrapped = staticmethod(my_async_func)
 
         # Direct check on descriptor object fails (this is the bug)
-        assert not asyncio.iscoroutinefunction(static_wrapped)  # type: ignore[reportDeprecated]
+        assert not inspect.iscoroutinefunction(static_wrapped)
         assert isinstance(static_wrapped, staticmethod)
 
         # But unwrapping __func__ reveals the async function
         unwrapped = static_wrapped.__func__
-        assert asyncio.iscoroutinefunction(unwrapped)  # type: ignore[reportDeprecated]
+        assert inspect.iscoroutinefunction(unwrapped)
 
         # When accessed via class attribute, Python's descriptor protocol
         # automatically unwraps it, so it works:
         class C:
             async_static = static_wrapped
 
-        assert asyncio.iscoroutinefunction(C.async_static)  # type: ignore[reportDeprecated]  # Works via descriptor protocol
+        assert inspect.iscoroutinefunction(C.async_static)  # Works via descriptor protocol
 
 
 class TestExecutorExplicitTypes:
