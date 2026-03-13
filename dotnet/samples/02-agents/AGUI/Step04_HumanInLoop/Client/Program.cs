@@ -44,7 +44,6 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     messages.Add(new ChatMessage(ChatRole.User, input));
     Console.WriteLine();
 
-#pragma warning disable MEAI001
     List<AIContent> approvalResponses = [];
 
     do
@@ -59,14 +58,14 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
             {
                 switch (content)
                 {
-                    case FunctionApprovalRequestContent approvalRequest:
+                    case ToolApprovalRequestContent approvalRequest:
                         DisplayApprovalRequest(approvalRequest);
 
-                        Console.Write($"\nApprove '{approvalRequest.FunctionCall.Name}'? (yes/no): ");
+                        Console.Write($"\nApprove '{GetToolCallName(approvalRequest.ToolCall)}'? (yes/no): ");
                         string? userInput = Console.ReadLine();
                         bool approved = userInput?.ToUpperInvariant() is "YES" or "Y";
 
-                        FunctionApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
+                        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved);
 
                         if (approvalRequest.AdditionalProperties != null)
                         {
@@ -119,7 +118,6 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
         }
     }
     while (approvalResponses.Count > 0);
-#pragma warning restore MEAI001
 
     Console.WriteLine("\n");
     Console.ForegroundColor = ConsoleColor.White;
@@ -127,20 +125,21 @@ while ((input = Console.ReadLine()) != null && !input.Equals("exit", StringCompa
     Console.ResetColor();
 }
 
-#pragma warning disable MEAI001
-static void DisplayApprovalRequest(FunctionApprovalRequestContent approvalRequest)
+static void DisplayApprovalRequest(ToolApprovalRequestContent approvalRequest)
 {
+    var toolName = GetToolCallName(approvalRequest.ToolCall);
+    var toolArguments = GetToolCallArguments(approvalRequest.ToolCall);
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine();
     Console.WriteLine("============================================================");
     Console.WriteLine("APPROVAL REQUIRED");
     Console.WriteLine("============================================================");
-    Console.WriteLine($"Function: {approvalRequest.FunctionCall.Name}");
+    Console.WriteLine($"Function: {toolName}");
 
-    if (approvalRequest.FunctionCall.Arguments != null)
+    if (toolArguments != null)
     {
         Console.WriteLine("Arguments:");
-        foreach (var arg in approvalRequest.FunctionCall.Arguments)
+        foreach (var arg in toolArguments)
         {
             Console.WriteLine($"  {arg.Key} = {arg.Value}");
         }
@@ -149,4 +148,17 @@ static void DisplayApprovalRequest(FunctionApprovalRequestContent approvalReques
     Console.WriteLine("============================================================");
     Console.ResetColor();
 }
-#pragma warning restore MEAI001
+
+static string GetToolCallName(ToolCallContent toolCall) => toolCall switch
+{
+    FunctionCallContent fcc => fcc.Name,
+    McpServerToolCallContent mcc => mcc.Name,
+    _ => toolCall.CallId
+};
+
+static IDictionary<string, object?>? GetToolCallArguments(ToolCallContent toolCall) => toolCall switch
+{
+    FunctionCallContent fcc => fcc.Arguments,
+    McpServerToolCallContent mcc => mcc.Arguments,
+    _ => null
+};

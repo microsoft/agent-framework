@@ -47,9 +47,7 @@ static string ApproveExpenseReport(string expenseReportId)
 var jsonOptions = app.Services.GetRequiredService<IOptions<JsonOptions>>().Value;
 
 // Create approval-required tool
-#pragma warning disable MEAI001 // Type is for evaluation purposes only
 AITool[] tools = [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(ApproveExpenseReport))];
-#pragma warning restore MEAI001
 
 // Create base agent
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.

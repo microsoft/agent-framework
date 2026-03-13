@@ -1,10 +1,13 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Chat;
 
 namespace Microsoft.Agents.AI.OpenAI;
 
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 internal sealed class AsyncStreamingChatCompletionUpdateCollectionResult : AsyncCollectionResult<StreamingChatCompletionUpdate>
 {
     private readonly IAsyncEnumerable<AgentResponseUpdate> _updates;

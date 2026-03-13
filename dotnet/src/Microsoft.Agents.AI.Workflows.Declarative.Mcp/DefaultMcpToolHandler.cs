@@ -186,7 +186,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)
     {
         // Ensure Output list is initialized
-        resultContent.Output ??= [];
+        resultContent.Outputs ??= [];
 
         if (result.IsError == true)
         {
@@ -203,7 +203,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
                 }
             }
 
-            resultContent.Output.Add(new TextContent($"Error: {errorText ?? "Unknown error from MCP Server call"}"));
+            resultContent.Outputs.Add(new TextContent($"Error: {errorText ?? "Unknown error from MCP Server call"}"));
             return;
         }
 
@@ -218,7 +218,7 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             AIContent content = ConvertContentBlock(block);
             if (content is not null)
             {
-                resultContent.Output.Add(content);
+                resultContent.Outputs.Add(content);
             }
         }
     }

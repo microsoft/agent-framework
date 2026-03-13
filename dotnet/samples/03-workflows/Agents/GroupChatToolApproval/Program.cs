@@ -17,7 +17,7 @@
 //
 // Demonstrate:
 // - Using custom GroupChatManager with agents that have approval-required tools.
-// - Handling FunctionApprovalRequestContent in group chat scenarios.
+// - Handling ToolApprovalRequestContent in group chat scenarios.
 // - Multi-round group chat with tool approval interruption and resumption.
 
 using System.ComponentModel;
@@ -101,16 +101,28 @@ public static class Program
             {
                 case RequestInfoEvent e:
                 {
-                    if (e.Request.TryGetDataAs(out FunctionApprovalRequestContent? approvalRequestContent))
+                    if (e.Request.TryGetDataAs(out ToolApprovalRequestContent? approvalRequestContent))
                     {
+                        var toolName = approvalRequestContent.ToolCall switch
+                        {
+                            FunctionCallContent fcc => fcc.Name,
+                            McpServerToolCallContent mcc => mcc.Name,
+                            _ => approvalRequestContent.ToolCall.CallId
+                        };
+                        var toolArguments = approvalRequestContent.ToolCall switch
+                        {
+                            FunctionCallContent fcc => fcc.Arguments,
+                            McpServerToolCallContent mcc => mcc.Arguments,
+                            _ => null
+                        };
                         Console.WriteLine();
                         Console.WriteLine($"[APPROVAL REQUIRED] From agent: {e.Request.PortInfo.PortId}");
-                        Console.WriteLine($"  Tool: {approvalRequestContent.FunctionCall.Name}");
-                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(approvalRequestContent.FunctionCall.Arguments)}");
+                        Console.WriteLine($"  Tool: {toolName}");
+                        Console.WriteLine($"  Arguments: {JsonSerializer.Serialize(toolArguments)}");
                         Console.WriteLine();
 
                         // Approve the tool call request
-                        Console.WriteLine($"Tool: {approvalRequestContent.FunctionCall.Name} approved");
+                        Console.WriteLine($"Tool: {toolName} approved");
                         await run.SendResponseAsync(e.Request.CreateResponse(approvalRequestContent.CreateResponse(approved: true)));
                     }
 

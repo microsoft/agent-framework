@@ -17,17 +17,19 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
     /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
+    /// <param name="model">Optional default model ID for the agent.</param>
     /// <param name="instructions">Optional instructions for the agent.</param>
     /// <param name="name">Optional name for the agent.</param>
     /// <param name="description">Optional description for the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
         ResponsesClient client,
+        string? model = null,
         string? instructions = null,
         string? name = null,
         string? description = null,
         ILoggerFactory? loggerFactory = null) :
-        this(client, new()
+        this(client, model, new()
         {
             Name = name,
             Description = description,
@@ -40,11 +42,12 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
     /// </summary>
     /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
+    /// <param name="model">Optional default model ID for the agent.</param>
     /// <param name="options">Options to create the agent.</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
-        ResponsesClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
-        base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(), options, loggerFactory))
+        ResponsesClient client, string? model, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
+        base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(model), options, loggerFactory))
     {
     }
 

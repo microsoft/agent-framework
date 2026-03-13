@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
 using Microsoft.Extensions.AI;
 
@@ -33,8 +34,8 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
                     new ChatMessage(
                         ChatRole.Assistant,
                         [
-                            new McpServerToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")),
-                            new FunctionApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
+                            new ToolApprovalRequestContent("call1", new McpServerToolCallContent("call1", "testmcp", "server-name")),
+                            new ToolApprovalRequestContent("call2", new FunctionCallContent("call2", "result1")),
                             new FunctionCallContent("call3", "myfunc"),
                             new TextContent("Heya"),
                         ])));
@@ -46,11 +47,10 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
         ChatMessage messageCopy = Assert.Single(source.AgentResponse.Messages);
         Assert.Equal(messageCopy.Contents.Count, copy.AgentResponse.Messages[0].Contents.Count);
 
-        McpServerToolApprovalRequestContent mcpRequest = AssertContent<McpServerToolApprovalRequestContent>(messageCopy);
-        Assert.Equal("call1", mcpRequest.Id);
-
-        FunctionApprovalRequestContent functionRequest = AssertContent<FunctionApprovalRequestContent>(messageCopy);
-        Assert.Equal("call2", functionRequest.Id);
+        ToolApprovalRequestContent[] approvalRequests = messageCopy.Contents.OfType<ToolApprovalRequestContent>().ToArray();
+        Assert.Equal(2, approvalRequests.Length);
+        Assert.Equal("call1", approvalRequests[0].RequestId);
+        Assert.Equal("call2", approvalRequests[1].RequestId);
 
         FunctionCallContent functionCall = AssertContent<FunctionCallContent>(messageCopy);
         Assert.Equal("call3", functionCall.CallId);

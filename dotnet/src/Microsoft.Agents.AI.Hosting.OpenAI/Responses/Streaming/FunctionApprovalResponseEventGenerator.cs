@@ -16,20 +16,20 @@ internal sealed class FunctionApprovalResponseEventGenerator(
         SequenceNumber seq,
         int outputIndex) : StreamingEventGenerator
 {
-    public override bool IsSupported(AIContent content) => content is FunctionApprovalResponseContent;
+    public override bool IsSupported(AIContent content) => content is ToolApprovalResponseContent;
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (content is not FunctionApprovalResponseContent approvalResponse)
+        if (content is not ToolApprovalResponseContent approvalResponse)
         {
-            throw new InvalidOperationException("FunctionApprovalResponseEventGenerator only supports FunctionApprovalResponseContent.");
+            throw new InvalidOperationException("FunctionApprovalResponseEventGenerator only supports ToolApprovalResponseContent.");
         }
 
         yield return new StreamingFunctionApprovalResponded
         {
             SequenceNumber = seq.Increment(),
             OutputIndex = outputIndex,
-            RequestId = approvalResponse.Id,
+            RequestId = approvalResponse.RequestId,
             Approved = approvalResponse.Approved,
             ItemId = idGenerator.GenerateMessageId()
         };
