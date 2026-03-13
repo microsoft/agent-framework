@@ -59,6 +59,7 @@ else:
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._mcp import MCPTool
     from ._middleware import FunctionMiddlewarePipeline, FunctionMiddlewareTypes
     from ._types import (
@@ -245,7 +246,7 @@ class FunctionTool(SerializationMixin):
         additional_properties: dict[str, Any] | None = None,
         func: Callable[..., Any] | None = None,
         input_model: type[BaseModel] | Mapping[str, Any] | None = None,
-        result_parser: Callable[[Any], str] | None = None,
+        result_parser: Callable[[Any], str | list[Content]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the FunctionTool.
@@ -448,19 +449,20 @@ class FunctionTool(SerializationMixin):
         *,
         arguments: BaseModel | Mapping[str, Any] | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> list[Content]:
         """Run the AI function with the provided arguments as a Pydantic model.
 
-        The raw return value of the wrapped function is automatically parsed into a ``str``
-        (either plain text or serialized JSON) using :meth:`parse_result` or the custom
-        ``result_parser`` if one was provided.
+        The raw return value of the wrapped function is automatically parsed into a
+        ``list[Content]`` using :meth:`parse_result` or the custom ``result_parser``
+        if one was provided.  Every result — text, rich media, or serialized objects —
+        is represented uniformly as Content items.
 
         Keyword Args:
             arguments: A mapping or model instance containing the arguments for the function.
             kwargs: Keyword arguments to pass to the function, will not be used if ``arguments`` is provided.
 
         Returns:
-            The parsed result as a string — either plain text or serialized JSON.
+            A list of Content items representing the tool output.
 
         Raises:
             TypeError: If arguments is not mapping-like or fails schema checks.
@@ -468,6 +470,7 @@ class FunctionTool(SerializationMixin):
         if self.declaration_only:
             raise ToolException(f"Function '{self.name}' is declaration only and cannot be invoked.")
         global OBSERVABILITY_SETTINGS
+        from ._types import Content
         from .observability import OBSERVABILITY_SETTINGS
 
         parser = self.result_parser or FunctionTool.parse_result
@@ -514,9 +517,15 @@ class FunctionTool(SerializationMixin):
                 parsed = parser(result)
             except Exception:
                 logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                parsed = str(result)
+                parsed = [Content.from_text(str(result))]
+            if isinstance(parsed, str):
+                parsed = [Content.from_text(parsed)]
             logger.info(f"Function {self.name} succeeded.")
-            logger.debug(f"Function result: {parsed or 'None'}")
+            if parsed:
+                types = [item.type for item in parsed]
+                logger.debug(f"Function result: {len(parsed)} item(s) ({', '.join(types)})")
+            else:
+                logger.debug("Function result: None")
             return parsed
 
         attributes = get_function_span_attributes(self, tool_call_id=tool_call_id)
@@ -563,11 +572,14 @@ class FunctionTool(SerializationMixin):
                     parsed = parser(result)
                 except Exception:
                     logger.warning(f"Function {self.name}: result parser failed, falling back to str().")
-                    parsed = str(result)
+                    parsed = [Content.from_text(str(result))]
+                if isinstance(parsed, str):
+                    parsed = [Content.from_text(parsed)]
                 logger.info(f"Function {self.name} succeeded.")
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED:  # type: ignore[name-defined]
-                    span.set_attribute(OtelAttr.TOOL_RESULT, parsed)
-                    logger.debug(f"Function result: {parsed}")
+                    result_str = "\n".join(c.text or "" for c in parsed if c.type == "text") or str(parsed)
+                    span.set_attribute(OtelAttr.TOOL_RESULT, result_str)
+                    logger.debug(f"Function result: {result_str}")
                 return parsed
             finally:
                 duration = (end_time_stamp or perf_counter()) - start_time_stamp
@@ -621,10 +633,14 @@ class FunctionTool(SerializationMixin):
         return value
 
     @staticmethod
-    def parse_result(result: Any) -> str:
-        """Convert a raw function return value to a string representation.
+    def parse_result(result: Any) -> list[Content]:
+        """Convert a raw function return value to a list of Content items.
 
-        The return value is always a ``str`` — either plain text or serialized JSON.
+        Every tool result is represented as a uniform ``list[Content]``.  Text
+        results become ``Content(type="text")``, rich media (images, audio,
+        files) are preserved as-is, and arbitrary objects are serialized to JSON
+        text.
+
         This is called automatically by :meth:`invoke` before returning the result,
         ensuring that the result stored in ``Content.from_function_result`` is
         already in a form that can be passed directly to LLM APIs.
@@ -633,16 +649,30 @@ class FunctionTool(SerializationMixin):
             result: The raw return value from the wrapped function.
 
         Returns:
-            A string representation of the result, either plain text or serialized JSON.
+            A list of Content items representing the tool output.
         """
+        from ._types import Content
+
         if result is None:
-            return ""
+            return [Content.from_text("")]
         if isinstance(result, str):
-            return result
+            return [Content.from_text(result)]
+        if isinstance(result, Content):
+            return [result]
+        if isinstance(result, list) and any(isinstance(item, Content) for item in result):  # type: ignore[reportUnknownVariableType]
+            parsed_items: list[Content] = []
+            for item in result:  # type: ignore[reportUnknownVariableType]
+                if isinstance(item, Content):
+                    parsed_items.append(item)
+                else:
+                    dumpable = FunctionTool._make_dumpable(item)  # type: ignore[reportUnknownArgumentType]
+                    text = dumpable if isinstance(dumpable, str) else json.dumps(dumpable, default=str)  # type: ignore[reportUnknownArgumentType]
+                    parsed_items.append(Content.from_text(text))
+            return parsed_items
         dumpable = FunctionTool._make_dumpable(result)
         if isinstance(dumpable, str):
-            return dumpable
-        return json.dumps(dumpable, default=str)
+            return [Content.from_text(dumpable)]
+        return [Content.from_text(json.dumps(dumpable, default=str))]
 
     def to_json_schema_spec(self) -> dict[str, Any]:
         """Convert a FunctionTool to the JSON Schema function specification format.
@@ -859,7 +889,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> FunctionTool: ...
 
 
@@ -875,7 +905,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> Callable[[Callable[..., Any]], FunctionTool]: ...
 
 
@@ -890,7 +920,7 @@ def tool(
     max_invocations: int | None = None,
     max_invocation_exceptions: int | None = None,
     additional_properties: dict[str, Any] | None = None,
-    result_parser: Callable[[Any], str] | None = None,
+    result_parser: Callable[[Any], str | list[Content]] | None = None,
 ) -> FunctionTool | Callable[[Callable[..., Any]], FunctionTool]:
     """Decorate a function to turn it into a FunctionTool that can be passed to models and executed automatically.
 
@@ -1458,7 +1488,7 @@ def _update_conversation_id(
     if conversation_id is None:
         return
     if "chat_options" in kwargs:
-        kwargs["chat_options"].conversation_id = conversation_id
+        kwargs["chat_options"]["conversation_id"] = conversation_id
     else:
         kwargs["conversation_id"] = conversation_id
 
@@ -1811,6 +1841,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -1821,6 +1853,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1831,6 +1865,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1841,6 +1877,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
         function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         from ._middleware import FunctionMiddlewarePipeline
@@ -1869,6 +1907,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             middleware_pipeline=function_middleware_pipeline,
         )
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != "session"}
+        if compaction_strategy is not None:
+            filtered_kwargs["compaction_strategy"] = compaction_strategy
+        if tokenizer is not None:
+            filtered_kwargs["tokenizer"] = tokenizer
 
         # Make options mutable so we can update conversation_id during function invocation loop
         mutable_options: dict[str, Any] = dict(options) if options else {}

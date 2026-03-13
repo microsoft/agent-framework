@@ -716,12 +716,46 @@ class AnthropicClient(
                         "input": content.parse_arguments(),
                     })
                 case "function_result":
-                    a_content.append({
-                        "type": "tool_result",
-                        "tool_use_id": content.call_id,
-                        "content": content.result if content.result is not None else "",
-                        "is_error": content.exception is not None,
-                    })
+                    if content.items:
+                        tool_content: list[dict[str, Any]] = []
+                        for item in content.items:
+                            if item.type == "text":
+                                tool_content.append({"type": "text", "text": item.text or ""})
+                            elif item.type == "data" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {
+                                        "data": _get_data_bytes_as_str(item),  # type: ignore[attr-defined]
+                                        "media_type": item.media_type,
+                                        "type": "base64",
+                                    },
+                                })
+                            elif item.type == "uri" and item.has_top_level_media_type("image"):
+                                tool_content.append({
+                                    "type": "image",
+                                    "source": {"type": "url", "url": item.uri},
+                                })
+                            else:
+                                logger.debug(
+                                    "Ignoring unsupported rich content media type in tool result: %s",
+                                    item.media_type,
+                                )
+                        tool_result_content = (
+                            tool_content if tool_content else (content.result if content.result is not None else "")
+                        )
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": tool_result_content,
+                            "is_error": content.exception is not None,
+                        })
+                    else:
+                        a_content.append({
+                            "type": "tool_result",
+                            "tool_use_id": content.call_id,
+                            "content": content.result if content.result is not None else "",
+                            "is_error": content.exception is not None,
+                        })
                 case "mcp_server_tool_call":
                     mcp_call: dict[str, Any] = {
                         "type": "mcp_tool_use",

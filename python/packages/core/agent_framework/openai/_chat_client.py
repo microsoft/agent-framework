@@ -327,7 +327,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
 
         # Start with a copy of options
-        run_options = {k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools"}}
+        run_options = {
+            k: v for k, v in options.items() if v is not None and k not in {"instructions", "tools", "conversation_id"}
+        }
 
         # messages
         if messages and "messages" not in run_options:
@@ -577,9 +579,20 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         args["tool_calls"] = [self._prepare_content_for_openai(content)]  # type: ignore
                 case "function_result":
                     args["tool_call_id"] = content.call_id
-                    # Always include content for tool results - API requires it even if empty
-                    # Functions returning None should still have a tool result message
-                    args["content"] = content.result if content.result is not None else ""
+                    if content.items:
+                        text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                        rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                        if rich_items:
+                            logger.warning(
+                                "OpenAI Chat Completions API does not support rich content (images, audio) "
+                                "in tool results. Rich content items will be omitted. "
+                                "Use the Responses API client for rich tool results."
+                            )
+                        args["content"] = "\n".join(text_parts) if text_parts else ""
+                    else:
+                        args["content"] = content.result if content.result is not None else ""
+                    all_messages.append(args)
+                    continue
                 case "text_reasoning" if (protected_data := content.protected_data) is not None:
                     # Buffer reasoning to attach to the next message with content/tool_calls
                     pending_reasoning = json.loads(protected_data)
@@ -644,7 +657,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             case "function_result":
                 return {
                     "tool_call_id": content.call_id,
-                    "content": content.result,
+                    "content": content.result if content.result is not None else "",
                 }
             case "data" | "uri" if content.has_top_level_media_type("image"):
                 return {

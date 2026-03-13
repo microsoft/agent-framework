@@ -20,6 +20,13 @@ When making changes to a package, check if the following need updates:
 - The package's `AGENTS.md` file (adding/removing/renaming public APIs, architecture changes, import path changes)
 - The agent skills in `.github/skills/` if conventions, commands, or workflows change
 
+## Pull Request Description Guidance
+
+When preparing a PR description:
+- Follow the repository PR template at `.github/pull_request_template.md` and keep its structure/headings.
+- Describe the net change relative to `main` (this is implied; do not call it out explicitly as "vs main").
+- Do not add ad-hoc validation sections (for example, "Validation" or "Tests run"); CI/CD and the template checklist cover validation status.
+
 ## Quick Reference
 
 Run `uv run poe` from the `python/` directory to see available commands. See [DEV_SETUP.md](DEV_SETUP.md) for detailed usage.

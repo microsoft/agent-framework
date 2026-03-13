@@ -8,6 +8,10 @@ inputs:
     os:
       description: The operating system to set up
       required: true
+    exclude-packages:
+      description: Space-separated list of packages to exclude from uv sync
+      required: false
+      default: ''
 
 runs:
     using: "composite"
@@ -19,6 +23,20 @@ runs:
             enable-cache: true
             cache-suffix: ${{ inputs.os }}-${{ inputs.python-version }}
             cache-dependency-glob: "**/uv.lock"
+      - name: Exclude incompatible workspace packages
+        if: ${{ inputs.exclude-packages != '' }}
+        shell: bash
+        run: |
+          for pkg in ${{ inputs.exclude-packages }}; do
+            for f in python/packages/*/pyproject.toml; do
+              if grep -q "name = \"$pkg\"" "$f"; then
+                pkg_dir=$(dirname "$f" | sed 's|python/||')
+                echo "Excluding workspace package: $pkg ($pkg_dir)"
+                sed -i.bak '/\[tool\.uv\.workspace\]/a\exclude = ["'"$pkg_dir"'"]' python/pyproject.toml
+                sed -i.bak '/'"$pkg"' = { workspace = true }/d' python/pyproject.toml
+              fi
+            done
+          done
       - name: Install the project
         shell: bash
         run: |
