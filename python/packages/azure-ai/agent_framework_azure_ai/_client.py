@@ -495,21 +495,32 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         runtime_structured_output = self._get_structured_output_signature(chat_options)
 
         if runtime_tools is not None or runtime_structured_output is not None:
-            tools_changed = runtime_tools is not None
-            structured_output_changed = runtime_structured_output is not None
+            tools_changed = False
+            structured_output_changed = False
 
             if self.warn_runtime_tools_and_structure_changed:
+                # We created the agent ourselves so we can compare tool sets.
                 if runtime_tools is not None:
                     tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
                 if runtime_structured_output is not None:
                     structured_output_changed = (
                         runtime_structured_output != self._created_agent_structured_output_signature
                     )
+            else:
+                # Agent was not created by this client (e.g. use_latest_version
+                # or explicit agent_version).  We have no creation-time baseline
+                # so only warn when non-empty tools or structured_output are
+                # supplied — an empty tool list is just the framework default
+                # and should not trigger a false-positive warning.
+                if runtime_tools:
+                    tools_changed = True
+                if runtime_structured_output is not None:
+                    structured_output_changed = True
 
             if tools_changed or structured_output_changed:
                 logger.warning(
-                    "AzureAIClient does not support runtime tools or structured_output overrides after agent creation. "
-                    "Use AzureOpenAIResponsesClient instead."
+                    "AzureAIClient does not support runtime tools or structured_output overrides "
+                    "after agent creation. Use AzureOpenAIResponsesClient instead."
                 )
 
         agent_level_option_to_run_keys = {

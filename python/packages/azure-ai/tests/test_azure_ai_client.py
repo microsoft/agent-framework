@@ -907,6 +907,49 @@ async def test_use_latest_version_existing_agent(
     assert client.agent_version == "2.5"
 
 
+async def test_use_latest_version_no_spurious_warning_for_empty_tools(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test that use_latest_version=True does not emit a false-positive tools warning.
+
+    When the agent is fetched via use_latest_version the framework may still
+    pass an empty runtime tools list (``[]``).  The client should not warn
+    about a tool mismatch in this case because no user-supplied tools are
+    actually being overridden.  Regression test for
+    https://github.com/microsoft/agent-framework/issues/4681
+    """
+    client = create_test_azure_ai_client(
+        mock_project_client, agent_name="existing-agent", use_latest_version=True
+    )
+
+    # Mock existing agent
+    mock_existing_agent = MagicMock()
+    mock_existing_agent.name = "existing-agent"
+    mock_existing_agent.versions.latest.version = "2.5"
+    mock_project_client.agents.get = AsyncMock(return_value=mock_existing_agent)
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    # First call fetches the latest version
+    with patch(
+        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        return_value={"model": "test-model", "tools": []},
+    ):
+        await client._prepare_options(messages, {})
+
+    # Subsequent call with empty tools — should NOT warn
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": []},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        await client._prepare_options(messages, {})
+
+    mock_warning.assert_not_called()
+
+
 async def test_use_latest_version_agent_not_found(
     mock_project_client: MagicMock,
 ) -> None:
