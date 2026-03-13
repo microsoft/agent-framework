@@ -195,13 +195,16 @@ def test_parse_tool_result_from_mcp_meta_not_in_string():
 
 
 def test_parse_tool_result_from_mcp_empty_content():
-    """Test that empty content produces list with empty text Content."""
+    """Test that empty MCP content normalizes to JSON null text content."""
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].type == "text"
-    assert result[0].text == ""
+    assert result[0].text == "null"
+
+    function_result = Content.from_function_result(call_id="call_null", result=result)
+    assert function_result.result == "null"
 
 
 def test_parse_tool_result_from_mcp_audio_content():

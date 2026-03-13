@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import sys
@@ -194,7 +195,7 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result:
-        result.append(Content.from_text(""))
+        result.append(Content.from_text(json.dumps(None)))
     return result
 
 
