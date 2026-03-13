@@ -382,12 +382,12 @@ public class ToolResultCompactionStrategyTests
     }
 
     [Fact]
-    public void ToolCallFormatterPropertyIsNotNullWhenNoneProvided()
+    public void ToolCallFormatterPropertyIsNullWhenNoneProvided()
     {
         // Arrange
         ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always);
 
-        // Assert — ToolCallFormatter is not null when no custom formatter is provided
+        // Assert — ToolCallFormatter is null when no custom formatter is provided
         Assert.Null(strategy.ToolCallFormatter);
     }
 
