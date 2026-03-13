@@ -1,8 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
+import inspect
 from typing import Any
 from unittest.mock import patch
+
+import pytest
 
 from agent_framework import (
     GROUP_ANNOTATION_KEY,
@@ -48,6 +51,60 @@ async def test_chat_client_get_response_streaming(client: SupportsChatGetRespons
 def test_base_client(chat_client_base: SupportsChatGetResponse):
     assert isinstance(chat_client_base, BaseChatClient)
     assert isinstance(chat_client_base, SupportsChatGetResponse)
+
+
+def test_base_client_warns_for_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
+    with pytest.warns(DeprecationWarning, match="additional_properties"):
+        client = type(chat_client_base)(legacy_key="legacy-value")
+
+    assert client.additional_properties["legacy_key"] == "legacy-value"
+
+
+def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
+    agent = chat_client_base.as_agent(additional_properties={"team": "core"})
+
+    assert agent.additional_properties == {"team": "core"}
+
+
+def test_openai_chat_client_get_response_docstring_surfaces_layered_runtime_docs() -> None:
+    from agent_framework.openai import OpenAIChatClient
+
+    docstring = inspect.getdoc(OpenAIChatClient.get_response)
+
+    assert docstring is not None
+    assert "Get a response from a chat client." in docstring
+    assert "function_invocation_kwargs" in docstring
+    assert "function_middleware: Optional per-call function middleware." in docstring
+    assert "middleware: Optional per-call chat and function middleware." in docstring
+
+
+def test_openai_chat_client_get_response_is_defined_on_openai_class() -> None:
+    from agent_framework.openai import OpenAIChatClient
+
+    signature = inspect.signature(OpenAIChatClient.get_response)
+
+    assert OpenAIChatClient.get_response.__qualname__ == "OpenAIChatClient.get_response"
+    assert "function_middleware" in signature.parameters
+    assert "middleware" in signature.parameters
+
+
+async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:
+    async def fake_inner_get_response(**kwargs):
+        assert kwargs["trace_id"] == "trace-123"
+        assert "function_invocation_kwargs" not in kwargs
+        return ChatResponse(messages=[Message(role="assistant", text="ok")])
+
+    with patch.object(
+        chat_client_base,
+        "_inner_get_response",
+        side_effect=fake_inner_get_response,
+    ) as mock_inner_get_response:
+        await chat_client_base.get_response(
+            [Message(role="user", text="hello")],
+            function_invocation_kwargs={"tool_request_id": "tool-123"},
+            client_kwargs={"trace_id": "trace-123"},
+        )
+        mock_inner_get_response.assert_called_once()
 
 
 async def test_base_client_get_response(chat_client_base: SupportsChatGetResponse):

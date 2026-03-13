@@ -665,7 +665,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if output_format:
             tool["output_format"] = output_format
         if model:
-            tool["model"] = model
+            tool["model"] = model  # type: ignore
         if quality:
             tool["quality"] = quality
         if partial_images is not None:

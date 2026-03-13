@@ -2698,7 +2698,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream: AsyncIterable[UpdateT] | Awaitable[AsyncIterable[UpdateT]],
         *,
         finalizer: Callable[[Sequence[UpdateT]], FinalT | Awaitable[FinalT]] | None = None,
-        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] | None = None,
+        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
         cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
         result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
     ) -> None:
@@ -2722,7 +2722,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._consumed: bool = False
         self._finalized: bool = False
         self._final_result: FinalT | None = None
-        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] = (
+        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = (
             transform_hooks if transform_hooks is not None else []
         )
         self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = (
@@ -2995,7 +2995,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     def with_transform_hook(
         self,
-        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None],
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
     ) -> ResponseStream[UpdateT, FinalT]:
         """Register a transform hook executed for each update during iteration."""
         self._transform_hooks.append(hook)

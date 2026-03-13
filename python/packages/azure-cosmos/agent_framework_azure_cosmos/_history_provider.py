@@ -124,7 +124,13 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         self._database_client = self._cosmos_client.get_database_client(self.database_name)
 
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
+    async def get_messages(
+        self,
+        session_id: str | None,
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Message]:
         """Retrieve stored messages for this session from Azure Cosmos DB."""
         await self._ensure_container_proxy()
         session_key = self._session_partition_key(session_id)
@@ -157,7 +163,14 @@ class CosmosHistoryProvider(BaseHistoryProvider):
 
         return messages
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages for this session to Azure Cosmos DB."""
         if not messages:
             return
