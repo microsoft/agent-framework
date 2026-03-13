@@ -375,6 +375,12 @@ internal static class ChatResponseUpdateAGUIExtensions
                     MessageId = chatResponse.MessageId!,
                     Delta = textContent.Text
                 };
+
+                // Emit annotations if present on the text content
+                if (textContent.Annotations is { Count: > 0 })
+                {
+                    yield return CreateAnnotationsCustomEvent(textContent.Annotations, jsonSerializerOptions);
+                }
             }
 
             // Emit tool call events and tool result events
@@ -463,6 +469,11 @@ internal static class ChatResponseUpdateAGUIExtensions
                             };
                         }
                     }
+                    else if (content is UsageContent usageContent)
+                    {
+                        // Emit usage data as a custom event
+                        yield return CreateUsageCustomEvent(usageContent, jsonSerializerOptions);
+                    }
                 }
             }
         }
@@ -491,6 +502,79 @@ internal static class ChatResponseUpdateAGUIExtensions
             string str => str,
             JsonElement jsonElement => jsonElement.GetRawText(),
             _ => JsonSerializer.Serialize(functionResultContent.Result, options.GetTypeInfo(functionResultContent.Result.GetType())),
+        };
+    }
+
+    private static CustomEvent CreateUsageCustomEvent(UsageContent usageContent, JsonSerializerOptions jsonSerializerOptions)
+    {
+        using var buffer = new System.IO.MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("inputTokenCount", usageContent.Details.InputTokenCount ?? 0);
+            writer.WriteNumber("outputTokenCount", usageContent.Details.OutputTokenCount ?? 0);
+            writer.WriteNumber("totalTokenCount", usageContent.Details.TotalTokenCount ?? 0);
+            writer.WriteEndObject();
+        }
+
+        return new CustomEvent
+        {
+            Name = "usage",
+            Value = JsonSerializer.Deserialize(buffer.ToArray(), jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))) as JsonElement?
+        };
+    }
+
+    private static CustomEvent CreateAnnotationsCustomEvent(
+        IList<AIAnnotation> annotations,
+        JsonSerializerOptions jsonSerializerOptions)
+    {
+        using var buffer = new System.IO.MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartArray();
+            foreach (var annotation in annotations)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("type", annotation.GetType().Name);
+
+                if (annotation is CitationAnnotation citation)
+                {
+                    if (citation.Title is not null)
+                    {
+                        writer.WriteString("title", citation.Title);
+                    }
+
+                    if (citation.Url is not null)
+                    {
+                        writer.WriteString("url", citation.Url.ToString());
+                    }
+
+                    if (citation.FileId is not null)
+                    {
+                        writer.WriteString("fileId", citation.FileId);
+                    }
+
+                    if (citation.ToolName is not null)
+                    {
+                        writer.WriteString("toolName", citation.ToolName);
+                    }
+
+                    if (citation.Snippet is not null)
+                    {
+                        writer.WriteString("snippet", citation.Snippet);
+                    }
+                }
+
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+
+        return new CustomEvent
+        {
+            Name = "annotations",
+            Value = JsonSerializer.Deserialize(buffer.ToArray(), jsonSerializerOptions.GetTypeInfo(typeof(JsonElement))) as JsonElement?
         };
     }
 }
