@@ -829,7 +829,7 @@ async def test_chat_agent_as_tool_function_execution(
     # Should return the agent's response text as a list of Content items
     assert isinstance(result, list)
     assert len(result) == 1
-    assert result[0].text == "test response"  # From mock chat client
+    assert result[0].text == "test streaming response another update"  # From mock streaming client
 
 
 async def test_chat_agent_as_tool_with_stream_callback(
@@ -869,7 +869,7 @@ async def test_chat_agent_as_tool_with_custom_arg_name(
     # Test that the custom argument name works
     result = await tool.invoke(arguments={"prompt": "Test prompt"})
     assert isinstance(result, list)
-    assert result[0].text == "test response"
+    assert result[0].text == "test streaming response another update"
 
 
 async def test_chat_agent_as_tool_with_async_stream_callback(
@@ -1181,7 +1181,7 @@ async def test_agent_run_accepts_prefixed_mcp_tools(chat_client_base: Any) -> No
 
 
 async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
-    """Verify tool execution receives 'session' inside **kwargs when function is called by client."""
+    """Verify legacy **kwargs tools receive the session when agent.run() is called with one."""
 
     captured: dict[str, Any] = {}
 
@@ -1192,7 +1192,6 @@ async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> N
         captured["has_state"] = session.state is not None if isinstance(session, AgentSession) else False
         return f"echo: {text}"
 
-    # Make the base client emit a function call for our tool
     chat_client_base.run_responses = [
         ChatResponse(
             messages=Message(
@@ -1212,14 +1211,11 @@ async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> N
     agent = Agent(client=chat_client_base, tools=[echo_session_info])
     session = agent.create_session()
 
-    result = await agent.run(
-        "hello",
-        session=session,
-        options={"additional_function_arguments": {"session": session}},
-    )
+    result = await agent.run("hello", session=session)
+
     assert result.text == "done"
-    assert captured.get("has_session") is False
-    assert captured.get("has_state") is False
+    assert captured.get("has_session") is True
+    assert captured.get("has_state") is True
 
 
 async def test_agent_tool_receives_explicit_session_via_function_invocation_context_kwargs(

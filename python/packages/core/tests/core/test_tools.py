@@ -977,7 +977,7 @@ async def test_ai_function_with_explicit_invocation_context():
 
     result = await tool_with_context.invoke(context=context)
 
-    assert result == "x=7, user=ctx-user"
+    assert result[0].text == "x=7, user=ctx-user"
 
 
 async def test_ai_function_with_typed_context_parameter_using_custom_name():
@@ -1004,7 +1004,7 @@ async def test_ai_function_with_typed_context_parameter_using_custom_name():
 
     result = await tool_with_runtime_context.invoke(context=context)
 
-    assert result == "x=8, user=runtime-user"
+    assert result[0].text == "x=8, user=runtime-user"
 
 
 async def test_ai_function_with_explicit_schema_and_untyped_ctx():
@@ -1026,7 +1026,7 @@ async def test_ai_function_with_explicit_schema_and_untyped_ctx():
 
     result = await tool_with_schema.invoke(context=context)
 
-    assert result == "x=9, user=schema-user"
+    assert result[0].text == "x=9, user=schema-user"
 
 
 async def test_ai_function_with_explicit_schema_and_typed_ctx():
@@ -1049,7 +1049,7 @@ async def test_ai_function_with_explicit_schema_and_typed_ctx():
     result = await tool_with_schema.invoke(context=context)
 
     assert tool_with_schema.parameters() == ToolInput.model_json_schema()
-    assert result == "x=11, user=typed-schema-user"
+    assert result[0].text == "x=11, user=typed-schema-user"
 
 
 def test_ai_function_with_multiple_typed_context_parameters_fails():
