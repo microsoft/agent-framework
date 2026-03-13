@@ -3530,7 +3530,6 @@ def test_parse_response_from_openai_function_call_includes_status() -> None:
     assert function_call.raw_representation is mock_function_call_item
 
 
-@pytest.mark.asyncio
 async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_from_history() -> None:
     """Loaded history must not replay provider-ephemeral Responses function call IDs."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
