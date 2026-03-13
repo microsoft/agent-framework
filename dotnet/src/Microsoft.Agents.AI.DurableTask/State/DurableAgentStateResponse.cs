@@ -57,7 +57,7 @@ internal sealed class DurableAgentStateResponse : DurableAgentStateEntry
     // AdditionalProperties. We keep the message if any base AIContent has annotations or additional
     // properties set. NOTE: if AIContent gains new serializable properties in the future, this check
     // should be updated accordingly.
-    static bool HasSerializableContent(ChatMessage message)
+    private static bool HasSerializableContent(ChatMessage message)
     {
         return message.Contents.Any(c =>
             c.GetType() != typeof(AIContent) ||
