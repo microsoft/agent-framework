@@ -12,6 +12,8 @@ namespace Microsoft.Agents.AI.Workflows;
 [JsonDerivedType(typeof(WorkflowStartedEvent))]
 [JsonDerivedType(typeof(WorkflowErrorEvent))]
 [JsonDerivedType(typeof(WorkflowWarningEvent))]
+[JsonDerivedType(typeof(WorkflowCompletedEvent))]
+[JsonDerivedType(typeof(WorkflowFailedEvent))]
 [JsonDerivedType(typeof(WorkflowOutputEvent))]
 [JsonDerivedType(typeof(RequestInfoEvent))]
 public class WorkflowEvent(object? data = null)

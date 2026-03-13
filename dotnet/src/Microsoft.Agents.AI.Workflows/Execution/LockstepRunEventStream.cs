@@ -107,7 +107,7 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         yield break; // Exit if cancellation is requested
                     }
 
-                    bool hadRequestHaltEvent = false;
+                    RequestHaltEvent? haltEvent = null;
                     foreach (WorkflowEvent raisedEvent in Interlocked.Exchange(ref eventSink, []))
                     {
                         if (linkedSource.Token.IsCancellationRequested)
@@ -116,9 +116,9 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         }
 
                         // TODO: Do we actually want to interpret this as a termination request?
-                        if (raisedEvent is RequestHaltEvent)
+                        if (raisedEvent is RequestHaltEvent halt)
                         {
-                            hadRequestHaltEvent = true;
+                            haltEvent = halt;
                         }
                         else
                         {
@@ -126,9 +126,15 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                         }
                     }
 
-                    if (hadRequestHaltEvent || linkedSource.Token.IsCancellationRequested)
+                    if (haltEvent is not null || linkedSource.Token.IsCancellationRequested)
                     {
                         // If we had a completion event, we are done.
+                        if (haltEvent is not null)
+                        {
+                            yield return new WorkflowCompletedEvent(haltEvent.Data);
+                            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+                        }
+
                         yield break;
                     }
 
@@ -146,7 +152,14 @@ internal sealed class LockstepRunEventStream : IRunEventStream
                 }
             } while (!ShouldBreak());
 
-            runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+            // Only signal workflow completion when the run has actually reached a terminal state.
+            // When breaking due to PendingRequests (paused, not completed) or cancellation,
+            // the stream ends silently — matching StreamingRunEventStream behavior.
+            if (this.RunStatus is RunStatus.Idle or RunStatus.Ended)
+            {
+                yield return new WorkflowCompletedEvent();
+                runActivity?.AddEvent(new ActivityEvent(EventNames.WorkflowCompleted));
+            }
         }
         finally
         {
