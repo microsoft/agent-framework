@@ -1486,8 +1486,6 @@ class AgentTelemetryLayer:
             super().run,  # type: ignore[misc]
         )
         provider_name = str(self.otel_provider_name)
-        capture_usage = bool(getattr(self, "_otel_capture_usage", True))
-
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
@@ -1572,7 +1570,8 @@ class AgentTelemetryLayer:
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        capture_usage=capture_usage,
+                        capture_response_id=False,
+                        capture_usage=False,
                     )
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
@@ -1625,7 +1624,12 @@ class AgentTelemetryLayer:
                     raise
                 duration = perf_counter() - start_time_stamp
                 if response:
-                    response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
+                    response_attributes = _get_response_attributes(
+                        attributes,
+                        response,
+                        capture_response_id=False,
+                        capture_usage=False,
+                    )
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                         _capture_messages(
@@ -1894,10 +1898,11 @@ def _get_response_attributes(
     attributes: dict[str, Any],
     response: ChatResponse | AgentResponse,
     *,
+    capture_response_id: bool = True,
     capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
-    if response.response_id:
+    if capture_response_id and response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = getattr(response, "finish_reason", None)
     if not finish_reason:
