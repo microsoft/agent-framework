@@ -2522,67 +2522,119 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         assert "failed to reconnect" in str(exc_info.value).lower()
 
 
-async def test_mcp_tool_reconnection_handles_cross_task_cancel_scope_error():
-    """Test that reconnection gracefully handles anyio cancel scope errors.
+async def test_mcp_tool_close_cleans_up_in_original_task(caplog):
+    """Closing an MCP tool from another task should still unwind contexts in the owner task."""
+    import asyncio
 
-    This tests the fix for the bug where calling connect(reset=True) from a
-    different task than where the connection was originally established would
-    cause: RuntimeError: Attempted to exit cancel scope in a different task
-    than it was entered in
+    class TaskBoundTransportContext:
+        def __init__(self) -> None:
+            self.enter_task = None
+            self.exit_task = None
+            self.closed_cleanly = False
 
-    This happens when using multiple MCP tools with AG-UI streaming - the first
-    tool call succeeds, but when the connection closes, the second tool call
-    triggers a reconnection from within the streaming loop (a different task).
-    """
-    from contextlib import AsyncExitStack
+        async def __aenter__(self):
+            self.enter_task = asyncio.current_task()
+            return (Mock(), Mock())
 
-    from agent_framework._mcp import MCPStdioTool
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exit_task = asyncio.current_task()
+            if self.exit_task is not self.enter_task:
+                raise RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
+            self.closed_cleanly = True
+            return
 
-    # Use load_tools=False and load_prompts=False to avoid triggering them during connect()
-    tool = MCPStdioTool(
+    tool = MCPStreamableHTTPTool(
         name="test_server",
-        command="test_command",
-        args=["arg1"],
+        url="https://example.com/mcp",
         load_tools=False,
         load_prompts=False,
     )
 
-    # Mock the exit stack to raise the cross-task cancel scope error
-    mock_exit_stack = AsyncMock(spec=AsyncExitStack)
-    mock_exit_stack.aclose = AsyncMock(
-        side_effect=RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
-    )
-    tool._exit_stack = mock_exit_stack
-    tool.session = Mock()
-    tool.is_connected = True
+    transport_context = TaskBoundTransportContext()
+    mock_session = Mock()
+    mock_session._request_id = 1
+    mock_session.initialize = AsyncMock()
 
-    # Mock get_mcp_client to return a mock transport
-    mock_transport = (Mock(), Mock())
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context.__aexit__ = AsyncMock()
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_context.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch.object(tool, "get_mcp_client", return_value=mock_context),
-        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+        patch.object(tool, "get_mcp_client", return_value=transport_context),
+        patch("agent_framework._mcp.ClientSession", return_value=mock_session_context),
     ):
-        mock_session = Mock()
-        mock_session._request_id = 1
-        mock_session.initialize = AsyncMock()
-        mock_session.set_logging_level = AsyncMock()
-        mock_session_context = AsyncMock()
-        mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_context.__aexit__ = AsyncMock()
-        mock_session_class.return_value = mock_session_context
+        await asyncio.create_task(tool.connect())
 
-        # This should NOT raise even though aclose() raised the cancel scope error
-        # The _safe_close_exit_stack method should catch and log the error
-        await tool.connect(reset=True)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            await tool.close()
 
-        # Verify a new exit stack was created (the old mock was replaced)
-        assert tool._exit_stack is not mock_exit_stack
-        assert tool.session is not None
+    assert transport_context.closed_cleanly is True
+    assert transport_context.exit_task is transport_context.enter_task
+    assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+
+
+async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
+    """Resetting an MCP tool from another task should unwind and reconnect on the owner task."""
+    import asyncio
+
+    class TaskBoundTransportContext:
+        def __init__(self) -> None:
+            self.enter_task = None
+            self.exit_task = None
+            self.closed_cleanly = False
+
+        async def __aenter__(self):
+            self.enter_task = asyncio.current_task()
+            return (Mock(), Mock())
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exit_task = asyncio.current_task()
+            if self.exit_task is not self.enter_task:
+                raise RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
+            self.closed_cleanly = True
+            return
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    transport_contexts = [TaskBoundTransportContext(), TaskBoundTransportContext()]
+    sessions = []
+    session_contexts = []
+    for _ in range(2):
+        session = Mock()
+        session._request_id = 1
+        session.initialize = AsyncMock()
+        session.set_logging_level = AsyncMock()
+        sessions.append(session)
+
+        session_context = AsyncMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        session_contexts.append(session_context)
+
+    with (
+        patch.object(tool, "get_mcp_client", side_effect=transport_contexts),
+        patch("agent_framework._mcp.ClientSession", side_effect=session_contexts),
+    ):
+        await tool.connect()
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            await asyncio.create_task(tool.connect(reset=True))
+
+        assert transport_contexts[0].closed_cleanly is True
+        assert transport_contexts[0].exit_task is transport_contexts[0].enter_task
+        assert transport_contexts[1].enter_task is transport_contexts[0].enter_task
+        assert tool.session is sessions[1]
         assert tool.is_connected is True
+        assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+
+        await tool.close()
 
 
 async def test_mcp_tool_safe_close_reraises_other_runtime_errors():
