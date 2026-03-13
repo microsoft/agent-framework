@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
@@ -49,6 +51,9 @@ internal static class ItemContentConverter
 
             // Error/refusal content
             ItemContentRefusal refusal => new ErrorContent(refusal.Refusal),
+
+            // Tool approval response (DevUI extension)
+            ItemContentToolApprovalResponse approval => CreateToolApprovalResponse(approval),
 
             // Image content
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.ImageUrl) =>
@@ -158,5 +163,62 @@ internal static class ItemContentConverter
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="ToolApprovalResponseContent"/> from a DevUI function approval response,
+    /// extracting the function call ID, name, and arguments from the JSON payload.
+    /// </summary>
+    private static ToolApprovalResponseContent CreateToolApprovalResponse(ItemContentToolApprovalResponse approval)
+    {
+        string callId = string.Empty;
+        string name = string.Empty;
+        bool isMcpCall = false;
+        string serverName = string.Empty;
+        Dictionary<string, object?>? arguments = null;
+
+        if (approval.FunctionCall is JsonElement fc && fc.ValueKind == JsonValueKind.Object)
+        {
+            if (fc.TryGetProperty("id", out var idProp))
+            {
+                callId = idProp.GetString() ?? string.Empty;
+            }
+
+            if (fc.TryGetProperty("name", out var nameProp))
+            {
+                name = nameProp.GetString() ?? string.Empty;
+            }
+
+            // Use the "type" discriminator from ToolCallInfo polymorphism
+            isMcpCall = fc.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "mcp_call";
+
+            if (isMcpCall && fc.TryGetProperty("server_name", out var serverProp))
+            {
+                serverName = serverProp.GetString() ?? string.Empty;
+            }
+
+            if (fc.TryGetProperty("arguments", out var argsProp) && argsProp.ValueKind == JsonValueKind.Object)
+            {
+                arguments = [];
+                foreach (var prop in argsProp.EnumerateObject())
+                {
+                    arguments[prop.Name] = prop.Value.ValueKind switch
+                    {
+                        JsonValueKind.String => prop.Value.GetString(),
+                        JsonValueKind.Number => prop.Value.GetDouble(),
+                        JsonValueKind.True => true,
+                        JsonValueKind.False => false,
+                        JsonValueKind.Null => null,
+                        _ => prop.Value.ToString()
+                    };
+                }
+            }
+        }
+
+        ToolCallContent toolCall = isMcpCall
+            ? new McpServerToolCallContent(callId, name, serverName) { Arguments = arguments }
+            : new FunctionCallContent(callId, name, arguments);
+
+        return new ToolApprovalResponseContent(approval.RequestId, approval.Approved, toolCall);
     }
 }

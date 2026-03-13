@@ -28,8 +28,8 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 [JsonDerivedType(typeof(StreamingReasoningSummaryTextDelta), StreamingReasoningSummaryTextDelta.EventType)]
 [JsonDerivedType(typeof(StreamingReasoningSummaryTextDone), StreamingReasoningSummaryTextDone.EventType)]
 [JsonDerivedType(typeof(StreamingWorkflowEventComplete), StreamingWorkflowEventComplete.EventType)]
-[JsonDerivedType(typeof(StreamingFunctionApprovalRequested), StreamingFunctionApprovalRequested.EventType)]
-[JsonDerivedType(typeof(StreamingFunctionApprovalResponded), StreamingFunctionApprovalResponded.EventType)]
+[JsonDerivedType(typeof(StreamingToolApprovalRequested), StreamingToolApprovalRequested.EventType)]
+[JsonDerivedType(typeof(StreamingToolApprovalResponded), StreamingToolApprovalResponded.EventType)]
 internal abstract class StreamingResponseEvent
 {
     /// <summary>
@@ -597,13 +597,13 @@ internal sealed class StreamingWorkflowEventComplete : StreamingResponseEvent
 }
 
 /// <summary>
-/// Represents a streaming response event indicating a function approval has been requested.
+/// Represents a streaming response event indicating a tool approval has been requested.
 /// This is a non-standard DevUI extension for human-in-the-loop scenarios.
 /// </summary>
-internal sealed class StreamingFunctionApprovalRequested : StreamingResponseEvent
+internal sealed class StreamingToolApprovalRequested : StreamingResponseEvent
 {
     /// <summary>
-    /// The constant event type identifier for function approval requested events.
+    /// The constant event type identifier for tool approval requested events.
     /// </summary>
     public const string EventType = "response.function_approval.requested";
 
@@ -618,10 +618,10 @@ internal sealed class StreamingFunctionApprovalRequested : StreamingResponseEven
     public required string RequestId { get; init; }
 
     /// <summary>
-    /// Gets or sets the function call that requires approval.
+    /// Gets or sets the tool call that requires approval.
     /// </summary>
     [JsonPropertyName("function_call")]
-    public required FunctionCallInfo FunctionCall { get; init; }
+    public required ToolCallInfo ToolCall { get; init; }
 
     /// <summary>
     /// Gets or sets the item ID for tracking purposes.
@@ -637,13 +637,13 @@ internal sealed class StreamingFunctionApprovalRequested : StreamingResponseEven
 }
 
 /// <summary>
-/// Represents a streaming response event indicating a function approval has been responded to.
+/// Represents a streaming response event indicating a tool approval has been responded to.
 /// This is a non-standard DevUI extension for human-in-the-loop scenarios.
 /// </summary>
-internal sealed class StreamingFunctionApprovalResponded : StreamingResponseEvent
+internal sealed class StreamingToolApprovalResponded : StreamingResponseEvent
 {
     /// <summary>
-    /// The constant event type identifier for function approval responded events.
+    /// The constant event type identifier for tool approval responded events.
     /// </summary>
     public const string EventType = "response.function_approval.responded";
 
@@ -677,25 +677,45 @@ internal sealed class StreamingFunctionApprovalResponded : StreamingResponseEven
 }
 
 /// <summary>
-/// Represents function call information for approval events.
+/// Represents tool call information for approval events.
 /// </summary>
-internal sealed class FunctionCallInfo
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+[JsonDerivedType(typeof(FunctionToolCallInfo), "function_call")]
+[JsonDerivedType(typeof(McpToolCallInfo), "mcp_call")]
+internal abstract class ToolCallInfo
 {
     /// <summary>
-    /// Gets or sets the function call ID.
+    /// Gets or sets the tool call ID.
     /// </summary>
     [JsonPropertyName("id")]
     public required string Id { get; init; }
 
     /// <summary>
-    /// Gets or sets the function name.
+    /// Gets or sets the tool call name.
     /// </summary>
     [JsonPropertyName("name")]
     public required string Name { get; init; }
 
     /// <summary>
-    /// Gets or sets the function arguments.
+    /// Gets or sets the tool call arguments.
     /// </summary>
     [JsonPropertyName("arguments")]
     public required JsonElement Arguments { get; init; }
+}
+
+/// <summary>
+/// Represents a regular function tool call in approval events.
+/// </summary>
+internal sealed class FunctionToolCallInfo : ToolCallInfo;
+
+/// <summary>
+/// Represents an MCP server tool call in approval events.
+/// </summary>
+internal sealed class McpToolCallInfo : ToolCallInfo
+{
+    /// <summary>
+    /// Gets or sets the MCP server name.
+    /// </summary>
+    [JsonPropertyName("server_name")]
+    public required string ServerName { get; init; }
 }
