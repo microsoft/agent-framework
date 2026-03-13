@@ -474,10 +474,10 @@ def mock_chat_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(
+async def test_agent_span_captures_response_telemetry_without_inner_chat_span(
     mock_chat_agent: SupportsAgentRun, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test that when agent diagnostics are enabled, telemetry is applied."""
+    """Agent spans should retain response telemetry when no inner chat span owns it."""
 
     agent = mock_chat_agent()
 
@@ -493,9 +493,9 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
-    assert OtelAttr.RESPONSE_ID not in span.attributes
-    assert OtelAttr.INPUT_TOKENS not in span.attributes
-    assert OtelAttr.OUTPUT_TOKENS not in span.attributes
+    assert span.attributes[OtelAttr.RESPONSE_ID] == "test_response_id"
+    assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
+    assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
         assert span.attributes[OtelAttr.OUTPUT_MESSAGES] is not None
 
