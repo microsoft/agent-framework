@@ -79,6 +79,7 @@ __all__ = [
     "create_metric_views",
     "create_resource",
     "enable_instrumentation",
+    "get_mcp_call_span",
     "get_meter",
     "get_tracer",
 ]
@@ -271,6 +272,15 @@ class OtelAttr(str, Enum):
     #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
+
+    # MCP-specific attributes
+    # https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/mcp.md
+    MCP_METHOD_NAME = "mcp.method.name"
+    MCP_PROTOCOL_VERSION = "mcp.protocol.version"
+    MCP_SESSION_ID = "mcp.session.id"
+    JSONRPC_REQUEST_ID = "jsonrpc.request.id"
+    JSONRPC_PROTOCOL_VERSION = "jsonrpc.protocol.version"
+    PROMPT_NAME = "gen_ai.prompt.name"
 
     # Agent Framework specific attributes
     MEASUREMENT_FUNCTION_TAG_NAME = "agent_framework.function.name"
@@ -1676,6 +1686,35 @@ def get_function_span(
     """
     return get_tracer().start_as_current_span(
         name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
+        attributes=attributes,
+        set_status_on_exception=False,
+        end_on_exit=True,
+        record_exception=False,
+    )
+
+
+def get_mcp_call_span(
+    attributes: dict[str, Any],
+) -> _AgnosticContextManager[trace.Span]:
+    """Start a CLIENT span for an MCP call (tool or prompt).
+
+    Creates a span following the OTel 1.40.0 semantic conventions for MCP:
+    https://github.com/open-telemetry/semantic-conventions/blob/main/docs/gen-ai/mcp.md
+
+    Args:
+        attributes: The span attributes. Must contain ``mcp.method.name``.
+            When the call is tool-related, ``gen_ai.tool.name`` is used in the span name.
+            When the call is prompt-related, ``gen_ai.prompt.name`` is used instead.
+
+    Returns:
+        A context manager that starts the span as the current span.
+    """
+    method_name = attributes.get(OtelAttr.MCP_METHOD_NAME, "mcp")
+    target = attributes.get(OtelAttr.TOOL_NAME) or attributes.get(OtelAttr.PROMPT_NAME)
+    span_name = f"{method_name} {target}" if target else method_name
+    return get_tracer().start_as_current_span(
+        name=span_name,
+        kind=trace.SpanKind.CLIENT,
         attributes=attributes,
         set_status_on_exception=False,
         end_on_exit=True,
