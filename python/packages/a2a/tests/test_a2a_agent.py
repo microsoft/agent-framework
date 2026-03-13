@@ -508,19 +508,20 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
 
 
 def test_prepare_message_for_a2a_forwards_context_id() -> None:
-    """Test conversion of Message preserves context_id on the A2A message."""
+    """Test conversion of Message preserves context_id without duplicating it in metadata."""
 
     agent = A2AAgent(client=MagicMock(), _http_client=None)
 
     message = Message(
         role="user",
         contents=[Content.from_text(text="Continue the task")],
-        additional_properties={"context_id": "ctx-123"},
+        additional_properties={"context_id": "ctx-123", "trace_id": "trace-456"},
     )
 
     result = agent._prepare_message_for_a2a(message)
 
     assert result.context_id == "ctx-123"
+    assert result.metadata == {"trace_id": "trace-456"}
 
 
 def test_parse_contents_from_a2a_with_data_part() -> None:
