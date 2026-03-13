@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
@@ -44,10 +45,13 @@ async def get_weather(location: Annotated[str, "The location as a city name"]) -
     return f"The weather in {location} is sunny and 72°F."
 
 
-async def create_vector_store(client: AzureOpenAIResponsesClient) -> tuple[str, Content]:
+async def create_vector_store(
+    client: AzureOpenAIResponsesClient,
+) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
-        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."), purpose="assistants"
+        file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."),
+        purpose="assistants",
     )
     vector_store = await client.client.vector_stores.create(
         name="knowledge_base",
@@ -98,7 +102,9 @@ def test_init_model_id_kwarg(azure_openai_unit_test_env: dict[str, str]) -> None
     assert isinstance(azure_responses_client, SupportsChatGetResponse)
 
 
-def test_init_model_id_kwarg_does_not_override_deployment_name(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_id_kwarg_does_not_override_deployment_name(
+    azure_openai_unit_test_env: dict[str, str],
+) -> None:
     """Test that deployment_name takes precedence over model_id kwarg (issue #4299)."""
     azure_responses_client = AzureOpenAIResponsesClient(deployment_name="my-deployment", model_id="gpt-4o")
 
@@ -323,7 +329,12 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
                             "temperature_c": {"type": "number"},
                             "advisory": {"type": "string"},
                         },
-                        "required": ["location", "conditions", "temperature_c", "advisory"],
+                        "required": [
+                            "location",
+                            "conditions",
+                            "temperature_c",
+                            "advisory",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -445,7 +456,12 @@ async def test_integration_web_search() -> None:
 
         # Test that the client will use the web search tool with location
         content = {
-            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
+            "messages": [
+                Message(
+                    role="user",
+                    text="What is the current weather? Do not ask for my current location.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [
@@ -556,7 +572,12 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
+        messages=[
+            Message(
+                role="user",
+                text="Calculate the sum of numbers from 1 to 10 using Python code.",
+            )
+        ],
         options={
             "tools": [AzureOpenAIResponsesClient.get_code_interpreter_tool()],
         },
@@ -602,6 +623,44 @@ async def test_integration_client_agent_existing_session():
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
             assert "photography" in second_response.text.lower()
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_azure_integration_tests_disabled
+async def test_azure_openai_responses_client_tool_rich_content_image() -> None:
+    """Test that Azure OpenAI Responses client can handle tool results containing images."""
+    image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
+    image_bytes = image_path.read_bytes()
+
+    @tool(approval_mode="never_require")
+    def get_test_image() -> Content:
+        """Return a test image for analysis."""
+        return Content.from_data(data=image_bytes, media_type="image/jpeg")
+
+    client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    for streaming in [False, True]:
+        messages = [
+            Message(
+                role="user",
+                text="Call the get_test_image tool and describe what you see.",
+            )
+        ]
+        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+
+        if streaming:
+            response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages=messages, options=options)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # sample_image.jpg contains a photo of a house; the model should mention it.
+        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
 # region Integration with Foundry V2

@@ -542,7 +542,12 @@ def test_function_result_content():
 
     # Check the type and content
     assert content.type == "function_result"
-    assert content.result == {"param1": "value1"}
+    # Dict results are stringified and stored as text items
+    assert "param1" in content.result
+    assert "value1" in content.result
+    assert content.items is not None
+    assert len(content.items) == 1
+    assert content.items[0].type == "text"
 
     # Ensure the instance is of type BaseContent
     assert isinstance(content, Content)
@@ -2455,12 +2460,13 @@ class NestedModel(BaseModel):
 def test_parse_result_pydantic_model():
     """Test that Pydantic BaseModel subclasses are properly serialized using model_dump()."""
     result = WeatherResult(temperature=22.5, condition="sunny")
-    json_result = FunctionTool.parse_result(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # The result should be a valid JSON string
-    assert isinstance(json_result, str)
-    assert '"temperature": 22.5' in json_result or '"temperature":22.5' in json_result
-    assert '"condition": "sunny"' in json_result or '"condition":"sunny"' in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert '"temperature": 22.5' in parsed[0].text or '"temperature":22.5' in parsed[0].text
+    assert '"condition": "sunny"' in parsed[0].text or '"condition":"sunny"' in parsed[0].text
 
 
 def test_parse_result_pydantic_model_in_list():
@@ -2469,14 +2475,14 @@ def test_parse_result_pydantic_model_in_list():
         WeatherResult(temperature=20.0, condition="cloudy"),
         WeatherResult(temperature=25.0, condition="sunny"),
     ]
-    json_result = FunctionTool.parse_result(results)
+    parsed = FunctionTool.parse_result(results)
 
-    # The result should be a valid JSON string representing a list
-    assert isinstance(json_result, str)
-    assert json_result.startswith("[")
-    assert json_result.endswith("]")
-    assert "cloudy" in json_result
-    assert "sunny" in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert parsed[0].text.startswith("[")
+    assert "cloudy" in parsed[0].text
+    assert "sunny" in parsed[0].text
 
 
 def test_parse_result_pydantic_model_in_dict():
@@ -2485,26 +2491,28 @@ def test_parse_result_pydantic_model_in_dict():
         "current": WeatherResult(temperature=22.0, condition="partly cloudy"),
         "forecast": WeatherResult(temperature=24.0, condition="sunny"),
     }
-    json_result = FunctionTool.parse_result(results)
+    parsed = FunctionTool.parse_result(results)
 
-    # The result should be a valid JSON string representing a dict
-    assert isinstance(json_result, str)
-    assert "current" in json_result
-    assert "forecast" in json_result
-    assert "partly cloudy" in json_result
-    assert "sunny" in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert "current" in parsed[0].text
+    assert "forecast" in parsed[0].text
+    assert "partly cloudy" in parsed[0].text
+    assert "sunny" in parsed[0].text
 
 
 def test_parse_result_nested_pydantic_model():
     """Test that nested Pydantic models are properly serialized."""
     result = NestedModel(name="Seattle", weather=WeatherResult(temperature=18.0, condition="rainy"))
-    json_result = FunctionTool.parse_result(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # The result should be a valid JSON string
-    assert isinstance(json_result, str)
-    assert "Seattle" in json_result
-    assert "rainy" in json_result
-    assert "18.0" in json_result or "18" in json_result
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert "Seattle" in parsed[0].text
+    assert "rainy" in parsed[0].text
+    assert "18.0" in parsed[0].text or "18" in parsed[0].text
 
 
 # region FunctionTool.parse_result with MCP TextContent-like objects
@@ -2518,11 +2526,12 @@ def test_parse_result_text_content_single():
         text: str
 
     result = [MockTextContent("Hello from MCP tool!")]
-    json_result = FunctionTool.parse_result(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # Should extract text and serialize as JSON array of strings
-    assert isinstance(json_result, str)
-    assert json_result == '["Hello from MCP tool!"]'
+    # Non-Content list items are serialized via _make_dumpable
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
 
 
 def test_parse_result_text_content_multiple():
@@ -2533,11 +2542,12 @@ def test_parse_result_text_content_multiple():
         text: str
 
     result = [MockTextContent("First result"), MockTextContent("Second result")]
-    json_result = FunctionTool.parse_result(result)
+    parsed = FunctionTool.parse_result(result)
 
-    # Should extract text from each and serialize as JSON array
-    assert isinstance(json_result, str)
-    assert json_result == '["First result", "Second result"]'
+    # Non-Content list items are serialized via _make_dumpable
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
 
 
 def test_parse_result_text_content_with_non_string_text():
@@ -2548,38 +2558,174 @@ def test_parse_result_text_content_with_non_string_text():
             self.text = 12345  # Not a string!
 
     result = [BadTextContent()]
-    json_result = FunctionTool.parse_result(result)
+    parsed = FunctionTool.parse_result(result)
 
     # Should not extract text since it's not a string, will serialize the object
-    assert isinstance(json_result, str)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
 
 
 def test_parse_result_none_returns_empty_string():
-    """Test that None returns an empty string."""
-    assert FunctionTool.parse_result(None) == ""
+    """Test that None returns a list with empty text Content."""
+    parsed = FunctionTool.parse_result(None)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].type == "text"
+    assert parsed[0].text == ""
 
 
 def test_parse_result_string_passthrough():
-    """Test that strings are returned as-is."""
-    assert FunctionTool.parse_result("hello world") == "hello world"
-    assert FunctionTool.parse_result('{"key": "value"}') == '{"key": "value"}'
+    """Test that strings are wrapped in Content."""
+    parsed = FunctionTool.parse_result("hello world")
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0].text == "hello world"
+
+    parsed2 = FunctionTool.parse_result('{"key": "value"}')
+    assert isinstance(parsed2, list)
+    assert len(parsed2) == 1
+    assert parsed2[0].text == '{"key": "value"}'
 
 
 def test_parse_result_content_object():
-    """Test that Content objects are serialized via to_dict."""
+    """Test that text Content objects are wrapped in a list."""
     content = Content.from_text("hello")
     result = FunctionTool.parse_result(content)
-    assert isinstance(result, str)
-    assert "hello" in result
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "hello"
 
 
 def test_parse_result_list_of_content():
-    """Test that list[Content] is serialized to JSON."""
+    """Test that list[Content] with text-only items is returned as list[Content]."""
     contents = [Content.from_text("hello"), Content.from_text("world")]
     result = FunctionTool.parse_result(contents)
-    assert isinstance(result, str)
-    assert "hello" in result
-    assert "world" in result
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+def test_parse_result_single_image_content():
+    """Test that a single image Content is preserved as list[Content]."""
+    image_content = Content.from_data(data=b"fake_png_bytes", media_type="image/png")
+    result = FunctionTool.parse_result(image_content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "image/png"
+
+
+def test_parse_result_single_text_content():
+    """Test that a single text Content returns a list with one text Content."""
+    text_content = Content.from_text("just text")
+    result = FunctionTool.parse_result(text_content)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "just text"
+
+
+def test_parse_result_mixed_content_list():
+    """Test that list with text and image Content is preserved."""
+    contents = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = FunctionTool.parse_result(contents)
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[1].type == "data"
+
+
+def test_from_function_result_with_content_list():
+    """Test Content.from_function_result stores all items uniformly."""
+    content_list = [
+        Content.from_text("Chart rendered."),
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = Content.from_function_result(call_id="test-123", result=content_list)
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "Chart rendered."
+    assert result.items is not None
+    assert len(result.items) == 2
+    assert result.items[0].type == "text"
+    assert result.items[0].text == "Chart rendered."
+    assert result.items[1].type == "data"
+    assert result.items[1].media_type == "image/png"
+
+
+def test_from_function_result_with_string():
+    """Test Content.from_function_result with plain string result."""
+    result = Content.from_function_result(call_id="test-123", result="just text")
+    assert result.type == "function_result"
+    assert result.call_id == "test-123"
+    assert result.result == "just text"
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "text"
+    assert result.items[0].text == "just text"
+
+
+def test_content_from_function_result_items_in_to_dict():
+    """Test that items are included in to_dict serialization."""
+    content_list = [
+        Content.from_text("done"),
+        Content.from_data(data=b"png_data", media_type="image/png"),
+    ]
+    result = Content.from_function_result(
+        call_id="call-1",
+        result=content_list,
+    )
+    d = result.to_dict()
+    assert "items" in d
+    assert len(d["items"]) == 2
+    assert d["items"][0]["type"] == "text"
+    assert d["items"][1]["type"] == "data"
+
+
+def test_from_function_result_with_only_rich_content_list():
+    """Test Content.from_function_result with only image items and no text."""
+    content_list = [
+        Content.from_data(data=b"image_bytes", media_type="image/png"),
+    ]
+    result = Content.from_function_result(call_id="test-456", result=content_list)
+    assert result.type == "function_result"
+    assert result.result == ""
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "data"
+
+
+def test_function_result_items_roundtrip_via_dict():
+    """Test that items survive a to_dict/from_dict round-trip as Content objects."""
+    content_list = [
+        Content.from_text("done"),
+        Content.from_data(data=b"png_data", media_type="image/png"),
+    ]
+    original = Content.from_function_result(call_id="call-rt", result=content_list)
+    restored = Content.from_dict(original.to_dict())
+    assert restored.items is not None
+    assert len(restored.items) == 2
+    assert isinstance(restored.items[0], Content)
+    assert restored.items[0].type == "text"
+    assert restored.items[0].text == "done"
+    assert isinstance(restored.items[1], Content)
+    assert restored.items[1].type == "data"
+
+
+def test_from_function_result_with_non_content_list():
+    """Test Content.from_function_result with a list of non-Content objects falls back to str."""
+    result = Content.from_function_result(call_id="test-789", result=["hello", "world"])
+    assert result.type == "function_result"
+    assert result.result == "['hello', 'world']"
+    assert result.items is not None
+    assert len(result.items) == 1
+    assert result.items[0].type == "text"
 
 
 # endregion

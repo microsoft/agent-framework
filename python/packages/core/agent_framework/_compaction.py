@@ -466,6 +466,9 @@ def annotate_message_groups(
 def _serialize_content(content: Content) -> dict[str, Any]:
     payload = content.to_dict(exclude_none=True)
     payload.pop("raw_representation", None)
+    # ``items`` mirrors ``result`` for function_result content; exclude it
+    # to avoid double-counting tokens during estimation.
+    payload.pop("items", None)
     return payload
 
 
