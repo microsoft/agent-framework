@@ -94,17 +94,11 @@ ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 logger = logging.getLogger("agent_framework")
 
 
-class _InnerResponseTelemetryCaptureState:
-    """Tracks response telemetry already captured by an inner chat span."""
-
-    def __init__(self) -> None:
-        self.response_id_captured = False
-        self.usage_captured = False
-
-
-INNER_RESPONSE_TELEMETRY_CAPTURE_STATE: Final[contextvars.ContextVar[_InnerResponseTelemetryCaptureState | None]] = (
-    contextvars.ContextVar("inner_response_telemetry_capture_state", default=None)
+INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
+    "inner_response_telemetry_captured_fields", default=None
 )
+INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
+INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -1571,9 +1565,9 @@ class AgentTelemetryLayer:
             **merged_client_kwargs,
         )
 
-        inner_response_telemetry_capture_state = _InnerResponseTelemetryCaptureState()
-        inner_response_telemetry_capture_state_token = INNER_RESPONSE_TELEMETRY_CAPTURE_STATE.set(
-            inner_response_telemetry_capture_state
+        inner_response_telemetry_captured_fields: set[str] = set()
+        inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
+            inner_response_telemetry_captured_fields
         )
 
         if stream:
@@ -1595,7 +1589,7 @@ class AgentTelemetryLayer:
                 else:
                     raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
             except Exception:
-                INNER_RESPONSE_TELEMETRY_CAPTURE_STATE.reset(inner_response_telemetry_capture_state_token)
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                 raise
 
             # Create span directly without trace.use_span() context attachment.
@@ -1636,8 +1630,9 @@ class AgentTelemetryLayer:
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        capture_response_id=not inner_response_telemetry_capture_state.response_id_captured,
-                        capture_usage=not inner_response_telemetry_capture_state.usage_captured,
+                        capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                        not in inner_response_telemetry_captured_fields,
+                        capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                     )
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
@@ -1654,7 +1649,7 @@ class AgentTelemetryLayer:
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
-                    INNER_RESPONSE_TELEMETRY_CAPTURE_STATE.reset(inner_response_telemetry_capture_state_token)
+                    INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                     _close_span()
 
             # Register a weak reference callback to close the span if stream is garbage collected
@@ -1695,8 +1690,9 @@ class AgentTelemetryLayer:
                         response_attributes = _get_response_attributes(
                             attributes,
                             response,
-                            capture_response_id=not inner_response_telemetry_capture_state.response_id_captured,
-                            capture_usage=not inner_response_telemetry_capture_state.usage_captured,
+                            capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                            not in inner_response_telemetry_captured_fields,
+                            capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                         )
                         _capture_response(span=span, attributes=response_attributes, duration=duration)
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
@@ -1708,7 +1704,7 @@ class AgentTelemetryLayer:
                             )
                     return response  # type: ignore[return-value,no-any-return]
             finally:
-                INNER_RESPONSE_TELEMETRY_CAPTURE_STATE.reset(inner_response_telemetry_capture_state_token)
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
 
         return _run()
 
@@ -1966,13 +1962,13 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
 
 def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentResponse) -> None:
     """Record when an inner chat telemetry span already captured response metadata."""
-    capture_state = INNER_RESPONSE_TELEMETRY_CAPTURE_STATE.get()
-    if capture_state is None:
+    captured_fields = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get()
+    if captured_fields is None:
         return
     if response.response_id:
-        capture_state.response_id_captured = True
+        captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
     if response.usage_details:
-        capture_state.usage_captured = True
+        captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
 
 
 def _get_response_attributes(
