@@ -283,4 +283,148 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         Assert.Contains(events, e => e is ToolCallEndEvent);
         Assert.Contains(events, e => e is RunFinishedEvent);
     }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_ContainsFinishReason_StopAsync()
+    {
+        // Arrange — Simulate an agent run that completes normally with FinishReason.Stop
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Hello world") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, "!") { MessageId = "msg1", FinishReason = ChatFinishReason.Stop }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        Assert.Equal(ChatFinishReason.Stop.Value, finishEvent.FinishReason);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_ContainsFinishReason_ToolCallsAsync()
+    {
+        // Arrange — Simulate an agent run that ends with FinishReason.ToolCalls (client-side tool call)
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        FunctionCallContent functionCall = new("call_1", "GetWeather", new Dictionary<string, object?> { ["city"] = "Seattle" });
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, [functionCall])
+            {
+                MessageId = "msg1",
+                FinishReason = ChatFinishReason.ToolCalls
+            }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        Assert.Equal(ChatFinishReason.ToolCalls.Value, finishEvent.FinishReason);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_FinishReasonNull_WhenNoUpdatesAsync()
+    {
+        // Arrange — No ChatResponseUpdates emitted (empty stream)
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<ChatResponseUpdate> updates = [];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        Assert.Null(finishEvent.FinishReason);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_CapturesLastFinishReasonAsync()
+    {
+        // Arrange — Multiple updates, only the last one has FinishReason set.
+        // Verifies that FinishReason is captured from the last update that has it.
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Part 1") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, "Part 2") { MessageId = "msg1" },
+            new ChatResponseUpdate(ChatRole.Assistant, "Part 3") { MessageId = "msg1", FinishReason = ChatFinishReason.Stop }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        Assert.Equal(ChatFinishReason.Stop.Value, finishEvent.FinishReason);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_FinishReason_SerializedCorrectlyAsync()
+    {
+        // Arrange — Verify the FinishReason is serialized in the JSON output per AG-UI spec
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<ChatResponseUpdate> updates =
+        [
+            new ChatResponseUpdate(ChatRole.Assistant, "Done") { MessageId = "msg1", FinishReason = ChatFinishReason.Stop }
+        ];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — Serialize the RunFinishedEvent and verify finishReason is present in JSON
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        string json = System.Text.Json.JsonSerializer.Serialize(finishEvent, AGUIJsonSerializerContext.Default.Options.GetTypeInfo(typeof(RunFinishedEvent)));
+        Assert.Contains("\"finishReason\"", json);
+        Assert.Contains("\"stop\"", json);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_RunFinishedEvent_FinishReasonNull_OmittedFromSerializationAsync()
+    {
+        // Arrange — When FinishReason is null, it should be omitted from JSON serialization
+        const string ThreadId = "thread1";
+        const string RunId = "run1";
+        List<ChatResponseUpdate> updates = [];
+
+        // Act
+        List<BaseEvent> events = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync(ThreadId, RunId, AGUIJsonSerializerContext.Default.Options, CancellationToken.None))
+        {
+            events.Add(evt);
+        }
+
+        // Assert — Serialize the RunFinishedEvent and verify finishReason is NOT present in JSON
+        RunFinishedEvent finishEvent = Assert.IsType<RunFinishedEvent>(events.Last());
+        string json = System.Text.Json.JsonSerializer.Serialize(finishEvent, AGUIJsonSerializerContext.Default.Options.GetTypeInfo(typeof(RunFinishedEvent)));
+        Assert.DoesNotContain("\"finishReason\"", json);
+    }
 }

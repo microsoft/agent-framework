@@ -22,6 +22,10 @@ internal sealed class RunFinishedEvent : BaseEvent
     [JsonPropertyName("runId")]
     public string RunId { get; set; } = string.Empty;
 
+    [JsonPropertyName("finishReason")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? FinishReason { get; set; }
+
     [JsonPropertyName("result")]
     public JsonElement? Result { get; set; }
 }
