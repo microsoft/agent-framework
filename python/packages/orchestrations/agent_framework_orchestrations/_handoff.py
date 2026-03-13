@@ -54,7 +54,7 @@ from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 
 from ._base_group_chat_orchestrator import TerminationCondition
-from ._orchestrator_helpers import clean_conversation_for_handoff
+from ._orchestration_shared import OrchestrationOutput, filter_tool_contents
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -428,7 +428,7 @@ class HandoffAgentExecutor(AgentExecutor):
     async def _run_agent_and_emit(self, ctx: WorkflowContext[Any, Any]) -> None:
         """Override to support handoff."""
         incoming_messages = list(self._cache)
-        cleaned_incoming_messages = clean_conversation_for_handoff(incoming_messages)
+        cleaned_incoming_messages = filter_tool_contents(incoming_messages)
         runtime_tool_messages = [
             message
             for message in incoming_messages
@@ -492,7 +492,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
         # Remove function call related content from the agent response for broadcast.
         # This prevents replaying stale tool artifacts to other agents.
-        cleaned_response = clean_conversation_for_handoff(response.messages)
+        cleaned_response = filter_tool_contents(response.messages)
 
         # For internal tracking, preserve the full response (including function_calls)
         # in _full_conversation so that Azure OpenAI can match function_calls with
@@ -624,7 +624,7 @@ class HandoffAgentExecutor(AgentExecutor):
 
         return None
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Any, Any]) -> bool:
+    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Any, OrchestrationOutput]) -> bool:
         """Check termination conditions and yield completion if met.
 
         Args:
@@ -641,7 +641,7 @@ class HandoffAgentExecutor(AgentExecutor):
             terminated = await terminated
 
         if terminated:
-            await ctx.yield_output(self._full_conversation)
+            await ctx.yield_output(OrchestrationOutput(messages=self._full_conversation))
             return True
 
         return False

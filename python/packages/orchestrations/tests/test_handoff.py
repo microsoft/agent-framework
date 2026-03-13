@@ -30,7 +30,7 @@ from agent_framework_orchestrations._handoff import (
     _AutoHandoffMiddleware,  # pyright: ignore[reportPrivateUsage]
     get_handoff_tool_name,
 )
-from agent_framework_orchestrations._orchestrator_helpers import clean_conversation_for_handoff
+from agent_framework_orchestrations._orchestration_shared import OrchestrationOutput, filter_tool_contents
 
 
 class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
@@ -710,7 +710,7 @@ async def test_handoff_clears_stale_service_session_id_before_run() -> None:
     assert triage_executor._session.service_session_id is None
 
 
-def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
+def test_filter_tool_contents_keeps_text_only_history() -> None:
     """Tool-control messages must be excluded from persisted handoff history."""
     function_call = Content.from_function_call(
         call_id="handoff-call-1",
@@ -740,7 +740,7 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
         ),
     ]
 
-    cleaned = clean_conversation_for_handoff(conversation)
+    cleaned = filter_tool_contents(conversation)
     assert [message.role for message in cleaned] == ["user", "assistant"]
     assert [message.text for message in cleaned] == [
         "My order arrived damaged.",
@@ -827,9 +827,11 @@ async def test_autonomous_mode_yields_output_without_user_request():
     assert outputs, "Autonomous mode should yield a workflow output"
 
     final_conversation = outputs[-1].data
-    assert isinstance(final_conversation, list)
-    conversation_list = cast(list[Message], final_conversation)
-    assert any(msg.role == "assistant" and (msg.text or "").startswith("specialist reply") for msg in conversation_list)
+    assert isinstance(final_conversation, OrchestrationOutput)
+    assert any(
+        msg.role == "assistant" and (msg.text or "").startswith("specialist reply")
+        for msg in final_conversation.messages
+    )
 
 
 async def test_autonomous_mode_resumes_user_input_on_turn_limit():
@@ -897,9 +899,8 @@ async def test_handoff_async_termination_condition() -> None:
     assert len(outputs) == 1
 
     final_conversation = outputs[0].data
-    assert isinstance(final_conversation, list)
-    final_conv_list = cast(list[Message], final_conversation)
-    user_messages = [msg for msg in final_conv_list if msg.role == "user"]
+    assert isinstance(final_conversation, OrchestrationOutput)
+    user_messages = [msg for msg in final_conversation.messages if msg.role == "user"]
     assert len(user_messages) == 2
     assert termination_call_count > 0
 
@@ -955,7 +956,7 @@ async def test_handoff_terminates_without_request_info_when_latest_response_meet
 
     outputs = [event for event in events if event.type == "output"]
     assert outputs
-    conversation_outputs = [event for event in outputs if isinstance(event.data, list)]
+    conversation_outputs = [event for event in outputs if isinstance(event.data, OrchestrationOutput)]
     assert len(conversation_outputs) == 1
 
 

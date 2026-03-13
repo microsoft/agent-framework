@@ -61,8 +61,7 @@ from ._magentic import (
     StandardMagenticManager,
 )
 from ._orchestration_request_info import AgentRequestInfoResponse
-from ._orchestration_state import OrchestrationState
-from ._orchestrator_helpers import clean_conversation_for_handoff, create_completion_message
+from ._orchestration_shared import OrchestrationState
 from ._sequential import SequentialBuilder
 
 __all__ = [
@@ -105,6 +104,4 @@ __all__ = [
     "StandardMagenticManager",
     "TerminationCondition",
     "__version__",
-    "clean_conversation_for_handoff",
-    "create_completion_message",
 ]

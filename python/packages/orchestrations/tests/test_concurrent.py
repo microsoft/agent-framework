@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from agent_framework import (
@@ -16,6 +16,8 @@ from agent_framework import (
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework.orchestrations import ConcurrentBuilder
 from typing_extensions import Never
+
+from agent_framework_orchestrations._orchestration_shared import OrchestrationOutput
 
 
 class _FakeAgentExec(Executor):
@@ -58,18 +60,18 @@ async def test_concurrent_default_aggregator_emits_single_user_and_assistants() 
     wf = ConcurrentBuilder(participants=[e1, e2, e3]).build()
 
     completed = False
-    output: list[Message] | None = None
+    output: OrchestrationOutput | None = None
     async for ev in wf.run("prompt: hello world", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = cast(list[Message], ev.data)
+            output = cast(OrchestrationOutput, ev.data)
         if completed and output is not None:
             break
 
     assert completed
     assert output is not None
-    messages: list[Message] = output
+    messages: list[Message] = output.messages
 
     # Expect one user message + one assistant message per participant
     assert len(messages) == 1 + 3
@@ -86,68 +88,67 @@ async def test_concurrent_custom_aggregator_callback_is_used() -> None:
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    async def summarize(results: list[AgentExecutorResponse]) -> str:
+    async def summarize(results: list[AgentExecutorResponse]) -> list[Message]:
         texts: list[str] = []
         for r in results:
             msgs: list[Message] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
-        return " | ".join(sorted(texts))
+        return [Message(role="assistant", text=" | ".join(sorted(texts)))]
 
     wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize).build()
 
     completed = False
-    output: str | None = None
+    output: OrchestrationOutput | None = None
     async for ev in wf.run("prompt: custom", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = cast(str, ev.data)
+            output = cast(OrchestrationOutput, ev.data)
         if completed and output is not None:
             break
 
     assert completed
     assert output is not None
-    # Custom aggregator returns a string payload
-    assert isinstance(output, str)
-    assert output == "One | Two"
+    assert isinstance(output, OrchestrationOutput)
+    assert output.messages[-1].text == "One | Two"
 
 
 async def test_concurrent_custom_aggregator_sync_callback_is_used() -> None:
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    # Sync callback with ctx parameter (should run via asyncio.to_thread)
-    def summarize_sync(results: list[AgentExecutorResponse], _ctx: WorkflowContext[Any]) -> str:  # type: ignore[unused-argument]
+    # Sync callback (should run via asyncio.to_thread)
+    def summarize_sync(results: list[AgentExecutorResponse]) -> list[Message]:
         texts: list[str] = []
         for r in results:
             msgs: list[Message] = r.agent_response.messages
             texts.append(msgs[-1].text if msgs else "")
-        return " | ".join(sorted(texts))
+        return [Message(role="assistant", text=" | ".join(sorted(texts)))]
 
     wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize_sync).build()
 
     completed = False
-    output: str | None = None
+    output: OrchestrationOutput | None = None
     async for ev in wf.run("prompt: custom sync", stream=True):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
         elif ev.type == "output":
-            output = cast(str, ev.data)
+            output = cast(OrchestrationOutput, ev.data)
         if completed and output is not None:
             break
 
     assert completed
     assert output is not None
-    assert isinstance(output, str)
-    assert output == "One | Two"
+    assert isinstance(output, OrchestrationOutput)
+    assert output.messages[-1].text == "One | Two"
 
 
 def test_concurrent_custom_aggregator_uses_callback_name_for_id() -> None:
     e1 = _FakeAgentExec("agentA", "One")
     e2 = _FakeAgentExec("agentB", "Two")
 
-    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
-        return str(len(results))
+    def summarize(results: list[AgentExecutorResponse]) -> list[Message]:
+        return [Message(role="assistant", text=str(len(results)))]
 
     wf = ConcurrentBuilder(participants=[e1, e2]).with_aggregator(summarize).build()
 
@@ -193,8 +194,8 @@ async def test_concurrent_with_aggregator_executor_instance() -> None:
 def test_concurrent_builder_rejects_multiple_calls_to_with_aggregator() -> None:
     """Test that multiple calls to .with_aggregator() raises an error."""
 
-    def summarize(results: list[AgentExecutorResponse]) -> str:  # type: ignore[override]
-        return str(len(results))
+    def summarize(results: list[AgentExecutorResponse]) -> list[Message]:
+        return [Message(role="assistant", text=str(len(results)))]
 
     with pytest.raises(ValueError, match=r"with_aggregator\(\) has already been called"):
         (
@@ -215,7 +216,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
 
     wf = ConcurrentBuilder(participants=list(participants), checkpoint_storage=storage).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_output: OrchestrationOutput | None = None
     async for ev in wf.run("checkpoint concurrent", stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -236,7 +237,7 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
     )
     wf_resume = ConcurrentBuilder(participants=list(resumed_participants), checkpoint_storage=storage).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_output: OrchestrationOutput | None = None
     async for ev in wf_resume.run(checkpoint_id=resume_checkpoint.checkpoint_id, stream=True):
         if ev.type == "output":
             resumed_output = ev.data  # type: ignore[assignment]
@@ -247,8 +248,8 @@ async def test_concurrent_checkpoint_resume_round_trip() -> None:
             break
 
     assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
-    assert [m.text for m in resumed_output] == [m.text for m in baseline_output]
+    assert [m.role for m in resumed_output.messages] == [m.role for m in baseline_output.messages]
+    assert [m.text for m in resumed_output.messages] == [m.text for m in baseline_output.messages]
 
 
 async def test_concurrent_checkpoint_runtime_only() -> None:
@@ -258,7 +259,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
     wf = ConcurrentBuilder(participants=agents).build()
 
-    baseline_output: list[Message] | None = None
+    baseline_output: OrchestrationOutput | None = None
     async for ev in wf.run("runtime checkpoint test", checkpoint_storage=storage, stream=True):
         if ev.type == "output":
             baseline_output = ev.data  # type: ignore[assignment]
@@ -278,7 +279,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
     resumed_agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
     wf_resume = ConcurrentBuilder(participants=resumed_agents).build()
 
-    resumed_output: list[Message] | None = None
+    resumed_output: OrchestrationOutput | None = None
     async for ev in wf_resume.run(
         checkpoint_id=resume_checkpoint.checkpoint_id, checkpoint_storage=storage, stream=True
     ):
@@ -291,7 +292,7 @@ async def test_concurrent_checkpoint_runtime_only() -> None:
             break
 
     assert resumed_output is not None
-    assert [m.role for m in resumed_output] == [m.role for m in baseline_output]
+    assert [m.role for m in resumed_output.messages] == [m.role for m in baseline_output.messages]
 
 
 async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
@@ -307,7 +308,7 @@ async def test_concurrent_checkpoint_runtime_overrides_buildtime() -> None:
         agents = [_FakeAgentExec(id="agent1", reply_text="A1"), _FakeAgentExec(id="agent2", reply_text="A2")]
         wf = ConcurrentBuilder(participants=agents, checkpoint_storage=buildtime_storage).build()
 
-        baseline_output: list[Message] | None = None
+        baseline_output: OrchestrationOutput | None = None
         async for ev in wf.run("override test", checkpoint_storage=runtime_storage, stream=True):
             if ev.type == "output":
                 baseline_output = ev.data  # type: ignore[assignment]

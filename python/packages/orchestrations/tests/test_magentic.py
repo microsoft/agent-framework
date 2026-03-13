@@ -36,6 +36,8 @@ from agent_framework.orchestrations import (
     StandardMagenticManager,
 )
 
+from agent_framework_orchestrations._orchestration_shared import OrchestrationOutput
+
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -195,8 +197,8 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
     async for event in workflow.run("compose summary", stream=True):
         if event.type == "output":
             msg = event.data
-            if isinstance(msg, list):
-                outputs.extend(cast(list[Message], msg))
+            if isinstance(msg, OrchestrationOutput):
+                outputs.extend(msg.messages)
         elif event.type == "magentic_orchestrator":
             orchestrator_event_count += 1
 
@@ -250,7 +252,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
     completed = False
-    output: list[Message] | None = None
+    output: OrchestrationOutput | None = None
     async for ev in wf.run(stream=True, responses={req_event.request_id: req_event.data.approve()}):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -261,8 +263,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     assert completed
     assert output is not None
-    assert isinstance(output, list)
-    assert all(isinstance(msg, Message) for msg in output)
+    assert isinstance(output, OrchestrationOutput)
+    assert all(isinstance(msg, Message) for msg in output.messages)
 
 
 async def test_magentic_plan_review_with_revise():
@@ -337,10 +339,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, list)
-    assert len(data) > 0  # type: ignore
-    assert data[-1].role == "assistant"  # type: ignore
-    assert all(isinstance(msg, Message) for msg in data)  # type: ignore
+    assert isinstance(data, OrchestrationOutput)
+    assert len(data.messages) > 0
+    assert data.messages[-1].role == "assistant"
+    assert all(isinstance(msg, Message) for msg in data.messages)
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -753,11 +755,11 @@ async def test_magentic_stall_and_reset_reach_limits():
     assert idle_status is not None
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
-    assert isinstance(output_event.data, list)
-    assert all(isinstance(msg, Message) for msg in output_event.data)  # type: ignore
-    assert len(output_event.data) > 0  # type: ignore
-    assert output_event.data[-1].text is not None  # type: ignore
-    assert output_event.data[-1].text == "Workflow terminated due to reaching maximum reset count."  # type: ignore
+    assert isinstance(output_event.data, OrchestrationOutput)
+    assert all(isinstance(msg, Message) for msg in output_event.data.messages)
+    assert len(output_event.data.messages) > 0
+    assert output_event.data.messages[-1].text is not None
+    assert output_event.data.messages[-1].text == "Workflow terminated due to reaching maximum reset count."
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:
