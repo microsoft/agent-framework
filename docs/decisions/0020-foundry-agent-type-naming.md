@@ -51,6 +51,17 @@ ChatClientAgent agent = aiProjectClient.AsAIAgent(
     name: "JokerAgent");
 ```
 
+Or use composed `ChatClientAgent`
+
+```csharp
+ProjectResponsesClient projectResponsesClient = new(new Uri(endpoint), new DefaultAzureCredential(), new AgentReference($"model:{deploymentName}"));
+
+ChatClientAgent agent = new(projectResponsesClient.AsIChatClient(),
+    chatClient: projectResponsesClient.AsIChatClient(),
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
+```
+
 This path is code-first and does not create a persistent server-side agent.
 
 ### Versioned agent path
