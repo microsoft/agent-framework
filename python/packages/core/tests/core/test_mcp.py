@@ -53,6 +53,81 @@ def test_normalize_mcp_name():
     assert _normalize_mcp_name("name/with\\slashes") == "name-with-slashes"
 
 
+def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
+    assert MCPStdioTool(name="stdio", command="python", tool_name_prefix="stdio").tool_name_prefix == "stdio"
+    assert (
+        MCPStreamableHTTPTool(
+            name="http",
+            url="https://example.com/mcp",
+            tool_name_prefix="http",
+        ).tool_name_prefix
+        == "http"
+    )
+    assert (
+        MCPWebsocketTool(
+            name="ws",
+            url="wss://example.com/mcp",
+            tool_name_prefix="ws",
+        ).tool_name_prefix
+        == "ws"
+    )
+
+
+async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration():
+    """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
+    tool = MCPTool(
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=["search_docs"],
+        approval_mode={"always_require_approval": ["search_docs"]},
+    )
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="search_docs",
+            description="Search docs",
+            inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert [function.name for function in tool._functions] == ["docs_search_docs"]
+    assert [function.name for function in tool.functions] == ["docs_search_docs"]
+    assert tool.functions[0].approval_mode == "always_require"
+
+
+async def test_load_prompts_with_tool_name_prefix() -> None:
+    """Prefixed MCP prompt names should be exposed with the configured prefix."""
+    tool = MCPTool(name="docs", tool_name_prefix="docs")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    page = Mock()
+    page.prompts = [
+        types.Prompt(
+            name="summarize docs",
+            description="Summarize docs",
+            arguments=[types.PromptArgument(name="topic", description="Topic", required=True)],
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_prompts = AsyncMock(return_value=page)
+
+    await tool.load_prompts()
+
+    assert [function.name for function in tool._functions] == ["docs_summarize-docs"]
+
+
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
@@ -120,13 +195,16 @@ def test_parse_tool_result_from_mcp_meta_not_in_string():
 
 
 def test_parse_tool_result_from_mcp_empty_content():
-    """Test that empty content produces list with empty text Content."""
+    """Test that empty MCP content normalizes to JSON null text content."""
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].type == "text"
-    assert result[0].text == ""
+    assert result[0].text == "null"
+
+    function_result = Content.from_function_result(call_id="call_null", result=result)
+    assert function_result.result == "null"
 
 
 def test_parse_tool_result_from_mcp_audio_content():

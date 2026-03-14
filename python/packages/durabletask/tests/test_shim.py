@@ -184,16 +184,31 @@ class TestDurableAIAgentSessionManagement:
         mock_executor.get_new_session.assert_called_once_with("test_agent")
         assert session == mock_session
 
-    def test_create_session_forwards_kwargs(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
-        """Verify create_session forwards kwargs to executor."""
-        mock_session = DurableAgentSession(service_session_id="session-123")
+    def test_get_session_forwards_service_session_id(
+        self, test_agent: DurableAIAgent[Any], mock_executor: Mock
+    ) -> None:
+        """Verify get_session forwards service_session_id and session_id to executor."""
+        mock_session = DurableAgentSession(service_session_id="svc-123")
         mock_executor.get_new_session.return_value = mock_session
 
-        test_agent.create_session(service_session_id="session-123")
+        session = test_agent.get_session("svc-123", session_id="local-456")
 
-        mock_executor.get_new_session.assert_called_once()
-        _, kwargs = mock_executor.get_new_session.call_args
-        assert kwargs["service_session_id"] == "session-123"
+        mock_executor.get_new_session.assert_called_once_with(
+            "test_agent", service_session_id="svc-123", session_id="local-456"
+        )
+        assert session.service_session_id == "svc-123"
+
+    def test_get_session_without_session_id(self, test_agent: DurableAIAgent[Any], mock_executor: Mock) -> None:
+        """Verify get_session works with only service_session_id (session_id defaults to None)."""
+        mock_session = DurableAgentSession(service_session_id="svc-789")
+        mock_executor.get_new_session.return_value = mock_session
+
+        session = test_agent.get_session("svc-789")
+
+        mock_executor.get_new_session.assert_called_once_with(
+            "test_agent", service_session_id="svc-789", session_id=None
+        )
+        assert session.service_session_id == "svc-789"
 
 
 class TestDurableAgentProviderInterface:

@@ -4,6 +4,8 @@
 // Uses Microsoft Agent Framework with Azure AI Foundry.
 // Ready for deployment to Foundry Hosted Agent service.
 
+#pragma warning disable CA2252 // AIProjectClient and Agents API require opting into preview features
+
 using System.ComponentModel;
 using System.Globalization;
 using System.Text;

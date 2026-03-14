@@ -119,9 +119,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         allow_preview: bool | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a bare Azure AI client.
 
@@ -145,9 +145,9 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -217,7 +217,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
 
         # Initialize parent
         super().__init__(
-            **kwargs,
+            additional_properties=additional_properties,
         )
 
         # Initialize instance variables
@@ -1243,11 +1243,11 @@ class AzureAIClient(
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
         allow_preview: bool | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure AI client with full layer support.
 
@@ -1268,11 +1268,11 @@ class AzureAIClient(
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
             allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of chat middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -1319,9 +1319,9 @@ class AzureAIClient(
             credential=credential,
             use_latest_version=use_latest_version,
             allow_preview=allow_preview,
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )
