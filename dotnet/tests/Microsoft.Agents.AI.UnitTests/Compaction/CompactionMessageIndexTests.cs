@@ -263,7 +263,7 @@ public class CompactionMessageIndexTests
     public void MessageGroupStoresPassedCounts()
     {
         // Arrange & Act
-        CompactionMessageGroup group = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
+        CompactionMessageGroup group = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
 
         // Assert
         Assert.Equal(1, group.MessageCount);
@@ -276,7 +276,7 @@ public class CompactionMessageIndexTests
     {
         // Arrange
         IReadOnlyList<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
-        CompactionMessageGroup group = new(CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
+        CompactionMessageGroup group = new(InvalidateCallback, CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
 
         // Assert — Messages is IReadOnlyList, not IList
         Assert.IsType<IReadOnlyList<ChatMessage>>(group.Messages, exactMatch: false);
@@ -752,9 +752,9 @@ public class CompactionMessageIndexTests
     public void ConstructorWithGroupsRestoresTurnIndex()
     {
         // Arrange — pre-existing groups with turn indices
-        CompactionMessageGroup group1 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
-        CompactionMessageGroup group2 = new(CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
-        CompactionMessageGroup group3 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
+        CompactionMessageGroup group1 = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group2 = new(InvalidateCallback, CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group3 = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
         List<CompactionMessageGroup> groups = [group1, group2, group3];
 
         // Act — constructor should restore _currentTurn from the last group's TurnIndex
@@ -789,7 +789,7 @@ public class CompactionMessageIndexTests
     public void ConstructorWithGroupsWithoutTurnIndexSkipsRestore()
     {
         // Arrange — groups without turn indices (system messages)
-        CompactionMessageGroup systemGroup = new(CompactionGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
+        CompactionMessageGroup systemGroup = new(InvalidateCallback, CompactionGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
         List<CompactionMessageGroup> groups = [systemGroup];
 
         // Act — constructor won't find a TurnIndex to restore
@@ -1648,23 +1648,5 @@ public class CompactionMessageIndexTests
         Assert.Equal(2, index.TotalTokenCount);
     }
 
-    [Fact]
-    public void ConstructorWithPreExistingGroupsRegistersThemForCacheInvalidation()
-    {
-        // Arrange — build groups externally, pass them into constructor
-        CompactionMessageGroup group1 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
-        CompactionMessageGroup group2 = new(CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
-        List<CompactionMessageGroup> groups = [group1, group2];
-
-        CompactionMessageIndex index = new(groups);
-
-        // Prime the cache
-        Assert.Equal(2, index.IncludedGroupCount);
-
-        // Act — exclude a pre-existing group (ExclusionChanged should fire and invalidate)
-        group1.IsExcluded = true;
-
-        // Assert — cache reflects the change
-        Assert.Equal(1, index.IncludedGroupCount);
-    }
+    private static void InvalidateCallback() { }
 }

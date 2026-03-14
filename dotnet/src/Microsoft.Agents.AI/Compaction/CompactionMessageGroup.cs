@@ -40,9 +40,15 @@ public sealed class CompactionMessageGroup
     /// </remarks>
     public static readonly string SummaryPropertyKey = "_is_summary";
 
+    private readonly Action _exclusionChangedCallback;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="CompactionMessageGroup"/> class.
     /// </summary>
+    /// <param name="exclusionChangedCallback">
+    /// A callback invoked when <see cref="IsExcluded"/> changes value.
+    /// Used internally by <see cref="CompactionMessageIndex"/> to invalidate cached aggregates.
+    /// </param>
     /// <param name="kind">The kind of message group.</param>
     /// <param name="messages">The messages in this group. The list is captured as a read-only snapshot.</param>
     /// <param name="byteCount">The total UTF-8 byte count of the text content in the messages.</param>
@@ -51,8 +57,15 @@ public sealed class CompactionMessageGroup
     /// The user turn this group belongs to, or <see langword="null"/> for <see cref="CompactionGroupKind.System"/>.
     /// </param>
     [JsonConstructor]
-    internal CompactionMessageGroup(CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
+    internal CompactionMessageGroup(
+        Action exclusionChangedCallback,
+        CompactionGroupKind kind,
+        IReadOnlyList<ChatMessage> messages,
+        int byteCount,
+        int tokenCount,
+        int? turnIndex = null)
     {
+        this._exclusionChangedCallback = exclusionChangedCallback;
         this.Kind = kind;
         this.Messages = messages;
         this.MessageCount = messages.Count;
@@ -101,14 +114,6 @@ public sealed class CompactionMessageGroup
     /// </remarks>
     public int? TurnIndex { get; }
 
-    private bool _isExcluded;
-
-    /// <summary>
-    /// An optional callback invoked when <see cref="IsExcluded"/> changes value.
-    /// Used internally by <see cref="CompactionMessageIndex"/> to invalidate cached aggregates.
-    /// </summary>
-    internal Action? ExclusionChanged;
-
     /// <summary>
     /// Gets or sets a value indicating whether this group is excluded from the projected message list.
     /// </summary>
@@ -118,13 +123,13 @@ public sealed class CompactionMessageGroup
     /// </remarks>
     public bool IsExcluded
     {
-        get => _isExcluded;
+        get;
         set
         {
-            if (_isExcluded != value)
+            if (field != value)
             {
-                _isExcluded = value;
-                ExclusionChanged?.Invoke();
+                field = value;
+                this._exclusionChangedCallback.Invoke();
             }
         }
     }
