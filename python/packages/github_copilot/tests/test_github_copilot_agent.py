@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E402
+
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -7,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+copilot = pytest.importorskip("copilot")
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
