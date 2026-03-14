@@ -2974,14 +2974,11 @@ async def test_mcp_tool_filters_framework_kwargs():
 
 
 @pytest.mark.parametrize(
-    "use_span,expect_traceparent",
-    [
-        (True, True),
-        (False, False),
-    ],
+    "use_parent_span",
+    [True, False],
 )
-async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_exporter):
-    """call_tool propagates OTel trace context via meta only when a span is active."""
+async def test_mcp_tool_call_tool_otel_meta(use_parent_span, span_exporter):
+    """call_tool always propagates OTel trace context via meta because it creates its own CLIENT span."""
     from opentelemetry import trace
 
     class TestServer(MCPTool):
@@ -3013,25 +3010,178 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
     async with server:
         await server.load_tools()
 
-        if use_span:
+        if use_parent_span:
             tracer = trace.get_tracer("test")
             with tracer.start_as_current_span("test_span"):
                 await server.functions[0].invoke(param="test_value")
         else:
-            # Use an invalid span to ensure no trace context is injected;
-            # call server.call_tool directly to bypass FunctionTool.invoke's own span.
-            with trace.use_span(trace.NonRecordingSpan(trace.INVALID_SPAN_CONTEXT)):
-                await server.call_tool("test_tool", param="test_value")
+            # call_tool creates its own MCP CLIENT span, so traceparent is always injected.
+            await server.call_tool("test_tool", param="test_value")
 
         meta = server.session.call_tool.call_args.kwargs.get("meta")
-        if expect_traceparent:
-            # When a valid span is active, we expect some propagation fields to be injected,
-            # but we do not assume any specific header name to keep this test propagator-agnostic.
-            assert meta is not None
-            assert isinstance(meta, dict)
-            assert len(meta) > 0
-        else:
-            assert meta is None
+        # call_tool always creates an OTel span, so traceparent is always propagated.
+        assert meta is not None
+        assert isinstance(meta, dict)
+        assert len(meta) > 0
+
+
+# endregion
+
+
+# region: OTel MCP spans
+
+
+@pytest.fixture
+def mcp_test_server_class():
+    """Factory for a minimal MCPTool subclass usable in span tests."""
+
+    class _TestServer(MCPTool):
+        def __init__(self, **kwargs):
+            super().__init__(name="test_server", **kwargs)
+            self._mock_session = Mock(spec=ClientSession)
+            # MCP SDK stores _request_id as int; call_tool converts it to str for the span.
+            self._mock_session._request_id = 42
+            self._mock_session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="ok")]
+                )
+            )
+            self._mock_session.get_prompt = AsyncMock(
+                return_value=types.GetPromptResult(
+                    messages=[
+                        types.PromptMessage(
+                            role="user",
+                            content=types.TextContent(type="text", text="hello"),
+                        )
+                    ]
+                )
+            )
+            self._mock_session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(tools=[])
+            )
+
+        async def connect(self):
+            self.session = self._mock_session
+            self._tools_loaded = True
+            self._prompts_loaded = True
+            self.is_connected = True
+
+        def get_mcp_client(self):
+            return None
+
+    return _TestServer
+
+
+async def test_call_tool_creates_mcp_client_span(span_exporter, mcp_test_server_class):
+    """call_tool emits a CLIENT span following OTel MCP conventions."""
+    from opentelemetry.trace import SpanKind
+
+    server = mcp_test_server_class()
+    async with server:
+        await server.call_tool("my_tool", param="value")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "tools/call my_tool"
+    assert span.kind == SpanKind.CLIENT
+    assert span.attributes["mcp.method.name"] == "tools/call"
+    assert span.attributes["gen_ai.tool.name"] == "my_tool"
+    assert span.attributes["gen_ai.operation.name"] == "execute_tool"
+    assert span.attributes["jsonrpc.protocol.version"] == "2.0"
+    assert span.attributes["jsonrpc.request.id"] == "42"
+
+
+async def test_call_tool_span_sets_error_on_mcp_error(span_exporter, mcp_test_server_class):
+    """call_tool sets ERROR status and error.type when McpError is raised."""
+    from mcp.shared.exceptions import McpError
+    from opentelemetry.trace import StatusCode
+
+    server = mcp_test_server_class()
+    async with server:
+        server._mock_session.call_tool = AsyncMock(
+            side_effect=McpError(
+                types.ErrorData(code=-32600, message="bad request")
+            )
+        )
+        with pytest.raises(Exception):
+            await server.call_tool("my_tool")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "-32600"
+
+
+async def test_call_tool_span_sets_error_on_tool_error_result(span_exporter, mcp_test_server_class):
+    """call_tool sets ERROR status when the tool result itself is an error."""
+    from opentelemetry.trace import StatusCode
+
+    server = mcp_test_server_class()
+    async with server:
+        server._mock_session.call_tool = AsyncMock(
+            return_value=types.CallToolResult(
+                isError=True,
+                content=[types.TextContent(type="text", text="tool error")],
+            )
+        )
+        with pytest.raises(Exception):
+            await server.call_tool("my_tool")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "ToolError"
+
+
+async def test_call_tool_span_includes_protocol_version(span_exporter, mcp_test_server_class):
+    """call_tool includes mcp.protocol.version when set."""
+    server = mcp_test_server_class()
+    async with server:
+        server._mcp_protocol_version = "2025-06-18"
+        await server.call_tool("my_tool")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    assert spans[0].attributes["mcp.protocol.version"] == "2025-06-18"
+
+
+async def test_get_prompt_creates_mcp_client_span(span_exporter, mcp_test_server_class):
+    """get_prompt emits a CLIENT span following OTel MCP conventions."""
+    from opentelemetry.trace import SpanKind
+
+    server = mcp_test_server_class()
+    async with server:
+        await server.get_prompt("my_prompt", arg="value")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.name == "prompts/get my_prompt"
+    assert span.kind == SpanKind.CLIENT
+    assert span.attributes["mcp.method.name"] == "prompts/get"
+    assert span.attributes["gen_ai.prompt.name"] == "my_prompt"
+    assert span.attributes["jsonrpc.protocol.version"] == "2.0"
+    assert span.attributes["jsonrpc.request.id"] == "42"
+
+
+async def test_get_prompt_span_sets_error_on_exception(span_exporter, mcp_test_server_class):
+    """get_prompt sets ERROR status and error.type on exception."""
+    from opentelemetry.trace import StatusCode
+
+    server = mcp_test_server_class()
+    async with server:
+        server._mock_session.get_prompt = AsyncMock(side_effect=RuntimeError("fail"))
+        with pytest.raises(Exception):
+            await server.get_prompt("my_prompt")
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.attributes["error.type"] == "RuntimeError"
 
 
 # endregion
