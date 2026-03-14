@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Shared.DiagnosticIds;
@@ -161,4 +162,117 @@ public abstract class CompactionStrategy
     /// <param name="value">The target value.</param>
     /// <returns>0 if negative; otherwise the value</returns>
     protected static int EnsureNonNegative(int value) => Math.Max(0, value);
+
+    /// <summary>
+    /// Creates a pre-configured <see cref="CompactionStrategy"/> from a combination of
+    /// <paramref name="approach"/> and <paramref name="size"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <paramref name="approach"/> controls which strategies are included in the pipeline:
+    /// <list type="bullet">
+    /// <item><description><see cref="CompactionApproach.Gentle"/>: tool result collapsing + truncation backstop. No <paramref name="chatClient"/> required.</description></item>
+    /// <item><description><see cref="CompactionApproach.Balanced"/>: tool result collapsing + LLM summarization + truncation backstop.</description></item>
+    /// <item><description><see cref="CompactionApproach.Aggressive"/>: tool result collapsing + LLM summarization + sliding window + truncation backstop.</description></item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// The <paramref name="size"/> controls the token and message thresholds at which each stage triggers.
+    /// Choose a size that matches the input token limit of your model.
+    /// </para>
+    /// </remarks>
+    /// <param name="approach">
+    /// The compaction approach that controls which strategy or pipeline to use.
+    /// <see cref="CompactionApproach.Gentle"/> does not require a <paramref name="chatClient"/>;
+    /// <see cref="CompactionApproach.Balanced"/> and <see cref="CompactionApproach.Aggressive"/> require one.
+    /// </param>
+    /// <param name="size">
+    /// The context-size profile that controls token and message thresholds.
+    /// </param>
+    /// <param name="chatClient">
+    /// The <see cref="IChatClient"/> used for LLM-based summarization.
+    /// Required when <paramref name="approach"/> is <see cref="CompactionApproach.Balanced"/> or
+    /// <see cref="CompactionApproach.Aggressive"/>; ignored for <see cref="CompactionApproach.Gentle"/>.
+    /// </param>
+    /// <returns>A <see cref="CompactionStrategy"/> configured for the specified approach and size.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="chatClient"/> is <see langword="null"/> and <paramref name="approach"/> requires one.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="approach"/> or <paramref name="size"/> is not a defined enum value.
+    /// </exception>
+    public static CompactionStrategy Create(CompactionApproach approach, CompactionSize size, IChatClient? chatClient = null)
+    {
+        if (approach is CompactionApproach.Balanced or CompactionApproach.Aggressive)
+        {
+            _ = Throw.IfNull(chatClient);
+        }
+
+        int tokenLimit = GetTokenLimit(size);
+        int messageLimit = GetMessageLimit(size);
+
+        return approach switch
+        {
+            CompactionApproach.Gentle => CreateGentlePipeline(tokenLimit, messageLimit),
+            CompactionApproach.Balanced => CreateBalancedPipeline(tokenLimit, messageLimit, chatClient!),
+            CompactionApproach.Aggressive => CreateAggressivePipeline(tokenLimit, messageLimit, GetTurnLimit(size), chatClient!),
+            _ => throw new ArgumentOutOfRangeException(nameof(approach), approach, null),
+        };
+    }
+
+    private static int GetTokenLimit(CompactionSize size) => size switch
+    {
+        CompactionSize.Compact => 4_000,
+        CompactionSize.Moderate => 8_000,
+        CompactionSize.Generous => 16_000,
+        _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
+    };
+
+    private static int GetMessageLimit(CompactionSize size) => size switch
+    {
+        CompactionSize.Compact => 10,
+        CompactionSize.Moderate => 20,
+        CompactionSize.Generous => 40,
+        _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
+    };
+
+    private static int GetTurnLimit(CompactionSize size) => size switch
+    {
+        CompactionSize.Compact => 3,
+        CompactionSize.Moderate => 6,
+        CompactionSize.Generous => 12,
+        _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
+    };
+
+    private static PipelineCompactionStrategy CreateGentlePipeline(int tokenLimit, int messageLimit) =>
+        new(
+            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(messageLimit)),
+            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+
+    private static PipelineCompactionStrategy CreateBalancedPipeline(int tokenLimit, int messageLimit, IChatClient chatClient)
+    {
+        // Early stages trigger at two-thirds of the limit so the pipeline has room to compact
+        // incrementally before reaching the emergency truncation backstop at the full limit.
+        int earlyMessageTrigger = messageLimit * 2 / 3;
+        int earlyTokenTrigger = tokenLimit * 2 / 3;
+
+        return new(
+            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(earlyMessageTrigger)),
+            new SummarizationCompactionStrategy(chatClient, CompactionTriggers.TokensExceed(earlyTokenTrigger)),
+            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+    }
+
+    private static PipelineCompactionStrategy CreateAggressivePipeline(int tokenLimit, int messageLimit, int turnLimit, IChatClient chatClient)
+    {
+        // Early stages trigger at half the limit so compaction kicks in sooner and
+        // the sliding window and truncation backstop are reached less often.
+        int earlyMessageTrigger = messageLimit / 2;
+        int earlyTokenTrigger = tokenLimit / 2;
+
+        return new(
+            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(earlyMessageTrigger)),
+            new SummarizationCompactionStrategy(chatClient, CompactionTriggers.TokensExceed(earlyTokenTrigger)),
+            new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(turnLimit)),
+            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+    }
 }
