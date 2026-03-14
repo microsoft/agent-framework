@@ -58,6 +58,7 @@ from .._tools import (
     FunctionTool,
     ToolTypes,
     normalize_tools,
+    sanitize_schema_for_api,
     tool,
 )
 from .._types import (
@@ -488,7 +489,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 )
                 continue
             if isinstance(tool_item, FunctionTool):
-                params = tool_item.parameters()
+                params = sanitize_schema_for_api(tool_item.parameters())
                 params["additionalProperties"] = False
                 response_tools.append(
                     FunctionToolParam(

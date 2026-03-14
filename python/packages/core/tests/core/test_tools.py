@@ -16,6 +16,8 @@ from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _parse_annotation,
     _parse_inputs,
+    _resolve_refs,
+    sanitize_schema_for_api,
 )
 from agent_framework.observability import OtelAttr
 
@@ -1132,6 +1134,196 @@ def test_parse_annotation_with_annotated_and_literal():
     literal_type = args[0]
     assert get_origin(literal_type) is Literal
     assert get_args(literal_type) == ("A", "B", "C")
+
+
+# endregion
+
+# region sanitize_schema_for_api tests
+
+
+def test_sanitize_schema_empty_returns_default() -> None:
+    """An empty schema should produce a minimal valid object schema."""
+    assert sanitize_schema_for_api({}) == {"type": "object", "properties": {}}
+
+
+def test_sanitize_schema_simple_unchanged() -> None:
+    """A simple schema with only supported fields should pass through."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    assert sanitize_schema_for_api(schema) == schema
+
+
+def test_sanitize_schema_does_not_mutate_original() -> None:
+    """The original schema dict must never be modified."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {"x": {"type": "integer"}},
+    }
+    original_keys = set(schema.keys())
+    sanitize_schema_for_api(schema)
+    assert set(schema.keys()) == original_keys
+
+
+def test_sanitize_schema_strips_unsupported_root_keys() -> None:
+    """$schema, $id, and title should all be stripped from the root."""
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "urn:example",
+        "title": "Args",
+        "type": "object",
+        "properties": {"x": {"type": "number"}},
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$schema" not in result
+    assert "$id" not in result
+    assert "title" not in result
+    assert result["type"] == "object"
+    assert result["properties"] == {"x": {"type": "number"}}
+
+
+def test_sanitize_schema_adds_type_object_when_missing() -> None:
+    """type should default to 'object' when properties are present but type is missing."""
+    result = sanitize_schema_for_api({"properties": {"name": {"type": "string"}}})
+    assert result["type"] == "object"
+
+
+def test_sanitize_schema_no_type_added_without_properties() -> None:
+    """type should not be injected when there are no properties."""
+    result = sanitize_schema_for_api({"description": "A schema without properties"})
+    assert "type" not in result
+
+
+def test_sanitize_schema_resolves_simple_ref() -> None:
+    """A simple $ref pointing to $defs should be inlined."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"params": {"$ref": "#/$defs/CustomerIdParam"}},
+        "$defs": {
+            "CustomerIdParam": {
+                "type": "object",
+                "properties": {"customer_id": {"type": "integer"}},
+                "required": ["customer_id"],
+            }
+        },
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$defs" not in result
+    assert result["properties"]["params"] == {
+        "type": "object",
+        "properties": {"customer_id": {"type": "integer"}},
+        "required": ["customer_id"],
+    }
+
+
+def test_sanitize_schema_resolves_nested_refs() -> None:
+    """Chained $ref references should be resolved recursively."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"order": {"$ref": "#/$defs/Order"}},
+        "$defs": {
+            "Order": {
+                "type": "object",
+                "properties": {"customer": {"$ref": "#/$defs/Customer"}},
+            },
+            "Customer": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+            },
+        },
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$defs" not in result
+    assert result["properties"]["order"]["properties"]["customer"] == {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+    }
+
+
+def test_sanitize_schema_resolves_ref_in_array_items() -> None:
+    """$ref inside array items should be resolved."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"items": {"type": "array", "items": {"$ref": "#/$defs/Item"}}},
+        "$defs": {"Item": {"type": "object", "properties": {"sku": {"type": "string"}}}},
+    }
+    result = sanitize_schema_for_api(schema)
+    assert result["properties"]["items"]["items"] == {
+        "type": "object",
+        "properties": {"sku": {"type": "string"}},
+    }
+
+
+def test_sanitize_schema_unresolvable_ref_dropped() -> None:
+    """An unresolvable $ref should be dropped gracefully."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"data": {"$ref": "#/$defs/NonExistent"}},
+        "$defs": {},
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$ref" not in result["properties"]["data"]
+
+
+def test_sanitize_schema_go_jsonschema_output() -> None:
+    """Schema generated by google/jsonschema-go (as used by matlab-mcp-core-server)."""
+    schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "urn:matlab:evaluate_matlab_code",
+        "title": "Args",
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "The MATLAB code to evaluate."},
+        },
+        "required": ["code"],
+        "additionalProperties": False,
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$schema" not in result
+    assert "$id" not in result
+    assert "title" not in result
+    assert result == {
+        "type": "object",
+        "properties": {"code": {"type": "string", "description": "The MATLAB code to evaluate."}},
+        "required": ["code"],
+        "additionalProperties": False,
+    }
+
+
+def test_resolve_refs_deep_copies() -> None:
+    """_resolve_refs should return a deep copy, not a reference to the input."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"nested": {"type": "object", "properties": {"deep": {"type": "boolean"}}}},
+    }
+    result = _resolve_refs(schema, {})
+    result["properties"]["nested"]["type"] = "array"
+    assert schema["properties"]["nested"]["type"] == "object"
+
+
+def test_sanitize_schema_both_defs_and_definitions() -> None:
+    """Schemas with both $defs and definitions should resolve refs from either."""
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "a": {"$ref": "#/$defs/TypeA"},
+            "b": {"$ref": "#/definitions/TypeB"},
+        },
+        "$defs": {
+            "TypeA": {"type": "string"},
+        },
+        "definitions": {
+            "TypeB": {"type": "integer"},
+        },
+    }
+    result = sanitize_schema_for_api(schema)
+    assert "$defs" not in result
+    assert "definitions" not in result
+    assert result["properties"]["a"] == {"type": "string"}
+    assert result["properties"]["b"] == {"type": "integer"}
 
 
 # endregion

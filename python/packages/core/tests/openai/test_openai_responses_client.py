@@ -3495,6 +3495,130 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     assert run_options["background"] is True
 
 
+def test_prepare_tools_for_openai_sanitizes_mcp_schema() -> None:
+    """Test that MCP tool schemas with unsupported JSON Schema fields are sanitized."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Simulate a schema produced by google/jsonschema-go (used by matlab-mcp-core-server)
+    mcp_schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "urn:matlab:evaluate_matlab_code",
+        "title": "Args",
+        "type": "object",
+        "properties": {
+            "project_path": {
+                "type": "string",
+                "description": "Absolute path to the project folder.",
+            },
+            "code": {
+                "type": "string",
+                "description": "The MATLAB code to evaluate.",
+            },
+        },
+        "required": ["code"],
+        "additionalProperties": False,
+    }
+
+    func_tool = FunctionTool(
+        func=lambda **kwargs: "ok",
+        name="evaluate_matlab_code",
+        description="Evaluate MATLAB code",
+        input_model=mcp_schema,
+    )
+
+    resp_tools = client._prepare_tools_for_openai([func_tool])
+    assert len(resp_tools) == 1
+
+    tool_def = resp_tools[0]
+    assert tool_def["type"] == "function"
+    assert tool_def["name"] == "evaluate_matlab_code"
+
+    params = tool_def["parameters"]
+    # These fields should be stripped — they cause 400 errors on LM Studio / Aliyun
+    assert "$schema" not in params
+    assert "$id" not in params
+    assert "title" not in params
+    # Valid fields should be preserved
+    assert params["type"] == "object"
+    assert "code" in params["properties"]
+    assert "project_path" in params["properties"]
+    assert params["required"] == ["code"]
+    assert params["additionalProperties"] is False
+
+
+def test_prepare_tools_for_openai_sanitizes_refs_in_mcp_schema() -> None:
+    """Test that $ref and $defs in MCP tool schemas are resolved and removed."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mcp_schema: dict[str, Any] = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "ToolInput",
+        "type": "object",
+        "properties": {
+            "settings": {"$ref": "#/$defs/Settings"},
+        },
+        "$defs": {
+            "Settings": {
+                "type": "object",
+                "properties": {
+                    "mode": {"type": "string", "enum": ["fast", "slow"]},
+                    "retries": {"type": "integer"},
+                },
+            }
+        },
+    }
+
+    func_tool = FunctionTool(
+        func=lambda **kwargs: "ok",
+        name="configure_tool",
+        description="Configure settings",
+        input_model=mcp_schema,
+    )
+
+    resp_tools = client._prepare_tools_for_openai([func_tool])
+    params = resp_tools[0]["parameters"]
+
+    assert "$schema" not in params
+    assert "title" not in params
+    assert "$defs" not in params
+    assert "$ref" not in params["properties"]["settings"]
+    # $ref should be resolved inline
+    assert params["properties"]["settings"] == {
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["fast", "slow"]},
+            "retries": {"type": "integer"},
+        },
+    }
+
+
+def test_prepare_tools_for_openai_does_not_mutate_cached_schema() -> None:
+    """Test that _prepare_tools_for_openai does not mutate the FunctionTool's cached schema."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    original_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {"x": {"type": "integer"}},
+    }
+
+    func_tool = FunctionTool(
+        func=lambda **kwargs: "ok",
+        name="my_tool",
+        description="A tool",
+        input_model=original_schema,
+    )
+
+    # Prime the cache
+    _ = func_tool.parameters()
+
+    # Prepare tools (this used to mutate the cache)
+    client._prepare_tools_for_openai([func_tool])
+
+    # The cached schema should NOT have been modified
+    cached = func_tool.parameters()
+    assert "additionalProperties" not in cached
+
+
 # endregion
 
 
