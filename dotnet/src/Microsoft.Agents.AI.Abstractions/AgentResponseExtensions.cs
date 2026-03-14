@@ -64,21 +64,30 @@ public static class AgentResponseExtensions
     {
         Throw.IfNull(responseUpdate);
 
-        return
-            responseUpdate.RawRepresentation as ChatResponseUpdate ??
-            new()
+        if (responseUpdate.RawRepresentation is ChatResponseUpdate raw)
+        {
+            // Recover MessageId from the wrapper if the raw representation doesn't have one.
+            // This handles both null and empty/whitespace values from providers.
+            if (string.IsNullOrWhiteSpace(raw.MessageId) && !string.IsNullOrWhiteSpace(responseUpdate.MessageId))
             {
-                AdditionalProperties = responseUpdate.AdditionalProperties,
-                AuthorName = responseUpdate.AuthorName,
-                Contents = responseUpdate.Contents,
-                CreatedAt = responseUpdate.CreatedAt,
-                FinishReason = responseUpdate.FinishReason,
-                MessageId = responseUpdate.MessageId,
-                RawRepresentation = responseUpdate,
-                ResponseId = responseUpdate.ResponseId,
-                Role = responseUpdate.Role,
-                ContinuationToken = responseUpdate.ContinuationToken,
-            };
+                raw.MessageId = responseUpdate.MessageId;
+            }
+            return raw;
+        }
+
+        return new()
+        {
+            AdditionalProperties = responseUpdate.AdditionalProperties,
+            AuthorName = responseUpdate.AuthorName,
+            Contents = responseUpdate.Contents,
+            CreatedAt = responseUpdate.CreatedAt,
+            FinishReason = responseUpdate.FinishReason,
+            MessageId = responseUpdate.MessageId,
+            RawRepresentation = responseUpdate,
+            ResponseId = responseUpdate.ResponseId,
+            Role = responseUpdate.Role,
+            ContinuationToken = responseUpdate.ContinuationToken,
+        };
     }
 
     /// <summary>
