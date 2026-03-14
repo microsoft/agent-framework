@@ -1180,16 +1180,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 if not fc_id.startswith("fc_"):
                     fc_id = f"fc_{fc_id}"
 
-                function_call_obj = {
+                status = (
+                    content.additional_properties.get("status") if content.additional_properties else None
+                ) or "completed"
+                return {
                     "call_id": content.call_id,
                     "id": fc_id,
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
+                    "status": status,
                 }
-                if status := content.additional_properties.get("status"):
-                    function_call_obj["status"] = status
-                return function_call_obj
             case "function_result":
                 shell_output_type = (
                     content.additional_properties.get(OPENAI_SHELL_OUTPUT_TYPE_KEY)
@@ -1226,10 +1227,14 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 output_parts.append(part)
                     if output_parts:
                         output = output_parts
+                fn_result_status = (
+                    content.additional_properties.get("status") if content.additional_properties else None
+                ) or "completed"
                 return {
                     "call_id": content.call_id,
                     "type": "function_call_output",
                     "output": output,
+                    "status": fn_result_status,
                 }
             case "function_approval_request":
                 return {

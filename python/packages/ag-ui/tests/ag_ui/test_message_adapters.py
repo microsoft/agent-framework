@@ -1455,6 +1455,94 @@ def test_parse_multimodal_media_part_binary_source_type():
     assert result.uri == "data:image/png;base64,abc"
 
 
+def test_parse_multimodal_media_part_filename_passthrough_base64():
+    """Filename from AG-UI BinaryInputContent is passed through to Content.from_data()."""
+    import base64
+
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    raw = base64.b64encode(b"PDF content").decode()
+    part = {
+        "type": "document",
+        "data": raw,
+        "mimeType": "application/pdf",
+        "filename": "report.pdf",
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.type == "data"
+    assert result.additional_properties is not None
+    assert result.additional_properties["filename"] == "report.pdf"
+
+
+def test_parse_multimodal_media_part_filename_passthrough_url():
+    """Filename from AG-UI part with URL is passed through to Content.from_uri()."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "document",
+        "url": "https://example.com/report.pdf",
+        "mimeType": "application/pdf",
+        "filename": "report.pdf",
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "https://example.com/report.pdf"
+    assert result.additional_properties is not None
+    assert result.additional_properties["filename"] == "report.pdf"
+
+
+def test_parse_multimodal_media_part_no_filename():
+    """Part without filename does not include filename in additional_properties."""
+    import base64
+
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    raw = base64.b64encode(b"image data").decode()
+    part = {
+        "type": "image",
+        "data": raw,
+        "mimeType": "image/png",
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert not result.additional_properties or "filename" not in result.additional_properties
+
+
+def test_parse_multimodal_media_part_filename_passthrough_data_uri():
+    """Filename from AG-UI part with data URI prefix is passed through."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "document",
+        "data": "data:application/pdf;base64,abc",
+        "mimeType": "application/pdf",
+        "filename": "invoice.pdf",
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "data:application/pdf;base64,abc"
+    assert result.additional_properties is not None
+    assert result.additional_properties["filename"] == "invoice.pdf"
+
+
+def test_parse_multimodal_media_part_filename_passthrough_binary_id():
+    """Filename from AG-UI part with binary ID is passed through."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "document",
+        "id": "file123",
+        "mimeType": "application/pdf",
+        "filename": "doc.pdf",
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "ag-ui://binary/file123"
+    assert result.additional_properties is not None
+    assert result.additional_properties["filename"] == "doc.pdf"
+
+
 def test_snapshot_non_dict_item_in_content_list():
     """Non-dict items in content list are stringified."""
     result = agui_messages_to_snapshot_format([{"role": "user", "content": [42, "text"]}])
