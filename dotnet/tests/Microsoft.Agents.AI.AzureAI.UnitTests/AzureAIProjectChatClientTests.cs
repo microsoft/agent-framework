@@ -22,7 +22,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -49,17 +49,16 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
-                ChatOptions = new() { ConversationId = "conv_12345" }
+                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_12345" }
             });
 
         // Act
-        var thread = agent.GetNewThread();
-        await agent.RunAsync("Hello", thread);
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
 
         Assert.True(requestTriggered);
-        var chatClientThread = Assert.IsType<ChatClientAgentThread>(thread);
-        Assert.Equal("conv_12345", chatClientThread.ConversationId);
+        var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Equal("conv_12345", chatClientSession.ConversationId);
     }
 
     /// <summary>
@@ -72,7 +71,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -99,16 +98,16 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
+                ChatOptions = new() { Instructions = "Test instructions" },
             });
 
         // Act
-        var thread = agent.GetNewThread();
-        await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
-        var chatClientThread = Assert.IsType<ChatClientAgentThread>(thread);
-        Assert.Equal("conv_12345", chatClientThread.ConversationId);
+        var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Equal("conv_12345", chatClientSession.ConversationId);
     }
 
     /// <summary>
@@ -121,7 +120,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -148,17 +147,16 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
-                ChatOptions = new() { ConversationId = "conv_should_not_use_default" }
+                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_should_not_use_default" }
             });
 
         // Act
-        var thread = agent.GetNewThread();
-        await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
-        var chatClientThread = Assert.IsType<ChatClientAgentThread>(thread);
-        Assert.Equal("conv_12345", chatClientThread.ConversationId);
+        var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Equal("conv_12345", chatClientSession.ConversationId);
     }
 
     /// <summary>
@@ -171,7 +169,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -198,15 +196,15 @@ public class AzureAIProjectChatClientTests
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
-                Instructions = "Test instructions",
+                ChatOptions = new() { Instructions = "Test instructions" },
             });
 
         // Act
-        var thread = agent.GetNewThread();
-        await agent.RunAsync("Hello", thread, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "resp_0888a" } });
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "resp_0888a" } });
 
         Assert.True(requestTriggered);
-        var chatClientThread = Assert.IsType<ChatClientAgentThread>(thread);
-        Assert.Equal("resp_0888a46cbf2b1ff3006914596e05d08195a77c3f5187b769a7", chatClientThread.ConversationId);
+        var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
+        Assert.Equal("resp_0888a46cbf2b1ff3006914596e05d08195a77c3f5187b769a7", chatClientSession.ConversationId);
     }
 }

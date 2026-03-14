@@ -27,7 +27,7 @@ internal static class ActivityProcessor
                 {
                     yield return CreateChatMessageFromActivity(activity, [new TextContent(activity.Text)]);
                 }
-                else
+                else if (logger.IsEnabled(LogLevel.Warning))
                 {
                     logger.LogWarning("Unknown activity type '{ActivityType}' received.", activity.Type);
                 }

@@ -6,17 +6,23 @@ This module provides the AgentFunctionApp class that integrates Microsoft Agent 
 with Azure Durable Entities, enabling stateful and durable AI agent execution.
 """
 
+from __future__ import annotations
+
+import asyncio
 import json
+import logging
 import re
+import uuid
 from collections.abc import Callable, Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import azure.durable_functions as df
 import azure.functions as func
-from agent_framework import AgentProtocol, get_logger
-
-from ._callbacks import AgentResponseCallbackProtocol
-from ._constants import (
+from agent_framework import AgentExecutor, SupportsAgentRun, Workflow, WorkflowEvent
+from agent_framework_durabletask import (
     DEFAULT_MAX_POLL_RETRIES,
     DEFAULT_POLL_INTERVAL_SECONDS,
     MIMETYPE_APPLICATION_JSON,
@@ -27,17 +33,51 @@ from ._constants import (
     THREAD_ID_HEADER,
     WAIT_FOR_RESPONSE_FIELD,
     WAIT_FOR_RESPONSE_HEADER,
+    AgentResponseCallbackProtocol,
+    AgentSessionId,
+    ApiResponseFields,
+    DurableAgentState,
+    DurableAIAgent,
+    RunRequest,
 )
-from ._durable_agent_state import DurableAgentState
+
+from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
-from ._models import AgentSessionId, RunRequest
-from ._orchestration import AgentOrchestrationContextType, DurableAIAgent
+from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
+from ._serialization import deserialize_value, serialize_value, strip_pickle_markers
+from ._workflow import (
+    SOURCE_HITL_RESPONSE,
+    SOURCE_ORCHESTRATOR,
+    execute_hitl_response_handler,
+    run_workflow_orchestrator,
+)
 
-logger = get_logger("agent_framework.azurefunctions")
+logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+
+def _create_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Create a deep copy of the deserialized state for later diffing."""
+    return deepcopy(state)
+
+
+@dataclass
+class AgentMetadata:
+    """Metadata for a registered agent.
+
+    Attributes:
+        agent: The agent instance implementing SupportsAgentRun
+        http_endpoint_enabled: Whether HTTP endpoint is enabled for this agent
+        mcp_tool_enabled: Whether MCP tool endpoint is enabled for this agent
+    """
+
+    agent: SupportsAgentRun
+    http_endpoint_enabled: bool
+    mcp_tool_enabled: bool
+
 
 if TYPE_CHECKING:
 
@@ -55,6 +95,15 @@ if TYPE_CHECKING:
         def orchestration_trigger(self, context_name: str) -> Callable[[HandlerT], HandlerT]: ...
 
         def activity_trigger(self, input_name: str) -> Callable[[HandlerT], HandlerT]: ...
+
+        def mcp_tool_trigger(
+            self,
+            arg_name: str,
+            tool_name: str,
+            description: str,
+            tool_properties: str,
+            data_type: func.DataType,
+        ) -> Callable[[HandlerT], HandlerT]: ...
 
 else:
     DFAppBase = df.DFApp  # type: ignore[assignment]
@@ -78,13 +127,13 @@ class AgentFunctionApp(DFAppBase):
         from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 
         # Create agents with unique names
-        weather_agent = AzureOpenAIChatClient(...).create_agent(
+        weather_agent = AzureOpenAIChatClient(...).as_agent(
             name="WeatherAgent",
             instructions="You are a helpful weather agent.",
             tools=[get_weather],
         )
 
-        math_agent = AzureOpenAIChatClient(...).create_agent(
+        math_agent = AzureOpenAIChatClient(...).as_agent(
             name="MathAgent",
             instructions="You are a helpful math assistant.",
             tools=[calculate],
@@ -102,8 +151,8 @@ class AgentFunctionApp(DFAppBase):
         @app.orchestration_trigger(context_name="context")
         def my_orchestration(context):
             writer = app.get_agent(context, "WeatherAgent")
-            thread = writer.get_new_thread()
-            forecast_task = writer.run("What's the forecast?", thread=thread)
+            session = writer.create_session()
+            forecast_task = writer.run("What's the forecast?", session=session)
             forecast = yield forecast_task
             return forecast
 
@@ -114,34 +163,42 @@ class AgentFunctionApp(DFAppBase):
     - Full access to all Azure Functions capabilities
 
     Attributes:
-        agents: Dictionary of agent name to AgentProtocol instance
+        agents: Dictionary of agent name to SupportsAgentRun instance
         enable_health_check: Whether health check endpoint is enabled
         enable_http_endpoints: Whether HTTP endpoints are created for agents
+        enable_mcp_tool_trigger: Whether MCP tool triggers are created for agents
         max_poll_retries: Maximum polling attempts when waiting for responses
         poll_interval_seconds: Delay (seconds) between polling attempts
+        workflow: Optional Workflow instance for workflow orchestration
     """
 
-    agents: dict[str, AgentProtocol]
+    _agent_metadata: dict[str, AgentMetadata]
     enable_health_check: bool
     enable_http_endpoints: bool
-    agent_http_endpoint_flags: dict[str, bool]
+    enable_mcp_tool_trigger: bool
+    workflow: Workflow | None
 
     def __init__(
         self,
-        agents: list[AgentProtocol] | None = None,
+        agents: list[SupportsAgentRun] | None = None,
+        workflow: Workflow | None = None,
         http_auth_level: func.AuthLevel = func.AuthLevel.FUNCTION,
         enable_health_check: bool = True,
         enable_http_endpoints: bool = True,
         max_poll_retries: int = DEFAULT_MAX_POLL_RETRIES,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        enable_mcp_tool_trigger: bool = False,
         default_callback: AgentResponseCallbackProtocol | None = None,
     ):
         """Initialize the AgentFunctionApp.
 
         :param agents: List of agent instances to register.
+        :param workflow: Optional Workflow instance to extract agents from and set up orchestration.
         :param http_auth_level: HTTP authentication level (default: ``func.AuthLevel.FUNCTION``).
         :param enable_health_check: Enable the built-in health check endpoint (default: ``True``).
         :param enable_http_endpoints: Enable HTTP endpoints for agents (default: ``True``).
+        :param enable_mcp_tool_trigger: Enable MCP tool triggers for agents (default: ``False``).
+            When enabled, agents will be exposed as MCP tools that can be invoked by MCP-compatible clients.
         :param max_poll_retries: Maximum polling attempts when waiting for a response.
             Defaults to ``DEFAULT_MAX_POLL_RETRIES``.
         :param poll_interval_seconds: Delay in seconds between polling attempts.
@@ -155,12 +212,13 @@ class AgentFunctionApp(DFAppBase):
         # Initialize parent DFApp
         super().__init__(http_auth_level=http_auth_level)
 
-        # Initialize agents dictionary
-        self.agents = {}
-        self.agent_http_endpoint_flags = {}
+        # Initialize agent metadata dictionary
+        self._agent_metadata = {}
         self.enable_health_check = enable_health_check
         self.enable_http_endpoints = enable_http_endpoints
+        self.enable_mcp_tool_trigger = enable_mcp_tool_trigger
         self.default_callback = default_callback
+        self.workflow = workflow
 
         try:
             retries = int(max_poll_retries)
@@ -174,6 +232,20 @@ class AgentFunctionApp(DFAppBase):
             interval = DEFAULT_POLL_INTERVAL_SECONDS
         self.poll_interval_seconds = interval if interval > 0 else DEFAULT_POLL_INTERVAL_SECONDS
 
+        # If workflow is provided, extract agents and set up orchestration
+        if workflow:
+            if agents is None:
+                agents = []
+            logger.debug("[AgentFunctionApp] Extracting agents from workflow")
+            for executor in workflow.executors.values():
+                if isinstance(executor, AgentExecutor):
+                    agents.append(executor.agent)
+                else:
+                    # Setup individual activity for each non-agent executor
+                    self._setup_executor_activity(executor.id)
+
+            self._setup_workflow_orchestration()
+
         if agents:
             # Register all provided agents
             logger.debug(f"[AgentFunctionApp] Registering {len(agents)} agent(s)")
@@ -186,35 +258,355 @@ class AgentFunctionApp(DFAppBase):
 
         logger.debug("[AgentFunctionApp] Initialization complete")
 
+    def _setup_executor_activity(self, executor_id: str) -> None:
+        """Register an activity for executing a specific non-agent executor.
+
+        Args:
+            executor_id: The ID of the executor to create an activity for.
+        """
+        activity_name = f"dafx-{executor_id}"
+        logger.debug(f"[AgentFunctionApp] Registering activity '{activity_name}' for executor '{executor_id}'")
+
+        # Capture executor_id in closure
+        captured_executor_id = executor_id
+
+        @self.function_name(activity_name)
+        @self.activity_trigger(input_name="inputData")
+        def executor_activity(inputData: str) -> str:
+            """Activity to execute a specific non-agent executor.
+
+            Note: We use str type annotations instead of dict to work around
+            Azure Functions worker type validation issues with dict[str, Any].
+            """
+            from agent_framework._workflows._state import State
+
+            data_obj = json.loads(inputData)
+            if not isinstance(data_obj, dict):
+                raise ValueError("Activity inputData must decode to a JSON object")
+            data = cast(dict[str, Any], data_obj)
+
+            message_data = data.get("message")
+            shared_state_snapshot = data.get("shared_state_snapshot", {})
+            source_executor_ids = cast(list[str], data.get("source_executor_ids", [SOURCE_ORCHESTRATOR]))
+
+            if not self.workflow:
+                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
+
+            executor = self.workflow.executors.get(captured_executor_id)
+            if not executor:
+                raise ValueError(f"Unknown executor: {captured_executor_id}")
+
+            # Reconstruct message - deserialize_value restores the original typed objects
+            # from the encoded data (with type markers)
+            message = deserialize_value(message_data)
+
+            # Check if this is a HITL response message by examining source_executor_ids
+            is_hitl_response = any(s.startswith(SOURCE_HITL_RESPONSE) for s in source_executor_ids)
+
+            async def run() -> dict[str, Any]:
+                # Create runner context and shared state
+                runner_context = CapturingRunnerContext()
+                shared_state = State()
+
+                # Deserialize shared state values to reconstruct dataclasses/Pydantic models
+                deserialized_state: dict[str, Any] = {
+                    str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
+                }
+                original_snapshot = _create_state_snapshot(deserialized_state)
+                shared_state.import_state(deserialized_state)
+
+                if is_hitl_response:
+                    # Handle HITL response by calling the executor's @response_handler
+                    if not isinstance(message_data, dict):
+                        raise ValueError("HITL message payload must be a JSON object")
+
+                    await execute_hitl_response_handler(
+                        executor=executor,
+                        hitl_message=cast(dict[str, Any], message_data),
+                        shared_state=shared_state,
+                        runner_context=runner_context,
+                    )
+                else:
+                    # Execute using the public execute() method
+                    await executor.execute(
+                        message=message,
+                        source_executor_ids=source_executor_ids,
+                        state=shared_state,
+                        runner_context=runner_context,
+                    )
+
+                # Commit pending state changes and export
+                shared_state.commit()
+                current_state = shared_state.export_state()
+                original_keys: set[str] = set(original_snapshot.keys())
+                current_keys: set[str] = set(current_state.keys())
+
+                # Deleted = was in original, not in current
+                deletes: set[str] = original_keys - current_keys
+
+                # Updates = keys in current that are new or have different values
+                updates: dict[str, Any] = {}
+                for key in current_keys:
+                    if key not in original_keys or current_state[key] != original_snapshot.get(key):
+                        updates[key] = current_state[key]
+
+                # Drain messages and events from runner context
+                sent_messages = await runner_context.drain_messages()
+                events = await runner_context.drain_events()
+
+                # Extract outputs from WorkflowEvent instances with type='output'
+                outputs: list[Any] = []
+                for event in events:
+                    if isinstance(event, WorkflowEvent) and event.type == "output":
+                        outputs.append(serialize_value(event.data))
+
+                # Get pending request info events for HITL
+                pending_request_info_events = await runner_context.get_pending_request_info_events()
+
+                # Serialize pending request info events for orchestrator
+                serialized_pending_requests: list[dict[str, Any]] = []
+                for _request_id, event in pending_request_info_events.items():
+                    serialized_pending_requests.append({
+                        "request_id": event.request_id,
+                        "source_executor_id": event.source_executor_id,
+                        "data": serialize_value(event.data),
+                        "request_type": f"{type(event.data).__module__}:{type(event.data).__name__}",
+                        "response_type": f"{event.response_type.__module__}:{event.response_type.__name__}"
+                        if event.response_type
+                        else None,
+                    })
+
+                # Serialize messages for JSON compatibility
+                serialized_sent_messages: list[dict[str, Any]] = []
+                for _source_id, msg_list in sent_messages.items():
+                    for msg in msg_list:
+                        serialized_sent_messages.append({
+                            "message": serialize_value(msg.data),
+                            "target_id": msg.target_id,
+                            "source_id": msg.source_id,
+                        })
+
+                serialized_updates = {k: serialize_value(v) for k, v in updates.items()}
+
+                return {
+                    "sent_messages": serialized_sent_messages,
+                    "outputs": outputs,
+                    "shared_state_updates": serialized_updates,
+                    "shared_state_deletes": list(deletes),
+                    "pending_request_info_events": serialized_pending_requests,
+                }
+
+            result = asyncio.run(run())
+            return json.dumps(result)
+
+        # Ensure the function is registered (prevents garbage collection)
+        _ = executor_activity
+
+    def _setup_workflow_orchestration(self) -> None:
+        """Register the workflow orchestration and related HTTP endpoints."""
+
+        @self.orchestration_trigger(context_name="context")
+        def workflow_orchestrator(context: df.DurableOrchestrationContext) -> Any:  # type: ignore[type-arg]
+            """Generic orchestrator for running the configured workflow."""
+            if self.workflow is None:
+                raise RuntimeError("Workflow not initialized in AgentFunctionApp")
+
+            input_data = context.get_input()
+
+            # Ensure input is a string for the agent
+            initial_message = json.dumps(input_data) if isinstance(input_data, (dict, list)) else str(input_data)
+
+            # Create local shared state dict for cross-executor state sharing
+            shared_state: dict[str, Any] = {}
+
+            outputs = yield from run_workflow_orchestrator(context, self.workflow, initial_message, shared_state)
+            # Durable Functions runtime extracts return value from StopIteration
+            return outputs  # noqa: B901
+
+        @self.route(route="workflow/run", methods=["POST"])
+        @self.durable_client_input(client_name="client")
+        async def start_workflow_orchestration(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to start the workflow."""
+            try:
+                req_body = req.get_json()
+            except ValueError:
+                return self._build_error_response("Invalid JSON body")
+
+            instance_id = await client.start_new("workflow_orchestrator", client_input=req_body)
+
+            base_url = self._build_base_url(req.url)
+            status_url = f"{base_url}/api/workflow/status/{instance_id}"
+
+            return func.HttpResponse(
+                json.dumps({
+                    "instanceId": instance_id,
+                    "statusQueryGetUri": status_url,
+                    "respondUri": f"{base_url}/api/workflow/respond/{instance_id}/{{requestId}}",
+                    "message": "Workflow started",
+                }),
+                status_code=202,
+                mimetype="application/json",
+            )
+
+        @self.route(route="workflow/status/{instanceId}", methods=["GET"])
+        @self.durable_client_input(client_name="client")
+        async def get_workflow_status(
+            req: func.HttpRequest, client: df.DurableOrchestrationClient
+        ) -> func.HttpResponse:
+            """HTTP endpoint to get workflow status."""
+            instance_id = req.route_params.get("instanceId")
+            if not instance_id:
+                return self._build_error_response("Instance ID is required", status_code=400)
+
+            status = await client.get_status(instance_id)
+
+            if not status:
+                return self._build_error_response("Instance not found", status_code=404)
+
+            response = {
+                "instanceId": status.instance_id,
+                "runtimeStatus": status.runtime_status.name if status.runtime_status else None,
+                "customStatus": status.custom_status,
+                "output": status.output,
+                "error": status.output if status.runtime_status == df.OrchestrationRuntimeStatus.Failed else None,
+                "createdTime": status.created_time.isoformat() if status.created_time else None,
+                "lastUpdatedTime": status.last_updated_time.isoformat() if status.last_updated_time else None,
+            }
+
+            # Add pending HITL requests info if available
+            if (
+                (custom_status := status.custom_status)
+                and isinstance(custom_status, dict)
+                and (pending_requests_dict := custom_status.get("pending_requests"))  # type: ignore
+                and isinstance(pending_requests_dict, dict)
+            ):
+                base_url = self._build_base_url(req.url)
+                pending_requests: list[dict[str, Any]] = []
+                for req_id, req_data in pending_requests_dict.items():  # type: ignore
+                    if not isinstance(req_data, dict):
+                        continue
+                    pending_requests.append({
+                        "requestId": req_id,
+                        "sourceExecutor": req_data.get("source_executor_id"),  # type: ignore[reportUnknownMemberType]
+                        "requestData": req_data.get("data"),  # type: ignore[reportUnknownMemberType]
+                        "requestType": req_data.get("request_type"),  # type: ignore[reportUnknownMemberType]
+                        "responseType": req_data.get("response_type"),  # type: ignore[reportUnknownMemberType]
+                        "respondUrl": f"{base_url}/api/workflow/respond/{instance_id}/{req_id}",
+                    })
+                response["pendingHumanInputRequests"] = pending_requests
+
+            return func.HttpResponse(
+                json.dumps(response, default=str),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        @self.route(route="workflow/respond/{instanceId}/{requestId}", methods=["POST"])
+        @self.durable_client_input(client_name="client")
+        async def send_hitl_response(req: func.HttpRequest, client: df.DurableOrchestrationClient) -> func.HttpResponse:
+            """HTTP endpoint to send a response to a pending HITL request.
+
+            The requestId in the URL corresponds to the request_id from the RequestInfoEvent.
+            The request body should contain the response data matching the expected response_type.
+            """
+            instance_id = req.route_params.get("instanceId")
+            request_id = req.route_params.get("requestId")
+
+            if not instance_id or not request_id:
+                return self._build_error_response("Instance ID and Request ID are required.")
+
+            try:
+                response_data = req.get_json()
+            except ValueError:
+                return self._build_error_response("Request body must be valid JSON.")
+
+            # Sanitize untrusted HTTP input before it reaches pickle.loads().
+            # See strip_pickle_markers() docstring for details on the attack vector.
+            response_data = strip_pickle_markers(response_data)
+
+            # Send the response as an external event
+            # The request_id is used as the event name for correlation
+            await client.raise_event(
+                instance_id=instance_id,
+                event_name=request_id,
+                event_data=response_data,
+            )
+
+            return func.HttpResponse(
+                json.dumps({
+                    "message": "Response delivered successfully",
+                    "instanceId": instance_id,
+                    "requestId": request_id,
+                }),
+                status_code=200,
+                mimetype="application/json",
+            )
+
+        # Ensure route handlers are registered (prevents unused function warnings)
+        _ = start_workflow_orchestration
+        _ = get_workflow_status
+        _ = send_hitl_response
+
+    def _build_status_url(self, request_url: str, instance_id: str) -> str:
+        """Build the status URL for a workflow instance."""
+        base_url = self._build_base_url(request_url)
+        return f"{base_url}/api/workflow/status/{instance_id}"
+
+    def _build_base_url(self, request_url: str) -> str:
+        """Extract the base URL from a request URL."""
+        base_url, _, _ = request_url.partition("/api/")
+        if not base_url:
+            base_url = request_url.rstrip("/")
+        return base_url
+
+    @property
+    def agents(self) -> dict[str, SupportsAgentRun]:
+        """Returns dict of agent names to agent instances.
+
+        Returns:
+            Dictionary mapping agent names to their SupportsAgentRun instances.
+        """
+        return {name: metadata.agent for name, metadata in self._agent_metadata.items()}
+
     def add_agent(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         callback: AgentResponseCallbackProtocol | None = None,
         enable_http_endpoint: bool | None = None,
+        enable_mcp_tool_trigger: bool | None = None,
     ) -> None:
         """Add an agent to the function app after initialization.
 
         Args:
-            agent: The Microsoft Agent Framework agent instance (must implement AgentProtocol)
+            agent: The Microsoft Agent Framework agent instance (must implement SupportsAgentRun)
                    The agent must have a 'name' attribute.
             callback: Optional callback invoked during agent execution
-            enable_http_endpoint: Optional flag that overrides the app-level
-                                   HTTP endpoint setting for this agent
+            enable_http_endpoint: Optional flag to enable/disable HTTP endpoint for this agent.
+                                  The app level enable_http_endpoints setting will override this setting.
+            enable_mcp_tool_trigger: Optional flag to enable/disable MCP tool trigger for this agent.
+                                     The app level enable_mcp_tool_trigger setting will override this setting.
 
         Raises:
-            ValueError: If the agent doesn't have a 'name' attribute or if an agent
-                       with the same name is already registered
+            ValueError: If the agent doesn't have a 'name' attribute.
         """
         # Get agent name from the agent's name attribute
         name = getattr(agent, "name", None)
         if name is None:
             raise ValueError("Agent does not have a 'name' attribute. All agents must have a 'name' attribute.")
 
-        if name in self.agents:
-            raise ValueError(f"Agent with name '{name}' is already registered. Each agent must have a unique name.")
+        if name in self._agent_metadata:
+            logger.warning("[AgentFunctionApp] Agent '%s' is already registered, skipping duplicate.", name)
+            return
 
         effective_enable_http_endpoint = (
             self.enable_http_endpoints if enable_http_endpoint is None else self._coerce_to_bool(enable_http_endpoint)
+        )
+        effective_enable_mcp_endpoint = (
+            self.enable_mcp_tool_trigger
+            if enable_mcp_tool_trigger is None
+            else self._coerce_to_bool(enable_mcp_tool_trigger)
         )
 
         logger.debug(f"[AgentFunctionApp] Adding agent: {name}")
@@ -224,17 +616,21 @@ class AgentFunctionApp(DFAppBase):
             "enabled" if effective_enable_http_endpoint else "disabled",
             name,
         )
+        logger.debug(
+            f"[AgentFunctionApp] MCP tool trigger: {'enabled' if effective_enable_mcp_endpoint else 'disabled'}"
+        )
 
-        self.agents[name] = agent
-        self.agent_http_endpoint_flags[name] = effective_enable_http_endpoint
+        # Store agent metadata
+        self._agent_metadata[name] = AgentMetadata(
+            agent=agent,
+            http_endpoint_enabled=effective_enable_http_endpoint,
+            mcp_tool_enabled=effective_enable_mcp_endpoint,
+        )
 
         effective_callback = callback or self.default_callback
 
         self._setup_agent_functions(
-            agent,
-            name,
-            effective_callback,
-            effective_enable_http_endpoint,
+            agent, name, effective_callback, effective_enable_http_endpoint, effective_enable_mcp_endpoint
         )
 
         logger.debug(f"[AgentFunctionApp] Agent '{name}' added successfully")
@@ -243,41 +639,43 @@ class AgentFunctionApp(DFAppBase):
         self,
         context: AgentOrchestrationContextType,
         agent_name: str,
-    ) -> DurableAIAgent:
+    ) -> DurableAIAgent[AgentTask]:
         """Return a DurableAIAgent proxy for a registered agent.
 
         Args:
             context: Durable Functions orchestration context invoking the agent.
             agent_name: Name of the agent registered on this app.
 
+        Returns:
+            DurableAIAgent[AgentTask] wrapper bound to the orchestration context.
+
         Raises:
             ValueError: If the requested agent has not been registered.
-
-        Returns:
-            DurableAIAgent wrapper bound to the orchestration context.
         """
         normalized_name = str(agent_name)
 
-        if normalized_name not in self.agents:
+        if normalized_name not in self._agent_metadata:
             raise ValueError(f"Agent '{normalized_name}' is not registered with this app.")
 
-        return DurableAIAgent(context, normalized_name)
+        executor = AzureFunctionsAgentExecutor(context)
+        return DurableAIAgent(executor, normalized_name)
 
     def _setup_agent_functions(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
         enable_http_endpoint: bool,
+        enable_mcp_tool_trigger: bool,
     ) -> None:
-        """Set up the HTTP trigger and entity for a specific agent.
+        """Set up the HTTP trigger, entity, and MCP tool trigger for a specific agent.
 
         Args:
             agent: The agent instance
             agent_name: The name to use for routing and entity registration
             callback: Optional callback to receive response updates
-            enable_http_endpoint: Whether the HTTP run route is enabled for
-                                   this agent
+            enable_http_endpoint: Whether to create HTTP endpoint
+            enable_mcp_tool_trigger: Whether to create MCP tool trigger
         """
         logger.debug(f"[AgentFunctionApp] Setting up functions for agent '{agent_name}'...")
 
@@ -289,6 +687,12 @@ class AgentFunctionApp(DFAppBase):
                 agent_name,
             )
         self._setup_agent_entity(agent, agent_name, callback)
+
+        if enable_mcp_tool_trigger:
+            agent_description = agent.description
+            self._setup_mcp_tool_trigger(agent_name, agent_description)
+        else:
+            logger.debug(f"[AgentFunctionApp] MCP tool trigger disabled for agent '{agent_name}'")
 
     def _setup_http_run_route(self, agent_name: str) -> None:
         """Register the POST route that triggers agent execution.
@@ -317,8 +721,6 @@ class AgentFunctionApp(DFAppBase):
                 "enable_tool_calls": true|false (optional, default: true)
             }
             """
-            logger.debug(f"[HTTP Trigger] Received request on route: /api/agents/{agent_name}/run")
-
             request_response_format: str = REQUEST_RESPONSE_FORMAT_JSON
             thread_id: str | None = None
 
@@ -327,9 +729,9 @@ class AgentFunctionApp(DFAppBase):
                 thread_id = self._resolve_thread_id(req=req, req_body=req_body)
                 wait_for_response = self._should_wait_for_response(req=req, req_body=req_body)
 
-                logger.debug(f"[HTTP Trigger] Message: {message}")
-                logger.debug(f"[HTTP Trigger] Thread ID: {thread_id}")
-                logger.debug(f"[HTTP Trigger] wait_for_response: {wait_for_response}")
+                logger.debug(
+                    f"[HTTP Trigger] Message: {message}, Thread ID: {thread_id}, wait_for_response: {wait_for_response}"
+                )
 
                 if not message:
                     logger.warning("[HTTP Trigger] Request rejected: Missing message")
@@ -343,20 +745,23 @@ class AgentFunctionApp(DFAppBase):
                 session_id = self._create_session_id(agent_name, thread_id)
                 correlation_id = self._generate_unique_id()
 
-                logger.debug(f"[HTTP Trigger] Using session ID: {session_id}")
-                logger.debug(f"[HTTP Trigger] Generated correlation ID: {correlation_id}")
-                logger.debug("[HTTP Trigger] Calling entity to run agent...")
+                logger.debug(
+                    f"[HTTP Trigger] Calling entity to run agent using session ID: {session_id} "
+                    f"and correlation ID: {correlation_id}"
+                )
 
-                entity_instance_id = session_id.to_entity_id()
+                entity_instance_id = df.EntityId(
+                    name=session_id.entity_name,
+                    key=session_id.key,
+                )
                 run_request = self._build_request_data(
                     req_body,
                     message,
-                    thread_id,
                     correlation_id,
                     request_response_format,
                 )
                 logger.debug("Signalling entity %s with request: %s", entity_instance_id, run_request)
-                await client.signal_entity(entity_instance_id, "run_agent", run_request)
+                await client.signal_entity(entity_instance_id, "run", run_request)
 
                 logger.debug(f"[HTTP Trigger] Signal sent to entity {session_id}")
 
@@ -419,7 +824,7 @@ class AgentFunctionApp(DFAppBase):
 
     def _setup_agent_entity(
         self,
-        agent: AgentProtocol,
+        agent: SupportsAgentRun,
         agent_name: str,
         callback: AgentResponseCallbackProtocol | None,
     ) -> None:
@@ -437,7 +842,8 @@ class AgentFunctionApp(DFAppBase):
             """Durable entity that manages agent execution and conversation state.
 
             Operations:
-            - run_agent: Execute the agent with a message
+            - run: Execute the agent with a message
+            - run_agent: (Deprecated) Execute the agent with a message
             - reset: Clear conversation history
             """
             entity_handler = create_agent_entity(agent, callback)
@@ -447,6 +853,164 @@ class AgentFunctionApp(DFAppBase):
         # Use the prefixed entity name as the function name too.
         entity_function.__name__ = entity_name_with_prefix
         self.entity_trigger(context_name="context", entity_name=entity_name_with_prefix)(entity_function)
+
+    def _setup_mcp_tool_trigger(self, agent_name: str, agent_description: str | None) -> None:
+        """Register an MCP tool trigger for an agent using Azure Functions native MCP support.
+
+        This creates a native Azure Functions MCP tool trigger that exposes the agent
+        as an MCP tool, allowing it to be invoked by MCP-compatible clients.
+
+        Args:
+            agent_name: The agent name (used as the MCP tool name)
+            agent_description: Optional description for the MCP tool (shown to clients)
+        """
+        mcp_function_name = self._build_function_name(agent_name, "mcptool")
+
+        # Define tool properties as JSON (MCP tool parameters)
+        tool_properties = json.dumps([
+            {
+                "propertyName": "query",
+                "propertyType": "string",
+                "description": "The query to send to the agent.",
+                "isRequired": True,
+                "isArray": False,
+            },
+            {
+                "propertyName": "threadId",
+                "propertyType": "string",
+                "description": "Optional thread identifier for conversation continuity.",
+                "isRequired": False,
+                "isArray": False,
+            },
+        ])
+
+        function_name_decorator = self.function_name(mcp_function_name)
+        mcp_tool_decorator = self.mcp_tool_trigger(
+            arg_name="context",
+            tool_name=agent_name,
+            description=agent_description or f"Interact with {agent_name} agent",
+            tool_properties=tool_properties,
+            data_type=func.DataType.UNDEFINED,
+        )
+        durable_client_decorator = self.durable_client_input(client_name="client")
+
+        @function_name_decorator
+        @mcp_tool_decorator
+        @durable_client_decorator
+        async def mcp_tool_handler(context: str, client: df.DurableOrchestrationClient) -> str:
+            """Handle MCP tool invocation for the agent.
+
+            Args:
+                context: MCP tool invocation context containing arguments (query, threadId)
+                client: Durable orchestration client for entity communication
+
+            Returns:
+                Agent response text
+            """
+            logger.debug("[MCP Tool Trigger] Received invocation for agent: %s", agent_name)
+            return await self._handle_mcp_tool_invocation(agent_name=agent_name, context=context, client=client)
+
+        _ = mcp_tool_handler
+        logger.debug("[AgentFunctionApp] Registered MCP tool trigger for agent: %s", agent_name)
+
+    async def _handle_mcp_tool_invocation(
+        self, agent_name: str, context: str, client: df.DurableOrchestrationClient
+    ) -> str:
+        """Handle an MCP tool invocation.
+
+        This method processes MCP tool requests and delegates to the agent entity.
+
+        Args:
+            agent_name: Name of the agent being invoked
+            context: MCP tool invocation context as a JSON string
+            client: Durable orchestration client
+
+        Returns:
+            Agent response text
+
+        Raises:
+            ValueError: If required arguments are missing or context is invalid JSON
+            RuntimeError: If agent execution fails
+        """
+        logger.debug("[MCP Tool Handler] Processing invocation for agent '%s'", agent_name)
+
+        # Parse JSON context string
+        try:
+            parsed_context: Any = json.loads(context)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid MCP context format: {e}") from e
+
+        parsed_context = cast(Mapping[str, Any], parsed_context) if isinstance(parsed_context, dict) else {}
+
+        # Extract arguments from MCP context
+        arguments: dict[str, Any] = parsed_context.get("arguments", {})
+
+        # Validate required 'query' argument
+        query: Any = arguments.get("query")
+        if not query or not isinstance(query, str):
+            raise ValueError("MCP Tool invocation is missing required 'query' argument of type string.")
+
+        # Extract optional threadId
+        thread_id = arguments.get("threadId")
+
+        # Create or parse session ID
+        if thread_id and isinstance(thread_id, str) and thread_id.strip():
+            try:
+                session_id = AgentSessionId.parse(thread_id, agent_name=agent_name)
+            except ValueError as e:
+                logger.warning(
+                    "Failed to parse AgentSessionId from thread_id '%s': %s. Falling back to new session ID.",
+                    thread_id,
+                    e,
+                )
+                session_id = AgentSessionId(name=agent_name, key=thread_id)
+        else:
+            # Generate new session ID
+            session_id = AgentSessionId.with_random_key(agent_name)
+
+        # Build entity instance ID
+        entity_instance_id = df.EntityId(
+            name=session_id.entity_name,
+            key=session_id.key,
+        )
+
+        # Create run request
+        correlation_id = self._generate_unique_id()
+        run_request = self._build_request_data(
+            req_body={"message": query, "role": "user"},
+            message=query,
+            correlation_id=correlation_id,
+            request_response_format=REQUEST_RESPONSE_FORMAT_TEXT,
+        )
+
+        query_preview = query[:50] + "..." if len(query) > 50 else query
+        logger.info("[MCP Tool] Invoking agent '%s' with query: %s", agent_name, query_preview)
+
+        # Signal entity to run agent
+        await client.signal_entity(entity_instance_id, "run", run_request)
+
+        # Poll for response (similar to HTTP handler)
+        try:
+            result = await self._get_response_from_entity(
+                client=client,
+                entity_instance_id=entity_instance_id,
+                correlation_id=correlation_id,
+                message=query,
+                thread_id=str(session_id),
+            )
+
+            # Extract and return response text
+            if result.get("status") == "success":
+                response_text = str(result.get("response", "No response"))
+                logger.info("[MCP Tool] Agent '%s' responded successfully", agent_name)
+                return response_text
+            error_msg = result.get("error", "Unknown error")
+            logger.error("[MCP Tool] Agent '%s' execution failed: %s", agent_name, error_msg)
+            raise RuntimeError(f"Agent execution failed: {error_msg}")
+
+        except Exception as exc:
+            logger.error("[MCP Tool] Error invoking agent '%s': %s", agent_name, exc, exc_info=True)
+            raise
 
     def _setup_health_route(self) -> None:
         """Register the optional health check route."""
@@ -458,16 +1022,14 @@ class AgentFunctionApp(DFAppBase):
             agent_info = [
                 {
                     "name": name,
-                    "type": type(agent).__name__,
-                    "http_endpoint_enabled": self.agent_http_endpoint_flags.get(
-                        name,
-                        self.enable_http_endpoints,
-                    ),
+                    "type": type(metadata.agent).__name__,
+                    "http_endpoint_enabled": metadata.http_endpoint_enabled,
+                    "mcp_tool_enabled": metadata.mcp_tool_enabled,
                 }
-                for name, agent in self.agents.items()
+                for name, metadata in self._agent_metadata.items()
             ]
             return func.HttpResponse(
-                json.dumps({"status": "healthy", "agents": agent_info, "agent_count": len(self.agents)}),
+                json.dumps({"status": "healthy", "agents": agent_info, "agent_count": len(self._agent_metadata)}),
                 status_code=200,
                 mimetype=MIMETYPE_APPLICATION_JSON,
             )
@@ -568,7 +1130,7 @@ class AgentFunctionApp(DFAppBase):
             agent_response = state.try_get_agent_response(correlation_id)
             if agent_response:
                 result = self._build_success_result(
-                    response_data=agent_response,
+                    response_message=agent_response.text,
                     message=message,
                     thread_id=thread_id,
                     correlation_id=correlation_id,
@@ -614,23 +1176,22 @@ class AgentFunctionApp(DFAppBase):
         )
 
     def _build_success_result(
-        self, response_data: dict[str, Any], message: str, thread_id: str, correlation_id: str, state: DurableAgentState
+        self, response_message: str, message: str, thread_id: str, correlation_id: str, state: DurableAgentState
     ) -> dict[str, Any]:
         """Build the success result returned to the HTTP caller."""
         return self._build_response_payload(
-            response=response_data.get("content"),
+            response=response_message,
             message=message,
             thread_id=thread_id,
             status="success",
             correlation_id=correlation_id,
-            extra_fields={"message_count": response_data.get("message_count", state.message_count)},
+            extra_fields={ApiResponseFields.MESSAGE_COUNT: state.message_count},
         )
 
     def _build_request_data(
         self,
         req_body: dict[str, Any],
         message: str,
-        thread_id: str,
         correlation_id: str,
         request_response_format: str,
     ) -> dict[str, Any]:
@@ -644,8 +1205,8 @@ class AgentFunctionApp(DFAppBase):
             request_response_format=request_response_format,
             response_format=req_body.get("response_format"),
             enable_tool_calls=enable_tool_calls,
-            thread_id=thread_id,
             correlation_id=correlation_id,
+            created_at=datetime.now(timezone.utc),
         ).to_dict()
 
     def _build_accepted_response(self, message: str, thread_id: str, correlation_id: str) -> dict[str, Any]:
@@ -687,6 +1248,15 @@ class AgentFunctionApp(DFAppBase):
         body_json = payload if isinstance(payload, str) else json.dumps(payload)
         return func.HttpResponse(body_json, status_code=status_code, mimetype=MIMETYPE_APPLICATION_JSON)
 
+    @staticmethod
+    def _build_error_response(message: str, status_code: int = 400) -> func.HttpResponse:
+        """Return a JSON error response with the given message and status code."""
+        return func.HttpResponse(
+            json.dumps({"error": message}),
+            status_code=status_code,
+            mimetype=MIMETYPE_APPLICATION_JSON,
+        )
+
     def _convert_payload_to_text(self, payload: dict[str, Any]) -> str:
         """Convert a structured payload into a human-readable text response."""
         for key in ("response", "error", "message"):
@@ -697,15 +1267,13 @@ class AgentFunctionApp(DFAppBase):
 
     def _generate_unique_id(self) -> str:
         """Generate a new unique identifier."""
-        import uuid
-
         return uuid.uuid4().hex
 
-    def _create_session_id(self, func_name: str, thread_id: str | None) -> AgentSessionId:
+    def _create_session_id(self, agent_name: str, thread_id: str | None) -> AgentSessionId:
         """Create a session identifier using the provided thread id or a random value."""
         if thread_id:
-            return AgentSessionId(name=func_name, key=thread_id)
-        return AgentSessionId.with_random_key(name=func_name)
+            return AgentSessionId(name=agent_name, key=thread_id)
+        return AgentSessionId.with_random_key(name=agent_name)
 
     def _resolve_thread_id(self, req: func.HttpRequest, req_body: dict[str, Any]) -> str:
         """Retrieve the thread identifier from request body or query parameters."""
@@ -742,10 +1310,9 @@ class AgentFunctionApp(DFAppBase):
         """Create a lowercase header mapping from the incoming request."""
         headers: dict[str, str] = {}
         raw_headers = req.headers
-        if isinstance(raw_headers, Mapping):
-            for key, value in raw_headers.items():
-                if value is not None:
-                    headers[str(key).lower()] = str(value)
+        for key, value in cast(Mapping[str, str], raw_headers).items():
+            headers[key.lower()] = value
+
         return headers
 
     @staticmethod

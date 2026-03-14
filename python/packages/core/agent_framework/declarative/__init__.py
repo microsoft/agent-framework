@@ -1,11 +1,35 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Declarative integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-declarative``
+
+Supported classes include:
+- AgentFactory
+- WorkflowFactory
+- ExternalInputRequest
+- ExternalInputResponse
+"""
+
 import importlib
 from typing import Any
 
 IMPORT_PATH = "agent_framework_declarative"
 PACKAGE_NAME = "agent-framework-declarative"
-_IMPORTS = ["__version__", "AgentFactory", "DeclarativeLoaderError", "ProviderLookupError", "ProviderTypeMapping"]
+_IMPORTS = [
+    "AgentFactory",
+    "AgentExternalInputRequest",
+    "AgentExternalInputResponse",
+    "DeclarativeLoaderError",
+    "DeclarativeWorkflowError",
+    "ExternalInputRequest",
+    "ExternalInputResponse",
+    "ProviderLookupError",
+    "ProviderTypeMapping",
+    "WorkflowFactory",
+    "WorkflowState",
+]
 
 
 def __getattr__(name: str) -> Any:

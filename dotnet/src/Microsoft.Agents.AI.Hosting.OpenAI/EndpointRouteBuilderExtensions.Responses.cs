@@ -76,7 +76,7 @@ public static partial class MicrosoftAgentAIHostingOpenAIEndpointRouteBuilderExt
         var handlers = new ResponsesHttpHandler(responsesService);
 
         var group = endpoints.MapGroup(responsesPath);
-        var endpointAgentName = agent.DisplayName;
+        var endpointAgentName = agent.Name ?? agent.Id;
 
         // Create response endpoint
         group.MapPost("/", handlers.CreateResponseAsync)

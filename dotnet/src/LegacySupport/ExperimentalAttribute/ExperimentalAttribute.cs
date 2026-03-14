@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 #if !NET8_0_OR_GREATER
 
@@ -28,7 +28,7 @@ internal sealed class ExperimentalAttribute : Attribute
     /// <param name="diagnosticId">Human readable explanation for marking experimental API.</param>
     public ExperimentalAttribute(string diagnosticId)
     {
-        DiagnosticId = diagnosticId;
+        this.DiagnosticId = diagnosticId;
     }
 
     /// <summary>

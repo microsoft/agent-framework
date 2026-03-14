@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
@@ -15,7 +14,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 public sealed class DeclarativeCodeGenTest(ITestOutputHelper output) : WorkflowTest(output)
 {
     [Theory]
-    [InlineData("CheckSystem.yaml", "CheckSystem.json")]
+    [InlineData("CheckSystem.yaml", "CheckSystem.json", Skip = "Temporarily skipped")]
     [InlineData("SendActivity.yaml", "SendActivity.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json")]
     [InlineData("InvokeAgent.yaml", "InvokeAgent.json", true)]

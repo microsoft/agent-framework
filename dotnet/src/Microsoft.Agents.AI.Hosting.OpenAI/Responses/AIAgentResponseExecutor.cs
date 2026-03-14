@@ -31,12 +31,19 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
     public async IAsyncEnumerable<StreamingResponseEvent> ExecuteAsync(
         AgentInvocationContext context,
         CreateResponse request,
+        IReadOnlyList<ChatMessage>? conversationHistory = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Create options with properties from the request
         var chatOptions = new ChatOptions
         {
-            ConversationId = request.Conversation?.Id,
+            // Note: We intentionally do NOT set ConversationId on ChatOptions here.
+            // The conversation ID from the client request is used by the hosting layer
+            // to manage conversation storage, but should not be forwarded to the underlying
+            // IChatClient as it has its own concept of conversations (or none at all).
+            // ---
+            // ConversationId = request.Conversation?.Id,
+
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
             MaxOutputTokens = request.MaxOutputTokens,
@@ -45,8 +52,13 @@ internal sealed class AIAgentResponseExecutor : IResponseExecutor
         };
         var options = new ChatClientAgentRunOptions(chatOptions);
 
-        // Convert input to chat messages
+        // Convert input to chat messages, prepending conversation history if available
         var messages = new List<ChatMessage>();
+
+        if (conversationHistory is not null)
+        {
+            messages.AddRange(conversationHistory);
+        }
 
         foreach (var inputMessage in request.Input.GetInputMessages())
         {

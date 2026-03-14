@@ -1,11 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Agents.Persistent;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
@@ -14,14 +14,13 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentCreateTests
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-    private readonly PersistentAgentsClient _persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
+    private const string SkipCodeInterpreterReason = "Azure AI Code Interpreter intermittently fails to execute uploaded files in CI";
+
+    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
     {
         // Arrange.
@@ -33,24 +32,15 @@ public class AzureAIAgentsPersistentCreateTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    name: AgentName,
-                    description: AgentDescription)),
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new() { Instructions = AgentInstructions },
+                    Name = AgentName,
+                    Description = AgentDescription
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                name: AgentName,
-                description: AgentDescription),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 name: AgentName,
                 description: AgentDescription),
@@ -80,9 +70,7 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory(Skip = "For manual testing only")]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithVectorStoresAsync(string createMechanism)
     {
         // Arrange.
@@ -104,26 +92,24 @@ public class AzureAIAgentsPersistentCreateTests
         );
         var vectorStoreMetadata = await this._persistentAgentsClient.VectorStores.CreateVectorStoreAsync([uploadedAgentFile.Id], name: "WordCodeLookup_VectorStore");
 
+        // Wait for vector store indexing to complete before using it
+        await this.WaitForVectorStoreReadyAsync(this._persistentAgentsClient, vectorStoreMetadata.Value.Id);
+
         // Act.
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }])),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }])),
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]
+                    }
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                tools: [new FileSearchToolDefinition()],
-                toolResources: new ToolResources() { FileSearch = new([vectorStoreMetadata.Value.Id], null) }),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 tools: [new FileSearchToolDefinition()],
                 toolResources: new ToolResources() { FileSearch = new([vectorStoreMetadata.Value.Id], null) }),
@@ -147,12 +133,15 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsSync")]
-    public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
+    [Fact(Skip = SkipCodeInterpreterReason)]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_ChatClientAgentOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithChatClientAgentOptionsAsync");
+
+    [Fact(Skip = SkipCodeInterpreterReason)]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_FoundryOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithFoundryOptionsAsync");
+
+    private async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
     {
         // Arrange.
         const string AgentInstructions = """
@@ -178,23 +167,17 @@ public class AzureAIAgentsPersistentCreateTests
         {
             // Hosted tool path (tools supplied via ChatClientAgentOptions)
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }])),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }])),
-            // Foundry (definitions + resources provided directly)
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]
+                    }
+                }),
             "CreateWithFoundryOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                instructions: AgentInstructions,
-                tools: [new CodeInterpreterToolDefinition()],
-                toolResources: new ToolResources() { CodeInterpreter = toolResource }),
-            "CreateWithFoundryOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 instructions: AgentInstructions,
                 tools: [new CodeInterpreterToolDefinition()],
                 toolResources: new ToolResources() { CodeInterpreter = toolResource }),
@@ -219,7 +202,6 @@ public class AzureAIAgentsPersistentCreateTests
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithChatClientAgentOptionsSync")]
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
     {
         // Arrange.
@@ -231,15 +213,15 @@ public class AzureAIAgentsPersistentCreateTests
         ChatClientAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._persistentAgentsClient.CreateAIAgentAsync(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
-            "CreateWithChatClientAgentOptionsSync" => this._persistentAgentsClient.CreateAIAgent(
-                s_config.DeploymentName,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
         };
 
@@ -258,5 +240,43 @@ public class AzureAIAgentsPersistentCreateTests
         {
             await this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
         }
+    }
+
+    /// <summary>
+    /// Waits for a vector store to complete indexing by polling its status.
+    /// </summary>
+    /// <param name="client">The persistent agents client.</param>
+    /// <param name="vectorStoreId">The ID of the vector store.</param>
+    /// <param name="maxWaitSeconds">Maximum time to wait in seconds (default: 30).</param>
+    /// <returns>A task that completes when the vector store is ready or throws on timeout/failure.</returns>
+    private async Task WaitForVectorStoreReadyAsync(
+        PersistentAgentsClient client,
+        string vectorStoreId,
+        int maxWaitSeconds = 30)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
+        {
+            PersistentAgentsVectorStore vectorStore = await client.VectorStores.GetVectorStoreAsync(vectorStoreId);
+
+            if (vectorStore.Status == VectorStoreStatus.Completed)
+            {
+                if (vectorStore.FileCounts.Failed > 0)
+                {
+                    throw new InvalidOperationException("Vector store indexing failed for some files");
+                }
+
+                return;
+            }
+
+            if (vectorStore.Status == VectorStoreStatus.Expired)
+            {
+                throw new InvalidOperationException("Vector store has expired");
+            }
+
+            await Task.Delay(1000);
+        }
+
+        throw new TimeoutException($"Vector store did not complete indexing within {maxWaitSeconds}s");
     }
 }

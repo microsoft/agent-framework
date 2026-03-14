@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -76,13 +77,13 @@ public static partial class AgentAbstractionsJsonUtilities
 
     // Agent abstraction types
     [JsonSerializable(typeof(AgentRunOptions))]
-    [JsonSerializable(typeof(AgentRunResponse))]
-    [JsonSerializable(typeof(AgentRunResponse[]))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate))]
-    [JsonSerializable(typeof(AgentRunResponseUpdate[]))]
-    [JsonSerializable(typeof(ServiceIdAgentThread.ServiceIdAgentThreadState))]
-    [JsonSerializable(typeof(InMemoryAgentThread.InMemoryAgentThreadState))]
-    [JsonSerializable(typeof(InMemoryChatMessageStore.StoreState))]
+    [JsonSerializable(typeof(AgentResponse))]
+    [JsonSerializable(typeof(AgentResponse[]))]
+    [JsonSerializable(typeof(AgentResponseUpdate))]
+    [JsonSerializable(typeof(AgentResponseUpdate[]))]
+    [JsonSerializable(typeof(InMemoryChatHistoryProvider.State))]
+    [JsonSerializable(typeof(AgentSessionStateBag))]
+    [JsonSerializable(typeof(ConcurrentDictionary<string, AgentSessionStateBagValue>))]
 
     [ExcludeFromCodeCoverage]
     private sealed partial class JsonContext : JsonSerializerContext;

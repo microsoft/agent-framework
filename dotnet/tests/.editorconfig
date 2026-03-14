@@ -1,6 +1,10 @@
 # Suppressing errors for Test projects under dotnet/tests folder
 [*.cs]
+dotnet_diagnostic.CA1822.severity = none # Member does not access instance data and can be marked as static
+dotnet_diagnostic.CA1873.severity = none # Evaluation of logging arguments may be expensive
+dotnet_diagnostic.CA1875.severity = none # Regex.IsMatch/Count instead of Regex.Match(...).Success/Regex.Matches(...).Count
 dotnet_diagnostic.CA2007.severity = none # Do not directly await a Task
+dotnet_diagnostic.CA2249.severity = none # Use `string.Contains` instead of `string.IndexOf` to improve readability
 
 dotnet_diagnostic.CS1591.severity = none # Missing XML comment for publicly visible type or member
 

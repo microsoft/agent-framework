@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
@@ -124,7 +123,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             }
         }
 
-        public static void Responses(IReadOnlyList<AgentRunResponseEvent> responseEvents, Testcase testcase)
+        public static void Responses(IReadOnlyList<AgentResponseEvent> responseEvents, Testcase testcase)
         {
             Assert.True(responseEvents.Count >= testcase.Validation.MinResponseCount, $"Response count less than expected: {testcase.Validation.MinResponseCount} (Actual: {responseEvents.Count})");
             if (testcase.Validation.MaxResponseCount != -1)
@@ -134,7 +133,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             }
         }
 
-        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, WorkflowAgentProvider agentProvider)
+        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, ResponseAgentProvider agentProvider)
         {
             int minExpectedCount = testcase.Validation.MinMessageCount ?? testcase.Validation.MinResponseCount;
             int maxExpectedCount = testcase.Validation.MaxMessageCount ?? testcase.Validation.MaxResponseCount ?? minExpectedCount;

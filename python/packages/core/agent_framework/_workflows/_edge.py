@@ -1,16 +1,27 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
+import inspect
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeAlias, TypeVar
 
+from .._agents import SupportsAgentRun
 from ._const import INTERNAL_SOURCE_ID
 from ._executor import Executor
 from ._model_utils import DictConvertible, encode_value
 
 logger = logging.getLogger(__name__)
+
+# Type alias for edge condition functions.
+# Conditions receive the message data and return bool (sync or async).
+EdgeCondition: TypeAlias = Callable[[Any], bool | Awaitable[bool]]
+
+# TypeVar for EdgeGroup subclasses used in class methods
+EdgeGroupT = TypeVar("EdgeGroupT", bound="EdgeGroup")
 
 
 def _extract_function_name(func: Callable[..., Any]) -> str:
@@ -71,12 +82,13 @@ class Edge(DictConvertible):
     serialising the edge down to primitives we can reconstruct the topology of
     a workflow irrespective of the original Python process.
 
+    Edge conditions receive the message data and return a boolean (sync or async).
+
     Examples:
         .. code-block:: python
 
-            edge = Edge(source_id="ingest", target_id="score", condition=lambda payload: payload["ready"])
-            assert edge.should_route({"ready": True}) is True
-            assert edge.should_route({"ready": False}) is False
+            edge = Edge(source_id="ingest", target_id="score", condition=lambda data: data["ready"])
+            assert await edge.should_route({"ready": True}) is True
     """
 
     ID_SEPARATOR: ClassVar[str] = "->"
@@ -84,13 +96,13 @@ class Edge(DictConvertible):
     source_id: str
     target_id: str
     condition_name: str | None
-    _condition: Callable[[Any], bool] | None = field(default=None, repr=False, compare=False)
+    _condition: EdgeCondition | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
         source_id: str,
         target_id: str,
-        condition: Callable[[Any], bool] | None = None,
+        condition: EdgeCondition | None = None,
         *,
         condition_name: str | None = None,
     ) -> None:
@@ -103,9 +115,9 @@ class Edge(DictConvertible):
         target_id:
             Canonical identifier of the downstream executor instance.
         condition:
-            Optional predicate that receives the message payload and returns
-            `True` when the edge should be traversed. When omitted, the edge is
-            considered unconditionally active.
+            Optional predicate that receives the message data and returns
+            `True` when the edge should be traversed. Can be sync or async.
+            When omitted, the edge is unconditionally active.
         condition_name:
             Optional override that pins a human-friendly name for the condition
             when the callable cannot be introspected (for example after
@@ -125,7 +137,9 @@ class Edge(DictConvertible):
         self.source_id = source_id
         self.target_id = target_id
         self._condition = condition
-        self.condition_name = _extract_function_name(condition) if condition is not None else condition_name
+        self.condition_name = (
+            _extract_function_name(condition) if condition is not None and condition_name is None else condition_name
+        )
 
     @property
     def id(self) -> str:
@@ -144,8 +158,16 @@ class Edge(DictConvertible):
         """
         return f"{self.source_id}{self.ID_SEPARATOR}{self.target_id}"
 
-    def should_route(self, data: Any) -> bool:
-        """Evaluate the edge predicate against an incoming payload.
+    @property
+    def has_condition(self) -> bool:
+        """Check if this edge has a condition.
+
+        Returns True if the edge was configured with a condition function.
+        """
+        return self._condition is not None
+
+    async def should_route(self, data: Any) -> bool:
+        """Evaluate the edge predicate against payload.
 
         When the edge was defined without an explicit predicate the method
         returns `True`, signalling an unconditional routing rule. Otherwise the
@@ -153,16 +175,27 @@ class Edge(DictConvertible):
         this edge. Any exception raised by the callable is deliberately allowed
         to surface to the caller to avoid masking logic bugs.
 
+        The condition receives the message data and may be sync or async.
+
+        Args:
+            data: The message payload
+
+        Returns:
+            True if the edge should be traversed, False otherwise.
+
         Examples:
             .. code-block:: python
 
-                edge = Edge("stage1", "stage2", condition=lambda payload: payload["score"] > 0.8)
-                assert edge.should_route({"score": 0.9}) is True
-                assert edge.should_route({"score": 0.4}) is False
+                edge = Edge("stage1", "stage2", condition=lambda data: data["score"] > 0.8)
+                assert await edge.should_route({"score": 0.9}) is True
+                assert await edge.should_route({"score": 0.4}) is False
         """
         if self._condition is None:
             return True
-        return self._condition(data)
+        result = self._condition(data)
+        if inspect.isawaitable(result):
+            return bool(await result)
+        return bool(result)
 
     def to_dict(self) -> dict[str, Any]:
         """Produce a JSON-serialisable view of the edge metadata.
@@ -184,7 +217,7 @@ class Edge(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Edge":
+    def from_dict(cls, data: dict[str, Any]) -> Edge:
         """Reconstruct an `Edge` from its serialised dictionary form.
 
         The deserialised edge will lack the executable predicate because we do
@@ -232,7 +265,7 @@ class Case:
     """
 
     condition: Callable[[Any], bool]
-    target: Executor
+    target: Executor | SupportsAgentRun
 
 
 @dataclass
@@ -255,7 +288,7 @@ class Default:
             assert fallback.target.id == "dead_letter"
     """
 
-    target: Executor
+    target: Executor | SupportsAgentRun
 
 
 @dataclass(init=False)
@@ -281,7 +314,7 @@ class EdgeGroup(DictConvertible):
 
     from builtins import type as builtin_type
 
-    _TYPE_REGISTRY: ClassVar[dict[str, builtin_type["EdgeGroup"]]] = {}
+    _TYPE_REGISTRY: ClassVar[dict[str, builtin_type[EdgeGroup]]] = {}
 
     def __init__(
         self,
@@ -363,7 +396,7 @@ class EdgeGroup(DictConvertible):
         }
 
     @classmethod
-    def register(cls, subclass: builtin_type["EdgeGroup"]) -> builtin_type["EdgeGroup"]:
+    def register(cls, subclass: builtin_type[EdgeGroupT]) -> builtin_type[EdgeGroupT]:
         """Register a subclass so deserialisation can recover the right type.
 
         Registration is typically performed via the decorator syntax applied to
@@ -385,7 +418,7 @@ class EdgeGroup(DictConvertible):
         return subclass
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "EdgeGroup":
+    def from_dict(cls, data: dict[str, Any]) -> EdgeGroup:
         """Hydrate the correct `EdgeGroup` subclass from serialised state.
 
         The method inspects the `type` field, allocates the corresponding class
@@ -443,11 +476,17 @@ class SingleEdgeGroup(EdgeGroup):
         self,
         source_id: str,
         target_id: str,
-        condition: Callable[[Any], bool] | None = None,
+        condition: EdgeCondition | None = None,
         *,
         id: str | None = None,
     ) -> None:
         """Create a one-to-one edge group between two executors.
+
+        Args:
+            source_id: The source executor ID.
+            target_id: The target executor ID.
+            condition: Optional condition function `(data) -> bool | Awaitable[bool]`.
+            id: Optional explicit ID for the edge group.
 
         Examples:
             .. code-block:: python
@@ -699,7 +738,7 @@ class SwitchCaseEdgeGroupCase(DictConvertible):
         return payload
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupCase":
+    def from_dict(cls, data: dict[str, Any]) -> SwitchCaseEdgeGroupCase:
         """Instantiate a case from its serialised dictionary payload.
 
         Examples:
@@ -753,7 +792,7 @@ class SwitchCaseEdgeGroupDefault(DictConvertible):
         return {"target_id": self.target_id, "type": self.type}
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwitchCaseEdgeGroupDefault":
+    def from_dict(cls, data: dict[str, Any]) -> SwitchCaseEdgeGroupDefault:
         """Recreate the default branch from its persisted form.
 
         Examples:

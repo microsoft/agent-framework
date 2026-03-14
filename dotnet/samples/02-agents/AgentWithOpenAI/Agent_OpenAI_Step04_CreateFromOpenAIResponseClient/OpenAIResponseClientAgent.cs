@@ -1,0 +1,114 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Runtime.CompilerServices;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
+using OpenAI.Responses;
+
+namespace OpenAIResponseClientSample;
+
+/// <summary>
+/// Provides an <see cref="AIAgent"/> backed by an OpenAI Responses implementation.
+/// </summary>
+public class OpenAIResponseClientAgent : DelegatingAIAgent
+{
+    /// <summary>
+    /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
+    /// </summary>
+    /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
+    /// <param name="instructions">Optional instructions for the agent.</param>
+    /// <param name="name">Optional name for the agent.</param>
+    /// <param name="description">Optional description for the agent.</param>
+    /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
+    public OpenAIResponseClientAgent(
+        ResponsesClient client,
+        string? instructions = null,
+        string? name = null,
+        string? description = null,
+        ILoggerFactory? loggerFactory = null) :
+        this(client, new()
+        {
+            Name = name,
+            Description = description,
+            ChatOptions = new ChatOptions() { Instructions = instructions },
+        }, loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initialize an instance of <see cref="OpenAIResponseClientAgent"/>.
+    /// </summary>
+    /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
+    /// <param name="options">Options to create the agent.</param>
+    /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
+    public OpenAIResponseClientAgent(
+        ResponsesClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
+        base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(), options, loggerFactory))
+    {
+    }
+
+    /// <summary>
+    /// Run the agent with the provided message and arguments.
+    /// </summary>
+    /// <param name="messages">The messages to pass to the agent.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ResponseResult"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    public virtual async Task<ResponseResult> RunAsync(
+        IEnumerable<ResponseItem> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await this.RunAsync(messages.AsChatMessages(), session, options, cancellationToken).ConfigureAwait(false);
+
+        return response.AsOpenAIResponse();
+    }
+
+    /// <summary>
+    /// Run the agent streaming with the provided message and arguments.
+    /// </summary>
+    /// <param name="messages">The messages to pass to the agent.</param>
+    /// <param name="session">The conversation session to continue with this invocation. If not provided, creates a new session. The session will be mutated with the provided messages and agent response.</param>
+    /// <param name="options">Optional parameters for agent invocation.</param>
+    /// <param name="cancellationToken">The <see cref="CancellationToken"/> to monitor for cancellation requests. The default is <see cref="CancellationToken.None"/>.</param>
+    /// <returns>A <see cref="ResponseResult"/> containing the list of <see cref="ChatMessage"/> items.</returns>
+    public virtual async IAsyncEnumerable<StreamingResponseUpdate> RunStreamingAsync(
+        IEnumerable<ResponseItem> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var response = this.RunStreamingAsync(messages.AsChatMessages(), session, options, cancellationToken);
+
+        await foreach (var update in response.ConfigureAwait(false))
+        {
+            switch (update.RawRepresentation)
+            {
+                case StreamingResponseUpdate rawUpdate:
+                    yield return rawUpdate;
+                    break;
+
+                case ChatResponseUpdate { RawRepresentation: StreamingResponseUpdate rawUpdate }:
+                    yield return rawUpdate;
+                    break;
+
+                default:
+                    // TODO: The OpenAI library does not currently expose model factory methods for creating
+                    // StreamingResponseUpdates. We are thus unable to manufacture such instances when there isn't
+                    // already one in the update and instead skip them.
+                    break;
+            }
+        }
+    }
+
+    /// <inheritdoc/>
+    protected sealed override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunCoreAsync(messages, session, options, cancellationToken);
+
+    /// <inheritdoc/>
+    protected sealed override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) =>
+        base.RunCoreStreamingAsync(messages, session, options, cancellationToken);
+}

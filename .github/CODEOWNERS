@@ -2,3 +2,6 @@
 # https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 python/packages/azurefunctions/ @microsoft/agentframework-durabletask-developers
+python/packages/durabletask/ @microsoft/agentframework-durabletask-developers
+python/samples/getting_started/azure_functions/ @microsoft/agentframework-durabletask-developers
+python/samples/getting_started/durabletask/ @microsoft/agentframework-durabletask-developers

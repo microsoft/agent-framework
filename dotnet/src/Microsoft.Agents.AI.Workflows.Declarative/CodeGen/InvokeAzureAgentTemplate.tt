@@ -1,11 +1,18 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ import namespace="Microsoft.Agents.AI.Workflows.Declarative.Extensions" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ import namespace="Microsoft.Extensions.AI" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateBoolExpressionTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateListExpressionTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateStringExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Invokes an agent to process messages and return a response within a conversation context.
 /// </summary>
-internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowAgentProvider agentProvider) : AgentExecutor(id: "<#= this.Id #>", session, agentProvider)
+internal sealed class <#= this.Name #>Executor(FormulaSession session, ResponseAgentProvider agentProvider) : AgentExecutor(id: "<#= this.Id #>", session, agentProvider)
 {
     // <inheritdoc />
     protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
@@ -21,7 +28,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
         EvaluateBoolExpression(this.Model.Output?.AutoSend, "autoSend", defaultValue: true); 
         EvaluateListExpression<ChatMessage>(this.Model.Input?.Messages, "inputMessages");#>
         
-        AgentRunResponse agentResponse =
+        AgentResponse agentResponse =
             await InvokeAgentAsync(
                 context,
                 agentName,
@@ -32,7 +39,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session, WorkflowA
 
         if (autoSend)
         {
-            await context.AddEventAsync(new AgentRunResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
+            await context.AddEventAsync(new AgentResponseEvent(this.Id, agentResponse)).ConfigureAwait(false);
         }
         <#
         AssignVariable(this.Messages, "agentResponse.Messages"); #>

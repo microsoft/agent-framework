@@ -9,14 +9,17 @@ This example demonstrates advanced AGUIChatClient features including:
 - Error handling
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
+from typing import cast
 
-from agent_framework import ai_function
+from agent_framework import ChatResponse, ChatResponseUpdate, Message, ResponseStream, tool
 from agent_framework.ag_ui import AGUIChatClient
 
 
-@ai_function
+@tool
 def get_weather(location: str) -> str:
     """Get the current weather for a location.
 
@@ -33,7 +36,7 @@ def get_weather(location: str) -> str:
     return weather_data.get(location.lower(), f"Weather data not available for {location}")
 
 
-@ai_function
+@tool
 def calculate(a: float, b: float, operation: str) -> str:
     """Perform basic arithmetic operations.
 
@@ -69,15 +72,19 @@ async def streaming_example(client: AGUIChatClient, thread_id: str | None = None
     print("\nUser: Tell me a short joke\n")
     print("Assistant: ", end="", flush=True)
 
-    async for update in client.get_streaming_response("Tell me a short joke", metadata=metadata):
+    stream = client.get_response(
+        [Message(role="user", text="Tell me a short joke")],
+        stream=True,
+        options={"metadata": metadata} if metadata else None,
+    )
+    stream = cast(ResponseStream[ChatResponseUpdate, ChatResponse], stream)
+    async for update in stream:
         if not thread_id and update.additional_properties:
             thread_id = update.additional_properties.get("thread_id")
 
-        from agent_framework import TextContent
-
         for content in update.contents:
-            if isinstance(content, TextContent) and content.text:
-                print(content.text, end="", flush=True)
+            if content.type == "text" and content.text:  # type: ignore[attr-defined]
+                print(content.text, end="", flush=True)  # type: ignore[attr-defined]
 
     print("\n")
     return thread_id
@@ -93,7 +100,7 @@ async def non_streaming_example(client: AGUIChatClient, thread_id: str | None = 
 
     print("\nUser: What is 2 + 2?\n")
 
-    response = await client.get_response("What is 2 + 2?", metadata=metadata)
+    response = await client.get_response([Message(role="user", text="What is 2 + 2?")], metadata=metadata)
 
     print(f"Assistant: {response.text}")
 
@@ -107,15 +114,15 @@ async def non_streaming_example(client: AGUIChatClient, thread_id: str | None = 
 async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     """Demonstrate sending tool definitions to the server.
 
-    IMPORTANT: When using AGUIChatClient directly (without ChatAgent wrapper):
+    IMPORTANT: When using AGUIChatClient directly (without Agent wrapper):
     - Tools are sent as DEFINITIONS only
     - No automatic client-side execution (no function invocation middleware)
     - Server must have matching tool implementations to execute them
 
     For CLIENT-SIDE tool execution (like .NET AGUIClient sample):
-    - Use ChatAgent wrapper with tools
+    - Use Agent wrapper with tools
     - See client_with_agent.py for the hybrid pattern
-    - ChatAgent middleware intercepts and executes client tools locally
+    - Agent middleware intercepts and executes client tools locally
     - Server can have its own tools that execute server-side
     - Both client and server tools work together in same conversation
 
@@ -132,19 +139,17 @@ async def tool_example(client: AGUIChatClient, thread_id: str | None = None):
     print("(Server must be configured with matching tools to execute them)\n")
 
     response = await client.get_response(
-        "What's the weather in Seattle?", tools=[get_weather, calculate], metadata=metadata
+        [Message(role="user", text="What's the weather in Seattle?")], tools=[get_weather, calculate], metadata=metadata
     )
 
     print(f"Assistant: {response.text}")
 
     # Show tool calls if any
-    from agent_framework import FunctionCallContent
-
     tool_called = False
     for message in response.messages:
         for content in message.contents:
-            if isinstance(content, FunctionCallContent):
-                print(f"\n[Tool Called: {content.name}]")
+            if content.type == "function_call":  # type: ignore[attr-defined]
+                print(f"\n[Tool Called: {content.name}]")  # type: ignore[attr-defined]
                 tool_called = True
 
     if not tool_called:
@@ -169,24 +174,28 @@ async def conversation_example(client: AGUIChatClient):
 
     # First turn
     print("User: My name is Alice\n")
-    response1 = await client.get_response("My name is Alice")
+    response1 = await client.get_response([Message(role="user", text="My name is Alice")])
     print(f"Assistant: {response1.text}")
     thread_id = response1.additional_properties.get("thread_id")
     print(f"\n[Thread: {thread_id}]")
 
     # Second turn - using same thread
     print("\nUser: What's my name?\n")
-    response2 = await client.get_response("What's my name?", metadata={"thread_id": thread_id})
+    response2 = await client.get_response(
+        [Message(role="user", text="What's my name?")], options={"metadata": {"thread_id": thread_id}}
+    )
     print(f"Assistant: {response2.text}")
 
     # Check if context was maintained
     if "alice" not in response2.text.lower():
-        print("\n[Note: Server may not maintain thread context - consider using ChatAgent for history management]")
+        print("\n[Note: Server may not maintain thread context - consider using Agent for history management]")
 
     # Third turn
     print("\nUser: Can you also tell me what 10 * 5 is?\n")
     response3 = await client.get_response(
-        "Can you also tell me what 10 * 5 is?", metadata={"thread_id": thread_id}, tools=[calculate]
+        [Message(role="user", text="Can you also tell me what 10 * 5 is?")],
+        options={"metadata": {"thread_id": thread_id}},
+        tools=[calculate],
     )
     print(f"Assistant: {response3.text}")
 

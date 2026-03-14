@@ -1,10 +1,24 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""DevUI integration namespace for optional Agent Framework connectors.
+
+This module lazily re-exports objects from:
+- ``agent-framework-devui``
+
+Supported classes and functions include:
+- DevServer
+- AgentFrameworkRequest
+- DiscoveryResponse
+- ResponseStreamEvent
+- serve
+- main
+"""
+
 import importlib
 from typing import Any
 
-PACKAGE_NAME = "agent_framework_devui"
-PACKAGE_EXTRA = "devui"
+IMPORT_PATH = "agent_framework_devui"
+PACKAGE_NAME = "agent-framework-devui"
 _IMPORTS = [
     "AgentFrameworkRequest",
     "DevServer",
@@ -14,20 +28,20 @@ _IMPORTS = [
     "OpenAIResponse",
     "ResponseStreamEvent",
     "main",
+    "register_cleanup",
     "serve",
-    "__version__",
 ]
 
 
 def __getattr__(name: str) -> Any:
     if name in _IMPORTS:
         try:
-            return getattr(importlib.import_module(PACKAGE_NAME), name)
+            return getattr(importlib.import_module(IMPORT_PATH), name)
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
-                f"The '{PACKAGE_EXTRA}' extra is not installed, please do `pip install agent-framework-{PACKAGE_EXTRA}`"
+                f"The '{PACKAGE_NAME}' package is not installed, please do `pip install {PACKAGE_NAME}`"
             ) from exc
-    raise AttributeError(f"Module {PACKAGE_NAME} has no attribute {name}.")
+    raise AttributeError(f"Module {IMPORT_PATH} has no attribute {name}.")
 
 
 def __dir__() -> list[str]:

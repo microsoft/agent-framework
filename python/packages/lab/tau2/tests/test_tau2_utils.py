@@ -2,97 +2,78 @@
 
 """Tests for tau2 utils module."""
 
-import urllib.request
-from pathlib import Path
-
-import pytest
-from agent_framework._tools import AIFunction
-from agent_framework._types import ChatMessage, FunctionCallContent, FunctionResultContent, Role, TextContent
+from agent_framework import Content, FunctionTool, Message
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,
-    convert_tau2_tool_to_ai_function,
+    convert_tau2_tool_to_function_tool,
 )
+from pydantic import BaseModel
 from tau2.data_model.message import AssistantMessage, SystemMessage, ToolCall, ToolMessage, UserMessage
-from tau2.domains.airline.data_model import FlightDB
-from tau2.domains.airline.tools import AirlineTools
-from tau2.environment.environment import Environment
 
 
-@pytest.fixture(scope="session")
-def tau2_airline_environment() -> Environment:
-    airline_db_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/db.json"
-    airline_policy_remote_path = "https://raw.githubusercontent.com/sierra-research/tau2-bench/5ba9e3e56db57c5e4114bf7f901291f09b2c5619/data/tau2/domains/airline/policy.md"
-
-    # Create cache directory
-    cache_dir = Path(__file__).parent / "data"
-    cache_dir.mkdir(exist_ok=True)
-
-    # Define cache file paths
-    db_cache_path = cache_dir / "airline_db.json"
-    policy_cache_path = cache_dir / "airline_policy.md"
-
-    # Download files only if they don't exist in cache
-    if not db_cache_path.exists():
-        urllib.request.urlretrieve(airline_db_remote_path, db_cache_path)
-
-    if not policy_cache_path.exists():
-        urllib.request.urlretrieve(airline_policy_remote_path, policy_cache_path)
-
-    # Load data from cached files
-    db = FlightDB.load(str(db_cache_path))
-    tools = AirlineTools(db)
-    with open(policy_cache_path) as fp:
-        policy = fp.read()
-
-    yield Environment(
-        domain_name="airline",
-        policy=policy,
-        tools=tools,
-    )
+class _DummyToolInput(BaseModel):
+    param: str
 
 
-def test_convert_tau2_tool_to_ai_function_basic(tau2_airline_environment):
-    """Test basic conversion from tau2 tool to AIFunction."""
-    # Get real tools from tau2 environment
-    tools = tau2_airline_environment.get_tools()
+class _DummyToolResult(BaseModel):
+    output: str
 
-    # Use the first available tool for testing
-    assert len(tools) > 0, "No tools available in environment"
-    tau2_tool = tools[0]
+
+class _DummyTau2Tool:
+    def __init__(self, name: str, description: str) -> None:
+        self.name = name
+        self._description = description
+        self.params = _DummyToolInput
+
+    def _get_description(self) -> str:
+        return self._description
+
+    def __call__(self, **kwargs: str) -> _DummyToolResult:
+        return _DummyToolResult(output=kwargs["param"])
+
+
+def test_convert_tau2_tool_to_function_tool_basic():
+    """Test basic conversion from tau2 tool to FunctionTool."""
+    tau2_tool = _DummyTau2Tool(name="lookup_booking", description="Lookup booking by id.")
 
     # Convert the tool
-    ai_function = convert_tau2_tool_to_ai_function(tau2_tool)
+    tool = convert_tau2_tool_to_function_tool(tau2_tool)
 
     # Verify the conversion
-    assert isinstance(ai_function, AIFunction)
-    assert ai_function.name == tau2_tool.name
-    assert ai_function.description == tau2_tool._get_description()
-    assert ai_function.input_model == tau2_tool.params
+    assert isinstance(tool, FunctionTool)
+    assert tool.name == tau2_tool.name
+    assert tool.description == tau2_tool._get_description()
+    assert tool.input_model == tau2_tool.params
 
-    # Test that the function is callable (we won't call it with real params to avoid side effects)
-    assert callable(ai_function.func)
+    result = tool.func(param="ABC123")
+    assert isinstance(result, _DummyToolResult)
+    assert result.output == "ABC123"
+    assert callable(tool.func)
 
 
-def test_convert_tau2_tool_to_ai_function_multiple_tools(tau2_airline_environment):
+def test_convert_tau2_tool_to_function_tool_multiple_tools():
     """Test conversion with multiple tau2 tools."""
-    # Get real tools from tau2 environment
-    tools = tau2_airline_environment.get_tools()
+    tools = [
+        _DummyTau2Tool(name="lookup_booking", description="Lookup booking by id."),
+        _DummyTau2Tool(name="cancel_booking", description="Cancel an existing booking."),
+        _DummyTau2Tool(name="check_policy", description="Get policy details."),
+    ]
 
     # Convert multiple tools
-    ai_functions = [convert_tau2_tool_to_ai_function(tool) for tool in tools[:3]]  # Test first 3 tools
+    function_tools = [convert_tau2_tool_to_function_tool(tool) for tool in tools]
 
     # Verify all conversions
-    for ai_function, tau2_tool in zip(ai_functions, tools[:3], strict=False):
-        assert isinstance(ai_function, AIFunction)
-        assert ai_function.name == tau2_tool.name
-        assert ai_function.description == tau2_tool._get_description()
-        assert ai_function.input_model == tau2_tool.params
-        assert callable(ai_function.func)
+    for tool, tau2_tool in zip(function_tools, tools, strict=False):
+        assert isinstance(tool, FunctionTool)
+        assert tool.name == tau2_tool.name
+        assert tool.description == tau2_tool._get_description()
+        assert tool.input_model == tau2_tool.params
+        assert callable(tool.func)
 
 
 def test_convert_agent_framework_messages_to_tau2_messages_system():
     """Test converting system message."""
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System instruction")])]
+    messages = [Message(role="system", contents=[Content.from_text(text="System instruction")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -104,7 +85,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_system():
 
 def test_convert_agent_framework_messages_to_tau2_messages_user():
     """Test converting user message."""
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="Hello assistant")])]
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello assistant")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -117,7 +98,7 @@ def test_convert_agent_framework_messages_to_tau2_messages_user():
 
 def test_convert_agent_framework_messages_to_tau2_messages_assistant():
     """Test converting assistant message."""
-    messages = [ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Hello user")])]
+    messages = [Message(role="assistant", contents=[Content.from_text(text="Hello user")])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -130,9 +111,9 @@ def test_convert_agent_framework_messages_to_tau2_messages_assistant():
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_function_call():
     """Test converting message with function call."""
-    function_call = FunctionCallContent(call_id="call_123", name="test_function", arguments={"param": "value"})
+    function_call = Content.from_function_call(call_id="call_123", name="test_function", arguments={"param": "value"})
 
-    messages = [ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="I'll call a function"), function_call])]
+    messages = [Message(role="assistant", contents=[Content.from_text(text="I'll call a function"), function_call])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -152,9 +133,9 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_function_call():
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_function_result():
     """Test converting message with function result."""
-    function_result = FunctionResultContent(call_id="call_123", result={"success": True, "data": "result data"})
+    function_result = Content.from_function_result(call_id="call_123", result={"success": True, "data": "result data"})
 
-    messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
+    messages = [Message(role="tool", contents=[function_result])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -170,11 +151,11 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_function_result(
 
 def test_convert_agent_framework_messages_to_tau2_messages_with_error():
     """Test converting function result with error."""
-    function_result = FunctionResultContent(
+    function_result = Content.from_function_result(
         call_id="call_456", result="Error occurred", exception=Exception("Test error")
     )
 
-    messages = [ChatMessage(role=Role.TOOL, contents=[function_result])]
+    messages = [Message(role="tool", contents=[function_result])]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -185,7 +166,9 @@ def test_convert_agent_framework_messages_to_tau2_messages_with_error():
 
 def test_convert_agent_framework_messages_to_tau2_messages_multiple_text_contents():
     """Test converting message with multiple text contents."""
-    messages = [ChatMessage(role=Role.USER, contents=[TextContent(text="First part"), TextContent(text="Second part")])]
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="First part"), Content.from_text(text="Second part")])
+    ]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)
 
@@ -196,16 +179,16 @@ def test_convert_agent_framework_messages_to_tau2_messages_multiple_text_content
 
 def test_convert_agent_framework_messages_to_tau2_messages_complex_scenario():
     """Test converting complex scenario with multiple message types."""
-    function_call = FunctionCallContent(call_id="call_789", name="complex_tool", arguments='{"key": "value"}')
+    function_call = Content.from_function_call(call_id="call_789", name="complex_tool", arguments='{"key": "value"}')
 
-    function_result = FunctionResultContent(call_id="call_789", result={"output": "tool result"})
+    function_result = Content.from_function_result(call_id="call_789", result={"output": "tool result"})
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[TextContent(text="System prompt")]),
-        ChatMessage(role=Role.USER, contents=[TextContent(text="User request")]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="I'll help you"), function_call]),
-        ChatMessage(role=Role.TOOL, contents=[function_result]),
-        ChatMessage(role=Role.ASSISTANT, contents=[TextContent(text="Based on the result...")]),
+        Message(role="system", contents=[Content.from_text(text="System prompt")]),
+        Message(role="user", contents=[Content.from_text(text="User request")]),
+        Message(role="assistant", contents=[Content.from_text(text="I'll help you"), function_call]),
+        Message(role="tool", contents=[function_result]),
+        Message(role="assistant", contents=[Content.from_text(text="Based on the result...")]),
     ]
 
     tau2_messages = convert_agent_framework_messages_to_tau2_messages(messages)

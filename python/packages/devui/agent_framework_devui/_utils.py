@@ -7,11 +7,19 @@ import json
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
-from agent_framework import ChatMessage
+from agent_framework import Message
 
 logger = logging.getLogger(__name__)
+
+
+def _string_key_dict(value: object) -> dict[str, Any] | None:
+    """Cast value to a dict."""
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, Any], value)
+
 
 # ============================================================================
 # Agent Metadata Extraction
@@ -32,27 +40,36 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         "instructions": None,
         "model": None,
         "chat_client_type": None,
-        "context_providers": None,
+        "context_provider": None,
         "middleware": None,
     }
 
     # Try to get instructions
-    if hasattr(entity_object, "chat_options") and hasattr(entity_object.chat_options, "instructions"):
-        metadata["instructions"] = entity_object.chat_options.instructions
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            if "instructions" in chat_opts_dict:
+                metadata["instructions"] = chat_opts_dict.get("instructions")
+        elif hasattr(chat_opts, "instructions"):
+            metadata["instructions"] = chat_opts.instructions
 
-    # Try to get model - check both chat_options and chat_client
-    if (
-        hasattr(entity_object, "chat_options")
-        and hasattr(entity_object.chat_options, "model_id")
-        and entity_object.chat_options.model_id
-    ):
-        metadata["model"] = entity_object.chat_options.model_id
-    elif hasattr(entity_object, "chat_client") and hasattr(entity_object.chat_client, "model_id"):
-        metadata["model"] = entity_object.chat_client.model_id
+    # Try to get model - check both default_options and client
+    if hasattr(entity_object, "default_options"):
+        chat_opts = entity_object.default_options
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            model_id = chat_opts_dict.get("model_id")
+            if model_id:
+                metadata["model"] = model_id
+        elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
+            metadata["model"] = chat_opts.model_id
+    if metadata["model"] is None and hasattr(entity_object, "client") and hasattr(entity_object.client, "model_id"):
+        metadata["model"] = entity_object.client.model_id
 
     # Try to get chat client type
-    if hasattr(entity_object, "chat_client"):
-        metadata["chat_client_type"] = entity_object.chat_client.__class__.__name__
+    if hasattr(entity_object, "client"):
+        metadata["chat_client_type"] = entity_object.client.__class__.__name__
 
     # Try to get context providers
     if (
@@ -60,20 +77,20 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
         and entity_object.context_provider
         and hasattr(entity_object.context_provider, "__class__")
     ):
-        metadata["context_providers"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
+        metadata["context_provider"] = [entity_object.context_provider.__class__.__name__]  # type: ignore
 
     # Try to get middleware
     if hasattr(entity_object, "middleware") and entity_object.middleware:
-        middleware_list: list[str] = []
+        middlewares_list: list[str] = []
         for m in entity_object.middleware:
             # Try multiple ways to get a good name for middleware
             if hasattr(m, "__name__"):  # Function or callable
-                middleware_list.append(m.__name__)
+                middlewares_list.append(m.__name__)
             elif hasattr(m, "__class__"):  # Class instance
-                middleware_list.append(m.__class__.__name__)
+                middlewares_list.append(m.__class__.__name__)
             else:
-                middleware_list.append(str(m))
-        metadata["middleware"] = middleware_list  # type: ignore
+                middlewares_list.append(str(m))
+        metadata["middleware"] = middlewares_list  # type: ignore
 
     return metadata
 
@@ -106,7 +123,7 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
         try:
             handlers = executor._handlers
             if isinstance(handlers, dict):
-                message_types = list(handlers.keys())
+                message_types = list(handlers.keys())  # type: ignore[arg-type]  # pyright: ignore[reportUnknownArgumentType]
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.debug(f"Failed to read executor handlers: {exc}")
 
@@ -114,8 +131,8 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
 
 
 def _contains_chat_message(type_hint: Any) -> bool:
-    """Check whether the provided type hint directly or indirectly references ChatMessage."""
-    if type_hint is ChatMessage:
+    """Check whether the provided type hint directly or indirectly references Message."""
+    if type_hint is Message:
         return True
 
     origin = get_origin(type_hint)
@@ -131,7 +148,7 @@ def _contains_chat_message(type_hint: Any) -> bool:
 def select_primary_input_type(message_types: list[Any]) -> Any | None:
     """Choose the most user-friendly input type for workflow inputs.
 
-    Prefers ChatMessage (or containers thereof) and then falls back to primitives.
+    Prefers Message (or containers thereof) and then falls back to primitives.
 
     Args:
         message_types: List of possible message types
@@ -144,7 +161,7 @@ def select_primary_input_type(message_types: list[Any]) -> Any | None:
 
     for message_type in message_types:
         if _contains_chat_message(message_type):
-            return ChatMessage
+            return Message
 
     preferred = (str, dict)
 
@@ -260,8 +277,6 @@ def generate_schema_from_serialization_mixin(cls: type[Any]) -> dict[str, Any]:
 
     # Get type hints
     try:
-        from typing import get_type_hints
-
         type_hints = get_type_hints(cls)
     except Exception:
         type_hints = {}
@@ -338,8 +353,6 @@ def extract_response_type_from_executor(executor: Any, request_type: type) -> ty
         The response type class, or None if not found
     """
     try:
-        from typing import get_type_hints
-
         # Introspect handler methods for @response_handler pattern
         for attr_name in dir(executor):
             if attr_name.startswith("_"):
@@ -364,11 +377,10 @@ def extract_response_type_from_executor(executor: Any, request_type: type) -> ty
                     _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
 
                     # Check if first param matches request_type
-                    first_matches_request = first_param_type == request_type or (
-                        hasattr(first_param_type, "__name__")
-                        and hasattr(request_type, "__name__")
-                        and first_param_type.__name__ == request_type.__name__
-                    )
+                    first_matches_request = first_param_type == request_type
+                    if not first_matches_request and isinstance(first_param_type, type):
+                        request_type_name = request_type.__name__
+                        first_matches_request = first_param_type.__name__ == request_type_name
 
                     # Verify we have a matching request type and valid response type (must be a type class)
                     if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
@@ -421,7 +433,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
     if hasattr(input_type, "model_json_schema"):
         return input_type.model_json_schema()  # type: ignore
 
-    # 3. SerializationMixin classes (ChatMessage, etc.)
+    # 3. SerializationMixin classes (Message, etc.)
     if is_serialization_mixin(input_type):
         return generate_schema_from_serialization_mixin(input_type)
 
@@ -430,7 +442,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
         return generate_schema_from_dataclass(input_type)
 
     # 5. Fallback to string
-    type_name = getattr(input_type, "__name__", str(input_type))
+    type_name = input_type.__name__ if isinstance(input_type, type) else str(cast(Any, input_type))
     return {"type": "string", "description": f"Input type: {type_name}"}
 
 
@@ -464,8 +476,9 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
         return _parse_string_input(input_data, target_type)
 
     # Handle dict input
-    if isinstance(input_data, dict):
-        return _parse_dict_input(input_data, target_type)
+    parsed_dict = _string_key_dict(input_data)
+    if parsed_dict is not None:
+        return _parse_dict_input(parsed_dict, target_type)
 
     # Fallback: return original
     return input_data
@@ -515,7 +528,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
         except Exception as e:
             logger.debug(f"Failed to parse string as Pydantic model: {e}")
 
-    # SerializationMixin (like ChatMessage)
+    # SerializationMixin (like Message)
     if is_serialization_mixin(target_type):
         try:
             # Try parsing as JSON dict first
@@ -525,7 +538,7 @@ def _parse_string_input(input_str: str, target_type: type) -> Any:
                     return target_type.from_dict(data)  # type: ignore
                 return target_type(**data)  # type: ignore
 
-            # For ChatMessage specifically: create from text
+            # For Message specifically: create from text
             # Try common field patterns
             common_fields = ["text", "message", "content"]
             sig = inspect.signature(target_type)

@@ -7,7 +7,7 @@ using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 
@@ -163,7 +163,7 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id); // Loop continuation
-            this.ContinueWith(new EmptyTemplate(endActionsId, this._rootId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.ResetAsync)}"), action.Id);
+            this.ContinueWith(new EmptyTemplate(endActionsId, this._rootId, $"{action.Id.FormatName()}.{nameof(ForeachExecutor.CompleteAsync)}"), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }
@@ -364,6 +364,10 @@ internal sealed class WorkflowTemplateVisitor : DialogActionVisitor
     }
 
     #region Not supported
+
+    protected override void Visit(InvokeMcpTool item) => this.NotSupported(item);
+
+    protected override void Visit(InvokeFunctionTool item) => this.NotSupported(item);
 
     protected override void Visit(AnswerQuestionWithAI item) => this.NotSupported(item);
 

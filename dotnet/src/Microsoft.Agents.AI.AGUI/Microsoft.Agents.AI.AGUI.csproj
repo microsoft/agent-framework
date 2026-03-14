@@ -23,7 +23,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="System.Net.ServerSentEvents" />
-    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" />
     <PackageReference Include="System.Net.Http.Json" />
     <PackageReference Include="System.Threading.Channels" />
   </ItemGroup>

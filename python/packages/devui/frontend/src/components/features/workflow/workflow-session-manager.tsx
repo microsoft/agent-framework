@@ -42,13 +42,13 @@ export const WorkflowSessionManager: React.FC<WorkflowSessionManagerProps> = ({
       if (response.data.length === 0) {
         console.log("No workflow conversations found, creating default conversation");
         const newSession = await apiClient.createWorkflowSession(workflowId, {
-          name: `Conversation ${new Date().toLocaleString()}`,
+          name: `Checkpoint Storage ${new Date().toLocaleString()}`,
         });
         setAvailableSessions([newSession]);
         setCurrentSession(newSession);
         onSessionChange?.(newSession);
         addToast({
-          message: "Default conversation created",
+          message: "Default checkpoint storage created",
           type: "success",
         });
       } else {
@@ -87,19 +87,19 @@ export const WorkflowSessionManager: React.FC<WorkflowSessionManagerProps> = ({
     setCreatingSession(true);
     try {
       const newSession = await apiClient.createWorkflowSession(workflowId, {
-        name: `Conversation ${new Date().toLocaleString()}`,
+        name: `Checkpoint Storage ${new Date().toLocaleString()}`,
       });
       addSession(newSession);
       setCurrentSession(newSession);
       onSessionChange?.(newSession);
       addToast({
-        message: "New conversation created",
+        message: "New checkpoint storage created",
         type: "success",
       });
     } catch (error) {
-      console.error("Failed to create conversation:", error);
+      console.error("Failed to create checkpoint storage:", error);
       addToast({
-        message: "Failed to create conversation",
+        message: "Failed to create checkpoint storage",
         type: "error",
       });
     } finally {

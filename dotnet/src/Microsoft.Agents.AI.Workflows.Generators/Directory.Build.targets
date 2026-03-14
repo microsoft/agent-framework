@@ -1,0 +1,18 @@
+<Project>
+  <!-- Import parent Directory.Build.targets if it exists -->
+  <PropertyGroup>
+    <_ParentTargetsPath>$([MSBuild]::GetPathOfFileAbove(Directory.Build.targets, $(MSBuildThisFileDirectory)..))</_ParentTargetsPath>
+  </PropertyGroup>
+  <Import Project="$(_ParentTargetsPath)" Condition="'$(_ParentTargetsPath)' != ''" />
+
+  <!-- Since the generators project must target netstandard2.0, if any other TFM is specified we flag it silently -->
+  <PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <_SkipIncompatibleBuild>true</_SkipIncompatibleBuild>
+    <!-- Bypass NETSDK1005 by clearing assets file path -->
+    <ProjectAssetsFile />
+    <ResolveAssemblyReferencesSilentlySkip>true</ResolveAssemblyReferencesSilentlySkip>
+  </PropertyGroup>
+
+  <!-- Since the generators project must target netstandard2.0, if any other TFM is specified we skip the build. -->
+  <Import Project="SkipIncompatibleBuild.targets" Condition="'$(_SkipIncompatibleBuild)' == 'true'" />
+</Project>

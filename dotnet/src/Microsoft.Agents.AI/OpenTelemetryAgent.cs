@@ -70,6 +70,12 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// and outputs, such as message content, function call arguments, and function call results.
     /// The default value can be overridden by setting the <c>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</c>
     /// environment variable to "true". Explicitly setting this property will override the environment variable.
+    /// <para>
+    /// <strong>Security consideration:</strong> When sensitive data capture is enabled, the full text of chat messages —
+    /// including user inputs, LLM responses, function call arguments, and function results — is emitted as telemetry.
+    /// This data may contain PII or other sensitive information. Ensure that your telemetry pipeline is configured
+    /// with appropriate access controls and data retention policies.
+    /// </para>
     /// </remarks>
     public bool EnableSensitiveData
     {
@@ -78,25 +84,25 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     }
 
     /// <inheritdoc/>
-    public override async Task<AgentRunResponse> RunAsync(
-        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+    protected override async Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
+        ChatOptions co = new ForwardedOptions(options, session, Activity.Current);
 
         var response = await this._otelClient.GetResponseAsync(messages, co, cancellationToken).ConfigureAwait(false);
 
-        return response.RawRepresentation as AgentRunResponse ?? new AgentRunResponse(response);
+        return response.RawRepresentation as AgentResponse ?? new AgentResponse(response);
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(
-        IEnumerable<ChatMessage> messages, AgentThread? thread = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ChatOptions co = new ForwardedOptions(options, thread, Activity.Current);
+        ChatOptions co = new ForwardedOptions(options, session, Activity.Current);
 
         await foreach (var update in this._otelClient.GetStreamingResponseAsync(messages, co, cancellationToken).ConfigureAwait(false))
         {
-            yield return update.RawRepresentation as AgentRunResponseUpdate ?? new AgentRunResponseUpdate(update);
+            yield return update.RawRepresentation as AgentResponseUpdate ?? new AgentResponseUpdate(update);
         }
     }
 
@@ -114,7 +120,9 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
 
         // Override information set by OpenTelemetryChatClient to make it specific to invoke_agent.
 
-        activity.DisplayName = $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.DisplayName}";
+        activity.DisplayName = string.IsNullOrWhiteSpace(this.Name)
+            ? $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Id}"
+            : $"{OpenTelemetryConsts.GenAI.InvokeAgent} {this.Name}({this.Id})";
         activity.SetTag(OpenTelemetryConsts.GenAI.Operation.Name, OpenTelemetryConsts.GenAI.InvokeAgent);
 
         if (!string.IsNullOrWhiteSpace(this._providerName))
@@ -140,17 +148,17 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// <summary>State passed from this instance into the inner agent, circumventing the intermediate <see cref="OpenTelemetryChatClient"/>.</summary>
     private sealed class ForwardedOptions : ChatOptions
     {
-        public ForwardedOptions(AgentRunOptions? options, AgentThread? thread, Activity? currentActivity) :
+        public ForwardedOptions(AgentRunOptions? options, AgentSession? session, Activity? currentActivity) :
             base((options as ChatClientAgentRunOptions)?.ChatOptions)
         {
             this.Options = options;
-            this.Thread = thread;
+            this.Session = session;
             this.CurrentActivity = currentActivity;
         }
 
         public AgentRunOptions? Options { get; }
 
-        public AgentThread? Thread { get; }
+        public AgentSession? Session { get; }
 
         public Activity? CurrentActivity { get; }
     }
@@ -168,7 +176,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
             // Invoke the inner agent.
-            var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false);
+            var response = await parentAgent.InnerAgent.RunAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false);
 
             // Wrap the response in a ChatResponse so we can pass it back through OpenTelemetryChatClient.
             return response.AsChatResponse();
@@ -183,7 +191,7 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
             parentAgent.UpdateCurrentActivity(fo?.CurrentActivity);
 
             // Invoke the inner agent.
-            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Thread, fo?.Options, cancellationToken).ConfigureAwait(false))
+            await foreach (var update in parentAgent.InnerAgent.RunStreamingAsync(messages, fo?.Session, fo?.Options, cancellationToken).ConfigureAwait(false))
             {
                 // Wrap the response updates in ChatResponseUpdates so we can pass them back through OpenTelemetryChatClient.
                 yield return update.AsChatResponseUpdate();

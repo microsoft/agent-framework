@@ -2,9 +2,8 @@
 
 using Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.CodeGen;
 

@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI;
 /// telemetry, and logging purposes.
 /// </remarks>
 [DebuggerDisplay("ProviderName = {ProviderName}")]
-public class AIAgentMetadata
+public sealed class AIAgentMetadata
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="AIAgentMetadata"/> class.

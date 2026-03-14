@@ -1,13 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - This is intentional as we are testing deprecated methods
+
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.IO;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Assistants;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
@@ -21,7 +23,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithClientFactory_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithClientFactory_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -29,7 +31,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -51,7 +53,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with clientFactory using AsBuilder pattern works correctly.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithClientFactoryUsingAsBuilder_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithClientFactoryUsingAsBuilder_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -60,7 +62,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             clientFactory: (innerClient) =>
@@ -81,7 +83,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with options and clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithOptionsAndClientFactory_AppliesFactoryCorrectly()
+    public async Task CreateAIAgentAsync_WithOptionsAndClientFactory_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -91,11 +93,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Test Agent",
             Description = "Test description",
-            Instructions = "Test instructions"
+            ChatOptions = new() { Instructions = "Test instructions" }
         };
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             options,
             clientFactory: (innerClient) => testChatClient);
@@ -115,14 +117,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent without clientFactory works normally.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithoutClientFactory_WorksNormally()
+    public async Task CreateAIAgentAsync_WithoutClientFactory_WorksNormallyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent");
@@ -140,14 +142,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with null clientFactory works normally.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullClientFactory_WorksNormally()
+    public async Task CreateAIAgentAsync_WithNullClientFactory_WorksNormallyAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
         const string ModelId = "test-model";
 
         // Act
-        var agent = assistantClient.CreateAIAgent(
+        var agent = await assistantClient.CreateAIAgentAsync(
             ModelId,
             instructions: "Test instructions",
             name: "Test Agent",
@@ -166,11 +168,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent throws ArgumentNullException when client is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullClient_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullClient_ThrowsArgumentNullExceptionAsync()
     {
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((AssistantClient)null!).CreateAIAgent("test-model"));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            ((AssistantClient)null!).CreateAIAgentAsync("test-model"));
 
         Assert.Equal("client", exception.ParamName);
     }
@@ -179,14 +181,14 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent throws ArgumentNullException when model is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullModel_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullModel_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
 
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.CreateAIAgent(null!));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient.CreateAIAgentAsync(null!));
 
         Assert.Equal("model", exception.ParamName);
     }
@@ -195,23 +197,23 @@ public sealed class OpenAIAssistantClientExtensionsTests
     /// Verify that CreateAIAgent with options throws ArgumentNullException when options is null.
     /// </summary>
     [Fact]
-    public void CreateAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    public async Task CreateAIAgentAsync_WithNullOptions_ThrowsArgumentNullExceptionAsync()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
 
         // Act & Assert
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.CreateAIAgent("test-model", (ChatClientAgentOptions)null!));
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient.CreateAIAgentAsync("test-model", (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with ClientResult and options works correctly.
+    /// Verify that AsAIAgent with ClientResult and options works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithClientResultAndOptions_WorksCorrectly()
+    public void AsAIAgent_WithClientResultAndOptions_WorksCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -222,11 +224,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(clientResult, options);
+        var agent = assistantClient.AsAIAgent(clientResult, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -236,10 +238,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with Assistant and options works correctly.
+    /// Verify that AsAIAgent with Assistant and options works correctly.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAssistantAndOptions_WorksCorrectly()
+    public void AsAIAgent_WithAssistantAndOptions_WorksCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -249,11 +251,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(assistant, options);
+        var agent = assistantClient.AsAIAgent(assistant, options);
 
         // Assert
         Assert.NotNull(agent);
@@ -263,10 +265,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with Assistant and options falls back to assistant metadata when options are null.
+    /// Verify that AsAIAgent with Assistant and options falls back to assistant metadata when options are null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithAssistantAndOptionsWithNullFields_FallsBackToAssistantMetadata()
+    public void AsAIAgent_WithAssistantAndOptionsWithNullFields_FallsBackToAssistantMetadata()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -275,40 +277,13 @@ public sealed class OpenAIAssistantClientExtensionsTests
         var options = new ChatClientAgentOptions(); // Empty options
 
         // Act
-        var agent = assistantClient.GetAIAgent(assistant, options);
+        var agent = assistantClient.AsAIAgent(assistant, options);
 
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("Original Name", agent.Name);
         Assert.Equal("Original Description", agent.Description);
         Assert.Equal("Original Instructions", agent.Instructions);
-    }
-
-    /// <summary>
-    /// Verify that GetAIAgent with agentId and options works correctly.
-    /// </summary>
-    [Fact]
-    public void GetAIAgent_WithAgentIdAndOptions_WorksCorrectly()
-    {
-        // Arrange
-        var assistantClient = new TestAssistantClient();
-        const string AgentId = "asst_abc123";
-
-        var options = new ChatClientAgentOptions
-        {
-            Name = "Override Name",
-            Description = "Override Description",
-            Instructions = "Override Instructions"
-        };
-
-        // Act
-        var agent = assistantClient.GetAIAgent(AgentId, options);
-
-        // Assert
-        Assert.NotNull(agent);
-        Assert.Equal("Override Name", agent.Name);
-        Assert.Equal("Override Description", agent.Description);
-        Assert.Equal("Override Instructions", agent.Instructions);
     }
 
     /// <summary>
@@ -325,7 +300,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
             Name = "Override Name",
             Description = "Override Description",
-            Instructions = "Override Instructions"
+            ChatOptions = new() { Instructions = "Override Instructions" }
         };
 
         // Act
@@ -339,10 +314,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent with clientFactory parameter correctly applies the factory.
+    /// Verify that AsAIAgent with clientFactory parameter correctly applies the factory.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithClientFactory_AppliesFactoryCorrectly()
+    public void AsAIAgent_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -355,7 +330,7 @@ public sealed class OpenAIAssistantClientExtensionsTests
         };
 
         // Act
-        var agent = assistantClient.GetAIAgent(
+        var agent = assistantClient.AsAIAgent(
             assistant,
             options,
             clientFactory: (innerClient) => testChatClient);
@@ -371,10 +346,10 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when assistantClientResult is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when assistantClientResult is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullClientResult_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullClientResult_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -382,16 +357,16 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent((ClientResult<Assistant>)null!, options));
+            assistantClient.AsAIAgent(null!, options));
 
         Assert.Equal("assistantClientResult", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when assistant is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when assistant is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullAssistant_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullAssistant_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -399,16 +374,16 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent((Assistant)null!, options));
+            assistantClient.AsAIAgent((Assistant)null!, options));
 
         Assert.Equal("assistantMetadata", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that GetAIAgent throws ArgumentNullException when options is null.
+    /// Verify that AsAIAgent throws ArgumentNullException when options is null.
     /// </summary>
     [Fact]
-    public void GetAIAgent_WithNullOptions_ThrowsArgumentNullException()
+    public void AsAIAgent_WithNullOptions_ThrowsArgumentNullException()
     {
         // Arrange
         var assistantClient = new TestAssistantClient();
@@ -416,26 +391,9 @@ public sealed class OpenAIAssistantClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            assistantClient.GetAIAgent(assistant, (ChatClientAgentOptions)null!));
+            assistantClient.AsAIAgent(assistant, (ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
-    }
-
-    /// <summary>
-    /// Verify that GetAIAgent throws ArgumentException when agentId is empty.
-    /// </summary>
-    [Fact]
-    public void GetAIAgent_WithEmptyAgentId_ThrowsArgumentException()
-    {
-        // Arrange
-        var assistantClient = new TestAssistantClient();
-        var options = new ChatClientAgentOptions();
-
-        // Act & Assert
-        var exception = Assert.Throws<ArgumentException>(() =>
-            assistantClient.GetAIAgent(string.Empty, options));
-
-        Assert.Equal("agentId", exception.ParamName);
     }
 
     /// <summary>
@@ -456,6 +414,543 @@ public sealed class OpenAIAssistantClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that CreateAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        const string ModelId = "test-model";
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(
+            ModelId,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with options and services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithOptionsAndServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        const string ModelId = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new() { Instructions = "Test instructions" }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithServices_PassesServicesToAgent()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent"}"""))!;
+
+        // Act
+        var agent = assistantClient.AsAIAgent(assistant, services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with services parameter correctly passes it through to the ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithServices_PassesServicesToAgentAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+
+        // Act
+        var agent = await assistantClient.GetAIAgentAsync("asst_abc123", services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the IServiceProvider was passed through to the FunctionInvokingChatClient
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgent with both clientFactory and services works correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithClientFactoryAndServices_AppliesBothCorrectlyAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var serviceProvider = new TestServiceProvider();
+        var testChatClient = new TestChatClient(assistantClient.AsIChatClient("test-model"));
+        const string ModelId = "test-model";
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(
+            ModelId,
+            instructions: "Test instructions",
+            name: "Test Agent",
+            clientFactory: (innerClient) => testChatClient,
+            services: serviceProvider);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the custom chat client was applied
+        var retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+
+        // Verify the IServiceProvider was passed through
+        var chatClient = agent.GetService<IChatClient>();
+        Assert.NotNull(chatClient);
+        var functionInvokingClient = chatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.Same(serviceProvider, GetFunctionInvocationServices(functionInvokingClient));
+    }
+
+    /// <summary>
+    /// Uses reflection to access the FunctionInvocationServices property which is not public.
+    /// </summary>
+    private static IServiceProvider? GetFunctionInvocationServices(FunctionInvokingChatClient client)
+    {
+        var property = typeof(FunctionInvokingChatClient).GetProperty(
+            "FunctionInvocationServices",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return property?.GetValue(client) as IServiceProvider;
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedCodeInterpreterTool properly adds CodeInterpreter tool definition.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedCodeInterpreterTool_CreatesAgentWithToolAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedCodeInterpreterTool()]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedCodeInterpreterTool with HostedFileContent input properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedCodeInterpreterToolAndHostedFileContent_CreatesAgentWithToolResourcesAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var codeInterpreterTool = new HostedCodeInterpreterTool
+        {
+            Inputs = [new HostedFileContent("test-file-id")]
+        };
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [codeInterpreterTool]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedFileSearchTool properly adds FileSearch tool definition.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedFileSearchTool_CreatesAgentWithToolAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedFileSearchTool()]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with HostedFileSearchTool with HostedVectorStoreContent input properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithHostedFileSearchToolAndHostedVectorStoreContent_CreatesAgentWithToolResourcesAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var fileSearchTool = new HostedFileSearchTool
+        {
+            MaximumResultCount = 10,
+            Inputs = [new HostedVectorStoreContent("test-vector-store-id")]
+        };
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [fileSearchTool]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with multiple tools including functions properly creates agent.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithMixedTools_CreatesAgentWithAllToolsAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var testFunction = AIFunctionFactory.Create(() => "test", "TestFunction", "A test function");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [new HostedCodeInterpreterTool(), new HostedFileSearchTool(), testFunction]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that CreateAIAgentAsync with function tools properly categorizes them as other tools.
+    /// </summary>
+    [Fact]
+    public async Task CreateAIAgentAsync_WithFunctionTools_CategorizesAsOtherToolsAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string ModelId = "test-model";
+        var testFunction = AIFunctionFactory.Create(() => "test", "TestFunction", "A test function");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "Test Agent",
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test instructions",
+                Tools = [testFunction]
+            }
+        };
+
+        // Act
+        var agent = await assistantClient.CreateAIAgentAsync(ModelId, options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload works correctly when assistant instructions are set.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithAssistantInstructions_SetsInstructions()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent", "instructions": "Original Instructions"}"""))!;
+
+        // Act
+        var agent = assistantClient.AsAIAgent(assistant);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Original Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload works correctly when chatOptions with instructions is provided.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithChatOptionsInstructions_UsesChatOptionsInstructions()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent", "instructions": "Original Instructions"}"""))!;
+        var chatOptions = new ChatOptions { Instructions = "Override Instructions" };
+
+        // Act
+        var agent = assistantClient.AsAIAgent(assistant, chatOptions);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+        Assert.Equal("Override Instructions", agent.Instructions);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload and ClientResult works correctly.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithClientResult_WorksCorrectly()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Test Agent", "instructions": "Original Instructions"}"""))!;
+        var clientResult = ClientResult.FromValue(assistant, new FakePipelineResponse());
+
+        // Act
+        var agent = assistantClient.AsAIAgent(clientResult);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Test Agent", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload throws ArgumentNullException when assistant client is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithNullAssistantClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AssistantClient? assistantClient = null;
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}"""))!;
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient!.AsAIAgent(assistant));
+
+        Assert.Equal("assistantClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload throws ArgumentNullException when assistantMetadata is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithNullAssistantMetadata_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient.AsAIAgent((Assistant)null!));
+
+        Assert.Equal("assistantMetadata", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with legacy overload throws ArgumentNullException when clientResult is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_LegacyOverload_WithNullClientResult_ThrowsArgumentNullException()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient.AsAIAgent(null!, chatOptions: null));
+
+        Assert.Equal("assistantClientResult", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with legacy overload works correctly.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_LegacyOverload_WorksCorrectlyAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+        const string AgentId = "asst_abc123";
+
+        // Act
+        var agent = await assistantClient.GetAIAgentAsync(AgentId);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("Original Name", agent.Name);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with legacy overload throws ArgumentNullException when assistantClient is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_LegacyOverload_WithNullAssistantClient_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        AssistantClient? assistantClient = null;
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient!.GetAIAgentAsync("asst_abc123"));
+
+        Assert.Equal("assistantClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with legacy overload throws ArgumentException when agentId is empty.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_LegacyOverload_WithEmptyAgentId_ThrowsArgumentExceptionAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            assistantClient.GetAIAgentAsync(string.Empty));
+
+        Assert.Equal("agentId", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with options throws ArgumentNullException when assistantClient is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_WithNullAssistantClient_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        AssistantClient? assistantClient = null;
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient!.GetAIAgentAsync("asst_abc123", options));
+
+        Assert.Equal("assistantClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with options throws ArgumentNullException when options is null.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithOptions_WithNullOptions_ThrowsArgumentNullExceptionAsync()
+    {
+        // Arrange
+        var assistantClient = new TestAssistantClient();
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            assistantClient.GetAIAgentAsync("asst_abc123", (ChatClientAgentOptions)null!));
+
+        Assert.Equal("options", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsAIAgent with options throws ArgumentNullException when assistantClient is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithOptions_WithNullAssistantClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AssistantClient? assistantClient = null;
+        var assistant = ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}"""))!;
+        var options = new ChatClientAgentOptions();
+
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            assistantClient!.AsAIAgent(assistant, options));
+
+        Assert.Equal("assistantClient", exception.ParamName);
+    }
+
+    /// <summary>
     /// Creates a test AssistantClient implementation for testing.
     /// </summary>
     private sealed class TestAssistantClient : AssistantClient
@@ -464,14 +959,9 @@ public sealed class OpenAIAssistantClientExtensionsTests
         {
         }
 
-        public override ClientResult<Assistant> CreateAssistant(string model, AssistantCreationOptions? options = null, CancellationToken cancellationToken = default)
+        public override Task<ClientResult<Assistant>> CreateAssistantAsync(string model, AssistantCreationOptions? options = null, CancellationToken cancellationToken = default)
         {
-            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}""")), new FakePipelineResponse())!;
-        }
-
-        public override ClientResult<Assistant> GetAssistant(string assistantId, CancellationToken cancellationToken = default)
-        {
-            return ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123", "name": "Original Name", "description": "Original Description", "instructions": "Original Instructions"}""")), new FakePipelineResponse())!;
+            return Task.FromResult<ClientResult<Assistant>>(ClientResult.FromValue(ModelReaderWriter.Read<Assistant>(BinaryData.FromString("""{"id": "asst_abc123"}""")), new FakePipelineResponse())!);
         }
 
         public override async Task<ClientResult<Assistant>> GetAssistantAsync(string assistantId, CancellationToken cancellationToken = default)
@@ -486,6 +976,11 @@ public sealed class OpenAIAssistantClientExtensionsTests
         public TestChatClient(IChatClient innerClient) : base(innerClient)
         {
         }
+    }
+
+    private sealed class TestServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 
     private sealed class FakePipelineResponse : PipelineResponse

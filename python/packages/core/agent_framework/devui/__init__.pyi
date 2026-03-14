@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+
 from agent_framework_devui import (
     AgentFrameworkRequest,
     DevServer,
@@ -7,8 +8,8 @@ from agent_framework_devui import (
     OpenAIError,
     OpenAIResponse,
     ResponseStreamEvent,
-    __version__,
     main,
+    register_cleanup,
     serve,
 )
 
@@ -20,7 +21,7 @@ __all__ = [
     "OpenAIError",
     "OpenAIResponse",
     "ResponseStreamEvent",
-    "__version__",
     "main",
+    "register_cleanup",
     "serve",
 ]

@@ -41,7 +41,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         Single cleanup hook:
         >>> from agent_framework.devui import serve, register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> serve(entities=[agent])
 
@@ -52,7 +52,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
         >>> # In agents/my_agent/agent.py
         >>> from agent_framework.devui import register_cleanup
         >>> credential = DefaultAzureCredential()
-        >>> agent = ChatAgent(...)
+        >>> agent = Agent(...)
         >>> register_cleanup(agent, credential.close)
         >>> # Run: devui ./agents
     """
@@ -73,7 +73,7 @@ def register_cleanup(entity: Any, *hooks: Callable[[], Any]) -> None:
     )
 
 
-def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:
+def _get_registered_cleanup_hooks(entity: Any) -> list[Callable[[], Any]]:  # type: ignore[reportUnusedFunction]
     """Get cleanup hooks registered for an entity (internal use).
 
     Args:
@@ -94,7 +94,7 @@ def serve(
     auto_open: bool = False,
     cors_origins: list[str] | None = None,
     ui_enabled: bool = True,
-    tracing_enabled: bool = False,
+    instrumentation_enabled: bool = False,
     mode: str = "developer",
     auth_enabled: bool = False,
     auth_token: str | None = None,
@@ -109,7 +109,7 @@ def serve(
         auto_open: Whether to automatically open browser
         cors_origins: List of allowed CORS origins
         ui_enabled: Whether to enable the UI
-        tracing_enabled: Whether to enable OpenTelemetry tracing
+        instrumentation_enabled: Whether to enable OpenTelemetry instrumentation
         mode: Server mode - 'developer' (full access, verbose errors) or 'user' (restricted APIs, generic errors)
         auth_enabled: Whether to enable Bearer token authentication
         auth_token: Custom authentication token (auto-generated if not provided with auth_enabled=True)
@@ -172,22 +172,12 @@ def serve(
         os.environ["AUTH_REQUIRED"] = "true"
         os.environ["DEVUI_AUTH_TOKEN"] = auth_token
 
-    # Configure tracing environment variables if enabled
-    if tracing_enabled:
-        import os
+    # Enable instrumentation if requested
+    if instrumentation_enabled:
+        from agent_framework.observability import enable_instrumentation
 
-        # Only set if not already configured by user
-        if not os.environ.get("ENABLE_OTEL"):
-            os.environ["ENABLE_OTEL"] = "true"
-            logger.info("Set ENABLE_OTEL=true for tracing")
-
-        if not os.environ.get("ENABLE_SENSITIVE_DATA"):
-            os.environ["ENABLE_SENSITIVE_DATA"] = "true"
-            logger.info("Set ENABLE_SENSITIVE_DATA=true for tracing")
-
-        if not os.environ.get("OTLP_ENDPOINT"):
-            os.environ["OTLP_ENDPOINT"] = "http://localhost:4317"
-            logger.info("Set OTLP_ENDPOINT=http://localhost:4317 for tracing")
+        enable_instrumentation(enable_sensitive_data=True)
+        logger.info("Enabled Agent Framework instrumentation with sensitive data")
 
     # Create server with direct parameters
     server = DevServer(
@@ -203,7 +193,7 @@ def serve(
     if entities:
         logger.info(f"Registering {len(entities)} in-memory entities")
         # Store entities for later registration during server startup
-        server._pending_entities = entities
+        server.set_pending_entities(entities)
 
     app = server.get_app()
 

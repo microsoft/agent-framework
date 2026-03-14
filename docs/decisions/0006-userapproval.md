@@ -161,11 +161,11 @@ while (response.ApprovalRequests.Count > 0)
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the ApprovalRequestContent items from
+    // A new property on AgentResponse to aggregate the ApprovalRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<ApprovalRequestContent> ApprovalRequests { get; set; }
 
@@ -251,11 +251,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IReadOnlyList<UserInputRequestContent> UserInputRequests { get; set; }
 
@@ -366,11 +366,11 @@ while (response.UserInputRequests.Any())
     response = await agent.RunAsync(messages, thread);
 }
 
-class AgentRunResponse
+class AgentResponse
 {
     ...
 
-    // A new property on AgentRunResponse to aggregate the UserInputRequestContent items from
+    // A new property on AgentResponse to aggregate the UserInputRequestContent items from
     // the response messages (Similar to the Text property).
     public IEnumerable<UserInputRequestContent> UserInputRequests { get; set; }
 

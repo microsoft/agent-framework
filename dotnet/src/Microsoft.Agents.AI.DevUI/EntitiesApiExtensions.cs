@@ -231,7 +231,7 @@ internal static class EntitiesApiExtensions
         return new EntityInfo(
             Id: entityId,
             Type: "agent",
-            Name: agent.DisplayName,
+            Name: agent.Name ?? agent.Id,
             Description: agent.Description,
             Framework: "agent_framework",
             Tools: tools,

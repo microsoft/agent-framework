@@ -40,7 +40,7 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
     public static ExecutorBinding BindExecutor<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync)
         where TExecutor : Executor
-        => BindExecutor<TExecutor, ExecutorOptions>((config, runId) => factoryAsync(config.Id, runId), id: typeof(TExecutor).Name, options: null);
+        => BindExecutor<TExecutor, ExecutorOptions>((config, sessionId) => factoryAsync(config.Id, sessionId), id: typeof(TExecutor).Name, options: null);
 
     /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, using the
@@ -77,7 +77,7 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
     public static ExecutorBinding BindExecutor<TExecutor>(this Func<string, string, ValueTask<TExecutor>> factoryAsync, string id)
         where TExecutor : Executor
-        => BindExecutor<TExecutor, ExecutorOptions>((_, runId) => factoryAsync(id, runId), id, options: null);
+        => BindExecutor<TExecutor, ExecutorOptions>((_, sessionId) => factoryAsync(id, sessionId), id, options: null);
 
     /// <summary>
     /// Configures a factory method for creating an <see cref="Executor"/> of type <typeparamref name="TExecutor"/>, with
@@ -419,8 +419,17 @@ public static class ExecutorBindingExtensions
     /// <param name="agent">The agent instance.</param>
     /// <param name="emitEvents">Specifies whether the agent should emit streaming events.</param>
     /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent.</returns>
-    public static ExecutorBinding BindAsExecutor(this AIAgent agent, bool emitEvents = false)
+    public static ExecutorBinding BindAsExecutor(this AIAgent agent, bool emitEvents)
         => new AIAgentBinding(agent, emitEvents);
+
+    /// <summary>
+    /// Configure an <see cref="AIAgent"/> as an executor for use in a workflow.
+    /// </summary>
+    /// <param name="agent">The agent instance.</param>
+    /// <param name="options">Optional configuration options for the AI agent executor. If null, default options are used.</param>
+    /// <returns>An <see cref="AIAgentBinding"/> instance that wraps the provided agent.</returns>
+    public static ExecutorBinding BindAsExecutor(this AIAgent agent, AIAgentHostOptions? options = null)
+        => new AIAgentBinding(agent, options);
 
     /// <summary>
     /// Configure a <see cref="RequestPort"/> as an executor for use in a workflow.

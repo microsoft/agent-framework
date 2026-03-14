@@ -22,7 +22,7 @@ internal class DefaultDurableAgentClient(DurableTaskClient client, ILoggerFactor
 
         await this._client.Entities.SignalEntityAsync(
             sessionId,
-            nameof(AgentEntity.RunAgentAsync),
+            nameof(AgentEntity.Run),
             request,
             cancellation: cancellationToken);
 

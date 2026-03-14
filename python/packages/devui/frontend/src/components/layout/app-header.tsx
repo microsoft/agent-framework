@@ -32,7 +32,7 @@ export function AppHeader({
   isLoading = false,
   onSettingsClick,
 }: AppHeaderProps) {
-  const { oaiMode } = useDevUIStore();
+  const { oaiMode, serverVersion } = useDevUIStore();
 
   return (
     <header className="flex h-14 items-center gap-4 border-b px-4">
@@ -64,6 +64,11 @@ export function AppHeader({
           </defs>
         </svg>
         Dev UI
+        {serverVersion && (
+          <span className="text-xs text-muted-foreground ml-1">
+            v{serverVersion}
+          </span>
+        )}
         {/* Mode Badge */}
         {oaiMode.enabled && (
           <Badge variant="secondary" className="gap-1 ml-2">
@@ -90,7 +95,14 @@ export function AppHeader({
 
       <div className="flex items-center gap-2 ml-auto">
         <ModeToggle />
-        <Button variant="ghost" size="sm" onClick={(e: React.MouseEvent) => { e.stopPropagation(); onSettingsClick?.(); }}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            onSettingsClick?.();
+          }}
+        >
           <Settings className="h-4 w-4" />
         </Button>
       </div>

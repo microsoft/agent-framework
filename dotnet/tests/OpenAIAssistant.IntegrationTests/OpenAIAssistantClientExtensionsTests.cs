@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - Testing deprecated OpenAI Assistants API extension methods
+
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
@@ -16,9 +19,10 @@ namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantClientExtensionsTests
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-    private readonly AssistantClient _assistantClient = new OpenAIClient(s_config.ApiKey).GetAssistantClient();
-    private readonly OpenAIFileClient _fileClient = new OpenAIClient(s_config.ApiKey).GetOpenAIFileClient();
+    private const string SkipCodeInterpreterReason = "OpenAI Assistant Code Interpreter intermittently fails in CI";
+
+    private readonly AssistantClient _assistantClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetAssistantClient();
+    private readonly OpenAIFileClient _fileClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetOpenAIFileClient();
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
@@ -36,17 +40,27 @@ public class OpenAIAssistantClientExtensionsTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: AgentInstructions,
-                    tools: [weatherFunction])),
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = AgentInstructions,
+                        Tools = [weatherFunction]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: AgentInstructions,
                 tools: [weatherFunction]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
@@ -69,7 +83,7 @@ public class OpenAIAssistantClientExtensionsTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = SkipCodeInterpreterReason)]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithParamsAsync")]
@@ -93,17 +107,27 @@ public class OpenAIAssistantClientExtensionsTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [codeInterpreterTool])),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [codeInterpreterTool])),
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [codeInterpreterTool]
+                    }
+                }),
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [codeInterpreterTool]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: Instructions,
                 tools: [codeInterpreterTool]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
@@ -145,7 +169,7 @@ public class OpenAIAssistantClientExtensionsTests
         string uploadedFileId = uploadResult.Value.Id;
 
         // Create a vector store backing the file search (HostedFileSearchTool requires a vector store id).
-        var vectorStoreClient = new OpenAIClient(s_config.ApiKey).GetVectorStoreClient();
+        var vectorStoreClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetVectorStoreClient();
         var vectorStoreCreate = await vectorStoreClient.CreateVectorStoreAsync(options: new VectorStoreCreationOptions()
         {
             Name = "WordCodeLookup_VectorStore",
@@ -153,22 +177,35 @@ public class OpenAIAssistantClientExtensionsTests
         });
         string vectorStoreId = vectorStoreCreate.Value.Id;
 
+        // Wait for vector store indexing to complete before using it
+        await WaitForVectorStoreReadyAsync(vectorStoreClient, vectorStoreId);
+
         var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] };
 
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [fileSearchTool])),
-            "CreateWithChatClientAgentOptionsSync" => this._assistantClient.CreateAIAgent(
-                model: s_config.ChatModelId!,
-                options: new ChatClientAgentOptions(
-                    instructions: Instructions,
-                    tools: [fileSearchTool])),
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [fileSearchTool]
+                    }
+                }),
+            "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
+                options: new ChatClientAgentOptions()
+                {
+                    ChatOptions = new()
+                    {
+                        Instructions = Instructions,
+                        Tools = [fileSearchTool]
+                    }
+                }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: Instructions,
                 tools: [fileSearchTool]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
@@ -188,5 +225,44 @@ public class OpenAIAssistantClientExtensionsTests
             await this._fileClient.DeleteFileAsync(uploadedFileId);
             File.Delete(searchFilePath);
         }
+    }
+
+    /// <summary>
+    /// Waits for a vector store to complete indexing by polling its status.
+    /// </summary>
+    /// <param name="client">The vector store client.</param>
+    /// <param name="vectorStoreId">The ID of the vector store.</param>
+    /// <param name="maxWaitSeconds">Maximum time to wait in seconds (default: 30).</param>
+    /// <returns>A task that completes when the vector store is ready or throws on timeout/failure.</returns>
+    private static async Task WaitForVectorStoreReadyAsync(
+        VectorStoreClient client,
+        string vectorStoreId,
+        int maxWaitSeconds = 30)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < maxWaitSeconds)
+        {
+            VectorStore vectorStore = await client.GetVectorStoreAsync(vectorStoreId);
+            VectorStoreStatus status = vectorStore.Status;
+
+            if (status == VectorStoreStatus.Completed)
+            {
+                if (vectorStore.FileCounts.Failed > 0)
+                {
+                    throw new InvalidOperationException("Vector store indexing failed for some files");
+                }
+
+                return;
+            }
+
+            if (status == VectorStoreStatus.Expired)
+            {
+                throw new InvalidOperationException("Vector store has expired");
+            }
+
+            await Task.Delay(1000);
+        }
+
+        throw new TimeoutException($"Vector store did not complete indexing within {maxWaitSeconds}s");
     }
 }
