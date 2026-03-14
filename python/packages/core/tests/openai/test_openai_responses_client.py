@@ -2358,6 +2358,73 @@ def test_with_callable_api_key() -> None:
     assert client.client is not None
 
 
+# region _prepare_content_for_openai status field tests
+
+
+def test_prepare_content_function_call_defaults_status_to_completed():
+    """function_call items must include status; default to 'completed' when not set."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_call(
+        call_id="call_abc",
+        name="get_weather",
+        arguments='{"city": "Seattle"}',
+    )
+    result = client._prepare_content_for_openai("assistant", content, call_id_to_id={})
+
+    assert result["type"] == "function_call"
+    assert result["status"] == "completed"
+
+
+def test_prepare_content_function_call_preserves_explicit_status():
+    """function_call items should preserve status from additional_properties when set."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_call(
+        call_id="call_xyz",
+        name="get_weather",
+        arguments='{"city": "Seattle"}',
+        additional_properties={"status": "in_progress"},
+    )
+    result = client._prepare_content_for_openai("assistant", content, call_id_to_id={})
+
+    assert result["type"] == "function_call"
+    assert result["status"] == "in_progress"
+
+
+def test_prepare_content_function_result_includes_status_completed():
+    """function_call_output items must always include status 'completed'."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_abc",
+        result='{"temperature": 72}',
+    )
+    result = client._prepare_content_for_openai("tool", content, call_id_to_id={})
+
+    assert result["type"] == "function_call_output"
+    assert result["status"] == "completed"
+    assert result["output"] == '{"temperature": 72}'
+
+
+def test_prepare_content_function_result_none_result():
+    """function_call_output with None result maps to empty string and includes status."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_abc",
+        result=None,
+    )
+    result = client._prepare_content_for_openai("tool", content, call_id_to_id={})
+
+    assert result["type"] == "function_call_output"
+    assert result["status"] == "completed"
+    assert result["output"] == ""
+
+
+# endregion
+
+
 # region Integration Tests
 
 

@@ -1036,16 +1036,20 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     "type": "function_call",
                     "name": content.name,
                     "arguments": content.arguments,
-                    "status": None,
+                    "status": (
+                        content.additional_properties.get("status")
+                        if content.additional_properties
+                        else None
+                    ) or "completed",
                 }
             case "function_result":
                 # call_id for the result needs to be the same as the call_id for the function call
-                args: dict[str, Any] = {
+                return {
                     "call_id": content.call_id,
                     "type": "function_call_output",
                     "output": content.result if content.result is not None else "",
+                    "status": "completed",
                 }
-                return args
             case "function_approval_request":
                 return {
                     "type": "mcp_approval_request",
