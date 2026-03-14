@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
@@ -39,9 +40,15 @@ public sealed class CompactionMessageGroup
     /// </remarks>
     public static readonly string SummaryPropertyKey = "_is_summary";
 
+    private readonly Action _exclusionChangedCallback;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="CompactionMessageGroup"/> class.
     /// </summary>
+    /// <param name="exclusionChangedCallback">
+    /// A callback invoked when <see cref="IsExcluded"/> changes value.
+    /// Used internally by <see cref="CompactionMessageIndex"/> to invalidate cached aggregates.
+    /// </param>
     /// <param name="kind">The kind of message group.</param>
     /// <param name="messages">The messages in this group. The list is captured as a read-only snapshot.</param>
     /// <param name="byteCount">The total UTF-8 byte count of the text content in the messages.</param>
@@ -50,8 +57,15 @@ public sealed class CompactionMessageGroup
     /// The user turn this group belongs to, or <see langword="null"/> for <see cref="CompactionGroupKind.System"/>.
     /// </param>
     [JsonConstructor]
-    internal CompactionMessageGroup(CompactionGroupKind kind, IReadOnlyList<ChatMessage> messages, int byteCount, int tokenCount, int? turnIndex = null)
+    internal CompactionMessageGroup(
+        Action exclusionChangedCallback,
+        CompactionGroupKind kind,
+        IReadOnlyList<ChatMessage> messages,
+        int byteCount,
+        int tokenCount,
+        int? turnIndex = null)
     {
+        this._exclusionChangedCallback = exclusionChangedCallback;
         this.Kind = kind;
         this.Messages = messages;
         this.MessageCount = messages.Count;
@@ -107,7 +121,18 @@ public sealed class CompactionMessageGroup
     /// Excluded groups are preserved in the collection for diagnostics or storage purposes
     /// but are not included when calling <see cref="CompactionMessageIndex.GetIncludedMessages"/>.
     /// </remarks>
-    public bool IsExcluded { get; set; }
+    public bool IsExcluded
+    {
+        get;
+        set
+        {
+            if (field != value)
+            {
+                field = value;
+                this._exclusionChangedCallback.Invoke();
+            }
+        }
+    }
 
     /// <summary>
     /// Gets or sets an optional reason explaining why this group was excluded.

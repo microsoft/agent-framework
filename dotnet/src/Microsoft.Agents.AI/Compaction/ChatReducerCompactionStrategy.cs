@@ -69,13 +69,11 @@ public sealed class ChatReducerCompactionStrategy : CompactionStrategy
             return false;
         }
 
-        // Rebuild the index from the reduced messages
-        CompactionMessageIndex rebuilt = CompactionMessageIndex.Create(reducedMessages, index.Tokenizer);
-        index.Groups.Clear();
-        foreach (CompactionMessageGroup group in rebuilt.Groups)
-        {
-            index.Groups.Add(group);
-        }
+        // Rebuild the index from the reduced messages.
+        // Use Update() rather than directly manipulating Groups so that
+        // cached metrics (IncludedGroupCount, token counts, etc.) are
+        // properly invalidated.
+        index.Update(reducedMessages);
 
         return true;
     }

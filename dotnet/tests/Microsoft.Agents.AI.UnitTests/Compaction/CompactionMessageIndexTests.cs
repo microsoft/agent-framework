@@ -263,7 +263,7 @@ public class CompactionMessageIndexTests
     public void MessageGroupStoresPassedCounts()
     {
         // Arrange & Act
-        CompactionMessageGroup group = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
+        CompactionMessageGroup group = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Hello")], byteCount: 5, tokenCount: 2);
 
         // Assert
         Assert.Equal(1, group.MessageCount);
@@ -276,7 +276,7 @@ public class CompactionMessageIndexTests
     {
         // Arrange
         IReadOnlyList<ChatMessage> messages = [new ChatMessage(ChatRole.User, "Hello")];
-        CompactionMessageGroup group = new(CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
+        CompactionMessageGroup group = new(InvalidateCallback, CompactionGroupKind.User, messages, byteCount: 5, tokenCount: 1);
 
         // Assert — Messages is IReadOnlyList, not IList
         Assert.IsType<IReadOnlyList<ChatMessage>>(group.Messages, exactMatch: false);
@@ -752,9 +752,9 @@ public class CompactionMessageIndexTests
     public void ConstructorWithGroupsRestoresTurnIndex()
     {
         // Arrange — pre-existing groups with turn indices
-        CompactionMessageGroup group1 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
-        CompactionMessageGroup group2 = new(CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
-        CompactionMessageGroup group3 = new(CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
+        CompactionMessageGroup group1 = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group2 = new(InvalidateCallback, CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "A1")], 2, 1, turnIndex: 1);
+        CompactionMessageGroup group3 = new(InvalidateCallback, CompactionGroupKind.User, [new ChatMessage(ChatRole.User, "Q2")], 2, 1, turnIndex: 2);
         List<CompactionMessageGroup> groups = [group1, group2, group3];
 
         // Act — constructor should restore _currentTurn from the last group's TurnIndex
@@ -789,7 +789,7 @@ public class CompactionMessageIndexTests
     public void ConstructorWithGroupsWithoutTurnIndexSkipsRestore()
     {
         // Arrange — groups without turn indices (system messages)
-        CompactionMessageGroup systemGroup = new(CompactionGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
+        CompactionMessageGroup systemGroup = new(InvalidateCallback, CompactionGroupKind.System, [new ChatMessage(ChatRole.System, "Be helpful")], 10, 3, turnIndex: null);
         List<CompactionMessageGroup> groups = [systemGroup];
 
         // Act — constructor won't find a TurnIndex to restore
@@ -1474,4 +1474,179 @@ public class CompactionMessageIndexTests
         Assert.Equal(CompactionGroupKind.ToolCall, index.Groups[2].Kind);
         Assert.Equal(3, index.Groups[2].MessageCount); // reasoning + toolCall + toolResult
     }
+
+    // -----------------------------------------------------------------------
+    // Cache invalidation tests
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenIsExcludedChanges()
+    {
+        // Arrange — two groups, read Included* properties (populates cache)
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes, 1 token
+            new ChatMessage(ChatRole.Assistant, "BBBB"),  // 4 bytes, 1 token
+        ]);
+
+        // Prime the cache by reading properties
+        Assert.Equal(2, index.IncludedGroupCount);
+        Assert.Equal(2, index.IncludedMessageCount);
+        Assert.Equal(8, index.IncludedByteCount);
+        Assert.Equal(2, index.IncludedTokenCount);
+        Assert.Equal(1, index.IncludedTurnCount);
+        Assert.Equal(2, index.IncludedNonSystemGroupCount);
+
+        // Act — exclude both groups in turn 1; cache must be invalidated
+        index.Groups[0].IsExcluded = true;
+        index.Groups[1].IsExcluded = true;
+
+        // Assert — Included* properties now reflect the exclusions
+        Assert.Equal(0, index.IncludedGroupCount);
+        Assert.Equal(0, index.IncludedMessageCount);
+        Assert.Equal(0, index.IncludedByteCount);
+        Assert.Equal(0, index.IncludedTokenCount);
+        Assert.Equal(0, index.IncludedTurnCount); // turn 1 is fully excluded
+        Assert.Equal(0, index.IncludedNonSystemGroupCount);
+    }
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenGroupAddedViaUpdate()
+    {
+        // Arrange — start with two messages, read RawMessageCount (populates cache)
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+
+        // Prime the cache
+        Assert.Equal(2, index.RawMessageCount);
+        Assert.Equal(2, index.IncludedGroupCount);
+
+        // Act — add two more messages
+        messages.Add(new ChatMessage(ChatRole.User, "Q2"));
+        messages.Add(new ChatMessage(ChatRole.Assistant, "A2"));
+        index.Update(messages);
+
+        // Assert — cached values updated
+        Assert.Equal(4, index.RawMessageCount);
+        Assert.Equal(4, index.IncludedGroupCount);
+    }
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenGroupAddedViaAddGroup()
+    {
+        // Arrange — prime the cache
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+        ]);
+        Assert.Equal(1, index.IncludedGroupCount);
+        Assert.Equal(1, index.TotalMessageCount);
+
+        // Act — add a group manually
+        index.AddGroup(CompactionGroupKind.AssistantText, [new ChatMessage(ChatRole.Assistant, "Hi")], turnIndex: 1);
+
+        // Assert — cache invalidated and recomputed
+        Assert.Equal(2, index.IncludedGroupCount);
+        Assert.Equal(2, index.TotalMessageCount);
+    }
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenGroupInsertedViaInsertGroup()
+    {
+        // Arrange — prime the cache
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Hello"),
+        ]);
+        Assert.Equal(1, index.IncludedGroupCount);
+        Assert.Equal(1, index.TotalMessageCount);
+
+        // Act — insert a group
+        ChatMessage summaryMsg = new(ChatRole.Assistant, "[Summary]");
+        (summaryMsg.AdditionalProperties ??= [])[CompactionMessageGroup.SummaryPropertyKey] = true;
+        index.InsertGroup(0, CompactionGroupKind.Summary, [summaryMsg]);
+
+        // Assert — cache invalidated and recomputed
+        Assert.Equal(2, index.IncludedGroupCount);
+        Assert.Equal(2, index.TotalMessageCount);
+        Assert.Equal(1, index.RawMessageCount); // Summary excluded from RawMessageCount
+    }
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenIndexRebuiltByUpdate()
+    {
+        // Arrange — populate and prime cache
+        List<ChatMessage> messages =
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ];
+        CompactionMessageIndex index = CompactionMessageIndex.Create(messages);
+        index.Groups[0].IsExcluded = true;
+
+        // Prime the cache after exclusion
+        Assert.Equal(1, index.IncludedGroupCount);
+
+        // Act — update with a completely different (shorter) list — forces full rebuild
+        List<ChatMessage> newMessages =
+        [
+            new ChatMessage(ChatRole.User, "NewQ"),
+        ];
+        index.Update(newMessages);
+
+        // Assert — full rebuild, previously excluded group is gone, cache is correct
+        Assert.Equal(1, index.IncludedGroupCount);
+        Assert.Equal(1, index.RawMessageCount);
+    }
+
+    [Fact]
+    public void CachedMetricsAreInvalidatedWhenUpdateClearsAllMessages()
+    {
+        // Arrange — prime the cache
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, "A1"),
+        ]);
+        Assert.Equal(2, index.IncludedGroupCount);
+        Assert.Equal(2, index.RawMessageCount);
+
+        // Act — update with empty list
+        index.Update([]);
+
+        // Assert — all cached metrics reset
+        Assert.Equal(0, index.IncludedGroupCount);
+        Assert.Equal(0, index.TotalGroupCount);
+        Assert.Equal(0, index.RawMessageCount);
+        Assert.Equal(0, index.IncludedTokenCount);
+    }
+
+    [Fact]
+    public void CachedTotalMetricsUnchangedWhenOnlyExcludedStateChanges()
+    {
+        // Arrange — prime the cache
+        CompactionMessageIndex index = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "AAAA"),       // 4 bytes
+            new ChatMessage(ChatRole.Assistant, "BBBB"),  // 4 bytes
+        ]);
+        Assert.Equal(2, index.TotalGroupCount);
+        Assert.Equal(2, index.TotalMessageCount);
+        Assert.Equal(8, index.TotalByteCount);
+
+        // Act — exclude a group
+        index.Groups[0].IsExcluded = true;
+
+        // Assert — Total* properties still include both groups
+        Assert.Equal(2, index.TotalGroupCount);
+        Assert.Equal(2, index.TotalMessageCount);
+        Assert.Equal(8, index.TotalByteCount);
+        Assert.Equal(2, index.TotalTokenCount);
+    }
+
+    private static void InvalidateCallback() { }
 }
