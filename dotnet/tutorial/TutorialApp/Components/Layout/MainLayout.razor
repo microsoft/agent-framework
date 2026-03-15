@@ -1,4 +1,6 @@
 @inherits LayoutComponentBase
+@inject LanguageService LangService
+@inject IJSRuntime JS
 
 <div class="layout">
     <aside class="sidebar">
@@ -7,6 +9,9 @@
             <span class="sidebar-subtitle">Tutorial</span>
         </div>
         <NavMenu />
+        <div class="sidebar-footer">
+            <LanguageSwitcher />
+        </div>
     </aside>
     <main class="content">
         <article class="chapter-body">
@@ -14,3 +19,18 @@
         </article>
     </main>
 </div>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var stored = await JS.InvokeAsync<string>("getStoredLanguage");
+            if (stored != LangService.CurrentCode)
+            {
+                LangService.SetLanguage(stored);
+                StateHasChanged();
+            }
+        }
+    }
+}

@@ -1,8 +1,10 @@
+@implements IDisposable
 @inject ChapterService ChapterService
+@inject LanguageService LangService
 @inject NavigationManager Nav
 
 <nav class="nav-menu">
-    @foreach (var chapter in ChapterService.GetChapters())
+    @foreach (var chapter in ChapterService.GetChapters(LangService.CurrentCode))
     {
         var href = $"/chapter/{chapter.Slug}";
         var isActive = Nav.Uri.EndsWith(href, StringComparison.OrdinalIgnoreCase);
@@ -12,3 +14,14 @@
         </a>
     }
 </nav>
+
+@code {
+    protected override void OnInitialized()
+        => LangService.OnChanged += OnLanguageChanged;
+
+    private void OnLanguageChanged(object? sender, EventArgs e)
+        => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+        => LangService.OnChanged -= OnLanguageChanged;
+}

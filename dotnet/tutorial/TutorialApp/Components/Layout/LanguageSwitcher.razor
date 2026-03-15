@@ -1,0 +1,22 @@
+@inject LanguageService LangService
+@inject IJSRuntime JS
+
+<div class="lang-switcher">
+    @foreach (var lang in LanguageService.Available)
+    {
+        var isActive = LangService.CurrentCode == lang.Code;
+        <button class="lang-btn @(isActive ? "active" : "")"
+                @onclick="() => SwitchAsync(lang.Code)"
+                disabled="@isActive">
+            @lang.NativeName
+        </button>
+    }
+</div>
+
+@code {
+    private async Task SwitchAsync(string code)
+    {
+        LangService.SetLanguage(code);
+        await JS.InvokeVoidAsync("setStoredLanguage", code);
+    }
+}

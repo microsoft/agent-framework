@@ -520,4 +520,7 @@
     <Project Path="tests/Microsoft.Agents.AI.Workflows.Generators.UnitTests/Microsoft.Agents.AI.Workflows.Generators.UnitTests.csproj" />
     <Project Path="tests/Microsoft.Agents.AI.Workflows.UnitTests/Microsoft.Agents.AI.Workflows.UnitTests.csproj" />
   </Folder>
+  <Folder Name="/tutorial/">
+    <Project Path="tutorial/TutorialApp/TutorialApp.csproj" />
+  </Folder>
 </Solution>

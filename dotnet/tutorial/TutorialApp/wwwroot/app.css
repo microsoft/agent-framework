@@ -233,6 +233,45 @@ html, body {
     border-radius: 0 6px 6px 0;
 }
 
+/* ─── Sidebar Footer & Language Switcher ───────────────────────── */
+.sidebar-footer {
+    margin-top: auto;
+    padding: 16px 20px;
+    border-top: 1px solid #2d2d4e;
+}
+
+.lang-switcher {
+    display: flex;
+    gap: 6px;
+}
+
+.lang-btn {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid #3a3a5e;
+    border-radius: 5px;
+    background: transparent;
+    color: #b0b4cc;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+
+.lang-btn:hover:not(:disabled) {
+    background: #252545;
+    color: #e8eaf0;
+    border-color: #5a5a8e;
+}
+
+.lang-btn.active,
+.lang-btn:disabled {
+    background: #1e3a5f;
+    color: #7eb8f7;
+    border-color: #7eb8f7;
+    cursor: default;
+}
+
 /* ─── Loading ───────────────────────────────────────────────────── */
 .loading {
     color: #94a3b8;

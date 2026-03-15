@@ -1,6 +1,7 @@
 @page "/chapter/{Slug}"
-@rendermode InteractiveServer
+@implements IDisposable
 @inject ChapterService ChapterService
+@inject LanguageService LangService
 @inject IJSRuntime JS
 
 <PageTitle>@_title - MAF .NET Tutorial</PageTitle>
@@ -20,12 +21,25 @@ else
     private string? _html;
     private string _title = "MAF .NET Tutorial";
 
+    protected override void OnInitialized()
+        => LangService.OnChanged += OnLanguageChanged;
+
+    private void OnLanguageChanged(object? sender, EventArgs e)
+        => InvokeAsync(async () =>
+        {
+            await LoadContentAsync();
+            StateHasChanged();
+        });
+
     protected override async Task OnParametersSetAsync()
+        => await LoadContentAsync();
+
+    private async Task LoadContentAsync()
     {
         _html = null;
-        _html = await ChapterService.GetContentAsync(Slug);
-
-        var chapter = ChapterService.GetChapters().FirstOrDefault(c => c.Slug == Slug);
+        _html = await ChapterService.GetContentAsync(Slug, LangService.CurrentCode);
+        var chapter = ChapterService.GetChapters(LangService.CurrentCode)
+            .FirstOrDefault(c => c.Slug == Slug);
         if (chapter is not null)
             _title = chapter.Title;
     }
@@ -33,8 +47,9 @@ else
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (_html is not null)
-        {
             await JS.InvokeVoidAsync("highlightCode");
-        }
     }
+
+    public void Dispose()
+        => LangService.OnChanged -= OnLanguageChanged;
 }

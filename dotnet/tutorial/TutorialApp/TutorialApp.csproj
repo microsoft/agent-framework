@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="../content/**/*.md">
+    <Content Include="../content/**/**/*.md">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <Link>content/%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Content>
