@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -15,15 +15,15 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.UnitTests;
 /// Tests for function approval request and response content types.
 /// These are DevUI-specific extensions that allow approval workflows for function calls.
 /// </summary>
-public sealed class FunctionApprovalTests : ConformanceTestBase
+public sealed class ToolApprovalTests : ConformanceTestBase
 {
     // Streaming request JSON for OpenAI Responses API
     private const string StreamingRequestJson = @"{""model"":""gpt-4o-mini"",""input"":""test"",""stream"":true}";
 
-    #region FunctionApprovalRequestContent Tests
+    #region ToolApprovalRequestContent Tests
 
     [Fact]
-    public async Task FunctionApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-request-agent";
@@ -32,10 +32,8 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         const string FunctionId = "call-abc123";
         Dictionary<string, object?> arguments = new() { ["location"] = "Seattle", ["unit"] = "celsius" };
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalRequestContent approvalRequest = new(RequestId, functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest = new(RequestId, functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalRequest]);
@@ -56,6 +54,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         Assert.Equal(RequestId, approvalEvent.GetProperty("request_id").GetString());
 
         JsonElement functionCallElement = approvalEvent.GetProperty("function_call");
+        Assert.Equal("function_call", functionCallElement.GetProperty("type").GetString());
         Assert.Equal(FunctionId, functionCallElement.GetProperty("id").GetString());
         Assert.Equal(FunctionName, functionCallElement.GetProperty("name").GetString());
 
@@ -65,7 +64,46 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_WithComplexArguments_GeneratesCorrectEvent_SuccessAsync()
+    public async Task McpToolApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
+    {
+        // Arrange
+        const string AgentName = "mcp-approval-request-agent";
+        const string RequestId = "req-mcp-123";
+        const string ToolName = "read_file";
+        const string CallId = "call-mcp-abc";
+        const string ServerName = "filesystem";
+        Dictionary<string, object?> arguments = new() { ["path"] = "/tmp/test.txt" };
+
+        McpServerToolCallContent mcpToolCall = new(CallId, ToolName, ServerName) { Arguments = arguments };
+        ToolApprovalRequestContent approvalRequest = new(RequestId, mcpToolCall);
+
+        HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
+            [approvalRequest]);
+
+        // Act
+        HttpResponseMessage httpResponse = await this.SendResponsesRequestAsync(client, AgentName, StreamingRequestJson);
+        string sseContent = await httpResponse.Content.ReadAsStringAsync();
+        List<JsonElement> events = ParseSseEvents(sseContent);
+
+        // Assert
+        JsonElement approvalEvent = events.FirstOrDefault(e =>
+            e.GetProperty("type").GetString() == "response.function_approval.requested");
+        Assert.True(approvalEvent.ValueKind != JsonValueKind.Undefined, "approval event not found");
+
+        Assert.Equal(RequestId, approvalEvent.GetProperty("request_id").GetString());
+
+        JsonElement toolCallElement = approvalEvent.GetProperty("function_call");
+        Assert.Equal("mcp_call", toolCallElement.GetProperty("type").GetString());
+        Assert.Equal(CallId, toolCallElement.GetProperty("id").GetString());
+        Assert.Equal(ToolName, toolCallElement.GetProperty("name").GetString());
+        Assert.Equal(ServerName, toolCallElement.GetProperty("server_name").GetString());
+
+        JsonElement argumentsElement = toolCallElement.GetProperty("arguments");
+        Assert.Equal("/tmp/test.txt", argumentsElement.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public async Task ToolApprovalRequest_WithComplexArguments_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-request-complex-args-agent";
@@ -79,10 +117,8 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
             ["options"] = new Dictionary<string, object?> { ["decimal"] = true }
         };
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalRequestContent approvalRequest = new(RequestId, functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest = new(RequestId, functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalRequest]);
@@ -98,6 +134,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         Assert.NotEqual(JsonValueKind.Undefined, approvalEvent.ValueKind);
 
         JsonElement functionCallElement = approvalEvent.GetProperty("function_call");
+        Assert.Equal("function_call", functionCallElement.GetProperty("type").GetString());
         JsonElement argumentsElement = functionCallElement.GetProperty("arguments");
 
         // Verify complex arguments are serialized correctly
@@ -107,15 +144,13 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_EmitsCorrectEventSequence_SuccessAsync()
+    public async Task ToolApprovalRequest_EmitsCorrectEventSequence_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-sequence-agent";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test_function", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-1", functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest = new("req-1", functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalRequest]);
@@ -143,15 +178,13 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalRequest_SequenceNumbersAreCorrect_SuccessAsync()
+    public async Task ToolApprovalRequest_SequenceNumbersAreCorrect_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-seq-num-agent";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-1", functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest = new("req-1", functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalRequest]);
@@ -173,10 +206,10 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
     #endregion
 
-    #region FunctionApprovalResponseContent Tests
+    #region ToolApprovalResponseContent Tests
 
     [Fact]
-    public async Task FunctionApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-approved-agent";
@@ -185,10 +218,8 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         const string FunctionId = "call-ghi789";
         Dictionary<string, object?> arguments = new() { ["to"] = "user@example.com", ["subject"] = "Test" };
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalResponseContent approvalResponse = new(RequestId, approved: true, functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalResponseContent approvalResponse = new(RequestId, approved: true, functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalResponse]);
@@ -211,7 +242,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalResponse_Rejected_GeneratesCorrectEvent_SuccessAsync()
+    public async Task ToolApprovalResponse_Rejected_GeneratesCorrectEvent_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-rejected-agent";
@@ -219,10 +250,8 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         const string FunctionName = "delete_file";
         const string FunctionId = "call-xyz999";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, new Dictionary<string, object?> { ["path"] = "/important.txt" });
-        FunctionApprovalResponseContent approvalResponse = new(RequestId, approved: false, functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalResponseContent approvalResponse = new(RequestId, approved: false, functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalResponse]);
@@ -242,15 +271,13 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     }
 
     [Fact]
-    public async Task FunctionApprovalResponse_EmitsCorrectEventSequence_SuccessAsync()
+    public async Task ToolApprovalResponse_EmitsCorrectEventSequence_SuccessAsync()
     {
         // Arrange
         const string AgentName = "approval-response-sequence-agent";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test_function", new Dictionary<string, object?>());
-        FunctionApprovalResponseContent approvalResponse = new("req-1", approved: true, functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalResponseContent approvalResponse = new("req-1", approved: true, functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
             [approvalResponse]);
@@ -277,10 +304,8 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         // Arrange
         const string AgentName = "mixed-approval-text-agent";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-mixed-1", "test", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-mixed-1", functionCall);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest = new("req-mixed-1", functionCall);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
         [
@@ -306,13 +331,11 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
         // Arrange
         const string AgentName = "multiple-approval-agent";
 
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall1 = new("call-multi-1", "function1", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest1 = new("req-multi-1", functionCall1);
+        ToolApprovalRequestContent approvalRequest1 = new("req-multi-1", functionCall1);
 
         FunctionCallContent functionCall2 = new("call-multi-2", "function2", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest2 = new("req-multi-2", functionCall2);
-#pragma warning restore MEAI001
+        ToolApprovalRequestContent approvalRequest2 = new("req-multi-2", functionCall2);
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
         [

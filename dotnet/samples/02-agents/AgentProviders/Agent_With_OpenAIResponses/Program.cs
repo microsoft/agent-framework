@@ -3,6 +3,7 @@
 // This sample shows how to create and use a simple AI agent with OpenAI Responses as the backend.
 
 using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Responses;
 
@@ -11,7 +12,8 @@ var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt
 
 AIAgent agent = new OpenAIClient(
     apiKey)
-     .GetResponsesClient(model)
+     .GetResponsesClient()
+     .AsIChatClient(model)
      .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.

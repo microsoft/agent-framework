@@ -246,7 +246,7 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
     AgentResponse response = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
     // For simplicity, we are assuming here that only function approvals are pending.
-    List<FunctionApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+    List<ToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
     while (approvalRequests.Count > 0)
     {
@@ -255,17 +255,24 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
         response.Messages = approvalRequests
             .ConvertAll(functionApprovalRequest =>
             {
-                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {GetToolCallName(functionApprovalRequest.ToolCall)}");
                 return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
             });
 
         response = await innerAgent.RunAsync(response.Messages, session, options, cancellationToken);
 
-        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+        approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
     }
 
     return response;
 }
+
+static string GetToolCallName(ToolCallContent toolCall) => toolCall switch
+{
+    FunctionCallContent fcc => fcc.Name,
+    McpServerToolCallContent mcc => mcc.Name,
+    _ => toolCall.CallId
+};
 
 // This middleware handles chat client lower level invocations.
 // This is useful for handling agent messages before they are sent to the LLM and also handle any response messages from the LLM before they are sent back to the agent.
