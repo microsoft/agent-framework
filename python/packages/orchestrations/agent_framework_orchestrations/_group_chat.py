@@ -206,12 +206,16 @@ class GroupChatOrchestrator(BaseGroupChatOrchestrator):
         next_speaker = await self._get_next_speaker()
 
         # Broadcast participant messages to all participants for context, except
-        # the participant that just responded
+        # the participant that just responded (unless it is also the next speaker,
+        # in which case it must receive the broadcast so its executor cache is
+        # repopulated before the follow-up request arrives).
         participant = ctx.get_source_executor_id()
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participant_registry.participants if p != participant],
+            participants=[
+                p for p in self._participant_registry.participants if p != participant or p == next_speaker
+            ],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
@@ -379,17 +383,24 @@ class AgentBasedGroupChatOrchestrator(BaseGroupChatOrchestrator):
             return
 
         # Broadcast participant messages to all participants for context, except
-        # the participant that just responded
+        # the participant that just responded (unless it is also the next speaker,
+        # in which case it must receive the broadcast so its executor cache is
+        # repopulated before the follow-up request arrives).
         participant = ctx.get_source_executor_id()
+        next_speaker = agent_orchestration_output.next_speaker
         await self._broadcast_messages_to_participants(
             messages,
             cast(WorkflowContext[AgentExecutorRequest | GroupChatParticipantMessage], ctx),
-            participants=[p for p in self._participant_registry.participants if p != participant],
+            participants=[
+                p
+                for p in self._participant_registry.participants
+                if p != participant or p == next_speaker
+            ],
         )
         # Send request to selected participant
         await self._send_request_to_participant(
             # If not terminating, next_speaker must be provided thus will not be None
-            agent_orchestration_output.next_speaker,  # type: ignore[arg-type]
+            next_speaker,  # type: ignore[arg-type]
             cast(WorkflowContext[AgentExecutorRequest | GroupChatRequestMessage], ctx),
         )
         self._increment_round()
