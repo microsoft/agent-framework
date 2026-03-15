@@ -18,4 +18,10 @@ public sealed class SuperStepStartInfo(HashSet<string>? sendingExecutors = null)
     /// Gets a value indicating whether there are any external messages queued during the previous SuperStep.
     /// </summary>
     public bool HasExternalMessages { get; init; }
+
+    /// <summary>
+    /// Gets the <see cref="CheckpointInfo"/> corresponding to the checkpoint created at the start of this SuperStep, if any.
+    /// <see langword="null"/> if checkpointing was not enabled when the run was started.
+    /// </summary>
+    public CheckpointInfo? Checkpoint { get; init; }
 }
