@@ -1,5 +1,6 @@
 @inject LanguageService LangService
 @inject IJSRuntime JS
+@implements IDisposable
 
 <div class="lang-switcher">
     @foreach (var lang in LanguageService.Available)
@@ -14,9 +15,18 @@
 </div>
 
 @code {
+    protected override void OnInitialized()
+        => LangService.OnChanged += OnLanguageChanged;
+
+    private void OnLanguageChanged(object? sender, EventArgs e)
+        => InvokeAsync(StateHasChanged);
+
     private async Task SwitchAsync(string code)
     {
         LangService.SetLanguage(code);
         await JS.InvokeVoidAsync("setStoredLanguage", code);
     }
+
+    public void Dispose()
+        => LangService.OnChanged -= OnLanguageChanged;
 }
