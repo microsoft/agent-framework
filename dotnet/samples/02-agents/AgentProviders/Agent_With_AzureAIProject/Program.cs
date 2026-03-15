@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -30,14 +31,18 @@ var createdAgentVersion = aiProjectClient.Agents.CreateAgentVersion(agentName: J
 //      agentVersion.Name = <agentName>
 
 // You can use an AIAgent with an already created server side agent version.
-AIAgent existingJokerAgent = aiProjectClient.AsAIAgent(createdAgentVersion);
+ChatClientAgent existingJokerAgent = aiProjectClient.AsAIAgent(createdAgentVersion);
 
 // You can also create another AIAgent version by providing the same name with a different definition.
-AIAgent newJokerAgent = await aiProjectClient.CreateAIAgentAsync(name: JokerName, model: deploymentName, instructions: "You are extremely hilarious at telling jokes.");
+AgentVersion newJokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    JokerName,
+    new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = "You are extremely hilarious at telling jokes." }));
+ChatClientAgent newJokerAgent = aiProjectClient.AsAIAgent(newJokerAgentVersion);
 
 // You can also get the AIAgent latest version just providing its name.
-AIAgent jokerAgentLatest = await aiProjectClient.GetAIAgentAsync(name: JokerName);
-var latestAgentVersion = jokerAgentLatest.GetService<AgentVersion>()!;
+AgentRecord jokerAgentRecord = await aiProjectClient.Agents.GetAgentAsync(JokerName);
+ChatClientAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
+AgentVersion latestAgentVersion = jokerAgentRecord.Versions.Latest;
 
 // The AIAgent version can be accessed via the GetService method.
 Console.WriteLine($"Latest agent version id: {latestAgentVersion.Id}");

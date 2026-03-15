@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Core;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -174,7 +175,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AIProjectClient client = this.GetAgentClient();
 
-        agent = client.AsAIAgent(agentVersion, tools: null, clientFactory: null, services: null);
+        agent = client.AsAIAgent(agentVersion);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)

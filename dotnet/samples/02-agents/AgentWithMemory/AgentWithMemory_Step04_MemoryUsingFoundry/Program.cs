@@ -33,11 +33,15 @@ FoundryMemoryProvider memoryProvider = new(
     memoryStoreName,
     stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
-AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
-    options: new ChatClientAgentOptions()
+ChatClientAgent agent = projectClient.AsAIAgent(
+    new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",
-        ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details."
+        },
         AIContextProviders = [memoryProvider]
     });
 

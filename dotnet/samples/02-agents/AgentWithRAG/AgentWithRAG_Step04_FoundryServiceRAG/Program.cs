@@ -4,11 +4,13 @@
 
 using System.ClientModel;
 using Azure.AI.Projects;
+using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Files;
+using OpenAI.Responses;
 using OpenAI.VectorStores;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -39,12 +41,15 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
 
 var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreCreate.Value.Id)] };
 
-AIAgent agent = await aiProjectClient
-    .CreateAIAgentAsync(
-        model: deploymentName,
-        name: "AskContoso",
-        instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
-        tools: [fileSearchTool]);
+AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "AskContoso",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(model: deploymentName)
+        {
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+            Tools = { fileSearchTool.GetService<ResponseTool>() ?? fileSearchTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert hosted file search tool to a ResponseTool.") }
+        }));
+ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 AgentSession session = await agent.CreateSessionAsync();
 

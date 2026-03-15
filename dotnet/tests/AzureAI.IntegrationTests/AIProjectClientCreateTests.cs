@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -14,6 +16,7 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
+[Obsolete("Use FoundryVersionedAgentCreateTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientCreateTests
 {
     private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());

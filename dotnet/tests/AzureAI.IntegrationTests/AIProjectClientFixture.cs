@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,6 +17,7 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
+[Obsolete("Use FoundryVersionedAgentFixture instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientFixture : IChatClientAgentFixture
 {
     private ChatClientAgent _agent = null!;

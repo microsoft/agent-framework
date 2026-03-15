@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
@@ -48,7 +49,7 @@ internal sealed class Program
 
         string workflowInput = GetWorkflowInput(args);
 
-        AIAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+        ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
         AgentSession session = await agent.CreateSessionAsync();
 
