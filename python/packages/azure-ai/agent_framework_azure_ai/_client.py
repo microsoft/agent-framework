@@ -485,17 +485,18 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         runtime_tools = run_options.get("tools")
         runtime_structured_output = self._get_structured_output_signature(chat_options)
 
-        if runtime_tools is not None or runtime_structured_output is not None:
-            tools_changed = runtime_tools is not None
-            structured_output_changed = runtime_structured_output is not None
+        if self.warn_runtime_tools_and_structure_changed and (
+            runtime_tools is not None or runtime_structured_output is not None
+        ):
+            tools_changed = False
+            structured_output_changed = False
 
-            if self.warn_runtime_tools_and_structure_changed:
-                if runtime_tools is not None:
-                    tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
-                if runtime_structured_output is not None:
-                    structured_output_changed = (
-                        runtime_structured_output != self._created_agent_structured_output_signature
-                    )
+            if runtime_tools is not None:
+                tools_changed = self._extract_tool_names(runtime_tools) != self._created_agent_tool_names
+            if runtime_structured_output is not None:
+                structured_output_changed = (
+                    runtime_structured_output != self._created_agent_structured_output_signature
+                )
 
             if tools_changed or structured_output_changed:
                 logger.warning(
