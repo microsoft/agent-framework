@@ -9,21 +9,17 @@ To najprostszy możliwy agent MAF: jeden plik, który tworzy agenta, prosi go o 
 ```csharp
 // Copyright (c) Microsoft. All rights reserved.
 
-// Ten przykład pokazuje, jak stworzyć i używać prostego agenta AI z Azure OpenAI jako backendem.
+// Ten przykład pokazuje, jak stworzyć i używać prostego agenta AI z OpenAI jako backendem.
 
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
+using OpenAI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Wywołaj agenta i wyświetl wynik tekstowy.
@@ -41,9 +37,9 @@ await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pir
 ### 1. Odczyt konfiguracji ze zmiennych środowiskowych
 
 ```csharp
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 ```
 
 MAF stosuje konwencję odczytywania sekretów ze zmiennych środowiskowych — nigdy na stałe w kodzie.
@@ -51,8 +47,8 @@ MAF stosuje konwencję odczytywania sekretów ze zmiennych środowiskowych — n
 ### 2. Budowanie agenta
 
 ```csharp
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 ```
 
@@ -60,8 +56,8 @@ Trzy wywołania w łańcuchu:
 
 | Wywołanie | Co robi |
 |---|---|
-| `new AzureOpenAIClient(...)` | Tworzy połączenie z Azure OpenAI |
-| `.GetChatClient(deploymentName)` | Pobiera `ChatClient` dla wskazanego wdrożenia |
+| `new OpenAIClient(apiKey)` | Tworzy połączenie z OpenAI przy użyciu klucza API |
+| `.GetChatClient(model)` | Pobiera `ChatClient` dla wskazanego modelu |
 | `.AsAIAgent(...)` | Opakowuje go w `ChatClientAgent` (implementuje `AIAgent`) |
 
 Parametr `instructions` staje się promptem systemowym. Parametr `name` to metadane — przydatne przy logowaniu i przepływach wieloagentowych.

@@ -13,30 +13,28 @@ The `Microsoft.Agents.AI.Hosting.AzureFunctions` package lets you host any `AIAg
 //
 // Prerequisites:
 //   - Azure Functions Core Tools
-//   - Azure OpenAI resource
+//   - OpenAI API key
 //
 // Environment variables:
-//   AZURE_OPENAI_ENDPOINT
-//   AZURE_OPENAI_DEPLOYMENT_NAME (defaults to "gpt-4o-mini")
+//   OPENAI_API_KEY
+//   OPENAI_MODEL (defaults to "gpt-4o-mini")
 //
 // Run with: func start
 // Then call: POST http://localhost:7071/api/agents/HostedAgent/run
 
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
-using OpenAI.Chat;
+using OpenAI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 // Set up an AI agent following the standard MAF pattern.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
     .AsAIAgent(
         instructions: "You are a helpful assistant hosted in Azure Functions.",
         name: "HostedAgent");
@@ -63,7 +61,7 @@ Client → POST /api/agents/{name}/run
               ↓
          Your AIAgent.RunAsync(message, session)
               ↓
-         Azure OpenAI
+         OpenAI API
 ```
 
 Sessions are persisted in Durable Functions state storage — no database code needed. The `timeToLive` parameter sets when idle sessions are cleaned up.
@@ -144,7 +142,7 @@ az functionapp create \
 func azure functionapp publish my-maf-agent
 ```
 
-Set the same environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`) as Application Settings in the Azure portal.
+Set the same environment variables (`OPENAI_API_KEY`, `OPENAI_MODEL`) as Application Settings in the Azure portal.
 
 ## Key Takeaways
 

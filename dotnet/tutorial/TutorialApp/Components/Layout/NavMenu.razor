@@ -17,11 +17,20 @@
 
 @code {
     protected override void OnInitialized()
-        => LangService.OnChanged += OnLanguageChanged;
+    {
+        LangService.OnChanged += OnLanguageChanged;
+        Nav.LocationChanged += OnLocationChanged;
+    }
 
     private void OnLanguageChanged(object? sender, EventArgs e)
         => InvokeAsync(StateHasChanged);
 
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => InvokeAsync(StateHasChanged);
+
     public void Dispose()
-        => LangService.OnChanged -= OnLanguageChanged;
+    {
+        LangService.OnChanged -= OnLanguageChanged;
+        Nav.LocationChanged -= OnLocationChanged;
+    }
 }

@@ -5,7 +5,8 @@ namespace TutorialApp.Services;
 /// <summary>Defines a supported UI language.</summary>
 /// <param name="Code">BCP-47 language code (e.g. "en", "pl"). Must match a content/ subdirectory name.</param>
 /// <param name="NativeName">Language name shown in the switcher, written in that language.</param>
-public record LanguageDef(string Code, string NativeName);
+/// <param name="Flag">Flag emoji for the language (e.g. "🇬🇧").</param>
+public record LanguageDef(string Code, string NativeName, string Flag);
 
 /// <summary>
 /// Scoped service that tracks the active language for the current Blazor circuit.
@@ -17,8 +18,8 @@ public sealed class LanguageService
     // ── Add new languages here ──────────────────────────────────────────────
     public static readonly IReadOnlyList<LanguageDef> Available =
     [
-        new("en", "English"),
-        new("pl", "Polski"),
+        new("en", "English", "🇬🇧"),
+        new("pl", "Polski", "🇵🇱"),
     ];
     // ───────────────────────────────────────────────────────────────────────
 

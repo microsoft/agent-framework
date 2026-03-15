@@ -13,30 +13,28 @@ Pakiet `Microsoft.Agents.AI.Hosting.AzureFunctions` pozwala hostować dowolny `A
 //
 // Wymagania wstępne:
 //   - Azure Functions Core Tools
-//   - Zasób Azure OpenAI
+//   - Klucz API OpenAI
 //
 // Zmienne środowiskowe:
-//   AZURE_OPENAI_ENDPOINT
-//   AZURE_OPENAI_DEPLOYMENT_NAME (domyślnie "gpt-4o-mini")
+//   OPENAI_API_KEY
+//   OPENAI_MODEL (domyślnie "gpt-4o-mini")
 //
 // Uruchom za pomocą: func start
 // Następnie wywołaj: POST http://localhost:7071/api/agents/HostedAgent/run
 
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
-using OpenAI.Chat;
+using OpenAI;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 // Skonfiguruj agenta AI zgodnie ze standardowym wzorcem MAF.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
     .AsAIAgent(
         instructions: "You are a helpful assistant hosted in Azure Functions.",
         name: "HostedAgent");
@@ -63,7 +61,7 @@ Klient → POST /api/agents/{name}/run
               ↓
          Twój AIAgent.RunAsync(message, session)
               ↓
-         Azure OpenAI
+         OpenAI API
 ```
 
 Sesje są automatycznie utrwalane w magazynie stanów Durable Functions — bez pisania kodu bazy danych. Parametr `timeToLive` określa, kiedy nieaktywne sesje są czyszczone.
@@ -144,7 +142,7 @@ az functionapp create \
 func azure functionapp publish moj-agent-maf
 ```
 
-Ustaw te same zmienne środowiskowe (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`) jako Ustawienia aplikacji w portalu Azure.
+Ustaw te same zmienne środowiskowe (`OPENAI_API_KEY`, `OPENAI_MODEL`) jako Ustawienia aplikacji w portalu Azure.
 
 ## Kluczowe wnioski
 

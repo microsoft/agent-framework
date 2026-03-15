@@ -4,7 +4,7 @@
 
 MAF zapewnia przejrzyste, kompozycyjne API zbudowane na bazie `Microsoft.Extensions.AI`, ułatwiając:
 
-- Tworzenie agentów obsługiwanych przez dowolnego dostawcę LLM (Azure OpenAI, OpenAI i inne)
+- Tworzenie agentów obsługiwanych przez dowolnego dostawcę LLM (OpenAI, Anthropic, Azure OpenAI i inne)
 - Wyposażanie agentów w narzędzia (funkcje lokalne, zewnętrzne API)
 - Utrzymywanie wieloturowych rozmów ze stanem sesji
 - Budowanie złożonych przepływów pracy z wieloma agentami
@@ -24,32 +24,60 @@ MAF zapewnia przejrzyste, kompozycyjne API zbudowane na bazie `Microsoft.Extensi
 ### Wymagania wstępne
 
 - SDK .NET 10
-- Zasób Azure OpenAI (lub klucz API OpenAI)
+- Klucz API OpenAI
 - Dwie zmienne środowiskowe:
 
 ```bash
-export AZURE_OPENAI_ENDPOINT="https://twoj-zasob.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4o-mini"
 ```
 
 ### Twój pierwszy agent (5 linii)
 
 ```csharp
-using Azure.AI.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
+using OpenAI;
 
-AIAgent agent = new AzureOpenAIClient(
-    new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!),
-    new DefaultAzureCredential())
-    .GetChatClient("gpt-4o-mini")
+var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+    ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
+
+AIAgent agent = new OpenAIClient(apiKey)
+    .GetChatClient(model)
     .AsAIAgent(instructions: "Jesteś pomocnym asystentem.");
 
 Console.WriteLine(await agent.RunAsync("Cześć!"));
 ```
 
 Kluczową metodą rozszerzającą jest `.AsAIAgent()` — opakowuje dowolny `IChatClient` w pełnoprawny obiekt `AIAgent`.
+
+### Alternatywa: Anthropic (Claude)
+
+MAF posiada oficjalną integrację z Anthropic przez pakiet `Microsoft.Agents.AI.Anthropic`. Wzorzec jest nieco inny — `AnthropicClient` udostępnia `.AsAIAgent()` bezpośrednio:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_MODEL="claude-haiku-4-5"
+```
+
+```csharp
+using Anthropic;
+using Microsoft.Agents.AI;
+
+var apiKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")
+    ?? throw new InvalidOperationException("ANTHROPIC_API_KEY is not set.");
+var model = Environment.GetEnvironmentVariable("ANTHROPIC_MODEL") ?? "claude-haiku-4-5";
+
+using AnthropicClient client = new AnthropicClient() { ApiKey = apiKey };
+
+AIAgent agent = client.AsAIAgent(
+    model: model,
+    instructions: "Jesteś pomocnym asystentem.");
+
+Console.WriteLine(await agent.RunAsync("Cześć!"));
+```
+
+Reszta tutoriala używa OpenAI, ale każdy wzorzec — sesje, narzędzia, pamięć, przepływy pracy — działa identycznie z Anthropic.
 
 ## Struktura tutoriala
 

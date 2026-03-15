@@ -7,6 +7,8 @@
     <RootNamespace>TutorialApp</RootNamespace>
     <!-- Tutorial app — not a library; suppress documentation and formatting rules -->
     <NoWarn>CS1591;SA0001</NoWarn>
+    <!-- Blazor Server doesn't support trimming/AOT; opt out of the repo-wide IsAotCompatible analysis -->
+    <IsAotCompatible>false</IsAotCompatible>
   </PropertyGroup>
 
   <ItemGroup>

@@ -8,7 +8,7 @@
         <button class="lang-btn @(isActive ? "active" : "")"
                 @onclick="() => SwitchAsync(lang.Code)"
                 disabled="@isActive">
-            @lang.NativeName
+            @lang.Flag @lang.Code.ToUpper()
         </button>
     }
 </div>
