@@ -1,9 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import logging
-from collections.abc import Mapping
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
