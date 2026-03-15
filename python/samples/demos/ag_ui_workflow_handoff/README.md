@@ -32,10 +32,9 @@ The backend uses Azure OpenAI responses and supports intent-driven, non-linear h
 
 ## 1) Run Backend
 
-From the Python repo root:
+From the Python repo root (`agent-framework/python`):
 
 ```bash
-cd /Users/evmattso/git/agent-framework/python
 uv sync
 uv run python samples/demos/ag_ui_workflow_handoff/backend/server.py
 ```
@@ -48,7 +47,7 @@ Backend default URL:
 ## 2) Install Frontend Packages (npm)
 
 ```bash
-cd /Users/evmattso/git/agent-framework/python/samples/demos/ag_ui_workflow_handoff/frontend
+cd samples/demos/ag_ui_workflow_handoff/frontend
 npm install
 ```
 
