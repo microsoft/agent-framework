@@ -458,6 +458,37 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                         raw_representation=event,
                     )
                     queue.put_nowait(update)
+            elif event.type == SessionEventType.TOOL_EXECUTION_START:
+                tool_call_id = getattr(event.data, "tool_call_id", None) or ""
+                tool_name = getattr(event.data, "tool_name", None) or ""
+                arguments = getattr(event.data, "arguments", None)
+                fc = Content.from_function_call(
+                    call_id=tool_call_id,
+                    name=tool_name,
+                    arguments=arguments,
+                    raw_representation=event.data,
+                )
+                update = AgentResponseUpdate(
+                    role="assistant",
+                    contents=[fc],
+                    raw_representation=event,
+                )
+                queue.put_nowait(update)
+            elif event.type == SessionEventType.TOOL_EXECUTION_COMPLETE:
+                tool_call_id = getattr(event.data, "tool_call_id", None) or ""
+                result_obj = getattr(event.data, "result", None)
+                result_text = getattr(result_obj, "content", "") if result_obj else ""
+                fr = Content.from_function_result(
+                    call_id=tool_call_id,
+                    result=str(result_text),
+                    raw_representation=event.data,
+                )
+                update = AgentResponseUpdate(
+                    role="tool",
+                    contents=[fr],
+                    raw_representation=event,
+                )
+                queue.put_nowait(update)
             elif event.type == SessionEventType.SESSION_IDLE:
                 queue.put_nowait(None)
             elif event.type == SessionEventType.SESSION_ERROR:
