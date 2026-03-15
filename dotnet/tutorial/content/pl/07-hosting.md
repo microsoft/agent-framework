@@ -27,6 +27,7 @@ using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
 using OpenAI;
+using OpenAI.Chat;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
@@ -36,7 +37,7 @@ var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
     .AsAIAgent(
-        instructions: "You are a helpful assistant hosted in Azure Functions.",
+        instructions: "Jesteś pomocnym asystentem hostowanym w Azure Functions.",
         name: "HostedAgent");
 
 // Skonfiguruj aplikację funkcji do hostowania agenta AI.

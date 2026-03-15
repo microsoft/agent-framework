@@ -24,7 +24,7 @@ MAF provides a clean, composable API on top of `Microsoft.Extensions.AI`, making
 ### Prerequisites
 
 - .NET 10 SDK
-- An OpenAI API key
+- An OpenAI API key (or Anthropic API key — see below)
 - Two environment variables:
 
 ```bash
@@ -32,11 +32,55 @@ export OPENAI_API_KEY="sk-..."
 export OPENAI_MODEL="gpt-4o-mini"
 ```
 
+### Creating a New .NET App
+
+Start by creating a new console app and adding the required NuGet packages:
+
+```bash
+dotnet new console -n MyAgent
+cd MyAgent
+```
+
+#### NuGet Packages for OpenAI
+
+```bash
+dotnet add package Microsoft.Agents.AI --prerelease
+dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+dotnet add package Microsoft.Extensions.AI.OpenAI
+dotnet add package Azure.AI.OpenAI --prerelease
+```
+
+#### NuGet Packages for Anthropic (Claude)
+
+If you want to use Claude instead of OpenAI, install the Anthropic adapter:
+
+```bash
+dotnet add package Microsoft.Agents.AI --prerelease
+dotnet add package Microsoft.Agents.AI.Anthropic --prerelease
+dotnet add package Anthropic
+```
+
+#### What Each Package Does
+
+| Package | Purpose |
+|---|---|
+| `Microsoft.Agents.AI` | Core MAF library — `AIAgent`, `AgentSession`, `WorkflowBuilder`, tool support |
+| `Microsoft.Agents.AI.OpenAI` | MAF adapter for OpenAI — adds `.AsAIAgent()` to `IChatClient` |
+| `Microsoft.Extensions.AI.OpenAI` | Microsoft's official OpenAI bridge for `Microsoft.Extensions.AI` |
+| `Azure.AI.OpenAI` | Azure OpenAI SDK (also used for standard openai.com endpoints) |
+| `Microsoft.Agents.AI.Anthropic` | MAF first-party adapter for Anthropic — adds `.AsAIAgent()` directly to `AnthropicClient` |
+| `Anthropic` | Official Anthropic .NET SDK (`AnthropicClient`, model streaming, etc.) |
+
+> **Why both `Microsoft.Agents.AI.Anthropic` and `Anthropic`?**
+> The `Anthropic` package is Anthropic's own SDK and handles the raw HTTP transport.
+> `Microsoft.Agents.AI.Anthropic` wraps it into MAF's `AIAgent` abstraction so you get sessions, tools, memory, and workflows — the same as with OpenAI.
+
 ### Your First Agent (5 lines)
 
 ```csharp
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");

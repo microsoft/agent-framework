@@ -13,25 +13,26 @@ using System.ComponentModel;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
 var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
-[Description("Get the weather for a given location.")]
-static string GetWeather([Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is cloudy with a high of 15°C.";
+[Description("Podaj pogodę dla danej lokalizacji.")]
+static string GetWeather([Description("Lokalizacja, dla której ma zostać podana pogoda.")] string location)
+    => $"Pogoda w {location}: zachmurzenie, temperatura maksymalna 15°C.";
 
 // Utwórz klienta czatu i agenta, przekazując narzędzie funkcyjne do agenta.
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .AsAIAgent(instructions: "You are a helpful assistant", tools: [AIFunctionFactory.Create(GetWeather)]);
+    .AsAIAgent(instructions: "Jesteś pomocnym asystentem", tools: [AIFunctionFactory.Create(GetWeather)]);
 
 // Interakcja bez strumieniowania.
-Console.WriteLine(await agent.RunAsync("What is the weather like in Amsterdam?"));
+Console.WriteLine(await agent.RunAsync("Jaka jest pogoda w Amsterdamie?"));
 
 // Interakcja ze strumieniowaniem.
-await foreach (var update in agent.RunStreamingAsync("What is the weather like in Amsterdam?"))
+await foreach (var update in agent.RunStreamingAsync("Jaka jest pogoda w Amsterdamie?"))
 {
     Console.WriteLine(update);
 }
@@ -52,9 +53,9 @@ To standardowy przepływ [function calling w OpenAI](https://platform.openai.com
 ## Definiowanie narzędzia
 
 ```csharp
-[Description("Get the weather for a given location.")]
-static string GetWeather([Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is cloudy with a high of 15°C.";
+[Description("Podaj pogodę dla danej lokalizacji.")]
+static string GetWeather([Description("Lokalizacja, dla której ma zostać podana pogoda.")] string location)
+    => $"Pogoda w {location}: zachmurzenie, temperatura maksymalna 15°C.";
 ```
 
 Atrybuty `[Description]` na **metodzie** i **parametrach** stają się schematem JSON, na podstawie którego model LLM decyduje, kiedy i jak wywołać funkcję. Pisz jasne opisy — model je czyta.
@@ -63,7 +64,7 @@ Atrybuty `[Description]` na **metodzie** i **parametrach** stają się schematem
 
 ```csharp
 .AsAIAgent(
-    instructions: "You are a helpful assistant",
+    instructions: "Jesteś pomocnym asystentem",
     tools: [AIFunctionFactory.Create(GetWeather)]
 )
 ```
@@ -82,14 +83,14 @@ AIFunction searchTool = AIFunctionFactory.Create(searchService.SearchAsync);
 AIFunction dateTool = AIFunctionFactory.Create(
     () => DateTime.UtcNow.ToString("R"),
     name: "GetCurrentTime",
-    description: "Returns the current UTC time.");
+    description: "Zwraca aktualny czas UTC.");
 
 // Narzędzie asynchroniczne
-[Description("Look up order status in the database.")]
-static async Task<string> GetOrderStatus([Description("The order ID.")] string orderId)
+[Description("Sprawdź status zamówienia w bazie danych.")]
+static async Task<string> GetOrderStatus([Description("Identyfikator zamówienia.")] string orderId)
 {
     var order = await db.Orders.FindAsync(orderId);
-    return order?.Status ?? "Not found";
+    return order?.Status ?? "Nie znaleziono";
 }
 ```
 

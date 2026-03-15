@@ -13,6 +13,7 @@ To najprostszy możliwy agent MAF: jeden plik, który tworzy agenta, prosi go o 
 
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");
@@ -20,13 +21,13 @@ var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+    .AsAIAgent(instructions: "Jesteś dobry w opowiadaniu żartów.", name: "Joker");
 
 // Wywołaj agenta i wyświetl wynik tekstowy.
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+Console.WriteLine(await agent.RunAsync("Opowiedz mi żart o piracie."));
 
 // Wywołaj agenta z obsługą strumieniowania.
-await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
+await foreach (var update in agent.RunStreamingAsync("Opowiedz mi żart o piracie."))
 {
     Console.WriteLine(update);
 }
@@ -49,7 +50,7 @@ MAF stosuje konwencję odczytywania sekretów ze zmiennych środowiskowych — n
 ```csharp
 AIAgent agent = new OpenAIClient(apiKey)
     .GetChatClient(model)
-    .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+    .AsAIAgent(instructions: "Jesteś dobry w opowiadaniu żartów.", name: "Joker");
 ```
 
 Trzy wywołania w łańcuchu:
@@ -65,7 +66,7 @@ Parametr `instructions` staje się promptem systemowym. Parametr `name` to metad
 ### 3. Wywołanie bez strumieniowania
 
 ```csharp
-Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+Console.WriteLine(await agent.RunAsync("Opowiedz mi żart o piracie."));
 ```
 
 `RunAsync` zbiera całą odpowiedź przed zwróceniem. Użyj tej metody, gdy potrzebujesz pełnej odpowiedzi przed kontynuowaniem.
@@ -73,7 +74,7 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 ### 4. Wywołanie ze strumieniowaniem
 
 ```csharp
-await foreach (var update in agent.RunStreamingAsync("Tell me a joke about a pirate."))
+await foreach (var update in agent.RunStreamingAsync("Opowiedz mi żart o piracie."))
 {
     Console.WriteLine(update);
 }

@@ -27,23 +27,23 @@ ChatClient chatClient = new OpenAIClient(apiKey)
 // Utwórz agenta z niestandardowym komponentem pamięci dla każdej sesji.
 AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
 {
-    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
+    ChatOptions = new() { Instructions = "Jesteś przyjaznym asystentem. Zawsze zwracaj się do użytkownika po imieniu." },
     AIContextProviders = [new UserInfoMemory(chatClient.AsIChatClient())]
 });
 
 AgentSession session = await agent.CreateSessionAsync();
 
 Console.WriteLine(">> Sesja z pustą pamięcią\n");
-Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", session));
-Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
-Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
+Console.WriteLine(await agent.RunAsync("Cześć, ile wynosi pierwiastek kwadratowy z 9?", session));
+Console.WriteLine(await agent.RunAsync("Mam na imię Ruaidhrí", session));
+Console.WriteLine(await agent.RunAsync("Mam 20 lat", session));
 
 // Serializuj sesję — zawiera stan pamięci.
 JsonElement sessionElement = await agent.SerializeSessionAsync(session);
 
 Console.WriteLine("\n>> Deserializowana sesja z wcześniej utworzoną pamięcią\n");
 var deserializedSession = await agent.DeserializeSessionAsync(sessionElement);
-Console.WriteLine(await agent.RunAsync("What is my name and age?", deserializedSession));
+Console.WriteLine(await agent.RunAsync("Jak mam na imię i ile mam lat?", deserializedSession));
 
 Console.WriteLine("\n>> Odczyt pamięci przez komponent pamięci\n");
 var userInfo = agent.GetService<UserInfoMemory>()?.GetUserInfo(deserializedSession);
@@ -56,7 +56,7 @@ if (userInfo is not null && agent.GetService<UserInfoMemory>() is UserInfoMemory
 {
     newSessionMemory.SetUserInfo(newSession, userInfo);
 }
-Console.WriteLine(await agent.RunAsync("What is my name and age?", newSession));
+Console.WriteLine(await agent.RunAsync("Jak mam na imię i ile mam lat?", newSession));
 ```
 
 ## Komponent `UserInfoMemory`
@@ -95,7 +95,7 @@ internal sealed class UserInfoMemory : AIContextProvider
                 context.RequestMessages,
                 new ChatOptions()
                 {
-                    Instructions = "Extract the user's name and age from the message if present. If not present return nulls."
+                    Instructions = "Wyodrębnij imię i wiek użytkownika z wiadomości, jeśli są podane. Jeśli nie, zwróć null."
                 },
                 cancellationToken: cancellationToken);
 
@@ -114,11 +114,11 @@ internal sealed class UserInfoMemory : AIContextProvider
 
         instructions
             .AppendLine(userInfo.UserName is null
-                ? "Ask the user for their name and politely decline to answer any questions until they provide it."
-                : $"The user's name is {userInfo.UserName}.")
+                ? "Zapytaj użytkownika o imię i grzecznie odmów odpowiadania na pytania, dopóki go nie poda."
+                : $"Imię użytkownika to {userInfo.UserName}.")
             .AppendLine(userInfo.UserAge is null
-                ? "Ask the user for their age and politely decline to answer any questions until they provide it."
-                : $"The user's age is {userInfo.UserAge}.");
+                ? "Zapytaj użytkownika o wiek i grzecznie odmów odpowiadania na pytania, dopóki go nie poda."
+                : $"Wiek użytkownika to {userInfo.UserAge}.");
 
         return new ValueTask<AIContext>(new AIContext { Instructions = instructions.ToString() });
     }

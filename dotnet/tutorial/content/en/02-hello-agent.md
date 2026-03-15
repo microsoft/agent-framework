@@ -13,6 +13,7 @@ This is the simplest possible MAF agent: a single file that creates an agent, as
 
 using Microsoft.Agents.AI;
 using OpenAI;
+using OpenAI.Chat;
 
 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY")
     ?? throw new InvalidOperationException("OPENAI_API_KEY is not set.");

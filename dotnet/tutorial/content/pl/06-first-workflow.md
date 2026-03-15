@@ -22,7 +22,7 @@ namespace WorkflowExecutorsAndEdgesSample;
 /// 1. Pobiera tekst wejściowy i konwertuje go na wielkie litery (UppercaseExecutor)
 /// 2. Pobiera tekst wielkich liter i odwraca go (ReverseTextExecutor)
 ///
-/// Dla wejścia "Hello, World!" przepływ pracy produkuje "!DLROW ,OLLEH".
+/// Dla wejścia "Witaj, Świecie!" przepływ pracy produkuje "!EICŚIW ,JATIW".
 /// </summary>
 public static class Program
 {
@@ -40,7 +40,7 @@ public static class Program
         var workflow = builder.Build();
 
         // Wykonaj przepływ pracy z danymi wejściowymi
-        await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+        await using Run run = await InProcessExecution.RunAsync(workflow, "Witaj, Świecie!");
         foreach (WorkflowEvent evt in run.NewEvents)
         {
             if (evt is ExecutorCompletedEvent executorComplete)
@@ -68,8 +68,8 @@ internal sealed class ReverseTextExecutor() : Executor<string, string>("ReverseT
 
 **Wynik:**
 ```
-UppercaseExecutor: HELLO, WORLD!
-ReverseTextExecutor: !DLROW ,OLLEH
+UppercaseExecutor: WITAJ, ŚWIECIE!
+ReverseTextExecutor: !EICŚIW ,JATIW
 ```
 
 ## Podstawowe koncepcje
@@ -125,7 +125,7 @@ Konstruktor przyjmuje executor wejściowy. Dodaj krawędzie, aby połączyć kol
 ### Run i zdarzenia
 
 ```csharp
-await using Run run = await InProcessExecution.RunAsync(workflow, "Hello, World!");
+await using Run run = await InProcessExecution.RunAsync(workflow, "Witaj, Świecie!");
 foreach (WorkflowEvent evt in run.NewEvents)
 {
     if (evt is ExecutorCompletedEvent executorComplete)
