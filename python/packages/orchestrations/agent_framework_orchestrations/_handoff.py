@@ -40,7 +40,7 @@ from typing import Any
 
 from agent_framework import Agent, SupportsAgentRun
 from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
-from agent_framework._sessions import AgentSession
+from agent_framework._sessions import AgentSession, BaseHistoryProvider, InMemoryHistoryProvider
 from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, Content, Message
 from agent_framework._workflows._agent_executor import AgentExecutor, AgentExecutorRequest
@@ -368,12 +368,32 @@ class HandoffAgentExecutor(AgentExecutor):
         # restore the original tools, in case they are shared between agents
         options["tools"] = tools_from_options
 
+        # Filter out history providers to prevent duplicate messages.
+        # The HandoffAgentExecutor manages conversation history via _full_conversation,
+        # so history providers would re-inject previously stored messages on each
+        # agent.run() call, causing the entire conversation to appear twice.
+        # A no-op InMemoryHistoryProvider placeholder prevents the agent from
+        # auto-injecting a default one at runtime.
+        filtered_providers = [
+            p for p in agent.context_providers
+            if not isinstance(p, BaseHistoryProvider)
+        ]
+        # Always add a no-op placeholder to prevent the agent from
+        # auto-injecting a default InMemoryHistoryProvider at runtime.
+        filtered_providers.append(
+            InMemoryHistoryProvider(
+                load_messages=False,
+                store_inputs=False,
+                store_outputs=False,
+            )
+        )
+
         return Agent(
             client=agent.client,
             id=agent.id,
             name=agent.name,
             description=agent.description,
-            context_providers=agent.context_providers,
+            context_providers=filtered_providers,
             middleware=agent.agent_middleware,
             default_options=cloned_options,  # type: ignore[assignment]
         )
