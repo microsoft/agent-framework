@@ -267,6 +267,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
+                When provided, the session's ``session_id`` is used as the A2A
+                ``context_id`` so that the remote agent can correlate
+                messages belonging to the same conversation.
             function_invocation_kwargs: Present for compatibility with the shared agent interface.
                 A2AAgent does not use these values directly.
             client_kwargs: Present for compatibility with the shared agent interface.
@@ -284,13 +287,17 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         del function_invocation_kwargs, client_kwargs, kwargs
+        # Derive context_id from session when available so the remote agent
+        # can correlate messages belonging to the same conversation.
+        context_id: str | None = session.session_id if session else None
+
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
                 TaskIdParams(id=continuation_token["task_id"])
             )
         else:
             normalized_messages = normalize_messages(messages)
-            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1], context_id=context_id)
             a2a_stream = self.client.send_message(a2a_message)
 
         response = ResponseStream(
@@ -403,7 +410,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             return AgentResponse.from_updates(updates)
         return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
 
-    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+    def _prepare_message_for_a2a(self, message: Message, *, context_id: str | None = None) -> A2AMessage:
         """Prepare a Message for the A2A protocol.
 
         Transforms Agent Framework Message objects into A2A protocol Messages by:
@@ -412,6 +419,14 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         - Converting file references (URI/data/hosted_file) to FilePart objects
         - Preserving metadata and additional properties from the original message
         - Setting the role to 'user' as framework messages are treated as user input
+
+        Args:
+            message: The framework Message to convert.
+
+        Keyword Args:
+            context_id: Optional A2A context ID to associate this message with a
+                conversation session. When provided, the remote agent can correlate
+                multiple messages belonging to the same conversation.
         """
         parts: list[A2APart] = []
         if not message.contents:
@@ -494,6 +509,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
             metadata=metadata,
+            context_id=context_id or uuid.uuid4().hex,
         )
 
     def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:
