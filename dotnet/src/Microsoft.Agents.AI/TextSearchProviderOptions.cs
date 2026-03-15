@@ -86,7 +86,16 @@ public sealed class TextSearchProviderOptions
     /// When <see langword="null"/>, the provider defaults to including only
     /// <see cref="AgentRequestMessageSourceType.External"/> messages.
     /// </value>
-    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputMessageFilter { get; set; }
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputRequestMessageFilter { get; set; }
+
+    /// <summary>
+    /// Gets or sets an optional filter function applied to response messages when updating the recent message
+    /// memory during <see cref="AIContextProvider.InvokedAsync"/>.
+    /// </summary>
+    /// <value>
+    /// When <see langword="null"/>, the provider defaults to including all messages.
+    /// </value>
+    public Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? StorageInputResponseMessageFilter { get; set; }
 
     /// <summary>
     /// Gets or sets the list of <see cref="ChatRole"/> types to filter recent messages to

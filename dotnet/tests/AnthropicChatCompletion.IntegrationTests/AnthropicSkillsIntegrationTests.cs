@@ -22,14 +22,14 @@ public sealed class AnthropicSkillsIntegrationTests
     // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
     private const string SkipReason = "Integrations tests for local execution only";
 
-    private static readonly AnthropicConfiguration s_config = TestConfiguration.LoadSection<AnthropicConfiguration>();
-
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task CreateAgentWithPptxSkillAsync()
     {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+
         // Arrange
-        AnthropicClient anthropicClient = new() { ApiKey = s_config.ApiKey };
-        string model = s_config.ChatModelId;
+        AnthropicClient anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+        string model = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
 
         BetaSkillParams pptxSkill = new()
         {
@@ -53,11 +53,13 @@ public sealed class AnthropicSkillsIntegrationTests
         Assert.NotEmpty(response.Text);
     }
 
-    [Fact(Skip = SkipReason)]
+    [Fact]
     public async Task ListAnthropicManagedSkillsAsync()
     {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+
         // Arrange
-        AnthropicClient anthropicClient = new() { ApiKey = s_config.ApiKey };
+        AnthropicClient anthropicClient = new() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
 
         // Act
         SkillListPage skills = await anthropicClient.Beta.Skills.List(

@@ -180,6 +180,34 @@ class ToolExecutionException(ToolException):
     pass
 
 
+class UserInputRequiredException(ToolException):
+    """Raised when a tool wrapping a sub-agent requires user input to proceed.
+
+    This exception carries the ``user_input_request`` Content items emitted by
+    the sub-agent (e.g., ``oauth_consent_request``, ``function_approval_request``)
+    so the tool invocation layer can propagate them to the parent agent's response
+    instead of swallowing them as a generic tool error.
+
+    Args:
+        contents: The user-input-request Content items from the sub-agent response.
+        message: Human-readable description of why user input is needed.
+    """
+
+    def __init__(
+        self,
+        contents: list[Any],
+        message: str = "Tool requires user input to proceed.",
+    ) -> None:
+        """Create a UserInputRequiredException.
+
+        Args:
+            contents: The user-input-request Content items from the sub-agent response.
+            message: Human-readable description of why user input is needed.
+        """
+        super().__init__(message, log_level=None)
+        self.contents = contents
+
+
 # endregion
 
 # region Middleware Exceptions

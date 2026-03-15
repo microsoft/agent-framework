@@ -55,7 +55,7 @@ public static class ChatClientExtensions
 
         if (chatClient.GetService<FunctionInvokingChatClient>() is null)
         {
-            _ = chatBuilder.Use((innerClient, services) =>
+            chatBuilder.Use((innerClient, services) =>
             {
                 var loggerFactory = services.GetService<ILoggerFactory>();
 

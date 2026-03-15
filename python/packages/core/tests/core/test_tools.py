@@ -5,15 +5,15 @@ from unittest.mock import Mock
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
     Content,
     FunctionTool,
     tool,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
-    _build_pydantic_model_from_json_schema,
     _parse_annotation,
     _parse_inputs,
 )
@@ -125,7 +125,8 @@ async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
         return f"{query}:{max_results}"
 
     result = await search.invoke(arguments={"query": "hello", "max_results": 3})
-    assert result == "hello:3"
+    assert isinstance(result, list)
+    assert result[0].text == "hello:3"
 
 
 async def test_tool_decorator_with_json_schema_invoke_missing_required():
@@ -222,7 +223,8 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == "10"
+    assert isinstance(result, list)
+    assert result[0].text == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -493,11 +495,13 @@ async def test_tool_decorator_shared_state():
 
     # Test with invoke method as well (simulating agent execution)
     result6 = await increment_tool.invoke(amount=5)
-    assert result6 == "Counter incremented by 5. New value: 60"
+    assert isinstance(result6, list)
+    assert result6[0].text == "Counter incremented by 5. New value: 60"
     assert counter_instance.counter == 60
 
     result7 = await get_value_tool.invoke()
-    assert result7 == "Current counter value: 60"
+    assert isinstance(result7, list)
+    assert result7[0].text == "Current counter value: 60"
     assert counter_instance.counter == 60
 
 
@@ -520,7 +524,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -564,7 +569,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -605,7 +611,8 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
         options={"model_id": "dummy"},
     )
 
-    assert result == "HELLO WORLD"
+    assert isinstance(result, list)
+    assert result[0].text == "HELLO WORLD"
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -629,7 +636,8 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == "15"
+    assert isinstance(result, list)
+    assert result[0].text == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -697,7 +705,8 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == "12"
+    assert isinstance(result, list)
+    assert result[0].text == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -933,13 +942,137 @@ async def test_ai_function_with_kwargs_injection():
         arguments=tool_with_kwargs.input_model(x=5),
         user_id="user2",
     )
-    assert result == "x=5, user=user2"
+    assert isinstance(result, list)
+    assert result[0].text == "x=5, user=user2"
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
         arguments=tool_with_kwargs.input_model(x=10),
     )
-    assert result_default == "x=10, user=unknown"
+    assert isinstance(result_default, list)
+    assert result_default[0].text == "x=10, user=unknown"
+
+
+async def test_ai_function_with_explicit_invocation_context():
+    """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
+
+    @tool
+    def tool_with_context(x: int, ctx: FunctionInvocationContext) -> str:
+        """A tool that accepts runtime context injection."""
+        user_id = ctx.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_context,
+        arguments=tool_with_context.input_model(x=7),
+        kwargs={"user_id": "ctx-user"},
+    )
+
+    result = await tool_with_context.invoke(context=context)
+
+    assert result[0].text == "x=7, user=ctx-user"
+
+
+async def test_ai_function_with_typed_context_parameter_using_custom_name():
+    """Test that typed context injection works for names other than ctx."""
+
+    @tool
+    def tool_with_runtime_context(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool that uses a custom context parameter name."""
+        user_id = runtime.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_runtime_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_runtime_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_runtime_context,
+        arguments=tool_with_runtime_context.input_model(x=8),
+        kwargs={"user_id": "runtime-user"},
+    )
+
+    result = await tool_with_runtime_context.invoke(context=context)
+
+    assert result[0].text == "x=8, user=runtime-user"
+
+
+async def test_ai_function_with_explicit_schema_and_untyped_ctx():
+    """Test that explicit schemas allow an untyped ctx parameter."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x, ctx) -> str:
+        """A tool with explicit schema and implicit ctx injection."""
+        return f"x={x}, user={ctx.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=9),
+        kwargs={"user_id": "schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert result[0].text == "x=9, user=schema-user"
+
+
+async def test_ai_function_with_explicit_schema_and_typed_ctx():
+    """Test that explicit schemas also work with typed context injection."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool with explicit schema and typed context injection."""
+        return f"x={x}, user={runtime.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=11),
+        kwargs={"user_id": "typed-schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert tool_with_schema.parameters() == ToolInput.model_json_schema()
+    assert result[0].text == "x=11, user=typed-schema-user"
+
+
+def test_ai_function_with_multiple_typed_context_parameters_fails():
+    """Test that tools reject multiple typed FunctionInvocationContext parameters."""
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool
+        def invalid_tool(ctx_one: FunctionInvocationContext, ctx_two: FunctionInvocationContext) -> str:
+            return f"{ctx_one.kwargs}-{ctx_two.kwargs}"
+
+
+def test_ai_function_with_ctx_and_typed_context_parameter_fails():
+    """Test that explicit-schema tools reject both implicit ctx and typed context parameters."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool(schema=ToolInput)
+        def invalid_tool(x, ctx, runtime: FunctionInvocationContext) -> str:
+            return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
 # region _parse_annotation tests
@@ -999,469 +1132,6 @@ def test_parse_annotation_with_annotated_and_literal():
     literal_type = args[0]
     assert get_origin(literal_type) is Literal
     assert get_args(literal_type) == ("A", "B", "C")
-
-
-def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
-    """Test for Tools with complex input schema (array of objects).
-
-    This test verifies that JSON schemas with array properties containing nested objects
-    are properly parsed, ensuring that the nested object schema is preserved
-    and not reduced to a bare dict.
-
-    Example from issue:
-    ```
-    const SalesOrderItemSchema = z.object({
-        customerMaterialNumber: z.string().optional(),
-        quantity: z.number(),
-        unitOfMeasure: z.string()
-    });
-
-    const CreateSalesOrderInputSchema = z.object({
-        contract: z.string(),
-        items: z.array(SalesOrderItemSchema)
-    });
-    ```
-
-    The issue was that agents only saw:
-    ```
-    {"contract": "str", "items": "list[dict]"}
-    ```
-
-    Instead of the proper nested schema with all fields.
-    """
-    # Schema matching the issue description
-    schema = {
-        "type": "object",
-        "properties": {
-            "contract": {"type": "string", "description": "Reference contract number"},
-            "items": {
-                "type": "array",
-                "description": "Sales order line items",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "customerMaterialNumber": {
-                            "type": "string",
-                            "description": "Customer's material number",
-                        },
-                        "quantity": {"type": "number", "description": "Order quantity"},
-                        "unitOfMeasure": {
-                            "type": "string",
-                            "description": "Unit of measure (e.g., 'ST', 'KG', 'TO')",
-                        },
-                    },
-                    "required": ["quantity", "unitOfMeasure"],
-                },
-            },
-        },
-        "required": ["contract", "items"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("create_sales_order", schema)
-
-    # Test valid data
-    valid_data = {
-        "contract": "CONTRACT-123",
-        "items": [
-            {
-                "customerMaterialNumber": "MAT-001",
-                "quantity": 10,
-                "unitOfMeasure": "ST",
-            },
-            {"quantity": 5.5, "unitOfMeasure": "KG"},
-        ],
-    }
-
-    instance = model(**valid_data)
-
-    # Verify the data was parsed correctly
-    assert instance.contract == "CONTRACT-123"
-    assert len(instance.items) == 2
-
-    # Verify first item
-    assert instance.items[0].customerMaterialNumber == "MAT-001"
-    assert instance.items[0].quantity == 10
-    assert instance.items[0].unitOfMeasure == "ST"
-
-    # Verify second item (optional field not provided)
-    assert instance.items[1].quantity == 5.5
-    assert instance.items[1].unitOfMeasure == "KG"
-
-    # Verify that items are proper BaseModel instances, not bare dicts
-    assert isinstance(instance.items[0], BaseModel)
-    assert isinstance(instance.items[1], BaseModel)
-
-    # Verify that the nested object has the expected fields
-    assert hasattr(instance.items[0], "customerMaterialNumber")
-    assert hasattr(instance.items[0], "quantity")
-    assert hasattr(instance.items[0], "unitOfMeasure")
-
-    # CRITICAL: Validate using the same methods that actual chat clients use
-    # This is what would actually be sent to the LLM
-
-    # Create a FunctionTool wrapper to access the client-facing APIs
-    def dummy_func(**kwargs):
-        return kwargs
-
-    test_func = FunctionTool(
-        func=dummy_func,
-        name="create_sales_order",
-        description="Create a sales order",
-        input_model=model,
-    )
-
-    # Test 1: Anthropic client uses tool.parameters() directly
-    anthropic_schema = test_func.parameters()
-
-    # Verify contract property
-    assert "contract" in anthropic_schema["properties"]
-    assert anthropic_schema["properties"]["contract"]["type"] == "string"
-
-    # Verify items array property exists
-    assert "items" in anthropic_schema["properties"]
-    items_prop = anthropic_schema["properties"]["items"]
-    assert items_prop["type"] == "array"
-
-    # THE KEY TEST for Anthropic: array items must have proper object schema
-    assert "items" in items_prop, "Array should have 'items' schema definition"
-    array_items_schema = items_prop["items"]
-
-    # Resolve schema if using $ref
-    if "$ref" in array_items_schema:
-        ref_path = array_items_schema["$ref"]
-        assert ref_path.startswith("#/$defs/") or ref_path.startswith("#/definitions/")
-        ref_name = ref_path.split("/")[-1]
-        defs = anthropic_schema.get("$defs", anthropic_schema.get("definitions", {}))
-        assert ref_name in defs, f"Referenced schema '{ref_name}' should exist"
-        item_schema = defs[ref_name]
-    else:
-        item_schema = array_items_schema
-
-    # Verify the nested object has all properties defined
-    assert "properties" in item_schema, "Array items should have properties (not bare dict)"
-    item_properties = item_schema["properties"]
-
-    # All three fields must be present in schema sent to LLM
-    assert "customerMaterialNumber" in item_properties, "customerMaterialNumber missing from LLM schema"
-    assert "quantity" in item_properties, "quantity missing from LLM schema"
-    assert "unitOfMeasure" in item_properties, "unitOfMeasure missing from LLM schema"
-
-    # Verify types are correct
-    assert item_properties["customerMaterialNumber"]["type"] == "string"
-    assert item_properties["quantity"]["type"] in ["number", "integer"]
-    assert item_properties["unitOfMeasure"]["type"] == "string"
-
-    # Test 2: OpenAI client uses tool.to_json_schema_spec()
-    openai_spec = test_func.to_json_schema_spec()
-
-    assert openai_spec["type"] == "function"
-    assert "function" in openai_spec
-    openai_schema = openai_spec["function"]["parameters"]
-
-    # Verify the same structure is present in OpenAI format
-    assert "items" in openai_schema["properties"]
-    openai_items_prop = openai_schema["properties"]["items"]
-    assert openai_items_prop["type"] == "array"
-    assert "items" in openai_items_prop
-
-    openai_array_items = openai_items_prop["items"]
-    if "$ref" in openai_array_items:
-        ref_path = openai_array_items["$ref"]
-        ref_name = ref_path.split("/")[-1]
-        defs = openai_schema.get("$defs", openai_schema.get("definitions", {}))
-        openai_item_schema = defs[ref_name]
-    else:
-        openai_item_schema = openai_array_items
-
-    assert "properties" in openai_item_schema
-    openai_props = openai_item_schema["properties"]
-    assert "customerMaterialNumber" in openai_props
-    assert "quantity" in openai_props
-    assert "unitOfMeasure" in openai_props
-
-    # Test validation - missing required quantity
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-456",
-            items=[
-                {
-                    "customerMaterialNumber": "MAT-002",
-                    "unitOfMeasure": "TO",
-                    # Missing required 'quantity'
-                }
-            ],
-        )
-
-    # Test validation - missing required unitOfMeasure
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-789",
-            items=[
-                {
-                    "quantity": 20
-                    # Missing required 'unitOfMeasure'
-                }
-            ],
-        )
-
-
-def test_one_of_discriminator_polymorphism():
-    """Test that oneOf with discriminator creates proper polymorphic union types.
-
-    Tests that oneOf + discriminator patterns are properly converted to Pydantic discriminated unions.
-    """
-    schema = {
-        "$defs": {
-            "CreateProject": {
-                "description": "Action: Create an Azure DevOps project.",
-                "properties": {
-                    "name": {
-                        "const": "create_project",
-                        "default": "create_project",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/CreateProjectParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "CreateProjectParams": {
-                "description": "Parameters for the create_project action.",
-                "properties": {
-                    "orgUrl": {"minLength": 1, "type": "string"},
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "description": {"default": "", "type": "string"},
-                    "template": {"default": "Agile", "type": "string"},
-                    "sourceControl": {
-                        "default": "Git",
-                        "enum": ["Git", "Tfvc"],
-                        "type": "string",
-                    },
-                    "visibility": {"default": "private", "type": "string"},
-                },
-                "required": ["orgUrl", "projectName"],
-                "type": "object",
-            },
-            "DeployRequest": {
-                "description": "Request to deploy Azure DevOps resources.",
-                "properties": {
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "organization": {"minLength": 1, "type": "string"},
-                    "actions": {
-                        "items": {
-                            "discriminator": {
-                                "mapping": {
-                                    "create_project": "#/$defs/CreateProject",
-                                    "hello_world": "#/$defs/HelloWorld",
-                                },
-                                "propertyName": "name",
-                            },
-                            "oneOf": [
-                                {"$ref": "#/$defs/HelloWorld"},
-                                {"$ref": "#/$defs/CreateProject"},
-                            ],
-                        },
-                        "type": "array",
-                    },
-                },
-                "required": ["projectName", "organization"],
-                "type": "object",
-            },
-            "HelloWorld": {
-                "description": "Action: Prints a greeting message.",
-                "properties": {
-                    "name": {
-                        "const": "hello_world",
-                        "default": "hello_world",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/HelloWorldParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "HelloWorldParams": {
-                "description": "Parameters for the hello_world action.",
-                "properties": {
-                    "name": {
-                        "description": "Name to greet",
-                        "minLength": 1,
-                        "type": "string",
-                    }
-                },
-                "required": ["name"],
-                "type": "object",
-            },
-        },
-        "properties": {"params": {"$ref": "#/$defs/DeployRequest"}},
-        "required": ["params"],
-        "type": "object",
-    }
-
-    # Build the model
-    model = _build_pydantic_model_from_json_schema("deploy_tool", schema)
-
-    # Verify the model structure
-    assert model is not None
-    assert issubclass(model, BaseModel)
-
-    # Test with HelloWorld action
-    hello_world_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "hello_world",
-                    "params": {"name": "Alice"},
-                }
-            ],
-        }
-    }
-
-    instance = model(**hello_world_data)
-    assert instance.params.projectName == "MyProject"
-    assert instance.params.organization == "MyOrg"
-    assert len(instance.params.actions) == 1
-    assert instance.params.actions[0].name == "hello_world"
-    assert instance.params.actions[0].params.name == "Alice"
-
-    # Test with CreateProject action
-    create_project_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "NewProject",
-                        "sourceControl": "Git",
-                    },
-                }
-            ],
-        }
-    }
-
-    instance2 = model(**create_project_data)
-    assert instance2.params.actions[0].name == "create_project"
-    assert instance2.params.actions[0].params.projectName == "NewProject"
-    assert instance2.params.actions[0].params.sourceControl == "Git"
-
-    # Test with mixed actions
-    mixed_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {"name": "hello_world", "params": {"name": "Bob"}},
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "AnotherProject",
-                    },
-                },
-            ],
-        }
-    }
-
-    instance3 = model(**mixed_data)
-    assert len(instance3.params.actions) == 2
-    assert instance3.params.actions[0].name == "hello_world"
-    assert instance3.params.actions[1].name == "create_project"
-
-
-def test_const_creates_literal():
-    """Test that const in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "action": {
-                "const": "create",
-                "type": "string",
-                "description": "Action type",
-            },
-            "value": {"type": "integer"},
-        },
-        "required": ["action", "value"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_const", schema)
-
-    # Verify valid const value works
-    instance = model(action="create", value=42)
-    assert instance.action == "create"
-    assert instance.value == 42
-
-    # Verify incorrect const value fails
-    with pytest.raises(ValidationError):
-        model(action="delete", value=42)
-
-
-def test_enum_creates_literal():
-    """Test that enum in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "status": {
-                "enum": ["pending", "approved", "rejected"],
-                "type": "string",
-                "description": "Status",
-            },
-            "priority": {"enum": [1, 2, 3], "type": "integer"},
-        },
-        "required": ["status"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_enum", schema)
-
-    # Verify valid enum values work
-    instance = model(status="approved", priority=2)
-    assert instance.status == "approved"
-    assert instance.priority == 2
-
-    # Verify invalid enum value fails
-    with pytest.raises(ValidationError):
-        model(status="unknown")
-
-    with pytest.raises(ValidationError):
-        model(status="pending", priority=5)
-
-
-def test_nested_object_with_const_and_enum():
-    """Test that const and enum work in nested objects."""
-    schema = {
-        "properties": {
-            "config": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "const": "production",
-                        "default": "production",
-                        "type": "string",
-                    },
-                    "level": {"enum": ["low", "medium", "high"], "type": "string"},
-                },
-                "required": ["level"],
-            }
-        },
-        "required": ["config"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_nested", schema)
-
-    # Valid data
-    instance = model(config={"type": "production", "level": "high"})
-    assert instance.config.type == "production"
-    assert instance.config.level == "high"
-
-    # Invalid const in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "development", "level": "low"})
-
-    # Invalid enum in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "production", "level": "critical"})
 
 
 # endregion

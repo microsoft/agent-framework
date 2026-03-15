@@ -23,6 +23,8 @@ logging.basicConfig(level=logging.WARNING)
 
 # Module-level markers - applied to all tests in this module
 pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
     pytest.mark.sample("04_single_agent_orchestration_chaining"),
     pytest.mark.integration_test,
     pytest.mark.requires_azure_openai,

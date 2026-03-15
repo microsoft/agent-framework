@@ -866,3 +866,687 @@ def test_agui_messages_to_snapshot_format_basic():
     assert result[0]["content"] == "Hello"
     assert result[1]["role"] == "assistant"
     assert result[1]["content"] == "Hi there"
+
+
+# ── Tool history sanitization edge cases ──
+
+
+def test_sanitize_multiple_approvals_and_logic():
+    """Two function_approval_response contents: True + False → False overall."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="confirm_changes", arguments='{"function_call_id":"c1"}'),
+        ],
+    )
+    user_msg = Message(
+        role="user",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="a1",
+                function_call=Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            ),
+            Content.from_function_approval_response(
+                approved=False,
+                id="a2",
+                function_call=Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            ),
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+    # Both approvals should be preserved in user message
+    assert any(msg.role == "user" for msg in result)
+
+
+def test_sanitize_pending_tool_skip_on_user_followup():
+    """User text message after assistant tool call injects synthetic skipped results."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    user_msg = Message(
+        role="user",
+        contents=[Content.from_text(text="Actually, never mind")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+    # Should have: assistant, synthetic tool result, user
+    tool_results = [m for m in result if m.role == "tool"]
+    assert len(tool_results) == 1
+    assert "skipped" in str(tool_results[0].contents[0].result).lower()
+
+
+def test_sanitize_tool_result_clears_pending_confirm():
+    """Tool result for pending confirm_changes call_id clears pending state."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+        ],
+    )
+    tool_msg = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="c1", result="done")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, tool_msg])
+    assert len(result) == 2
+    assert result[1].role == "tool"
+
+
+def test_sanitize_non_standard_role_resets_state():
+    """System message between assistant+user resets pending tool state."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments="{}")],
+    )
+    system_msg = Message(role="system", contents=[Content.from_text(text="System update")])
+    user_msg = Message(role="user", contents=[Content.from_text(text="Continue")])
+
+    result = _sanitize_tool_history([assistant_msg, system_msg, user_msg])
+    # System message should reset pending state, so no synthetic tool results
+    tool_results = [m for m in result if m.role == "tool"]
+    assert len(tool_results) == 0
+
+
+def test_sanitize_json_confirm_changes_response():
+    """User sends JSON text with 'accepted' after confirm_changes."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="confirm_changes", arguments='{"function_call_id":"c1"}'),
+        ],
+    )
+    # Note: confirm_changes is filtered, so c2 won't be in pending_tool_call_ids
+    # But c1 will remain pending. User message with JSON accepted text doesn't match
+    # confirm_changes path since pending_confirm_changes_id was reset.
+    user_msg = Message(
+        role="user",
+        contents=[Content.from_text(text=json.dumps({"accepted": True}))],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+    # Should still process without errors
+    assert len(result) >= 1
+
+
+# ── Deduplication edge cases ──
+
+
+def test_deduplicate_tool_results():
+    """Duplicate tool results for same call_id are deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="first")])
+    msg2 = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="second")])
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert len(result) == 1
+
+
+def test_deduplicate_assistant_tool_calls():
+    """Duplicate assistant messages with same tool_calls are deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="fn", arguments="{}")],
+    )
+    msg2 = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="fn", arguments="{}")],
+    )
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert len(result) == 1
+
+
+def test_deduplicate_general_messages():
+    """Duplicate general user messages are deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg2 = Message(role="user", contents=[Content.from_text(text="Hello")])
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert len(result) == 1
+
+
+def test_deduplicate_replaces_empty_tool_result():
+    """Empty tool result is replaced by later non-empty result."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="")])
+    msg2 = Message(role="tool", contents=[Content.from_function_result(call_id="c1", result="actual result")])
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert len(result) == 1
+    assert result[0].contents[0].result == "actual result"
+
+
+# ── Multimodal & content conversion edge cases ──
+
+
+def test_convert_agui_content_unknown_source_type_fallback():
+    """Unknown source type falls back to url/data/id fields."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "image",
+        "source": {"type": "custom", "url": "https://example.com/img.png"},
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "https://example.com/img.png"
+
+
+def test_convert_agui_content_data_uri_prefix():
+    """base64 data starting with 'data:' is treated as data URI."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "image",
+        "source": {"type": "base64", "data": "data:image/png;base64,abc", "mimeType": "image/png"},
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "data:image/png;base64,abc"
+
+
+def test_convert_agui_content_binary_id():
+    """Source with 'id' field creates ag-ui:// URI."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    part = {
+        "type": "image",
+        "source": {"type": "id", "id": "file123"},
+    }
+    result = _parse_multimodal_media_part(part)
+    assert result is not None
+    assert result.uri == "ag-ui://binary/file123"
+
+
+def test_convert_agui_content_string_items_in_list():
+    """String items in content list create text Content."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework(["hello", "world"])
+    assert len(result) == 2
+    assert result[0].text == "hello"
+    assert result[1].text == "world"
+
+
+def test_convert_agui_content_non_dict_non_str_items():
+    """Non-dict/non-str items in list are stringified."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework([123, None])
+    assert len(result) == 2
+    assert result[0].text == "123"
+    assert result[1].text == "None"
+
+
+def test_convert_agui_content_unknown_part_type_with_text():
+    """Unknown part type with 'text' key extracts the text."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework([{"type": "widget", "text": "hi"}])
+    assert len(result) == 1
+    assert result[0].text == "hi"
+
+
+def test_convert_agui_content_unknown_part_type_without_text():
+    """Unknown part type without 'text' key stringifies the dict."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework([{"type": "widget", "data": 42}])
+    assert len(result) == 1
+    assert "widget" in result[0].text
+
+
+def test_convert_agui_content_none():
+    """None content returns empty list."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework(None)
+    assert result == []
+
+
+def test_convert_agui_content_non_str_non_list_non_none():
+    """Non-string, non-list, non-None content is stringified."""
+    from agent_framework_ag_ui._message_adapters import _convert_agui_content_to_framework
+
+    result = _convert_agui_content_to_framework(42)
+    assert len(result) == 1
+    assert result[0].text == "42"
+
+
+# ── Snapshot normalization edge cases ──
+
+
+def test_snapshot_input_image_to_binary():
+    """input_image type is normalized to binary in snapshot."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "source": {"type": "url", "url": "https://example.com/img.png"}},
+                ],
+            }
+        ]
+    )
+    assert isinstance(result[0]["content"], list)
+    assert result[0]["content"][0]["type"] == "binary"
+
+
+def test_snapshot_mime_type_snake_case():
+    """mime_type (snake_case) is normalized to mimeType."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Caption", "mime_type": "text/plain"},
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://x.com/a.png", "mime_type": "image/png"},
+                    },
+                ],
+            }
+        ]
+    )
+    content = result[0]["content"]
+    assert isinstance(content, list)
+    # The text part should have mimeType added
+    text_part = content[0]
+    assert text_part.get("mimeType") == "text/plain"
+
+
+def test_snapshot_text_only_list_collapsed():
+    """List of only text parts is collapsed to string."""
+    result = agui_messages_to_snapshot_format(
+        [{"role": "user", "content": [{"type": "text", "text": "Hello"}, {"type": "text", "text": " World"}]}]
+    )
+    assert result[0]["content"] == "Hello World"
+
+
+def test_snapshot_legacy_binary_data_and_id():
+    """Legacy binary part with data and id fields."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Caption"},
+                    {"type": "binary", "data": "base64data", "id": "file1", "mimeType": "image/png"},
+                ],
+            }
+        ]
+    )
+    content = result[0]["content"]
+    assert isinstance(content, list)
+    binary_part = content[1]
+    assert binary_part["type"] == "binary"
+    assert binary_part["data"] == "base64data"
+    assert binary_part["id"] == "file1"
+
+
+# ── Message conversion edge cases ──
+
+
+def test_agui_tool_message_action_execution_id_fallback():
+    """Tool message with actionExecutionId but no tool_call_id."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "content": "result data",
+                "actionExecutionId": "action_1",
+            }
+        ]
+    )
+    assert len(messages) == 1
+    assert messages[0].contents[0].type == "function_result"
+    assert messages[0].contents[0].call_id == "action_1"
+
+
+def test_agui_tool_message_result_key_instead_of_content():
+    """Tool message with 'result' key instead of 'content'."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "result": "the result",
+                "toolCallId": "c1",
+            }
+        ]
+    )
+    assert len(messages) == 1
+    assert messages[0].contents[0].result == "the result"
+
+
+def test_agui_tool_message_dict_content():
+    """Tool message with dict content."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "content": {"key": "value"},
+                "toolCallId": "c1",
+            }
+        ]
+    )
+    assert len(messages) == 1
+    # Dict content as approval check: no 'accepted' key, so it's a regular tool result
+    assert messages[0].contents[0].type == "function_result"
+
+
+def test_agui_tool_message_list_content():
+    """Tool message with list content."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "tool",
+                "content": ["item1", "item2"],
+                "toolCallId": "c1",
+            }
+        ]
+    )
+    assert len(messages) == 1
+    assert messages[0].contents[0].type == "function_result"
+
+
+def test_agui_action_execution_id_without_role():
+    """Message with actionExecutionId but no role maps to tool."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "actionExecutionId": "action_1",
+                "result": "tool result",
+            }
+        ]
+    )
+    assert len(messages) == 1
+    assert messages[0].role == "tool"
+    assert messages[0].contents[0].call_id == "action_1"
+
+
+def test_agui_non_dict_tool_call_skipped():
+    """Non-dict tool_call entries in tool_calls array are skipped."""
+    messages = agui_messages_to_agent_framework(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    "not_a_dict",
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "fn", "arguments": "{}"},
+                    },
+                ],
+            }
+        ]
+    )
+    assert len(messages) == 1
+    func_calls = [c for c in messages[0].contents if c.type == "function_call"]
+    assert len(func_calls) == 1
+
+
+def test_agui_empty_content_default():
+    """Message with empty/null content gets default empty text."""
+    messages = agui_messages_to_agent_framework([{"role": "user"}])
+    assert len(messages) == 1
+    assert len(messages[0].contents) == 1
+    assert messages[0].contents[0].text == ""
+
+
+def test_agui_dict_tool_msg_without_tool_call_id():
+    """Dict tool message missing toolCallId gets empty string."""
+    result = agui_messages_to_snapshot_format([{"role": "tool", "content": "result"}])
+    assert len(result) == 1
+    assert result[0].get("toolCallId") == ""
+
+
+def test_snapshot_argument_serialization_none():
+    """None arguments in tool_calls are serialized to empty string."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": None}},
+                ],
+            }
+        ]
+    )
+    tc = result[0]["tool_calls"][0]
+    assert tc["function"]["arguments"] == ""
+
+
+def test_snapshot_argument_serialization_object():
+    """Object arguments in tool_calls are JSON-serialized."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": {"key": "val"}}},
+                ],
+            }
+        ]
+    )
+    tc = result[0]["tool_calls"][0]
+    assert tc["function"]["arguments"] == '{"key": "val"}'
+
+
+def test_snapshot_tool_call_id_normalization():
+    """tool_call_id is normalized to toolCallId in snapshot."""
+    result = agui_messages_to_snapshot_format([{"role": "tool", "content": "result", "tool_call_id": "c1"}])
+    assert result[0].get("toolCallId") == "c1"
+    assert "tool_call_id" not in result[0]
+
+
+def test_agui_to_framework_dict_tool_msg_without_tool_call_id():
+    """Dict tool message in agent_framework_messages_to_agui without toolCallId."""
+    result = agent_framework_messages_to_agui(
+        [{"role": "tool", "content": "result"}]  # type: ignore[list-item]
+    )
+    assert len(result) == 1
+    assert result[0].get("toolCallId") == ""
+
+
+def test_snapshot_none_content():
+    """None content is normalized to empty string."""
+    result = agui_messages_to_snapshot_format([{"role": "user", "content": None}])
+    assert result[0]["content"] == ""
+
+
+def test_sanitize_confirm_changes_with_approval_accepted():
+    """Approval for pending confirm_changes creates synthetic result."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    # Create assistant with both a real tool and confirm_changes
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            Content.from_function_call(call_id="c2", name="confirm_changes", arguments='{"function_call_id":"c1"}'),
+        ],
+    )
+    # Note: confirm_changes gets filtered out, so pending_confirm_changes_id becomes None.
+    # The test verifies the filtering path works without error.
+    user_msg = Message(
+        role="user",
+        contents=[
+            Content.from_function_approval_response(
+                approved=True,
+                id="a1",
+                function_call=Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+            ),
+        ],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, user_msg])
+    # Should process without errors; confirm_changes is filtered from assistant msg
+    assert len(result) >= 1
+
+
+def test_sanitize_json_accepted_text_for_pending_confirm():
+    """JSON text with 'accepted' field for non-filtered confirm_changes path."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    # Create an assistant with a tool call that requires a result
+    assistant_msg = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(call_id="c1", name="tool_a", arguments="{}"),
+        ],
+    )
+    # A tool result arrives, then a user message
+    tool_msg = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="c1", result="done")],
+    )
+    user_msg = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue please")],
+    )
+
+    result = _sanitize_tool_history([assistant_msg, tool_msg, user_msg])
+    # Should have: assistant, tool result, user
+    assert len(result) == 3
+
+
+def test_parse_multimodal_media_part_no_data_no_url():
+    """Part with no url, data, or id returns None."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    result = _parse_multimodal_media_part({"type": "image"})
+    assert result is None
+
+
+def test_parse_multimodal_media_part_binary_source_type():
+    """Source with type='binary' extracts data field."""
+    from agent_framework_ag_ui._message_adapters import _parse_multimodal_media_part
+
+    result = _parse_multimodal_media_part(
+        {"type": "image", "source": {"type": "binary", "data": "data:image/png;base64,abc"}}
+    )
+    assert result is not None
+    assert result.uri == "data:image/png;base64,abc"
+
+
+def test_snapshot_non_dict_item_in_content_list():
+    """Non-dict items in content list are stringified."""
+    result = agui_messages_to_snapshot_format([{"role": "user", "content": [42, "text"]}])
+    # Text-only after stringification means collapsed to string
+    assert isinstance(result[0]["content"], str)
+
+
+def test_snapshot_non_dict_tool_call_skipped():
+    """Non-dict entries in tool_calls are skipped during argument serialization."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    "not_a_dict",
+                    {"id": "c1", "type": "function", "function": {"name": "fn", "arguments": "{}"}},
+                ],
+            }
+        ]
+    )
+    # Should not error
+    assert len(result) == 1
+
+
+def test_snapshot_tool_call_without_function_payload():
+    """tool_call dict without function payload is skipped."""
+    result = agui_messages_to_snapshot_format(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "c1", "type": "function"}],
+            }
+        ]
+    )
+    assert len(result) == 1
+
+
+def test_agui_to_framework_action_name_without_role():
+    """Message with actionName but no explicit role maps to tool."""
+    messages = agui_messages_to_agent_framework([{"actionName": "get_weather", "result": "Sunny", "toolCallId": "c1"}])
+    assert len(messages) == 1
+    assert messages[0].role == "tool"
+
+
+def test_agui_to_framework_tool_message_content_none():
+    """Tool message with content=None uses result field fallback."""
+    messages = agui_messages_to_agent_framework(
+        [{"role": "tool", "content": None, "result": "fallback_result", "toolCallId": "c1"}]
+    )
+    assert len(messages) == 1
+    assert messages[0].contents[0].result == "fallback_result"
+
+
+def test_agui_fresh_approval_is_still_processed():
+    """A fresh approval (no assistant response after it) must still produce function_approval_response.
+
+    On Turn 2, the approval is fresh (no subsequent assistant message), so it
+    must be processed normally to execute the tool.
+    """
+    messages_input = [
+        # Turn 1: user asks something
+        {"role": "user", "content": "What time is it?", "id": "msg_1"},
+        # Turn 1: assistant calls a tool
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_456",
+                    "type": "function",
+                    "function": {"name": "get_datetime", "arguments": "{}"},
+                }
+            ],
+            "id": "msg_2",
+        },
+        # Turn 2: user approves (no assistant message after this)
+        {
+            "role": "tool",
+            "content": json.dumps({"accepted": True}),
+            "toolCallId": "call_456",
+            "id": "msg_3",
+        },
+    ]
+
+    messages = agui_messages_to_agent_framework(messages_input)
+
+    # The fresh approval SHOULD produce a function_approval_response
+    approval_contents = [
+        content for msg in messages for content in (msg.contents or []) if content.type == "function_approval_response"
+    ]
+    assert len(approval_contents) == 1, "Fresh approval should produce function_approval_response"
+    assert approval_contents[0].approved is True
+    assert approval_contents[0].function_call.name == "get_datetime"

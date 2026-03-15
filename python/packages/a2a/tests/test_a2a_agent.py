@@ -145,6 +145,54 @@ def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) ->
     assert agent.client == mock_a2a_client
 
 
+def test_a2a_agent_defaults_name_description_from_agent_card(mock_a2a_client: MockA2AClient) -> None:
+    """Test A2AAgent defaults name and description from agent_card when not explicitly provided."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(agent_card=mock_card, client=mock_a2a_client, http_client=None)
+
+    assert agent.name == "Card Agent Name"
+    assert agent.description == "Card agent description"
+
+
+def test_a2a_agent_explicit_name_description_overrides_agent_card(mock_a2a_client: MockA2AClient) -> None:
+    """Test that explicit name/description take precedence over agent_card values."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(
+        name="Explicit Name",
+        description="Explicit description",
+        agent_card=mock_card,
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    assert agent.name == "Explicit Name"
+    assert agent.description == "Explicit description"
+
+
+def test_a2a_agent_empty_string_name_description_not_overridden(mock_a2a_client: MockA2AClient) -> None:
+    """Test that explicitly provided empty strings are not overridden by agent_card values."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(
+        name="",
+        description="",
+        agent_card=mock_card,
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    assert agent.name == ""
+    assert agent.description == ""
+
+
 def test_a2a_agent_initialization_without_client_raises_error() -> None:
     """Test A2AAgent initialization without client or URL raises ValueError."""
     with raises(ValueError, match="Either agent_card or url must be provided"):
@@ -561,6 +609,8 @@ def test_transport_negotiation_both_fail() -> None:
     # Create a mock agent card
     mock_agent_card = MagicMock(spec=AgentCard)
     mock_agent_card.url = "http://test-agent.example.com"
+    mock_agent_card.name = "Test Agent"
+    mock_agent_card.description = "A test agent"
 
     # Mock the factory to simulate both primary and fallback failures
     mock_factory = MagicMock()

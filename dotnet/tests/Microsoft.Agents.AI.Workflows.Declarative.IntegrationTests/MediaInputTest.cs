@@ -4,12 +4,11 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
-using Xunit.Abstractions;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 
@@ -77,7 +76,7 @@ public sealed class MediaInputTest(ITestOutputHelper output) : IntegrationTest(o
     {
         // Arrange
         byte[] fileData = ReadLocalFile(fileSource);
-        AIProjectClient client = new(this.TestEndpoint, new AzureCliCredential());
+        AIProjectClient client = new(this.TestEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
         using MemoryStream contentStream = new(fileData);
         OpenAIFileClient fileClient = client.GetProjectOpenAIClient().GetOpenAIFileClient();
         OpenAIFile fileInfo = await fileClient.UploadFileAsync(contentStream, documentName, FileUploadPurpose.Assistants);

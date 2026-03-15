@@ -22,13 +22,13 @@ import weakref
 from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from enum import Enum
 from time import perf_counter, time_ns
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.semconv_ai import Meters, SpanAttributes
+from opentelemetry.semconv_ai import Meters
 
 from . import __version__ as version_info
 from ._settings import load_settings
@@ -49,6 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
+    from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._sessions import AgentSession
     from ._tools import FunctionTool
     from ._types import (
@@ -59,7 +60,9 @@ if TYPE_CHECKING:  # pragma: no cover
         ChatResponse,
         ChatResponseUpdate,
         Content,
+        EmbeddingGenerationOptions,
         FinishReason,
+        GeneratedEmbeddings,
         Message,
         ResponseStream,
     )
@@ -70,6 +73,7 @@ __all__ = [
     "OBSERVABILITY_SETTINGS",
     "AgentTelemetryLayer",
     "ChatTelemetryLayer",
+    "EmbeddingTelemetryLayer",
     "OtelAttr",
     "configure_otel_providers",
     "create_metric_views",
@@ -80,6 +84,8 @@ __all__ = [
 ]
 
 
+EmbeddingInputT = TypeVar("EmbeddingInputT", default="str")
+EmbeddingT = TypeVar("EmbeddingT", default="list[float]")
 AgentT = TypeVar("AgentT", bound="SupportsAgentRun")
 ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
@@ -194,6 +200,7 @@ class OtelAttr(str, Enum):
     T_TYPE_INPUT = "input"
     T_TYPE_OUTPUT = "output"
     DURATION_UNIT = "s"
+
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
     AGENT_DESCRIPTION = "gen_ai.agent.description"
@@ -259,6 +266,7 @@ class OtelAttr(str, Enum):
 
     # Operation names
     CHAT_COMPLETION_OPERATION = "chat"
+    EMBEDDING_OPERATION = "embeddings"
     TOOL_EXECUTION_OPERATION = "execute_tool"
     #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
@@ -888,7 +896,6 @@ def get_meter(
         return metrics.get_meter(name=name, version=version, schema_url=schema_url)
 
 
-global OBSERVABILITY_SETTINGS
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
@@ -1047,7 +1054,15 @@ def configure_otel_providers(
         if vs_code_extension_port is not None:
             settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
 
-        OBSERVABILITY_SETTINGS = ObservabilitySettings(**settings_kwargs)
+        updated_settings = ObservabilitySettings(**settings_kwargs)
+        OBSERVABILITY_SETTINGS.enable_instrumentation = updated_settings.enable_instrumentation
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = updated_settings.enable_sensitive_data
+        OBSERVABILITY_SETTINGS.enable_console_exporters = updated_settings.enable_console_exporters
+        OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
+        OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
+        OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
+        OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # type: ignore[reportPrivateUsage]
+        OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Update the observability settings with the provided values
         OBSERVABILITY_SETTINGS.enable_instrumentation = True
@@ -1108,6 +1123,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
@@ -1118,6 +1135,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
@@ -1128,6 +1147,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
@@ -1137,18 +1158,55 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        """Trace chat responses with OpenTelemetry spans and metrics."""
+        """Trace chat responses with OpenTelemetry spans and metrics.
+
+        Args:
+            messages: The message or messages to send to the model.
+            stream: Whether to stream the response. Defaults to False.
+            options: Chat options as a TypedDict.
+            compaction_strategy: Optional compaction strategy to apply before model calls.
+            tokenizer: Optional tokenizer used by token-aware compaction strategies.
+
+        Keyword Args:
+            kwargs: Compatibility keyword arguments from higher client layers. This layer does
+                not consume ``function_invocation_kwargs`` directly; if present, it is ignored
+                because function invocation has already been processed above. If a ``client_kwargs``
+                mapping is present, it is flattened into ordinary keyword arguments for tracing and
+                forwarding so clients that use those values continue to work while clients that
+                ignore extra kwargs remain compatible.
+        """
+        from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
+
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
+        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
+        kwargs.pop("function_invocation_kwargs", None)
+        merged_client_kwargs = (
+            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
+            if isinstance(compatibility_client_kwargs, Mapping)
+            else {}
+        )
+        merged_client_kwargs.update(kwargs)
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_get_response(messages=messages, stream=stream, options=options, **kwargs)  # type: ignore[no-any-return]
+            return super_get_response(  # type: ignore[no-any-return]
+                messages=messages,
+                stream=stream,
+                options=options,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                **merged_client_kwargs,
+            )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
-        provider_name = str(self.otel_provider_name)
-        model_id = kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        provider_name = str(getattr(self, "otel_provider_name", "unknown"))
+        model_id = (
+            merged_client_kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        )
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
@@ -1156,19 +1214,21 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             provider_name=provider_name,
             model=model_id,
             service_url=service_url,
-            **kwargs,
+            **merged_client_kwargs,
         )
 
         if stream:
-            from ._types import ResponseStream
-
-            stream_result = super_get_response(messages=messages, stream=True, options=opts, **kwargs)
-            if isinstance(stream_result, ResponseStream):
-                result_stream = stream_result
-            elif isinstance(stream_result, Awaitable):
-                result_stream = ResponseStream.from_awaitable(stream_result)
-            else:
-                raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            result_stream = cast(
+                ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+                super_get_response(
+                    messages=messages,
+                    stream=True,
+                    options=opts,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    **merged_client_kwargs,
+                ),
+            )
 
             # Create span directly without trace.use_span() context attachment.
             # Streaming spans are closed asynchronously in cleanup hooks, which run
@@ -1203,14 +1263,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 from ._types import ChatResponse
 
                 try:
-                    response = await result_stream.get_final_response()
+                    response: ChatResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(attributes, response)
                     _capture_response(
                         span=span,
                         attributes=response_attributes,
-                        token_usage_histogram=self.token_usage_histogram,
-                        operation_duration_histogram=self.duration_histogram,
+                        token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                        operation_duration_histogram=getattr(self, "duration_histogram", None),
                         duration=duration,
                     )
                     if (
@@ -1232,7 +1292,9 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
             # Register a weak reference callback to close the span if stream is garbage collected
             # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream = result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            wrapped_stream: ResponseStream[ChatResponseUpdate, ChatResponse[Any]] = result_stream.with_cleanup_hook(
+                _record_duration
+            ).with_cleanup_hook(_finalize_stream)
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1247,7 +1309,17 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     )
                 start_time_stamp = perf_counter()
                 try:
-                    response = await super_get_response(messages=messages, stream=False, options=opts, **kwargs)
+                    response = cast(
+                        ChatResponse[Any],
+                        await super_get_response(
+                            messages=messages,
+                            stream=False,
+                            options=opts,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
+                            **merged_client_kwargs,
+                        ),
+                    )
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                     raise
@@ -1256,21 +1328,95 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 _capture_response(
                     span=span,
                     attributes=response_attributes,
-                    token_usage_histogram=self.token_usage_histogram,
-                    operation_duration_histogram=self.duration_histogram,
+                    token_usage_histogram=getattr(self, "token_usage_histogram", None),
+                    operation_duration_histogram=getattr(self, "duration_histogram", None),
                     duration=duration,
                 )
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                    finish_reason = cast(
+                        "FinishReason | None",
+                        response.finish_reason if response.finish_reason in FINISH_REASON_MAP else None,
+                    )
                     _capture_messages(
                         span=span,
                         provider_name=provider_name,
                         messages=response.messages,
-                        finish_reason=response.finish_reason,
+                        finish_reason=finish_reason,
                         output=True,
                     )
                 return response  # type: ignore[return-value,no-any-return]
 
         return _get_response()
+
+
+EmbeddingOptionsT = TypeVar(
+    "EmbeddingOptionsT",
+    bound=TypedDict,  # type: ignore[valid-type]
+    default="EmbeddingGenerationOptions",
+    covariant=True,
+)
+
+
+class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOptionsT]):
+    """Layer that wraps embedding client get_embeddings with OpenTelemetry tracing."""
+
+    def __init__(self, *args: Any, otel_provider_name: str | None = None, **kwargs: Any) -> None:
+        """Initialize telemetry attributes and histograms."""
+        super().__init__(*args, **kwargs)
+        self.token_usage_histogram = _get_token_usage_histogram()
+        self.duration_histogram = _get_duration_histogram()
+        self.otel_provider_name = otel_provider_name or getattr(self, "OTEL_PROVIDER_NAME", "unknown")
+
+    async def get_embeddings(
+        self,
+        values: Sequence[EmbeddingInputT],
+        *,
+        options: EmbeddingOptionsT | None = None,
+    ) -> GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT]:
+        """Trace embedding generation with OpenTelemetry spans and metrics."""
+        from ._types import GeneratedEmbeddings  # type: ignore[reportUnusedImport]
+
+        global OBSERVABILITY_SETTINGS
+        super_get_embeddings = super().get_embeddings  # type: ignore[misc]
+
+        if not OBSERVABILITY_SETTINGS.ENABLED:
+            return await super_get_embeddings(values, options=options)  # type: ignore[no-any-return]
+
+        opts: dict[str, Any] = options or {}  # type: ignore[assignment]
+        provider_name = str(getattr(self, "otel_provider_name", "unknown"))
+        model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        service_url_func = getattr(self, "service_url", None)
+        service_url = str(service_url_func() if callable(service_url_func) else "unknown")
+        attributes = _get_span_attributes(
+            operation_name=OtelAttr.EMBEDDING_OPERATION,
+            provider_name=provider_name,
+            model=model_id,
+            service_url=service_url,
+        )
+
+        with _get_span(attributes=attributes, span_name_attribute=OtelAttr.REQUEST_MODEL) as span:
+            start_time_stamp = perf_counter()
+            try:
+                result = cast(
+                    GeneratedEmbeddings[EmbeddingT, EmbeddingOptionsT],
+                    await super_get_embeddings(values, options=options),
+                )
+            except Exception as exception:
+                capture_exception(span=span, exception=exception, timestamp=time_ns())
+                raise
+            duration = perf_counter() - start_time_stamp
+            response_attributes: dict[str, Any] = {**attributes}
+            usage = result.usage or {}
+            if (input_tokens := usage.get("input_token_count")) is not None:
+                response_attributes[OtelAttr.INPUT_TOKENS] = input_tokens
+            _capture_response(
+                span=span,
+                attributes=response_attributes,
+                token_usage_histogram=self.token_usage_histogram,
+                operation_duration_histogram=self.duration_histogram,
+                duration=duration,
+            )
+            return result  # type: ignore[no-any-return]
 
 
 class AgentTelemetryLayer:
@@ -1298,6 +1444,10 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -1308,6 +1458,10 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -1317,11 +1471,20 @@ class AgentTelemetryLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
-        super_run = super().run  # type: ignore[misc]
+        from ._types import ResponseStream, merge_chat_options
+
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,  # type: ignore[misc]
+        )
         provider_name = str(self.otel_provider_name)
         capture_usage = bool(getattr(self, "_otel_capture_usage", True))
 
@@ -1330,13 +1493,17 @@ class AgentTelemetryLayer:
                 messages=messages,
                 stream=stream,
                 session=session,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
                 **kwargs,
             )
 
-        from ._types import ResponseStream, merge_chat_options
-
         default_options = getattr(self, "default_options", {})
         options = kwargs.get("options")
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        merged_client_kwargs.update(kwargs)
         merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
@@ -1346,20 +1513,24 @@ class AgentTelemetryLayer:
             agent_description=getattr(self, "description", None),
             thread_id=session.service_session_id if session else None,
             all_options=merged_options,
-            **kwargs,
+            **merged_client_kwargs,
         )
 
         if stream:
-            run_result = super_run(
+            run_result: object = super_run(
                 messages=messages,
                 stream=True,
                 session=session,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=client_kwargs,
                 **kwargs,
             )
             if isinstance(run_result, ResponseStream):
-                result_stream = run_result
+                result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
             elif isinstance(run_result, Awaitable):
-                result_stream = ResponseStream.from_awaitable(run_result)
+                result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             else:
                 raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
 
@@ -1396,7 +1567,7 @@ class AgentTelemetryLayer:
                 from ._types import AgentResponse
 
                 try:
-                    response = await result_stream.get_final_response()
+                    response: AgentResponse[Any] = await result_stream.get_final_response()
                     duration = duration_state.get("duration")
                     response_attributes = _get_response_attributes(
                         attributes,
@@ -1422,7 +1593,9 @@ class AgentTelemetryLayer:
 
             # Register a weak reference callback to close the span if stream is garbage collected
             # without being consumed. This ensures spans don't leak if users don't consume streams.
-            wrapped_stream = result_stream.with_cleanup_hook(_record_duration).with_cleanup_hook(_finalize_stream)
+            wrapped_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = result_stream.with_cleanup_hook(
+                _record_duration
+            ).with_cleanup_hook(_finalize_stream)
             weakref.finalize(wrapped_stream, _close_span)
             return wrapped_stream
 
@@ -1437,10 +1610,14 @@ class AgentTelemetryLayer:
                     )
                 start_time_stamp = perf_counter()
                 try:
-                    response = await super_run(
+                    response: AgentResponse[Any] = await super_run(
                         messages=messages,
                         stream=False,
                         session=session,
+                        compaction_strategy=compaction_strategy,
+                        tokenizer=tokenizer,
+                        function_invocation_kwargs=function_invocation_kwargs,
+                        client_kwargs=client_kwargs,
                         **kwargs,
                     )
                 except Exception as exception:
@@ -1528,12 +1705,17 @@ def _get_span(
         yield current_span
 
 
-def _get_instructions_from_options(options: Any) -> str | None:
+def _get_instructions_from_options(options: Any) -> str | list[str] | None:
     """Extract instructions from options dict."""
     if options is None:
         return None
-    if isinstance(options, dict):
-        return options.get("instructions")
+    if isinstance(options, Mapping):
+        instructions = cast(Mapping[str, Any], options).get("instructions")
+        if isinstance(instructions, str):
+            return instructions
+        if isinstance(instructions, list) and all(isinstance(item, str) for item in instructions):  # type: ignore[reportUnknownVariableType]
+            return instructions  # type: ignore[reportUnknownVariableType]
+        return None
     return None
 
 
@@ -1592,8 +1774,7 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
     """Get the span attributes from a kwargs dictionary."""
     attributes: dict[str, Any] = {}
     options = kwargs.get("all_options", kwargs.get("options"))
-    if options is not None and not isinstance(options, dict):
-        options = None
+    options_mapping = cast(Mapping[str, Any], options) if isinstance(options, Mapping) else None
 
     for source_keys, (otel_key, transform_func, check_options, default_value) in OTEL_ATTR_MAP.items():
         # Normalize to tuple of keys
@@ -1601,8 +1782,8 @@ def _get_span_attributes(**kwargs: Any) -> dict[str, Any]:
 
         value = None
         for key in keys:
-            if check_options and options is not None:
-                value = options.get(key)
+            if check_options and options_mapping is not None:
+                value = options_mapping.get(key)
             if value is None:
                 value = kwargs.get(key)
             if value is not None:
@@ -1673,7 +1854,7 @@ def _to_otel_message(message: Message) -> dict[str, Any]:
 
 def _to_otel_part(content: Content) -> dict[str, Any] | None:
     """Create a otel representation of a Content."""
-    from ._types import _get_data_bytes_as_str
+    from ._types import _get_data_bytes_as_str  # pyright: ignore[reportPrivateUsage]
 
     match content.type:
         case "text":
@@ -1728,10 +1909,12 @@ def _get_response_attributes(
     if model_id := getattr(response, "model_id", None):
         attributes[OtelAttr.RESPONSE_MODEL] = model_id
     if capture_usage and (usage := response.usage_details):
-        if usage.get("input_token_count"):
-            attributes[OtelAttr.INPUT_TOKENS] = usage["input_token_count"]
-        if usage.get("output_token_count"):
-            attributes[OtelAttr.OUTPUT_TOKENS] = usage["output_token_count"]
+        input_tokens = usage.get("input_token_count")
+        if input_tokens:
+            attributes[OtelAttr.INPUT_TOKENS] = input_tokens
+        output_tokens = usage.get("output_token_count")
+        if output_tokens:
+            attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
     return attributes
 
 
@@ -1756,9 +1939,7 @@ def _capture_response(
     span.set_attributes(attributes)
     attrs: dict[str, Any] = {k: v for k, v in attributes.items() if k in GEN_AI_METRIC_ATTRIBUTES}
     if token_usage_histogram and (input_tokens := attributes.get(OtelAttr.INPUT_TOKENS)):
-        token_usage_histogram.record(
-            input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT}
-        )
+        token_usage_histogram.record(input_tokens, attributes={**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_INPUT})
     if token_usage_histogram and (output_tokens := attributes.get(OtelAttr.OUTPUT_TOKENS)):
         token_usage_histogram.record(output_tokens, {**attrs, OtelAttr.T_TYPE: OtelAttr.T_TYPE_OUTPUT})
     if operation_duration_histogram and duration is not None:

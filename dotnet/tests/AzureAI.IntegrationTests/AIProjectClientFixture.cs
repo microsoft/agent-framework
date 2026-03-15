@@ -8,7 +8,6 @@ using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
@@ -18,8 +17,6 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientFixture : IChatClientAgentFixture
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-
     private ChatClientAgent _agent = null!;
     private AIProjectClient _client = null!;
 
@@ -118,14 +115,14 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: s_config.DeploymentName, instructions: instructions, tools: aiTools);
+        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools);
     }
 
     public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        return await this._client.CreateAIAgentAsync(model: s_config.DeploymentName, options);
+        return await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
     }
 
     public static string GenerateUniqueAgentName(string baseName) =>
@@ -158,25 +155,27 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         }
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._client is not null && this._agent is not null)
         {
-            return this._client.Agents.DeleteAgentAsync(this._agent.Name);
+            return new ValueTask(this._client.Agents.DeleteAgentAsync(this._agent.Name));
         }
 
-        return Task.CompletedTask;
+        return default;
     }
 
-    public virtual async Task InitializeAsync()
+    public virtual async ValueTask InitializeAsync()
     {
-        this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
+        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
     public async Task InitializeAsync(ChatClientAgentOptions options)
     {
-        this._client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
+        this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync(options);
     }
 }

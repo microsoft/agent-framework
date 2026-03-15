@@ -121,9 +121,17 @@ client = OpenAIChatClient(env_file_path="openai.env")
 
 ## Tests
 
-All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
+All the tests are located in the `tests` folder of each package. Tests marked with `@pytest.mark.integration` and `@skip_if_..._integration_tests_disabled` are integration tests that require external services (e.g., OpenAI, Azure OpenAI). They are automatically skipped when the required API keys or service endpoints are not configured in your environment or `.env` file.
 
-If you want to run these tests, you need to set the environment variable `RUN_INTEGRATION_TESTS` to `true` and have the appropriate key per services set in your environment or in a `.env` file.
+You can select or exclude integration tests using pytest markers:
+
+```bash
+# Run only unit tests (exclude integration tests)
+uv run poe all-tests -m "not integration"
+
+# Run only integration tests
+uv run poe all-tests -m integration
+```
 
 Alternatively, you can run them using VSCode Tasks. Open the command palette
 (`Ctrl+Shift+P`) and type `Tasks: Run Task`. Select `Test` from the list.
@@ -133,6 +141,8 @@ If you want to run the tests for a single package, you can use the `uv run poe t
 ```bash
 uv run poe --directory packages/core test
 ```
+
+Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The `all-tests` task also uses xdist across all packages.
 
 These commands also output the coverage report.
 
@@ -207,10 +217,13 @@ uv run poe setup --python 3.12
 ```
 
 #### `install`
-Install all dependencies including extras and dev dependencies, including updates:
+Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
+
+For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
@@ -267,6 +280,35 @@ Lint markdown code blocks:
 ```bash
 uv run poe markdown-code-lint
 ```
+
+#### `validate-dependency-bounds-test`
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
+```bash
+uv run poe validate-dependency-bounds-test
+# Defaults to --project "*"; pass a package to scope test mode
+uv run poe validate-dependency-bounds-test --project <workspace-package-name>
+```
+
+#### `validate-dependency-bounds-project`
+Validate and extend dependency bounds for a single dependency in a single package. Use `--mode lower`, `--mode upper`, or the default `--mode both`:
+```bash
+uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
+```
+`--project` defaults to `*`, and `--dependency` is optional. Automation can use `--mode upper --project "*"` to run the upper-bound pass across the workspace.
+For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may still be a single patch or minor line, but multi-minor ranges are fine when the package's checks/tests prove they work.
+
+#### `add-dependency-and-validate-bounds`
+Add an external dependency to a workspace project and run both validators for that same project/dependency:
+```bash
+uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
+```
+
+#### `upgrade-dev-dependencies`
+Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+```bash
+uv run poe upgrade-dev-dependencies
+```
+Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Comprehensive Checks
 

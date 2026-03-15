@@ -11,30 +11,24 @@ namespace AgentConformance.IntegrationTests.Support;
 public sealed class TestConfiguration
 {
     private static readonly IConfiguration s_configuration = new ConfigurationBuilder()
-        .AddJsonFile(path: "testsettings.json", optional: true)
         .AddJsonFile(path: "testsettings.development.json", optional: true)
         .AddEnvironmentVariables()
         .AddUserSecrets<TestConfiguration>()
         .Build();
 
     /// <summary>
-    /// Loads the type of configuration using a section name based on the type name.
+    /// Gets a configuration value by its flat key name.
     /// </summary>
-    /// <typeparam name="T">The type of config to load.</typeparam>
-    /// <returns>The loaded configuration section of the specified type.</returns>
-    /// <exception cref="InvalidOperationException">Thrown if the configuration section cannot be loaded.</exception>
-    public static T LoadSection<T>()
-    {
-        var configType = typeof(T);
-        var configTypeName = configType.Name;
+    /// <param name="key">The configuration key.</param>
+    /// <returns>The configuration value, or <see langword="null"/> if not found.</returns>
+    public static string? GetValue(string key) => s_configuration[key];
 
-        const string TrimText = "Configuration";
-        if (configTypeName.EndsWith(TrimText, StringComparison.OrdinalIgnoreCase))
-        {
-            configTypeName = configTypeName.Substring(0, configTypeName.Length - TrimText.Length);
-        }
-
-        return s_configuration.GetRequiredSection(configTypeName).Get<T>() ??
-            throw new InvalidOperationException($"Could not load config for {configTypeName}.");
-    }
+    /// <summary>
+    /// Gets a required configuration value by its flat key name.
+    /// </summary>
+    /// <param name="key">The configuration key.</param>
+    /// <returns>The configuration value.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if the configuration value is not found.</exception>
+    public static string GetRequiredValue(string key) =>
+        s_configuration[key] ?? throw new InvalidOperationException($"Configuration key '{key}' is required but was not found.");
 }

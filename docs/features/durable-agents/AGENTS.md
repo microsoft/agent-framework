@@ -8,7 +8,7 @@ This directory contains feature documentation for the durable agents integration
 
 - .NET implementation: `dotnet/src/Microsoft.Agents.AI.DurableTask/` and `dotnet/src/Microsoft.Agents.AI.Hosting.AzureFunctions/`
 - Python implementation: `python/packages/durabletask/` and `python/packages/azurefunctions/` (package `agent-framework-azurefunctions`)
-- .NET samples: `dotnet/samples/Durable/Agents/`
+- .NET samples: `dotnet/samples/04-hosting/DurableAgents/`
 - Python samples: `python/samples/04-hosting/durabletask/`
 - Official docs (Microsoft Learn): <https://learn.microsoft.com/agent-framework/integrations/azure-functions>
 

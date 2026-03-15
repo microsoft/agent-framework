@@ -3,7 +3,7 @@
 """Tests for AgentExecutor handling of tool calls and results in streaming mode."""
 
 from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal, overload
 
 from typing_extensions import Never
 
@@ -13,6 +13,7 @@ from agent_framework import (
     AgentExecutorResponse,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     ChatResponse,
@@ -37,18 +38,38 @@ class _ToolCallingAgent(BaseAgent):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
             return ResponseStream(self._run_stream_impl(), finalizer=AgentResponse.from_updates)
 
-        async def _run() -> AgentResponse:
+        async def _run() -> AgentResponse[Any]:
             return AgentResponse(messages=[Message("assistant", ["done"])])
 
         return _run()
@@ -111,6 +132,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     # First event: text update
     assert events[0].data is not None
     assert events[0].data.contents[0].type == "text"
+    assert events[0].data.contents[0].text is not None
     assert "Let me search" in events[0].data.contents[0].text
 
     # Second event: function call
@@ -129,6 +151,7 @@ async def test_agent_executor_emits_tool_calls_in_streaming_mode() -> None:
     # Fourth event: final text
     assert events[3].data is not None
     assert events[3].data.contents[0].type == "text"
+    assert events[3].data.contents[0].text is not None
     assert "sunny" in events[3].data.contents[0].text
 
 

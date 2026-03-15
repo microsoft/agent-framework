@@ -1091,3 +1091,29 @@ async def test_auto_handoff_middleware_calls_next_for_non_handoff_tool() -> None
 
     call_next.assert_awaited_once()
     assert context.result is None
+
+
+def test_handoff_builder_rejects_non_agent_supports_agent_run():
+    """Verify that participants() rejects SupportsAgentRun implementations that are not Agent instances."""
+    from agent_framework import AgentResponse, AgentSession, SupportsAgentRun
+
+    class FakeAgentRun:
+        def __init__(self, id, name):
+            self.id = id
+            self.name = name
+            self.description = "d"
+
+        async def run(self, messages=None, *, stream=False, session=None, **kwargs):
+            return AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])])
+
+        def create_session(self, **kwargs):
+            return AgentSession()
+
+        def get_session(self, *, service_session_id, **kwargs):
+            return AgentSession(service_session_id=service_session_id)
+
+    fake = FakeAgentRun("a", "A")
+    assert isinstance(fake, SupportsAgentRun)
+
+    with pytest.raises(TypeError, match="Participants must be Agent instances"):
+        HandoffBuilder().participants([fake])
