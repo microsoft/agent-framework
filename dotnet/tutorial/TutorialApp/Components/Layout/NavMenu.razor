@@ -1,0 +1,14 @@
+@inject ChapterService ChapterService
+@inject NavigationManager Nav
+
+<nav class="nav-menu">
+    @foreach (var chapter in ChapterService.GetChapters())
+    {
+        var href = $"/chapter/{chapter.Slug}";
+        var isActive = Nav.Uri.EndsWith(href, StringComparison.OrdinalIgnoreCase);
+        <a href="@href" class="nav-item @(isActive ? "active" : "")">
+            <span class="nav-number">@chapter.Order.ToString("D2")</span>
+            <span class="nav-title">@chapter.Title</span>
+        </a>
+    }
+</nav>

@@ -1,0 +1,248 @@
+/* ─── Reset & Base ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    color: #1a1a2e;
+    background: #f8f9fc;
+}
+
+/* ─── Layout ────────────────────────────────────────────────────── */
+.layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ─── Sidebar ───────────────────────────────────────────────────── */
+.sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: #1a1a2e;
+    color: #e8eaf0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.sidebar-header {
+    padding: 24px 20px 16px;
+    border-bottom: 1px solid #2d2d4e;
+}
+
+.sidebar-logo {
+    display: block;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #7eb8f7;
+    letter-spacing: 0.02em;
+}
+
+.sidebar-subtitle {
+    display: block;
+    font-size: 0.75rem;
+    color: #7a7a9a;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* ─── Nav Menu ──────────────────────────────────────────────────── */
+.nav-menu {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 0;
+}
+
+.nav-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 9px 20px;
+    text-decoration: none;
+    color: #b0b4cc;
+    font-size: 0.875rem;
+    transition: background 0.15s, color 0.15s;
+    border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+    background: #252545;
+    color: #e8eaf0;
+}
+
+.nav-item.active {
+    background: #1e3a5f;
+    color: #fff;
+    border-left-color: #7eb8f7;
+}
+
+.nav-number {
+    font-size: 0.7rem;
+    color: #555577;
+    font-variant-numeric: tabular-nums;
+    min-width: 20px;
+    flex-shrink: 0;
+}
+
+.nav-item.active .nav-number {
+    color: #7eb8f7;
+}
+
+.nav-title {
+    line-height: 1.3;
+}
+
+/* ─── Content Area ──────────────────────────────────────────────── */
+.content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 48px 64px;
+    background: #f8f9fc;
+}
+
+.chapter-body {
+    max-width: 780px;
+    margin: 0 auto;
+}
+
+/* ─── Typography ────────────────────────────────────────────────── */
+.chapter-body h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 0.5rem;
+    line-height: 1.2;
+}
+
+.chapter-body h2 {
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin: 2.5rem 0 0.75rem;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.chapter-body h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #334155;
+    margin: 1.75rem 0 0.5rem;
+}
+
+.chapter-body h4 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #475569;
+    margin: 1.25rem 0 0.4rem;
+}
+
+.chapter-body p {
+    line-height: 1.75;
+    color: #374151;
+    margin-bottom: 1rem;
+}
+
+.chapter-body ul, .chapter-body ol {
+    margin: 0.75rem 0 1rem 1.5rem;
+    color: #374151;
+    line-height: 1.75;
+}
+
+.chapter-body li {
+    margin-bottom: 0.25rem;
+}
+
+.chapter-body a {
+    color: #2563eb;
+    text-decoration: none;
+}
+
+.chapter-body a:hover {
+    text-decoration: underline;
+}
+
+/* ─── Inline Code ───────────────────────────────────────────────── */
+.chapter-body code:not(pre code) {
+    background: #e8edf5;
+    color: #c7254e;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.875em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+/* ─── Code Blocks ───────────────────────────────────────────────── */
+.chapter-body pre {
+    background: #f6f8fa;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 1.25rem 0;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.chapter-body pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: inherit;
+}
+
+/* ─── Tables ────────────────────────────────────────────────────── */
+.chapter-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.25rem 0;
+    font-size: 0.9rem;
+}
+
+.chapter-body th {
+    background: #f1f5f9;
+    font-weight: 600;
+    color: #1e293b;
+    text-align: left;
+    padding: 10px 14px;
+    border: 1px solid #e2e8f0;
+}
+
+.chapter-body td {
+    padding: 9px 14px;
+    border: 1px solid #e2e8f0;
+    color: #374151;
+    vertical-align: top;
+}
+
+.chapter-body tr:nth-child(even) td {
+    background: #f8fafc;
+}
+
+/* ─── Blockquote ────────────────────────────────────────────────── */
+.chapter-body blockquote {
+    border-left: 4px solid #7eb8f7;
+    background: #eff6ff;
+    margin: 1.25rem 0;
+    padding: 12px 16px;
+    color: #1e3a5f;
+    border-radius: 0 6px 6px 0;
+}
+
+/* ─── Loading ───────────────────────────────────────────────────── */
+.loading {
+    color: #94a3b8;
+    font-style: italic;
+    margin-top: 2rem;
+}
+
+/* ─── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; height: auto; overflow-y: visible; }
+    .content { padding: 24px 20px; }
+}

@@ -1,0 +1,14 @@
+@page "/"
+@inject ChapterService ChapterService
+@inject NavigationManager Nav
+
+@code {
+    protected override void OnInitialized()
+    {
+        var first = ChapterService.GetChapters().FirstOrDefault();
+        if (first is not null)
+        {
+            Nav.NavigateTo($"/chapter/{first.Slug}");
+        }
+    }
+}

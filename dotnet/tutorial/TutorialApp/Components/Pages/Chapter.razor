@@ -1,0 +1,40 @@
+@page "/chapter/{Slug}"
+@rendermode InteractiveServer
+@inject ChapterService ChapterService
+@inject IJSRuntime JS
+
+<PageTitle>@_title - MAF .NET Tutorial</PageTitle>
+
+@if (_html is not null)
+{
+    @((MarkupString)_html)
+}
+else
+{
+    <p class="loading">Loading…</p>
+}
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+
+    private string? _html;
+    private string _title = "MAF .NET Tutorial";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _html = null;
+        _html = await ChapterService.GetContentAsync(Slug);
+
+        var chapter = ChapterService.GetChapters().FirstOrDefault(c => c.Slug == Slug);
+        if (chapter is not null)
+            _title = chapter.Title;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_html is not null)
+        {
+            await JS.InvokeVoidAsync("highlightCode");
+        }
+    }
+}
