@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
+    Agent,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -37,6 +38,7 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
+from agent_framework._sessions import AgentSession, InMemoryHistoryProvider, SessionContext
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -3241,6 +3243,56 @@ async def test_integration_tool_rich_content_image() -> None:
         assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
+@pytest.mark.timeout(300)
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_agent_replays_local_tool_history_without_stale_fc_id() -> None:
+    """Integration test: persisted local Responses tool history can be replayed on a later turn."""
+    hotel_code = "HOTEL-PERSIST-4672"
+
+    @tool(name="search_hotels", approval_mode="never_require")
+    async def search_hotels(city: Annotated[str, "The city to search for hotels in"]) -> str:
+        return f"The only hotel option in {city} is {hotel_code}."
+
+    client = OpenAIResponsesClient()
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    agent = Agent(
+        client=client,
+        tools=[search_hotels],
+        default_options={"store": False},
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run(
+        "Call the search_hotels tool for Paris and answer with the hotel code you found.",
+        session=session,
+        options={"tool_choice": {"mode": "required", "required_function_name": "search_hotels"}},
+    )
+    assert first_response.text is not None
+    assert hotel_code in first_response.text
+
+    shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
+    shared_function_call = next(
+        content
+        for message in shared_messages
+        for content in message.contents
+        if content.type == "function_call"
+    )
+    assert shared_function_call.additional_properties is not None
+    assert isinstance(shared_function_call.additional_properties.get("fc_id"), str)
+    assert shared_function_call.additional_properties["fc_id"]
+
+    second_response = await agent.run(
+        "What hotel code did you already find for Paris? Answer with the exact code only.",
+        session=session,
+        options={"tool_choice": "none"},
+    )
+    assert second_response.text is not None
+    assert hotel_code in second_response.text
+
+
 def test_continuation_token_json_serializable() -> None:
     """Test that OpenAIContinuationToken is a plain dict and JSON-serializable."""
     from agent_framework.openai import OpenAIContinuationToken
@@ -3540,6 +3592,111 @@ def test_parse_response_from_openai_function_call_includes_status() -> None:
     assert function_call.additional_properties.get("fc_id") == "fc_456"
     # Verify raw_representation is preserved
     assert function_call.raw_representation is mock_function_call_item
+
+
+async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_from_history() -> None:
+    """Loaded history must not replay provider-ephemeral Responses function call IDs."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    provider = InMemoryHistoryProvider()
+
+    session = AgentSession(session_id="thread-1")
+    session.state[provider.source_id] = {
+        "messages": [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="search_hotels",
+                        arguments='{"city": "Paris"}',
+                        additional_properties={"fc_id": "fc_provider123", "status": "completed"},
+                    ),
+                ],
+            ),
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id="call_1",
+                        result="Found 3 hotels in Paris",
+                    ),
+                ],
+            ),
+        ]
+    }
+
+    next_turn_input = Message(role="user", contents=[Content.from_text(text="Book the cheapest one")])
+
+    live_result = client._prepare_messages_for_openai([*session.state[provider.source_id]["messages"], next_turn_input])
+    live_function_call = next(item for item in live_result if item.get("type") == "function_call")
+    assert live_function_call["id"] == "fc_provider123"
+
+    context = SessionContext(session_id=session.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=session,
+        context=context,
+        state=session.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    loaded_result = client._prepare_messages_for_openai(
+        context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    loaded_function_call = next(item for item in loaded_result if item.get("type") == "function_call")
+    assert loaded_function_call["id"] == "fc_call_1"
+
+    stored_function_call = session.state[provider.source_id]["messages"][0].contents[0]
+    assert stored_function_call.additional_properties is not None
+    assert stored_function_call.additional_properties.get("fc_id") == "fc_provider123"
+
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    restored_context = SessionContext(session_id=restored.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=restored,
+        context=restored_context,
+        state=restored.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    restored_result = client._prepare_messages_for_openai(
+        restored_context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    restored_function_call = next(item for item in restored_result if item.get("type") == "function_call")
+    assert restored_function_call["id"] == "fc_call_1"
+
+
+def test_prepare_messages_for_openai_keeps_live_fc_id_separate_from_replayed_history() -> None:
+    """Replayed history must not borrow a live Responses function call ID with the same call_id."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    history_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "Paris"}',
+                additional_properties={"fc_id": "fc_history123"},
+            )
+        ],
+        additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+    )
+    live_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "London"}',
+                additional_properties={"fc_id": "fc_live123"},
+            )
+        ],
+    )
+
+    result = client._prepare_messages_for_openai([history_message, live_message])
+
+    function_calls = [item for item in result if item.get("type") == "function_call"]
+    assert [item["id"] for item in function_calls] == ["fc_call_1", "fc_live123"]
 
 
 def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
