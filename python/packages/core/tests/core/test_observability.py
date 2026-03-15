@@ -11,6 +11,7 @@ from opentelemetry.trace import StatusCode
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    Agent,
     AgentResponse,
     BaseChatClient,
     ChatResponse,
@@ -472,10 +473,10 @@ def mock_chat_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(
+async def test_agent_span_captures_response_telemetry_without_inner_chat_span(
     mock_chat_agent: SupportsAgentRun, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test that when agent diagnostics are enabled, telemetry is applied."""
+    """Agent spans should retain response telemetry when no inner chat span owns it."""
 
     agent = mock_chat_agent()
 
@@ -491,6 +492,7 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
+    assert span.attributes[OtelAttr.RESPONSE_ID] == "test_response_id"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
@@ -1433,6 +1435,24 @@ def test_get_response_attributes_capture_usage_false():
     assert OtelAttr.OUTPUT_TOKENS not in result
 
 
+def test_get_response_attributes_capture_response_id_false():
+    """Test _get_response_attributes skips response_id when capture_response_id is False."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = "resp_123"
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = None
+
+    attrs = {}
+    result = _get_response_attributes(attrs, response, capture_response_id=False)
+
+    assert OtelAttr.RESPONSE_ID not in result
+
+
 # region Test _get_exporters_from_env
 
 
@@ -2261,6 +2281,81 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
     # Third span: second chat (LLM call with function result)
     assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
+    span_exporter: InMemorySpanExporter, stream: bool
+):
+    """Only the inner chat span should own response-id and usage telemetry."""
+
+    class NestedTelemetryChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(contents=[Content.from_text("Nested")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(" response")], role="assistant")
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse(
+                        messages=[Message(role="assistant", text="Nested response")],
+                        response_id="nested_resp_123",
+                        usage_details=UsageDetails(input_token_count=11, output_token_count=22),
+                        finish_reason="stop",
+                    )
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", text="Nested response")],
+                    response_id="nested_resp_123",
+                    usage_details=UsageDetails(input_token_count=11, output_token_count=22),
+                    finish_reason="stop",
+                )
+
+            return _get()
+
+    agent = Agent(
+        client=NestedTelemetryChatClient(),
+        id="nested_agent_id",
+        name="nested_agent",
+        description="Nested telemetry agent",
+        default_options={"model_id": "NestedModel"},
+    )
+
+    span_exporter.clear()
+
+    if stream:
+        result_stream = agent.run("Test message", stream=True)
+        async for _ in result_stream:
+            pass
+        response = await result_stream.get_final_response()
+    else:
+        response = await agent.run("Test message")
+
+    assert response is not None
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 2
+
+    span_by_operation = {span.attributes[OtelAttr.OPERATION.value]: span for span in spans}
+    agent_span = span_by_operation[OtelAttr.AGENT_INVOKE_OPERATION]
+    chat_span = span_by_operation[OtelAttr.CHAT_COMPLETION_OPERATION]
+
+    assert chat_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"
+    assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11
+    assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
+
+    assert OtelAttr.RESPONSE_ID not in agent_span.attributes
+    assert OtelAttr.INPUT_TOKENS not in agent_span.attributes
+    assert OtelAttr.OUTPUT_TOKENS not in agent_span.attributes
 
 
 # region Test non-ASCII character handling in JSON serialization

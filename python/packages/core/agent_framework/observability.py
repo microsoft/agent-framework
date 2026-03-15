@@ -14,6 +14,7 @@ Commonly used exports:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -91,6 +92,13 @@ ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 
 logger = logging.getLogger("agent_framework")
+
+
+INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
+    "inner_response_telemetry_captured_fields", default=None
+)
+INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
+INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -1273,6 +1281,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                         operation_duration_histogram=getattr(self, "duration_histogram", None),
                         duration=duration,
                     )
+                    _mark_inner_response_telemetry_captured(response)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
                         and isinstance(response, ChatResponse)
@@ -1332,6 +1341,7 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     operation_duration_histogram=getattr(self, "duration_histogram", None),
                     duration=duration,
                 )
+                _mark_inner_response_telemetry_captured(response)
                 if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                     finish_reason = cast(
                         "FinishReason | None",
@@ -1486,8 +1496,6 @@ class AgentTelemetryLayer:
             super().run,  # type: ignore[misc]
         )
         provider_name = str(self.otel_provider_name)
-        capture_usage = bool(getattr(self, "_otel_capture_usage", True))
-
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_run(  # type: ignore[no-any-return]
                 messages=messages,
@@ -1516,23 +1524,32 @@ class AgentTelemetryLayer:
             **merged_client_kwargs,
         )
 
+        inner_response_telemetry_captured_fields: set[str] = set()
+        inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
+            inner_response_telemetry_captured_fields
+        )
+
         if stream:
-            run_result: object = super_run(
-                messages=messages,
-                stream=True,
-                session=session,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-                **kwargs,
-            )
-            if isinstance(run_result, ResponseStream):
-                result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
-            elif isinstance(run_result, Awaitable):
-                result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-            else:
-                raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            try:
+                run_result: object = super_run(
+                    messages=messages,
+                    stream=True,
+                    session=session,
+                    compaction_strategy=compaction_strategy,
+                    tokenizer=tokenizer,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                    **kwargs,
+                )
+                if isinstance(run_result, ResponseStream):
+                    result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
+                elif isinstance(run_result, Awaitable):
+                    result_stream = ResponseStream.from_awaitable(run_result)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+                else:
+                    raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
+            except Exception:
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                raise
 
             # Create span directly without trace.use_span() context attachment.
             # Streaming spans are closed asynchronously in cleanup hooks, which run
@@ -1572,7 +1589,9 @@ class AgentTelemetryLayer:
                     response_attributes = _get_response_attributes(
                         attributes,
                         response,
-                        capture_usage=capture_usage,
+                        capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                        not in inner_response_telemetry_captured_fields,
+                        capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                     )
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
@@ -1589,6 +1608,7 @@ class AgentTelemetryLayer:
                 except Exception as exception:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
+                    INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
                     _close_span()
 
             # Register a weak reference callback to close the span if stream is garbage collected
@@ -1600,41 +1620,50 @@ class AgentTelemetryLayer:
             return wrapped_stream
 
         async def _run() -> AgentResponse:
-            with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
-                if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
-                    _capture_messages(
-                        span=span,
-                        provider_name=provider_name,
-                        messages=messages,
-                        system_instructions=_get_instructions_from_options(merged_options),
-                    )
-                start_time_stamp = perf_counter()
-                try:
-                    response: AgentResponse[Any] = await super_run(
-                        messages=messages,
-                        stream=False,
-                        session=session,
-                        compaction_strategy=compaction_strategy,
-                        tokenizer=tokenizer,
-                        function_invocation_kwargs=function_invocation_kwargs,
-                        client_kwargs=client_kwargs,
-                        **kwargs,
-                    )
-                except Exception as exception:
-                    capture_exception(span=span, exception=exception, timestamp=time_ns())
-                    raise
-                duration = perf_counter() - start_time_stamp
-                if response:
-                    response_attributes = _get_response_attributes(attributes, response, capture_usage=capture_usage)
-                    _capture_response(span=span, attributes=response_attributes, duration=duration)
-                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+            try:
+                with _get_span(attributes=attributes, span_name_attribute=OtelAttr.AGENT_NAME) as span:
+                    if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                         _capture_messages(
                             span=span,
                             provider_name=provider_name,
-                            messages=response.messages,
-                            output=True,
+                            messages=messages,
+                            system_instructions=_get_instructions_from_options(merged_options),
                         )
-                return response  # type: ignore[return-value,no-any-return]
+                    start_time_stamp = perf_counter()
+                    try:
+                        response: AgentResponse[Any] = await super_run(
+                            messages=messages,
+                            stream=False,
+                            session=session,
+                            compaction_strategy=compaction_strategy,
+                            tokenizer=tokenizer,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=client_kwargs,
+                            **kwargs,
+                        )
+                    except Exception as exception:
+                        capture_exception(span=span, exception=exception, timestamp=time_ns())
+                        raise
+                    duration = perf_counter() - start_time_stamp
+                    if response:
+                        response_attributes = _get_response_attributes(
+                            attributes,
+                            response,
+                            capture_response_id=INNER_RESPONSE_ID_CAPTURED_FIELD
+                            not in inner_response_telemetry_captured_fields,
+                            capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
+                        )
+                        _capture_response(span=span, attributes=response_attributes, duration=duration)
+                        if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
+                            _capture_messages(
+                                span=span,
+                                provider_name=provider_name,
+                                messages=response.messages,
+                                output=True,
+                            )
+                    return response  # type: ignore[return-value,no-any-return]
+            finally:
+                INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
 
         return _run()
 
@@ -1890,14 +1919,26 @@ def _to_otel_part(content: Content) -> dict[str, Any] | None:
     return None
 
 
+def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentResponse) -> None:
+    """Record when an inner chat telemetry span already captured response metadata."""
+    captured_fields = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.get()
+    if captured_fields is None:
+        return
+    if response.response_id:
+        captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
+    if response.usage_details:
+        captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
+
+
 def _get_response_attributes(
     attributes: dict[str, Any],
     response: ChatResponse | AgentResponse,
     *,
+    capture_response_id: bool = True,
     capture_usage: bool = True,
 ) -> dict[str, Any]:
     """Get the response attributes from a response."""
-    if response.response_id:
+    if capture_response_id and response.response_id:
         attributes[OtelAttr.RESPONSE_ID] = response.response_id
     finish_reason = getattr(response, "finish_reason", None)
     if not finish_reason:
