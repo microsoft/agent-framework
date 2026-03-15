@@ -463,6 +463,222 @@ class TestGitHubCopilotAgentRunStreaming:
         assert agent._started is True  # type: ignore
         mock_client.start.assert_called_once()
 
+    async def test_run_streaming_tool_execution_start(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that TOOL_EXECUTION_START events produce function_call content."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_abc123"
+        tool_event_data.tool_name = "get_weather"
+        tool_event_data.arguments = {"city": "Seattle"}
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert responses[0].role == "assistant"
+        content = responses[0].contents[0]
+        assert content.type == "function_call"
+        assert content.call_id == "call_abc123"
+        assert content.name == "get_weather"
+        assert content.arguments == {"city": "Seattle"}
+        assert content.raw_representation is tool_event_data
+
+    async def test_run_streaming_tool_execution_complete(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that TOOL_EXECUTION_COMPLETE events produce function_result content."""
+        result_obj = MagicMock()
+        result_obj.content = "Sunny, 72°F"
+
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_abc123"
+        tool_event_data.result = result_obj
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert responses[0].role == "tool"
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_abc123"
+        assert content.result == "Sunny, 72°F"
+        assert content.raw_representation is tool_event_data
+
+    async def test_run_streaming_tool_execution_missing_fields(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that missing tool fields fall back to empty strings."""
+        tool_event_data = MagicMock(spec=[])  # No attributes
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_call"
+        assert content.call_id == ""
+        assert content.name == ""
+        assert content.arguments is None
+
+    async def test_run_streaming_tool_result_none(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that a tool result with None result object produces empty string."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_xyz"
+        tool_event_data.result = None
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_xyz"
+        assert content.result == ""
+
+    async def test_run_streaming_tool_call_and_result_sequence(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test a full streaming sequence: text delta, tool call, tool result, text delta."""
+        # Tool call event
+        call_data = MagicMock()
+        call_data.tool_call_id = "call_001"
+        call_data.tool_name = "search"
+        call_data.arguments = {"query": "weather"}
+        tool_call_event = SessionEvent(
+            data=call_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        # Tool result event
+        result_obj = MagicMock()
+        result_obj.content = "72°F and sunny"
+        result_data = MagicMock()
+        result_data.tool_call_id = "call_001"
+        result_data.result = result_obj
+        tool_result_event = SessionEvent(
+            data=result_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        # Final text delta
+        final_delta = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE_DELTA,
+            delta_content="The weather is sunny.",
+            message_id="msg-2",
+        )
+
+        events = [assistant_delta_event, tool_call_event, tool_result_event, final_delta, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 4
+        assert responses[0].role == "assistant"
+        assert responses[0].contents[0].type == "text"
+        assert responses[1].role == "assistant"
+        assert responses[1].contents[0].type == "function_call"
+        assert responses[2].role == "tool"
+        assert responses[2].contents[0].type == "function_result"
+        assert responses[3].role == "assistant"
+        assert responses[3].contents[0].type == "text"
+
 
 class TestGitHubCopilotAgentSessionManagement:
     """Test cases for session management."""
