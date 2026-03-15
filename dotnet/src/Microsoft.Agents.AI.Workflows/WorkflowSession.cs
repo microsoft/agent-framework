@@ -25,6 +25,25 @@ internal sealed class WorkflowSession : AgentSession
 
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
+    /// <summary>
+    /// Tracks pending external requests by their content ID (e.g., <see cref="FunctionCallContent.CallId"/>
+    /// or <see cref="UserInputRequestContent.Id"/>). This mapping enables converting incoming response
+    /// content back to <see cref="ExternalResponse"/> when resuming a workflow from a checkpoint.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Entries are added when a <see cref="RequestInfoEvent"/> is received during workflow execution,
+    /// and removed when a matching response is delivered via <see cref="SendMessagesWithResponseConversionAsync"/>.
+    /// </para>
+    /// <para>
+    /// The number of entries is bounded by the number of outstanding external requests in a single workflow run.
+    /// When a session is abandoned, all pending requests are released with the session object.
+    /// Request-level timeouts, if needed, should be implemented in the workflow definition itself
+    /// (e.g., using a timer racing against an external event).
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<string, ExternalRequest> _pendingRequests = [];
+
     internal static bool VerifyCheckpointingConfiguration(IWorkflowExecutionEnvironment executionEnvironment, [NotNullWhen(true)] out InProcessExecutionEnvironment? inProcEnv)
     {
         inProcEnv = null;
@@ -90,6 +109,7 @@ internal sealed class WorkflowSession : AgentSession
 
         this.LastCheckpoint = sessionState.LastCheckpoint;
         this.StateBag = sessionState.StateBag;
+        this._pendingRequests = sessionState.PendingRequests ?? [];
     }
 
     public CheckpointInfo? LastCheckpoint { get; set; }
@@ -101,7 +121,8 @@ internal sealed class WorkflowSession : AgentSession
             this.SessionId,
             this.LastCheckpoint,
             this._inMemoryCheckpointManager,
-            this.StateBag);
+            this.StateBag,
+            this._pendingRequests);
 
         return marshaller.Marshal(info);
     }
@@ -141,7 +162,7 @@ internal sealed class WorkflowSession : AgentSession
         return update;
     }
 
-    private async ValueTask<StreamingRun> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
+    private async ValueTask<ResumeRunResult> CreateOrResumeRunAsync(List<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         // The workflow is validated to be a ChatProtocol workflow by the WorkflowHostAgent before creating the session,
         // and does not need to be checked again here.
@@ -154,17 +175,121 @@ internal sealed class WorkflowSession : AgentSession
                                                cancellationToken)
                             .ConfigureAwait(false);
 
-            await run.TrySendMessageAsync(messages).ConfigureAwait(false);
-            return run;
+            // Process messages: convert response content to ExternalResponse, send regular messages as-is
+            bool hasMatchedExternalResponses = await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
+            return new ResumeRunResult(run, hasMatchedExternalResponses: hasMatchedExternalResponses);
         }
 
-        return await this._executionEnvironment
+        StreamingRun newRun = await this._executionEnvironment
                             .RunStreamingAsync(this._workflow,
                                          messages,
                                          this.SessionId,
                                          cancellationToken)
                             .ConfigureAwait(false);
+        return new ResumeRunResult(newRun);
     }
+
+    /// <summary>
+    /// Sends messages to the run, converting FunctionResultContent and UserInputResponseContent
+    /// to ExternalResponse when there's a matching pending request.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true"/> if any external responses were sent; otherwise, <see langword="false"/>.
+    /// </returns>
+    private async ValueTask<bool> SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
+    {
+        List<ChatMessage> regularMessages = [];
+        // Responses are deferred until after regular messages are queued so response handlers
+        // can merge buffered regular content in the same continuation turn.
+        List<(ExternalResponse Response, string? ContentId)> externalResponses = [];
+        bool hasMatchedExternalResponses = false;
+
+        // Tracks content IDs already matched to pending requests within this invocation,
+        // preventing duplicate responses for the same ID from being sent to the workflow engine.
+        HashSet<string>? matchedContentIds = null;
+
+        foreach (ChatMessage message in messages)
+        {
+            List<AIContent> regularContents = [];
+
+            foreach (AIContent content in message.Contents)
+            {
+                string? contentId = GetResponseContentId(content);
+
+                // Skip duplicate response content for an already-matched content ID
+                if (contentId != null && matchedContentIds?.Contains(contentId) == true)
+                {
+                    continue;
+                }
+
+                if (contentId != null
+                    && this.TryGetPendingRequest(contentId) is ExternalRequest pendingRequest)
+                {
+                    externalResponses.Add((pendingRequest.CreateResponse(content), contentId));
+                    (matchedContentIds ??= new(StringComparer.OrdinalIgnoreCase)).Add(contentId);
+                }
+                else
+                {
+                    regularContents.Add(content);
+                }
+            }
+
+            if (regularContents.Count > 0)
+            {
+                ChatMessage cloned = message.Clone();
+                cloned.Contents = regularContents;
+                regularMessages.Add(cloned);
+            }
+        }
+
+        // Send regular messages first so response handlers can merge them with responses.
+        if (regularMessages.Count > 0)
+        {
+            await run.TrySendMessageAsync(regularMessages).ConfigureAwait(false);
+        }
+
+        // Send external responses after regular messages.
+        foreach ((ExternalResponse response, string? contentId) in externalResponses)
+        {
+            await run.SendResponseAsync(response).ConfigureAwait(false);
+            hasMatchedExternalResponses = true;
+
+            if (contentId is string id)
+            {
+                this.RemovePendingRequest(id);
+            }
+        }
+
+        return hasMatchedExternalResponses;
+    }
+
+    /// <summary>
+    /// Gets the content ID from response content types.
+    /// </summary>
+    private static string? GetResponseContentId(AIContent content) => content switch
+    {
+        FunctionResultContent functionResultContent => functionResultContent.CallId,
+        UserInputResponseContent userInputResponseContent => userInputResponseContent.Id,
+        _ => null
+    };
+
+    /// <summary>
+    /// Tries to get a pending request by content ID.
+    /// </summary>
+    private ExternalRequest? TryGetPendingRequest(string contentId) =>
+        this._pendingRequests.TryGetValue(contentId, out ExternalRequest? request) ? request : null;
+
+    /// <summary>
+    /// Adds a pending request indexed by content ID.
+    /// </summary>
+    private void AddPendingRequest(string contentId, ExternalRequest request) =>
+        this._pendingRequests[contentId] = request;
+
+    /// <summary>
+    /// Removes a pending request by content ID.
+    /// </summary>
+    private void RemovePendingRequest(string contentId) =>
+        this._pendingRequests.Remove(contentId);
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
@@ -175,12 +300,19 @@ internal sealed class WorkflowSession : AgentSession
             this.LastResponseId = Guid.NewGuid().ToString("N");
             List<ChatMessage> messages = this.ChatHistoryProvider.GetFromBookmark(this).ToList();
 
-#pragma warning disable CA2007 // Analyzer misfiring and not seeing .ConfigureAwait(false) below.
-            await using StreamingRun run =
+            ResumeRunResult resumeResult =
                 await this.CreateOrResumeRunAsync(messages, cancellationToken).ConfigureAwait(false);
+#pragma warning disable CA2007 // Analyzer misfiring.
+            await using StreamingRun run = resumeResult.Run;
 #pragma warning restore CA2007
 
-            await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+            // Send a TurnToken only when no external responses were delivered.
+            // External response handlers already drive continuation turns and can merge
+            // buffered regular messages, so an extra TurnToken would cause a redundant turn.
+            if (!resumeResult.HasMatchedExternalResponses)
+            {
+                await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
+            }
             await foreach (WorkflowEvent evt in run.WatchStreamAsync(blockOnPendingRequest: false, cancellationToken)
                                                .ConfigureAwait(false)
                                                .WithCancellation(cancellationToken))
@@ -192,8 +324,20 @@ internal sealed class WorkflowSession : AgentSession
                         break;
 
                     case RequestInfoEvent requestInfo:
-                        FunctionCallContent fcContent = requestInfo.Request.ToFunctionCall();
-                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, fcContent);
+                        (AIContent requestContent, string? contentId) = requestInfo.Request switch
+                        {
+                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? fcc) => (fcc, fcc.CallId),
+                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out UserInputRequestContent? uic) => (uic, uic.Id),
+                            ExternalRequest externalRequest => ((AIContent)externalRequest.ToFunctionCall(), externalRequest.RequestId)
+                        };
+
+                        // Track the pending request so we can convert incoming responses back to ExternalResponse
+                        if (contentId != null)
+                        {
+                            this.AddPendingRequest(contentId, requestInfo.Request);
+                        }
+
+                        AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
                         yield return update;
                         break;
 
@@ -267,15 +411,36 @@ internal sealed class WorkflowSession : AgentSession
     /// <inheritdoc/>
     public WorkflowChatHistoryProvider ChatHistoryProvider { get; }
 
+    /// <summary>
+    /// Captures the outcome of creating or resuming a workflow run,
+    /// indicating what types of messages were sent during resume.
+    /// </summary>
+    private readonly struct ResumeRunResult
+    {
+        /// <summary>The streaming run that was created or resumed.</summary>
+        public StreamingRun Run { get; }
+
+        /// <summary>Whether any external responses (e.g., <see cref="FunctionResultContent"/>) were delivered.</summary>
+        public bool HasMatchedExternalResponses { get; }
+
+        public ResumeRunResult(StreamingRun run, bool hasMatchedExternalResponses = false)
+        {
+            this.Run = Throw.IfNull(run);
+            this.HasMatchedExternalResponses = hasMatchedExternalResponses;
+        }
+    }
+
     internal sealed class SessionState(
         string sessionId,
         CheckpointInfo? lastCheckpoint,
         InMemoryCheckpointManager? checkpointManager = null,
-        AgentSessionStateBag? stateBag = null)
+        AgentSessionStateBag? stateBag = null,
+        Dictionary<string, ExternalRequest>? pendingRequests = null)
     {
         public string SessionId { get; } = sessionId;
         public CheckpointInfo? LastCheckpoint { get; } = lastCheckpoint;
         public InMemoryCheckpointManager? CheckpointManager { get; } = checkpointManager;
         public AgentSessionStateBag StateBag { get; } = stateBag ?? new();
+        public Dictionary<string, ExternalRequest>? PendingRequests { get; } = pendingRequests;
     }
 }

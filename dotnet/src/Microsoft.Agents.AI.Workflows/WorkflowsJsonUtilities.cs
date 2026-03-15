@@ -90,6 +90,7 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(ChatMessage))]
     [JsonSerializable(typeof(ExternalRequest))]
     [JsonSerializable(typeof(ExternalResponse))]
+    [JsonSerializable(typeof(Dictionary<string, ExternalRequest>))]
     [JsonSerializable(typeof(TurnToken))]
 
     // Built-in Executor State Types

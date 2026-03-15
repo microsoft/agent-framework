@@ -58,7 +58,9 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
     {
         if (!this._pendingRequests.TryAdd(id, requestContent))
         {
-            throw new InvalidOperationException($"A pending request with ID '{id}' already exists.");
+            // Request is already pending; treat as an idempotent re-emission.
+            // Do not repost to the sink because request IDs must remain unique while pending.
+            return default;
         }
 
         return this.IsIntercepted
