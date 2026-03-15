@@ -1208,8 +1208,8 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
 
-    # Result is pre-parsed string (already JSON)
-    assert tool_outputs[0].output == pre_parsed
+    # Result is the text content extracted from items
+    assert tool_outputs[0].output == function_result.result
 
 
 async def test_azure_ai_chat_client_convert_required_action_approval_response(

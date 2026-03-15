@@ -92,9 +92,9 @@ class RawOllamaEmbeddingClient(
         model_id: str | None = None,
         host: str | None = None,
         client: AsyncClient | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw Ollama embedding client."""
         ollama_settings = load_settings(
@@ -110,7 +110,7 @@ class RawOllamaEmbeddingClient(
         self.model_id = ollama_settings["embedding_model_id"]  # type: ignore[assignment,reportTypedDictNotRequiredAccess]
         self.client = client or AsyncClient(host=ollama_settings.get("host"))
         self.host = str(self.client._client.base_url)  # type: ignore[reportUnknownMemberType,reportPrivateUsage,reportUnknownArgumentType]
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
@@ -214,17 +214,17 @@ class OllamaEmbeddingClient(
         host: str | None = None,
         client: AsyncClient | None = None,
         otel_provider_name: str | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Ollama embedding client."""
         super().__init__(
             model_id=model_id,
             host=host,
             client=client,
+            additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )

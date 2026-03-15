@@ -4,7 +4,7 @@ description = "Redis integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260304"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,10 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "redis>=6.4.0",
-    "redisvl>=0.8.2",
-    "numpy>=2.2.6"
+    "agent-framework-core>=1.0.0rc4",
+    "redis>=6.4.0,<7.2.1",
+    "redisvl>=0.11.0,<0.16",
+    "numpy>=2.2.6,<3"
 ]
 
 [tool.uv]
@@ -89,7 +89,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_redis"
-test = "pytest -m \"not integration\" --cov=agent_framework_redis --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_redis --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

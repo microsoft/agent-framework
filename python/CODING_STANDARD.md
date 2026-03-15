@@ -127,7 +127,12 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
 Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
 
 - **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
+- **Prefer purpose-specific buckets over generic kwargs**: If a flexible payload is still needed, use an explicit named parameter such as `additional_properties`, `function_invocation_kwargs`, or `client_kwargs` rather than a blanket `**kwargs`
 - **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
+- **Make known flows explicit first**: For abstract hooks, move known data flows into explicit parameters before leaving `**kwargs` behind for subclass extensibility (for example, prefer `state=` explicitly instead of passing it through kwargs)
+- **Prefer explicit metadata containers**: For constructors that expose metadata, prefer an explicit `additional_properties` parameter.
+- **Keep SDK passthroughs narrow and documented**: A kwargs escape hatch may be acceptable for provider helper APIs that pass through to a large or unstable external SDK surface, but it should be documented as SDK passthrough and revisited regularly
+- **Do not keep passthrough kwargs on wrappers that do not use them**: Convenience wrappers and session helpers should not accept generic kwargs merely to forward or ignore them
 - **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
 - **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
 - **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose
@@ -160,10 +165,14 @@ user_msg = Message("user", ["Hello, world!"])
 asst_msg = Message("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
+class UserMessage(Message):
+    pass
 
-user_msg = UserMessage(content="Hello, world!")
-asst_msg = AssistantMessage(content="Hello, world!")
+class AssistantMessage(Message):
+    pass
+
+user_msg = UserMessage("user", ["Hello, world!"])
+asst_msg = AssistantMessage("assistant", ["Hello, world!"])
 ```
 
 ### Import Structure
@@ -382,6 +391,19 @@ All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"a
 
 - **Core version changes**: When `agent-framework-core` is updated with breaking or significant changes and its version is bumped, update the `agent-framework-core>=...` lower bound in every other package's `pyproject.toml` to match the new core version.
 - **Non-core version changes**: Non-core packages (connectors, extensions) can have their own versions incremented independently while keeping the existing core lower bound pinned. Only raise the core lower bound if the non-core package actually depends on new core APIs.
+
+### External Dependency Version Bounds
+
+The guiding principle for external dependencies is to make the range of allowed versions as broad as possible, even if that means we have to do some conditional imports, and other tricks to allow small changes in versions.
+So we use bounded ranges for external package dependencies in `pyproject.toml`:
+
+
+- For stable dependencies (`>=1.0.0`), use a lower bound at a known-good version and an explicit upper bound that reflects the maximum major version we currently support (for example: `openai>=1.99.0,<3`).
+- For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good lower bound with a hard upper boundary in the same prerelease line (for example: `azure-ai-projects>=2.0.0b3,<2.0.0b4`).
+- For `<1.0.0` dependencies, use a known-good bounded range with an explicit upper cap. Prefer the broadest validated range the package can actually support: that may be a patch line, a minor line, or multiple minor lines (for example: `a2a-sdk>=0.3.5,<0.4.0`, `fastapi>=0.115.0,<0.136.0`, `uvicorn>=0.30.0,<0.39.0`).
+- For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good bounded range with a hard upper cap and keep the range only as broad as the package's validation coverage justifies.
+- Prefer keeping support for multiple major versions when practical. This may mean that the upper bound spans multiple major versions when the dependency maintains backward compatibility; if APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility.
+- When adding or changing an external dependency, first run `uv run poe validate-dependency-bounds-test` to validate workspace-wide lower/upper compatibility, then run `uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"` to expand package-scoped bounds.
 
 ### Installation Options
 

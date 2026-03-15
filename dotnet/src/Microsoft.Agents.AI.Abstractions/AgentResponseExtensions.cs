@@ -38,6 +38,7 @@ public static class AgentResponseExtensions
             {
                 AdditionalProperties = response.AdditionalProperties,
                 CreatedAt = response.CreatedAt,
+                FinishReason = response.FinishReason,
                 Messages = response.Messages,
                 RawRepresentation = response,
                 ResponseId = response.ResponseId,
@@ -71,6 +72,7 @@ public static class AgentResponseExtensions
                 AuthorName = responseUpdate.AuthorName,
                 Contents = responseUpdate.Contents,
                 CreatedAt = responseUpdate.CreatedAt,
+                FinishReason = responseUpdate.FinishReason,
                 MessageId = responseUpdate.MessageId,
                 RawRepresentation = responseUpdate,
                 ResponseId = responseUpdate.ResponseId,

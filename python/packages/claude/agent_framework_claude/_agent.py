@@ -496,7 +496,16 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                     result = await func_tool.invoke(arguments=args_instance)
                 else:
                     result = await func_tool.invoke(arguments=args)
-                return {"content": [{"type": "text", "text": str(result)}]}
+                content_blocks: list[dict[str, str]] = []
+                for c in result:
+                    if c.type == "text" and c.text:
+                        content_blocks.append({"type": "text", "text": c.text})
+                    elif c.type in ("data", "uri"):
+                        logger.warning(
+                            "Claude Agent SDK does not support rich content (images, audio) "
+                            "in tool results. Rich content items will be omitted."
+                        )
+                return {"content": content_blocks or [{"type": "text", "text": ""}]}
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
@@ -581,6 +590,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
@@ -591,6 +601,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        options: OptionsT | None = None,
         **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
@@ -600,7 +611,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
+        options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages.
 
@@ -612,16 +624,16 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 returns an awaitable AgentResponse.
             session: The conversation session. If session has service_session_id set,
                 the agent will resume that session.
-            kwargs: Additional keyword arguments including 'options' for runtime options
-                (model, permission_mode can be changed per-request).
+            options: Runtime options. Model and permission_mode can be changed per request.
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by ClaudeAgent.
 
         Returns:
             When stream=True: An ResponseStream for streaming updates.
             When stream=False: An Awaitable[AgentResponse] with the complete response.
         """
-        options = kwargs.pop("options", None)
         response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
+            self._get_stream(messages, session=session, options=options),
             finalizer=self._finalize_response,
         )
 
@@ -634,8 +646,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
+        options: OptionsT | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
         session = session or self.create_session()

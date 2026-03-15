@@ -236,11 +236,11 @@ class BedrockChatClient(
         session_token: str | None = None,
         client: BaseClient | None = None,
         boto3_session: Boto3Session | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Create a Bedrock chat client and load AWS credentials.
 
@@ -252,11 +252,11 @@ class BedrockChatClient(
             session_token: Optional AWS session token for temporary credentials.
             client: Preconfigured Bedrock runtime client; when omitted a boto3 session is created.
             boto3_session: Custom boto3 session used to build the runtime client if provided.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middlewares to include.
             function_invocation_configuration: Optional function invocation configuration
             env_file_path: Optional .env file path used by ``BedrockSettings`` to load defaults.
             env_file_encoding: Encoding for the optional .env file.
-            kwargs: Additional arguments forwarded to ``BaseChatClient``.
 
         Examples:
             .. code-block:: python
@@ -303,9 +303,9 @@ class BedrockChatClient(
             )
 
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self.model_id = chat_model_id
         self.region = region
@@ -405,11 +405,16 @@ class BedrockChatClient(
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
-            tool_config = tool_config or {}
             match tool_mode.get("mode"):
-                case "auto" | "none":
-                    tool_config["toolChoice"] = {tool_mode.get("mode"): {}}
+                case "none":
+                    # Bedrock doesn't support toolChoice "none".
+                    # Omit toolConfig entirely so the model won't attempt tool calls.
+                    tool_config = None
+                case "auto":
+                    tool_config = tool_config or {}
+                    tool_config["toolChoice"] = {"auto": {}}
                 case "required":
+                    tool_config = tool_config or {}
                     if required_name := tool_mode.get("required_function_name"):
                         tool_config["toolChoice"] = {"tool": {"name": required_name}}
                     else:
@@ -518,10 +523,22 @@ class BedrockChatClient(
                     }
                 }
             case "function_result":
+                if content.items:
+                    text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                    rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                    if rich_items:
+                        logger.warning(
+                            "Bedrock does not support rich content (images, audio) in tool results. "
+                            "Rich content items will be omitted."
+                        )
+                    tool_result_text = "\n".join(text_parts) if text_parts else ""
+                    tool_result_blocks = self._convert_tool_result_to_blocks(tool_result_text)
+                else:
+                    tool_result_blocks = self._convert_tool_result_to_blocks(content.result)
                 tool_result_block = {
                     "toolResult": {
                         "toolUseId": content.call_id,
-                        "content": self._convert_tool_result_to_blocks(content.result),
+                        "content": tool_result_blocks,
                         "status": "error" if content.exception else "success",
                     }
                 }
@@ -542,7 +559,12 @@ class BedrockChatClient(
         return None
 
     def _convert_tool_result_to_blocks(self, result: Any) -> list[dict[str, Any]]:
-        prepared_result = result if isinstance(result, str) else FunctionTool.parse_result(result)
+        if isinstance(result, str):
+            prepared_result = result
+        else:
+            parsed = FunctionTool.parse_result(result)
+            text_parts = [c.text or "" for c in parsed if c.type == "text"]
+            prepared_result = "\n".join(text_parts) if text_parts else str(result)
         try:
             parsed_result: object = json.loads(prepared_result)
         except json.JSONDecodeError:

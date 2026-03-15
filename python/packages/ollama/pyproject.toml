@@ -4,7 +4,7 @@ description = "Ollama integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260304"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://learn.microsoft.com/en-us/agent-framework/"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "ollama >= 0.5.3",
+    "agent-framework-core>=1.0.0rc4",
+    "ollama>=0.5.3,<0.5.4",
 ]
 
 [tool.uv]
@@ -90,7 +90,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_ollama"
-test = "pytest -m \"not integration\" --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_ollama --cov-report=term-missing:skip-covered tests'
 
 [tool.uv.build-backend]
 module-name = "agent_framework_ollama"

@@ -4,7 +4,7 @@ description = "Microsoft Purview (Graph dataSecurityAndGovernance) integration f
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260304"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,9 +24,9 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "azure-core>=1.30.0",
-    "httpx>=0.27.0",
+    "agent-framework-core>=1.0.0rc4",
+    "azure-core>=1.30.0,<2",
+    "httpx>=0.27.0,<0.29",
 ]
 
 [tool.uv]
@@ -86,7 +86,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_purview"
-test = "pytest -m \"not integration\" --cov=agent_framework_purview --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_purview --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.9,<4.0"]

@@ -4,7 +4,7 @@ description = "OpenAI ChatKit integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260304"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,8 +22,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "openai-chatkit>=1.4.0,<2.0.0",
+    "agent-framework-core>=1.0.0rc4",
+    "openai-chatkit>=1.4.1,<2.0.0",
 ]
 
 [tool.uv]
@@ -88,7 +88,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_chatkit"
-test = "pytest -m \"not integration\" --cov=agent_framework_chatkit --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_chatkit --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

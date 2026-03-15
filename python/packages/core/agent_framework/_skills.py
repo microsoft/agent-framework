@@ -26,13 +26,14 @@ Only use skills from trusted sources.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
 import re
 from collections.abc import Callable, Sequence
 from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, runtime_checkable
 
 from ._sessions import BaseContextProvider
 from ._tools import FunctionTool
@@ -93,6 +94,7 @@ class SkillResource:
             description: Optional human-readable summary shown when advertising the resource.
             content: Static content string.  Mutually exclusive with *function*.
             function: Callable (sync or async) that returns content on demand.
+                May return any type; the value is passed through as-is.
                 Mutually exclusive with *content*.
         """
         if not name or not name.strip():
@@ -115,6 +117,108 @@ class SkillResource:
             self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
+class SkillScript:
+    """An executable script attached to a skill.
+
+    .. warning:: Experimental
+
+        This API is experimental and subject to change or removal
+        in future versions without notice.
+
+    A script represents executable code that an agent can run.  It holds
+    either an inline ``function`` callable (code-defined scripts) or
+    a ``path`` to a script file on disk (file-based scripts).
+    Exactly one must be provided.
+
+    When ``function`` is set the script is treated as **code-based**
+    and the function is invoked directly in-process.  When ``path`` is
+    set the script is treated as **file-based** and delegated to the
+    configured :class:`SkillScriptRunner`.
+
+    Attributes:
+        name: Script identifier.
+        description: Optional human-readable summary, or ``None``.
+        function: Callable that implements the script, or ``None``.
+        path: Relative path to the script file from the skill directory, or
+            ``None`` for code-defined scripts.
+
+    Examples:
+        Code-defined script:
+
+        .. code-block:: python
+
+            SkillScript(name="analyze", function=analyze_data, description="Run analysis")
+
+        File-based script (discovered from disk):
+
+        .. code-block:: python
+
+            SkillScript(name="process.py", path="scripts/process.py")
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str | None = None,
+        function: Callable[..., Any] | None = None,
+        path: str | None = None,
+    ) -> None:
+        """Initialize a SkillScript.
+
+        Args:
+            name: Identifier for this script (e.g. ``"analyze"``, ``"process.py"``).
+            description: Optional human-readable summary.
+            function: Callable (sync or async) that implements the script.
+                Set for code-defined scripts; ``None`` for file-based scripts.
+                Mutually exclusive with *path*.
+            path: Relative path to the script file from the skill directory.
+                Set automatically for file-based scripts discovered from disk;
+                ``None`` for code-defined scripts.
+                Mutually exclusive with *function*.
+        """
+        if not name or not name.strip():
+            raise ValueError("Script name cannot be empty.")
+        if function is None and path is None:
+            raise ValueError(f"Script '{name}' must have either function or path.")
+        if function is not None and path is not None:
+            raise ValueError(f"Script '{name}' must have either function or path, not both.")
+
+        self.name = name
+        self.description = description
+        self.function = function
+        self.path = path
+        self._parameters_schema: dict[str, Any] | None = None
+        self._parameters_schema_resolved: bool = False
+
+        # Precompute whether the function accepts **kwargs to avoid
+        # repeated inspect.signature() calls on every invocation.
+        self._accepts_kwargs: bool = False
+        if function is not None:
+            sig = inspect.signature(function)
+            self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+    @property
+    def parameters_schema(self) -> dict[str, Any] | None:
+        """JSON Schema describing the script's parameters.
+
+        .. warning:: Experimental
+
+            This API is experimental and subject to change or removal
+            in future versions without notice.
+
+        Lazily generated from the callable's signature on first access.
+        Returns ``None`` for file-based scripts or functions with no
+        introspectable parameters.
+        """
+        if not self._parameters_schema_resolved and self.function is not None:
+            tool = FunctionTool(name=self.function.__name__, func=self.function)
+            schema = tool.parameters()
+            self._parameters_schema = schema if schema and schema.get("properties") else None
+            self._parameters_schema_resolved = True
+        return self._parameters_schema
+
+
 class Skill:
     """A skill definition with optional resources.
 
@@ -124,15 +228,16 @@ class Skill:
         in future versions without notice.
 
     A skill bundles a set of instructions (``content``) with metadata and
-    zero or more :class:`SkillResource` instances.  Resources can be
-    supplied at construction time or added later via the :meth:`resource`
-    decorator.
+    zero or more :class:`SkillResource` and :class:`SkillScript` instances.
+    Resources and scripts can be supplied at construction time or added later
+    via the :meth:`resource` and :meth:`script` decorators.
 
     Attributes:
         name: Skill name (lowercase letters, numbers, hyphens only).
         description: Human-readable description of the skill.
         content: The skill instructions body.
         resources: Mutable list of :class:`SkillResource` instances.
+        scripts: Mutable list of :class:`SkillScript` instances.
         path: Absolute path to the skill directory on disk, or ``None``
             for code-defined skills.
 
@@ -171,6 +276,7 @@ class Skill:
         description: str,
         content: str,
         resources: list[SkillResource] | None = None,
+        scripts: list[SkillScript] | None = None,
         path: str | None = None,
     ) -> None:
         """Initialize a Skill.
@@ -180,6 +286,7 @@ class Skill:
             description: Human-readable description of the skill (≤1024 chars).
             content: The skill instructions body.
             resources: Pre-built resources to attach to this skill.
+            scripts: Pre-built scripts to attach to this skill.
             path: Absolute path to the skill directory on disk.  Set automatically
                 for file-based skills; leave as ``None`` for code-defined skills.
         """
@@ -192,6 +299,7 @@ class Skill:
         self.description = description
         self.content = content
         self.resources: list[SkillResource] = resources if resources is not None else []
+        self.scripts: list[SkillScript] = scripts if scripts is not None else []
         self.path = path
 
     def resource(
@@ -227,7 +335,7 @@ class Skill:
             .. code-block:: python
 
                 @skill.resource
-                def get_schema() -> str:
+                def get_schema() -> Any:
                     return "schema..."
 
             With arguments:
@@ -235,7 +343,7 @@ class Skill:
             .. code-block:: python
 
                 @skill.resource(name="custom-name", description="Custom desc")
-                async def get_data() -> str:
+                async def get_data() -> Any:
                     return "data..."
         """
 
@@ -255,10 +363,116 @@ class Skill:
             return decorator
         return decorator(func)
 
+    def script(
+        self,
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Any:
+        """Decorator that registers a callable as a script on this skill.
+
+        Supports bare usage (``@skill.script``) and parameterized usage
+        (``@skill.script(name="custom", description="...")``).  The
+        decorated function is returned unchanged; a new
+        :class:`SkillScript` is appended to :attr:`scripts`.
+
+        Args:
+            func: The function being decorated.  Populated automatically when
+                the decorator is applied without parentheses.
+
+        Keyword Args:
+            name: Script name override.  Defaults to ``func.__name__``.
+            description: Script description override.  Defaults to the
+                function's docstring (via :func:`inspect.getdoc`).
+
+        Returns:
+            The original function unchanged, or a secondary decorator when
+            called with keyword arguments.
+
+        Examples:
+            Bare decorator:
+
+            .. code-block:: python
+
+                @skill.script
+                def analyze_data(query: str) -> str:
+                    \"\"\"Run data analysis.\"\"\"
+                    return run_analysis(query)
+
+            With arguments:
+
+            .. code-block:: python
+
+                @skill.script(name="fetch", description="Fetch remote data")
+                async def fetch_data(url: str) -> str:
+                    return await http_get(url)
+        """
+
+        def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+            script_name = name or f.__name__
+            script_description = description or (inspect.getdoc(f) or None)
+            self.scripts.append(
+                SkillScript(
+                    name=script_name,
+                    description=script_description,
+                    function=f,
+                )
+            )
+            return f
+
+        if func is None:
+            return decorator
+        return decorator(func)
+
 
 # endregion
 
-# region Constants
+# region Script Runners
+
+
+@runtime_checkable
+class SkillScriptRunner(Protocol):
+    """Protocol for skill script runners.
+
+    .. warning:: Experimental
+
+        This API is experimental and subject to change or removal
+        in future versions without notice.
+
+    A script runner determines how **file-based** skill scripts are
+    run. Implementations decide the execution strategy
+    (e.g., local subprocess, hosted code execution environment,
+    user-provided callable).
+
+    Code-defined scripts (registered via the ``@skill.script`` decorator)
+    are always executed **in-process** and do not use a script runner.
+
+    Any callable (sync or async) matching the ``__call__`` signature
+    satisfies this protocol.
+    """
+
+    def __call__(self, skill: Skill, script: SkillScript, args: dict[str, Any] | None = None) -> Any:
+        """Run a skill script.
+
+        The :class:`SkillsProvider` resolves skill and script names
+        before calling this method, so implementations receive fully
+        resolved objects.
+
+        Args:
+            skill: The skill that owns the script.
+            script: The script to run.
+            args: Optional keyword arguments for the script.
+
+        Returns:
+            The result. May be any type; the framework
+            serialises it automatically via
+            :meth:`~FunctionTool.parse_result`.
+        """
+        ...
+
+
+# endregion
 
 SKILL_FILE_NAME: Final[str] = "SKILL.md"
 MAX_SEARCH_DEPTH: Final[int] = 2
@@ -273,8 +487,7 @@ DEFAULT_RESOURCE_EXTENSIONS: Final[tuple[str, ...]] = (
     ".xml",
     ".txt",
 )
-
-# endregion
+DEFAULT_SCRIPT_EXTENSIONS: Final[tuple[str, ...]] = (".py",)
 
 # region Patterns and prompt template
 
@@ -307,12 +520,18 @@ Each skill provides specialized instructions, reference documents, and assets fo
 </available_skills>
 
 When a task aligns with a skill's domain, follow these steps in exact order:
-1. Use `load_skill` to retrieve the skill's instructions.
-2. Follow the provided guidance.
-3. Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
+- Use `load_skill` to retrieve the skill's instructions.
+- Follow the provided guidance.
+- Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
    (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-
+{runner_instructions}
 Only load what is needed, when it is needed."""
+
+SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
+    "\n- Use `run_skill_script` to run referenced scripts, using the name exactly as listed."
+    "\n- Pass script arguments inside `args` as a JSON object"
+    ' (e.g. `args: {"length": 24}`), not as top-level tool parameters.\n'
+)
 
 # endregion
 
@@ -381,8 +600,11 @@ class SkillsProvider(BaseContextProvider):
         skill_paths: str | Path | Sequence[str | Path] | None = None,
         *,
         skills: Sequence[Skill] | None = None,
+        script_runner: SkillScriptRunner | None = None,
         instruction_template: str | None = None,
         resource_extensions: tuple[str, ...] | None = None,
+        script_extensions: tuple[str, ...] | None = None,
+        require_script_approval: bool = False,
         source_id: str | None = None,
     ) -> None:
         """Initialize a SkillsProvider.
@@ -395,21 +617,69 @@ class SkillsProvider(BaseContextProvider):
 
         Keyword Args:
             skills: Code-defined :class:`Skill` instances to register.
+            script_runner: Strategy for running **file-based** skill
+                scripts. The provider resolves skill and script names, then
+                calls the runner directly. This parameter only
+                affects scripts discovered from disk (via *skill_paths*);
+                code-defined scripts (registered with ``@skill.script``) are
+                always executed in-process and ignore this setting.
+                When ``None``, file-based scripts are not executable.
             instruction_template: Custom system-prompt template for
                 advertising skills.  Must contain a ``{skills}`` placeholder for the
                 generated skills list.  Uses a built-in template when ``None``.
             resource_extensions: File extensions recognized as discoverable
                 resources.  Defaults to ``DEFAULT_RESOURCE_EXTENSIONS``
                 (``(".md", ".json", ".yaml", ".yml", ".csv", ".xml", ".txt")``).
+            script_extensions: File extensions recognized as discoverable
+                scripts.  Defaults to ``DEFAULT_SCRIPT_EXTENSIONS``
+                (``(".py",)``).
+            require_script_approval: When ``True``, skill script execution
+                requires explicit user approval before running. Instead of
+                executing immediately, the agent pauses and returns a
+                ``function_approval_request`` via ``result.user_input_requests``.
+                The application should present the request to the user, then
+                call ``request.to_function_approval_response(approved=True)``
+                (or ``False`` to reject) and pass the response back with
+                ``agent.run(approval_response, session=session)``.
+                Rejected scripts are not executed and the agent is informed
+                the user declined. Defaults to ``False``.  See
+                ``samples/02-agents/skills/script_approval/script_approval.py``
+                for the full approval loop pattern.
             source_id: Unique identifier for this provider instance.
         """
         super().__init__(source_id or self.DEFAULT_SOURCE_ID)
 
-        self._skills = _load_skills(skill_paths, skills, resource_extensions or DEFAULT_RESOURCE_EXTENSIONS)
+        self._skills = _load_skills(
+            skill_paths,
+            skills,
+            resource_extensions or DEFAULT_RESOURCE_EXTENSIONS,
+            script_extensions or DEFAULT_SCRIPT_EXTENSIONS,
+        )
 
-        self._instructions = _create_instructions(instruction_template, self._skills)
+        # File-based skills (skill.path set) have scripts discovered from disk
+        has_file_scripts = any(s.scripts for s in self._skills.values() if s.path is not None)
 
-        self._tools = self._create_tools()
+        # Code-defined skills (skill.path is None) have scripts with callable functions
+        has_code_scripts = any(s.scripts for s in self._skills.values() if s.path is None)
+
+        if has_file_scripts and script_runner is None:
+            raise ValueError(
+                "File-based skills with scripts were provided but no 'script_runner' was provided. "
+                "Pass a SkillScriptRunner callable to SkillsProvider."
+            )
+
+        self._script_runner = script_runner
+
+        self._instructions = _create_instructions(
+            prompt_template=instruction_template,
+            skills=self._skills,
+            include_script_runner_instructions=has_file_scripts or has_code_scripts,
+        )
+
+        self._tools = self._create_tools(
+            include_script_runner_tool=has_file_scripts or has_code_scripts,
+            require_script_approval=require_script_approval,
+        )
 
     async def before_run(
         self,
@@ -425,6 +695,11 @@ class SkillsProvider(BaseContextProvider):
         skill is registered, appends the skill-list system prompt and the
         ``load_skill`` / ``read_skill_resource`` tools to *context*.
 
+        When any registered skill defines one or more scripts (file-based or
+        code-based), the system prompt also includes script-runner
+        instructions (embedded via the ``{runner_instructions}`` placeholder),
+        and the ``run_skill_script`` tool is included alongside the base tools.
+
         Args:
             agent: The agent instance about to run.
             session: The current agent session.
@@ -434,17 +709,30 @@ class SkillsProvider(BaseContextProvider):
         if not self._skills:
             return
 
-        if self._instructions:
-            context.extend_instructions(self.source_id, self._instructions)
+        context.extend_instructions(self.source_id, self._instructions)  # type: ignore[arg-type]
         context.extend_tools(self.source_id, self._tools)
 
-    def _create_tools(self) -> list[FunctionTool]:
+    def _create_tools(
+        self,
+        include_script_runner_tool: bool,
+        require_script_approval: bool = False,
+    ) -> list[FunctionTool]:
         """Create the ``load_skill`` and ``read_skill_resource`` tool definitions.
 
+        When *include_script_runner_tool* is ``True``, also creates
+        ``run_skill_script``.
+
+        Args:
+            include_script_runner_tool: Whether to include the
+                ``run_skill_script`` tool in the returned list.
+            require_script_approval: When ``True``, the
+                ``run_skill_script`` tool pauses for user approval
+                before each invocation.
+
         Returns:
-            A two-element list of :class:`FunctionTool` instances.
+            A list of :class:`FunctionTool` instances.
         """
-        return [
+        tools = [
             FunctionTool(
                 name="load_skill",
                 description="Loads the full instructions for a specific skill.",
@@ -474,6 +762,45 @@ class SkillsProvider(BaseContextProvider):
                 },
             ),
         ]
+
+        if include_script_runner_tool:
+            tools.append(
+                FunctionTool(
+                    name="run_skill_script",
+                    description="Runs a script associated with a skill.",
+                    func=self._run_skill_script,
+                    approval_mode="always_require" if require_script_approval else "never_require",
+                    input_model={
+                        "type": "object",
+                        "properties": {
+                            "skill_name": {"type": "string", "description": "The name of the skill."},
+                            "script_name": {
+                                "type": "string",
+                                "description": (
+                                    "The name of the script to run as listed in the skill, "
+                                    "preserving any directory prefix exactly as shown. "
+                                    "Do not add or remove path prefixes."
+                                ),
+                            },
+                            "args": {
+                                "type": ["object", "null"],
+                                "additionalProperties": True,
+                                "default": None,
+                                "description": (
+                                    "Arguments to pass to the script as key-value pairs. "
+                                    "Use parameter names as keys without leading dashes "
+                                    '(e.g. {"length": 24, "uppercase": true}). '
+                                    "How these values are mapped to the underlying script "
+                                    "is determined by the script implementation or configured runner."
+                                ),
+                            },
+                        },
+                        "required": ["skill_name", "script_name"],
+                    },
+                )
+            )
+
+        return tools
 
     def _load_skill(self, skill_name: str) -> str:
         """Return the full instructions for the named skill.
@@ -516,9 +843,79 @@ class SkillsProvider(BaseContextProvider):
             resource_lines = "\n".join(_create_resource_element(r) for r in skill.resources)
             content += f"\n\n<resources>\n{resource_lines}\n</resources>"
 
+        if skill.scripts:
+            script_lines = "\n".join(_create_script_element(s) for s in skill.scripts)
+            content += f"\n\n<scripts>\n{script_lines}\n</scripts>"
+
         return content
 
-    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> str:
+    async def _run_skill_script(
+        self, skill_name: str, script_name: str, args: dict[str, Any] | None = None, **kwargs: Any
+    ) -> Any:
+        """Run a named script from a skill.
+
+        For code-defined scripts (those with a ``function`` and no ``path``),
+        the function is invoked directly in-process.  For file-based scripts
+        the configured :class:`SkillScriptRunner` is used.
+
+        Args:
+            skill_name: The name of the owning skill.
+            script_name: The script name to look up (case-insensitive).
+            args: Optional keyword arguments for the script, provided by the
+                agent/LLM.  These are mapped to the function's declared
+                parameters.
+            **kwargs: Runtime keyword arguments forwarded only to script
+                functions that accept ``**kwargs`` (e.g. arguments passed via
+                ``agent.run(user_id="123")``).
+
+        Returns:
+            The result, or a user-facing error message on
+            failure.
+        """
+        if not skill_name or not skill_name.strip():
+            return "Error: Skill name cannot be empty."
+
+        if not script_name or not script_name.strip():
+            return "Error: Script name cannot be empty."
+
+        skill = self._skills.get(skill_name)
+        if not skill:
+            return f"Error: Skill '{skill_name}' not found."
+
+        script = next((s for s in skill.scripts if s.name.lower() == script_name.lower()), None)
+        if not script:
+            return f"Error: Script '{script_name}' not found in skill '{skill_name}'."
+
+        # Code-defined scripts: run the function directly
+        if script.function is not None:
+            try:
+                if script._accepts_kwargs:  # pyright: ignore[reportPrivateUsage]
+                    result = script.function(**(args or {}), **kwargs)
+                else:
+                    result = script.function(**(args or {}))
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+            except Exception:
+                logger.exception("Error running code-defined script '%s' in skill '%s'", script_name, skill_name)
+                return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
+
+        # File-based scripts: delegate to the runner
+        if self._script_runner is None:
+            return (
+                f"Error: Script '{script_name}' in skill '{skill_name}' requires a runner. "
+                "Provide a script_runner for file-based scripts."
+            )
+        try:
+            result = self._script_runner(skill, script, args)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        except Exception:
+            logger.exception("Error running file-based script '%s' in skill '%s'", script_name, skill_name)
+            return f"Error: Failed to run script '{script_name}' in skill '{skill_name}'."
+
+    async def _read_skill_resource(self, skill_name: str, resource_name: str, **kwargs: Any) -> Any:
         """Read a named resource from a skill.
 
         Resolves the resource by case-insensitive name lookup.  Static
@@ -533,7 +930,7 @@ class SkillsProvider(BaseContextProvider):
                 ``agent.run(user_id="123")``).
 
         Returns:
-            The resource content string, or a user-facing error message on
+            The resource content (any type), or a user-facing error message on
             failure.
         """
         if not skill_name or not skill_name.strip():
@@ -565,13 +962,10 @@ class SkillsProvider(BaseContextProvider):
                     )
                 else:
                     result = resource.function(**kwargs) if resource._accepts_kwargs else resource.function()  # pyright: ignore[reportPrivateUsage]
-                return str(result)
-            except Exception as exc:
+                return result
+            except Exception:
                 logger.exception("Failed to read resource '%s' from skill '%s'", resource_name, skill_name)
-                return (
-                    f"Error ({type(exc).__name__}): Failed to read resource"
-                    f" '{resource_name}' from skill '{skill_name}'."
-                )
+                return f"Error: Failed to read resource '{resource_name}' from skill '{skill_name}'."
 
         return f"Error: Resource '{resource.name}' has no content or function."
 
@@ -705,6 +1099,60 @@ def _discover_resource_files(
         resources.append(_normalize_resource_path(str(rel_path)))
 
     return resources
+
+
+def _discover_script_files(
+    skill_dir_path: str,
+    extensions: tuple[str, ...] = DEFAULT_SCRIPT_EXTENSIONS,
+) -> list[str]:
+    """Scan a skill directory for script files matching *extensions*.
+
+    Recursively walks *skill_dir_path* and collects files whose extension
+    is in *extensions*.  Each candidate is validated against path-traversal
+    and symlink-escape checks; unsafe files are skipped with a warning.
+
+    Args:
+        skill_dir_path: Absolute path to the skill directory to scan.
+        extensions: Tuple of allowed script extensions (e.g. ``(".py",)``).
+
+    Returns:
+        Relative script paths (forward-slash-separated) for every
+        discovered file that passes security checks.
+    """
+    skill_dir = Path(skill_dir_path).absolute()
+    root_directory_path = str(skill_dir)
+    scripts: list[str] = []
+    normalized_extensions = {e.lower() for e in extensions}
+
+    for script_file in skill_dir.rglob("*"):
+        if not script_file.is_file():
+            continue
+
+        if script_file.suffix.lower() not in normalized_extensions:
+            continue
+
+        script_full_path = str(Path(os.path.normpath(script_file)).absolute())
+
+        if not _is_path_within_directory(script_full_path, root_directory_path):
+            logger.warning(
+                "Skipping script '%s': resolves outside skill directory '%s'",
+                script_file,
+                skill_dir_path,
+            )
+            continue
+
+        if _has_symlink_in_path(script_full_path, root_directory_path):
+            logger.warning(
+                "Skipping script '%s': symlink detected in path under skill directory '%s'",
+                script_file,
+                skill_dir_path,
+            )
+            continue
+
+        rel_path = script_file.relative_to(skill_dir)
+        scripts.append(_normalize_resource_path(str(rel_path)))
+
+    return scripts
 
 
 def _validate_skill_metadata(
@@ -902,6 +1350,7 @@ def _read_file_skill_resource(skill: Skill, resource_name: str) -> str:
 def _discover_file_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
     resource_extensions: tuple[str, ...] = DEFAULT_RESOURCE_EXTENSIONS,
+    script_extensions: tuple[str, ...] = DEFAULT_SCRIPT_EXTENSIONS,
 ) -> dict[str, Skill]:
     """Discover, parse, and load all file-based skills from the given paths.
 
@@ -912,6 +1361,7 @@ def _discover_file_skills(
     Args:
         skill_paths: Directory path(s) to scan, or ``None`` to skip.
         resource_extensions: File extensions recognized as resources.
+        script_extensions: File extensions recognized as scripts.
 
     Returns:
         A dict mapping skill name → :class:`Skill`.
@@ -955,6 +1405,10 @@ def _discover_file_skills(
             reader = (lambda s, r: lambda: _read_file_skill_resource(s, r))(file_skill, rn)
             file_skill.resources.append(SkillResource(name=rn, function=reader))
 
+        # Discover and attach file-based scripts as SkillScript instances
+        for sn in _discover_script_files(skill_path, script_extensions):
+            file_skill.scripts.append(SkillScript(name=sn, path=sn))
+
         skills[file_skill.name] = file_skill
         logger.info("Loaded skill: %s", file_skill.name)
 
@@ -966,6 +1420,7 @@ def _load_skills(
     skill_paths: str | Path | Sequence[str | Path] | None,
     skills: Sequence[Skill] | None,
     resource_extensions: tuple[str, ...],
+    script_extensions: tuple[str, ...],
 ) -> dict[str, Skill]:
     """Discover and merge skills from file paths and code-defined skills.
 
@@ -977,11 +1432,12 @@ def _load_skills(
         skill_paths: Directory path(s) to scan for ``SKILL.md`` files, or ``None``.
         skills: Code-defined :class:`Skill` instances, or ``None``.
         resource_extensions: File extensions recognized as discoverable resources.
+        script_extensions: File extensions recognized as discoverable scripts.
 
     Returns:
         A dict mapping skill name → :class:`Skill`.
     """
-    result = _discover_file_skills(skill_paths, resource_extensions)
+    result = _discover_file_skills(skill_paths, resource_extensions, script_extensions)
 
     if skills:
         for code_skill in skills:
@@ -1017,19 +1473,50 @@ def _create_resource_element(resource: SkillResource) -> str:
     return f"  <resource {attrs}/>"
 
 
+def _create_script_element(script: SkillScript) -> str:
+    """Create an XML ``<script …>`` element from a :class:`SkillScript`.
+
+    When the script has a ``parameters_schema``, the element includes a
+    ``<parameters_schema>`` child element containing the JSON schema.
+    Otherwise the element is self-closing.
+
+    Args:
+        script: The script to create the element from.
+
+    Returns:
+        An indented XML element string with ``name``, optional
+        ``description`` attributes, and an optional
+        ``<parameters_schema>`` child element.
+    """
+    attrs = f'name="{xml_escape(script.name, quote=True)}"'
+    if script.description:
+        attrs += f' description="{xml_escape(script.description, quote=True)}"'
+    if script.parameters_schema:
+        params_json = xml_escape(json.dumps(script.parameters_schema), quote=False)
+        return f"  <script {attrs}>\n    <parameters_schema>{params_json}</parameters_schema>\n  </script>"
+    return f"  <script {attrs}/>"
+
+
 def _create_instructions(
     prompt_template: str | None,
     skills: dict[str, Skill],
+    include_script_runner_instructions: bool = False,
 ) -> str | None:
     """Create the system-prompt text that advertises available skills.
 
     Generates an XML list of ``<skill>`` elements (sorted by name) and
     inserts it into *prompt_template* at the ``{skills}`` placeholder.
+    When *include_script_runner_instructions* is ``True``, executor-provided
+    instructions are inserted at the ``{runner_instructions}`` placeholder.
 
     Args:
-        prompt_template: Custom template string with a ``{skills}`` placeholder,
+        prompt_template: Custom template string with ``{skills}`` and
+            optional ``{runner_instructions}`` placeholders,
             or ``None`` to use the built-in default.
         skills: Registered skills keyed by name.
+        include_script_runner_instructions: When ``True``, include
+            script-runner instructions in the generated prompt.
+            Defaults to ``False``.
 
     Returns:
         The formatted instruction string, or ``None`` when *skills* is empty.
@@ -1038,12 +1525,13 @@ def _create_instructions(
         ValueError: If *prompt_template* is not a valid format string
             (e.g. missing ``{skills}`` placeholder).
     """
+    runner_instructions = SCRIPT_RUNNER_INSTRUCTIONS if include_script_runner_instructions else None
     template = DEFAULT_SKILLS_INSTRUCTION_PROMPT
 
     if prompt_template is not None:
         # Validate that the custom template contains a valid {skills} placeholder
         try:
-            result = prompt_template.format(skills="__PROBE__")
+            result = prompt_template.format(skills="__PROBE__", runner_instructions="__EXEC_PROBE__")
         except (KeyError, IndexError, ValueError) as exc:
             raise ValueError(
                 "The provided instruction_template is not a valid format string. "
@@ -1054,6 +1542,11 @@ def _create_instructions(
         if "__PROBE__" not in result:
             raise ValueError(
                 "The provided instruction_template must contain a '{skills}' placeholder."  # noqa: RUF027
+            )
+        if runner_instructions and "__EXEC_PROBE__" not in result:
+            raise ValueError(
+                "The provided instruction_template must contain an '{runner_instructions}' placeholder "  # noqa: RUF027
+                "when a script runner is configured."
             )
         template = prompt_template
 
@@ -1068,7 +1561,10 @@ def _create_instructions(
         lines.append(f"    <description>{xml_escape(skill.description)}</description>")
         lines.append("  </skill>")
 
-    return template.format(skills="\n".join(lines))
+    return template.format(
+        skills="\n".join(lines),
+        runner_instructions=runner_instructions or "",
+    )
 
 
 # endregion

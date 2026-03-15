@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc3"
+version = "1.0.0rc4"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,27 +23,27 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0rc3",
+    "agent-framework-core[all]==1.0.0rc4",
 ]
 
 [dependency-groups]
 dev = [
-    "uv>=0.9,<1.0.0",
-    "flit>=3.12.0",
-    "ruff>=0.11.8",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.2.1",
-    "pytest-xdist[psutil]>=3.8.0",
-    "pytest-timeout>=2.3.1",
-    "pytest-retry>=1",
-    "mypy>=1.16.1",
-    "pyright>=1.1.402",
+    "uv==0.10.9",
+    "flit==3.12.0",
+    "ruff==0.15.5",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.0.0",
+    "pytest-xdist[psutil]==3.8.0",
+    "pytest-timeout==2.4.0",
+    "pytest-retry==1.7.0",
+    "mypy==1.19.1",
+    "pyright==1.1.408",
     #tasks
-    "poethepoet>=0.36.0",
-    "rich",
-    "tomli",
-    "prek>=0.3.2",
+    "poethepoet==0.42.1",
+    "rich==13.7.1",
+    "tomli==2.4.0",
+    "prek==0.3.4",
 ]
 
 [tool.uv]
@@ -53,18 +53,6 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
-]
-override-dependencies = [
-  # A conflict between the dependency of litellm[proxy] < 0.30.0, which is a dependency of agent-lightning
-  # and uvicorn >= 0.34.0, which is a dependency of tau2
-  "uvicorn==0.38.0",
-  # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
-  "websockets==15.0.1",
-  # grpcio 1.67.x has no Python 3.14 wheels; grpcio 1.76.0+ supports Python 3.14
-  # litellm constrains grpcio<1.68.0 due to resource exhaustion bug (https://github.com/grpc/grpc/issues/38290)
-  # Use version-specific overrides to satisfy both constraints
-  "grpcio>=1.76.0; python_version >= '3.14'",
-  "grpcio>=1.62.3,<1.68.0; python_version < '3.14'",
 ]
 
 [tool.uv.workspace]
@@ -149,8 +137,6 @@ ignore = [
 "**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
 "samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
 "*.ipynb" = ["CPY", "E501"]
-# RUF070: Assignment before yield is intentional - context manager must exit before yielding
-"**/agent_framework/_workflows/_workflow.py" = ["RUF070"]
 
 [tool.ruff.format]
 docstring-code-format = true
@@ -213,7 +199,7 @@ executor.type = "uv"
 [tool.poe.tasks]
 markdown-code-lint = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
 prek-install = "prek install --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit"
+install = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
 test = "python scripts/run_tasks_in_packages_if_exists.py test"
 fmt = "python scripts/run_tasks_in_packages_if_exists.py fmt"
 format.ref = "fmt"
@@ -221,8 +207,9 @@ lint = "python scripts/run_tasks_in_packages_if_exists.py lint"
 samples-lint = "ruff check samples --fix --exclude samples/autogen-migration,samples/semantic-kernel-migration --ignore E501,ASYNC,B901,TD002"
 pyright = "python scripts/run_tasks_in_packages_if_exists.py pyright"
 mypy = "python scripts/run_tasks_in_packages_if_exists.py mypy"
-samples-syntax = "pyright -p pyrightconfig.samples.json --warnings"
-typing = ["pyright", "mypy"]
+typing = "python scripts/run_tasks_in_packages_if_exists.py mypy pyright"
+samples-syntax.shell = "pyright -p $(python -c \"import sys; print('pyrightconfig.samples.py310.json' if sys.version_info < (3,11) else 'pyrightconfig.samples.json')\") --warnings"
+samples-syntax.interpreter = "posix"
 # cleaning
 clean-dist-packages = "python scripts/run_tasks_in_packages_if_exists.py clean-dist"
 clean-dist-meta = "rm -rf dist"
@@ -286,6 +273,58 @@ sequence = [
     { ref = "prek-install" }
 ]
 args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+
+[tool.poe.tasks.upgrade-dev-dependency-pins]
+cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
+
+[tool.poe.tasks.upgrade-lockfile]
+cmd = "uv lock --upgrade"
+
+[tool.poe.tasks.upgrade-dev-dependencies]
+sequence = [
+    { ref = "upgrade-dev-dependency-pins" },
+    { ref = "upgrade-lockfile" },
+    { ref = "install" },
+    { ref = "check" },
+    { ref = "typing" },
+    { ref = "test" },
+]
+
+[tool.poe.tasks.add-dependency-to-project]
+cmd = "uv add --package ${project} ${dependency}"
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.validate-dependency-bounds-test]
+shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
+args = [{ name = "project", default = "*", options = ["-p", "--project"] }]
+
+[tool.poe.tasks.validate-dependency-bounds-project]
+shell = """
+command=(python -m scripts.dependencies.validate_dependency_bounds --mode "${mode}" --package "${project}")
+if [ -n "${dependency}" ]; then
+    command+=(--dependencies "${dependency}")
+fi
+"${command[@]}"
+"""
+interpreter = "bash"
+args = [
+    { name = "mode", default = "both", options = ["-m", "--mode"] },
+    { name = "project", default = "*", options = ["-p", "--project"] },
+    { name = "dependency", default = "", options = ["-d", "--dependency"] },
+]
+
+[tool.poe.tasks.add-dependency-and-validate-bounds]
+sequence = [
+    { ref = "add-dependency-to-project --project ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-bounds-project --mode both --project ${project} --dependency ${dependency}" },
+]
+args = [
+    { name = "project", options = ["-p", "--project"] },
+    { name = "dependency", options = ["-d", "--dependency"] },
+]
 
 [tool.poe.tasks.prek-pyright]
 cmd = "uv run python scripts/run_tasks_in_changed_packages.py pyright --files ${files}"

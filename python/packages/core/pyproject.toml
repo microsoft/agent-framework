@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0rc3"
+version = "1.0.0rc4"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -24,19 +24,19 @@ classifiers = [
 ]
 dependencies = [
     # utilities
-    "typing-extensions",
+    "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     # telemetry
-    "opentelemetry-api>=1.39.0",
-    "opentelemetry-sdk>=1.39.0",
-    "opentelemetry-semantic-conventions-ai>=0.4.13",
+    "opentelemetry-api>=1.39.0,<2",
+    "opentelemetry-sdk>=1.39.0,<2",
+    "opentelemetry-semantic-conventions-ai>=0.4.13,<0.4.14",
     # connectors and functions
-    "openai>=1.99.0",
+    "openai>=1.99.0,<3",
     "azure-identity>=1,<2",
     "azure-ai-projects>=2.0.0,<3.0",
     "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1",
+    "packaging>=24.1,<25",
 ]
 
 [project.optional-dependencies]
@@ -76,15 +76,7 @@ environments = [
 fallback-version = "0.0.0"
 
 [tool.pytest.ini_options]
-testpaths = [
-    'tests',
-    'packages/core/tests',
-    'packages/a2a/tests',
-    'packages/azure-ai/tests',
-    'packages/copilotstudio/tests',
-    'packages/mem0/tests',
-    'packages/runtime/tests'
-]
+testpaths = ['tests']
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -131,7 +123,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework"
-test = "pytest -m \"not integration\" --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests"
+test = 'pytest -m "not integration" --cov=agent_framework --cov-report=term-missing:skip-covered -n auto --dist worksteal tests'
 
 [tool.flit.module]
 name = "agent_framework"

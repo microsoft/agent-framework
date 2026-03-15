@@ -16,6 +16,18 @@ from agent_framework_azure_ai_search._context_provider import AzureAISearchConte
 # -- Helpers -------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def clear_azure_search_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep tests isolated from ambient Azure Search environment variables."""
+    for key in (
+        "AZURE_SEARCH_ENDPOINT",
+        "AZURE_SEARCH_INDEX_NAME",
+        "AZURE_SEARCH_KNOWLEDGE_BASE_NAME",
+        "AZURE_SEARCH_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
 class MockSearchResults:
     """Async-iterable mock for Azure SearchClient.search() results."""
 

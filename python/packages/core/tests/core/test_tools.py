@@ -12,6 +12,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _parse_annotation,
     _parse_inputs,
@@ -124,7 +125,8 @@ async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
         return f"{query}:{max_results}"
 
     result = await search.invoke(arguments={"query": "hello", "max_results": 3})
-    assert result == "hello:3"
+    assert isinstance(result, list)
+    assert result[0].text == "hello:3"
 
 
 async def test_tool_decorator_with_json_schema_invoke_missing_required():
@@ -221,7 +223,8 @@ async def test_tool_decorator_with_schema_invoke():
         return a + b
 
     result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
-    assert result == "10"
+    assert isinstance(result, list)
+    assert result[0].text == "10"
 
 
 def test_tool_decorator_with_schema_overrides_annotations():
@@ -492,11 +495,13 @@ async def test_tool_decorator_shared_state():
 
     # Test with invoke method as well (simulating agent execution)
     result6 = await increment_tool.invoke(amount=5)
-    assert result6 == "Counter incremented by 5. New value: 60"
+    assert isinstance(result6, list)
+    assert result6[0].text == "Counter incremented by 5. New value: 60"
     assert counter_instance.counter == 60
 
     result7 = await get_value_tool.invoke()
-    assert result7 == "Current counter value: 60"
+    assert isinstance(result7, list)
+    assert result7[0].text == "Current counter value: 60"
     assert counter_instance.counter == 60
 
 
@@ -519,7 +524,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -563,7 +569,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == "3"
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -604,7 +611,8 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
         options={"model_id": "dummy"},
     )
 
-    assert result == "HELLO WORLD"
+    assert isinstance(result, list)
+    assert result[0].text == "HELLO WORLD"
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -628,7 +636,8 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == "15"
+    assert isinstance(result, list)
+    assert result[0].text == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -696,7 +705,8 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == "12"
+    assert isinstance(result, list)
+    assert result[0].text == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -932,13 +942,137 @@ async def test_ai_function_with_kwargs_injection():
         arguments=tool_with_kwargs.input_model(x=5),
         user_id="user2",
     )
-    assert result == "x=5, user=user2"
+    assert isinstance(result, list)
+    assert result[0].text == "x=5, user=user2"
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
         arguments=tool_with_kwargs.input_model(x=10),
     )
-    assert result_default == "x=10, user=unknown"
+    assert isinstance(result_default, list)
+    assert result_default[0].text == "x=10, user=unknown"
+
+
+async def test_ai_function_with_explicit_invocation_context():
+    """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
+
+    @tool
+    def tool_with_context(x: int, ctx: FunctionInvocationContext) -> str:
+        """A tool that accepts runtime context injection."""
+        user_id = ctx.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_context,
+        arguments=tool_with_context.input_model(x=7),
+        kwargs={"user_id": "ctx-user"},
+    )
+
+    result = await tool_with_context.invoke(context=context)
+
+    assert result[0].text == "x=7, user=ctx-user"
+
+
+async def test_ai_function_with_typed_context_parameter_using_custom_name():
+    """Test that typed context injection works for names other than ctx."""
+
+    @tool
+    def tool_with_runtime_context(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool that uses a custom context parameter name."""
+        user_id = runtime.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_runtime_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_runtime_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_runtime_context,
+        arguments=tool_with_runtime_context.input_model(x=8),
+        kwargs={"user_id": "runtime-user"},
+    )
+
+    result = await tool_with_runtime_context.invoke(context=context)
+
+    assert result[0].text == "x=8, user=runtime-user"
+
+
+async def test_ai_function_with_explicit_schema_and_untyped_ctx():
+    """Test that explicit schemas allow an untyped ctx parameter."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x, ctx) -> str:
+        """A tool with explicit schema and implicit ctx injection."""
+        return f"x={x}, user={ctx.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=9),
+        kwargs={"user_id": "schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert result[0].text == "x=9, user=schema-user"
+
+
+async def test_ai_function_with_explicit_schema_and_typed_ctx():
+    """Test that explicit schemas also work with typed context injection."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool with explicit schema and typed context injection."""
+        return f"x={x}, user={runtime.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=11),
+        kwargs={"user_id": "typed-schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert tool_with_schema.parameters() == ToolInput.model_json_schema()
+    assert result[0].text == "x=11, user=typed-schema-user"
+
+
+def test_ai_function_with_multiple_typed_context_parameters_fails():
+    """Test that tools reject multiple typed FunctionInvocationContext parameters."""
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool
+        def invalid_tool(ctx_one: FunctionInvocationContext, ctx_two: FunctionInvocationContext) -> str:
+            return f"{ctx_one.kwargs}-{ctx_two.kwargs}"
+
+
+def test_ai_function_with_ctx_and_typed_context_parameter_fails():
+    """Test that explicit-schema tools reject both implicit ctx and typed context parameters."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool(schema=ToolInput)
+        def invalid_tool(x, ctx, runtime: FunctionInvocationContext) -> str:
+            return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
 # region _parse_annotation tests

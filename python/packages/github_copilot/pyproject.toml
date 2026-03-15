@@ -3,8 +3,8 @@ name = "agent-framework-github-copilot"
 description = "GitHub Copilot integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
-requires-python = ">=3.11"
-version = "1.0.0b260304"
+requires-python = ">=3.10"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -15,6 +15,7 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -22,8 +23,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "github-copilot-sdk>=0.1.32",
+    "agent-framework-core>=1.0.0rc4",
+    "github-copilot-sdk>=0.1.31,<0.1.33; python_version >= '3.11'",
 ]
 
 [tool.uv]
@@ -85,8 +86,15 @@ executor.type = "uv"
 include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_github_copilot"
 test = "pytest -m \"not integration\" --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
+
+[tool.poe.tasks.pyright]
+shell = "python -c \"import sys; exit(0 if sys.version_info < (3,11) else 1)\" || pyright"
+interpreter = "posix"
+
+[tool.poe.tasks.mypy]
+shell = "python -c \"import sys; exit(0 if sys.version_info < (3,11) else 1)\" || mypy --config-file $POE_ROOT/pyproject.toml agent_framework_github_copilot"
+interpreter = "posix"
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

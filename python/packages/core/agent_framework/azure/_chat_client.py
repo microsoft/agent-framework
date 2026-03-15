@@ -172,12 +172,12 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
 
@@ -205,13 +205,13 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
             middleware: Optional sequence of middleware to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation behavior.
-            kwargs: Other keyword parameters.
 
         Examples:
             .. code-block:: python
@@ -283,10 +283,10 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             credential=credential,
             default_headers=default_headers,
             client=async_client,
+            additional_properties=additional_properties,
             instruction_role=instruction_role,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
     @override

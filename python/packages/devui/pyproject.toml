@@ -4,7 +4,7 @@ description = "Debug UI for Microsoft Agent Framework with OpenAI-compatible API
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260304"
+version = "1.0.0b260311"
 license-files = ["LICENSE"]
 urls.homepage = "https://github.com/microsoft/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,15 +23,21 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc3",
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "python-dotenv>=1.0.0",
+    "agent-framework-core>=1.0.0rc4",
+    "fastapi>=0.115.0,<0.133.1",
+    "uvicorn[standard]>=0.30.0,<0.42.0"
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0.0", "watchdog>=3.0.0", "agent-framework-orchestrations"]
-all = ["pytest>=7.0.0", "watchdog>=3.0.0"]
+dev = [
+    "pytest==9.0.2",
+    "watchdog==6.0.0",
+    "agent-framework-orchestrations==1.0.0b260304",
+]
+all = [
+    "pytest==9.0.2",
+    "watchdog==6.0.0",
+]
 
 [project.scripts]
 devui = "agent_framework_devui:main"
@@ -94,7 +100,7 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks]
 mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_devui"
-test = "pytest -m \"not integration\" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests"
+test = 'pytest -m "not integration" --cov=agent_framework_devui --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
