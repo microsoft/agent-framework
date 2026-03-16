@@ -33,6 +33,7 @@ MARKDOWN_EXCLUDES = [
     "packages/devui/frontend",
     "context_providers/azure_ai_search",
 ]
+DEFAULT_AGGREGATE_TEST_EXCLUDES = {"devui", "lab"}
 
 
 @dataclass(frozen=True)
@@ -202,7 +203,10 @@ def collect_test_dirs(projects: list[WorkspaceProject]) -> list[Path]:
         project_root = WORKSPACE_ROOT / project.path
         for directory_name in ("tests", "ag_ui_tests"):
             for test_dir in project_root.rglob(directory_name):
-                if test_dir.is_dir():
+                relative_test_dir = test_dir.relative_to(project_root)
+                # Ignore hidden/generated trees such as ``.mypy_cache`` so the
+                # aggregate sweep only targets real repository test directories.
+                if test_dir.is_dir() and not any(part.startswith(".") for part in relative_test_dir.parts):
                     test_dirs.add(test_dir)
     return sorted(test_dirs)
 
@@ -329,6 +333,15 @@ def run_aggregate_test(project_pattern: str, cov: bool, extra_args: list[str]) -
     if not projects:
         print("[yellow]No selected projects support the current Python version, skipping.[/yellow]")
         return
+
+    if project_pattern == "*":
+        # Preserve the legacy ``all-tests`` contract when ``test --all`` runs with
+        # the default selector: experimental packages stay opt-in instead of
+        # suddenly joining every PR unit-test sweep.
+        projects = [project for project in projects if project.name not in DEFAULT_AGGREGATE_TEST_EXCLUDES]
+        if not projects:
+            print("[yellow]No aggregate-test projects remain after applying default exclusions.[/yellow]")
+            return
 
     test_dirs = [relative_path(path) for path in collect_test_dirs(projects)]
     if not test_dirs:
