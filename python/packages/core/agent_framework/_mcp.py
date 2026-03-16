@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import sys
+import typing
 from abc import abstractmethod
 from collections.abc import Callable, Collection, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
@@ -61,6 +62,11 @@ class MCPSpecificApproval(TypedDict, total=False):
 logger = logging.getLogger(__name__)
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
+
+# Derive the JSON-RPC protocol version used by the MCP library from its type annotations.
+# mcp.types.JSONRPCRequest defines `jsonrpc: Literal["2.0"]`; extracting it here ensures
+# we always emit the version the library actually uses rather than a hardcoded magic string.
+_JSONRPC_PROTOCOL_VERSION: str = typing.get_args(types.JSONRPCRequest.model_fields["jsonrpc"].annotation)[0]
 
 # region: Helpers
 
@@ -937,7 +943,7 @@ class MCPTool:
             OtelAttr.MCP_METHOD_NAME: "tools/call",
             OtelAttr.TOOL_NAME: tool_name,
             OtelAttr.OPERATION: OtelAttr.TOOL_EXECUTION_OPERATION,
-            OtelAttr.JSONRPC_PROTOCOL_VERSION: "2.0",
+            OtelAttr.JSONRPC_PROTOCOL_VERSION: _JSONRPC_PROTOCOL_VERSION,
         }
         if self._mcp_protocol_version:
             span_attributes[OtelAttr.MCP_PROTOCOL_VERSION] = self._mcp_protocol_version
@@ -1035,7 +1041,7 @@ class MCPTool:
         span_attributes: dict[str, Any] = {
             OtelAttr.MCP_METHOD_NAME: "prompts/get",
             OtelAttr.PROMPT_NAME: prompt_name,
-            OtelAttr.JSONRPC_PROTOCOL_VERSION: "2.0",
+            OtelAttr.JSONRPC_PROTOCOL_VERSION: _JSONRPC_PROTOCOL_VERSION,
         }
         if self._mcp_protocol_version:
             span_attributes[OtelAttr.MCP_PROTOCOL_VERSION] = self._mcp_protocol_version

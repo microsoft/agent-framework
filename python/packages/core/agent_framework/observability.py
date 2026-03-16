@@ -1709,7 +1709,7 @@ def get_mcp_call_span(
     Returns:
         A context manager that starts the span as the current span.
     """
-    method_name = attributes.get(OtelAttr.MCP_METHOD_NAME, "mcp")
+    method_name = attributes.get(OtelAttr.MCP_METHOD_NAME, "unknown")
     target = attributes.get(OtelAttr.TOOL_NAME) or attributes.get(OtelAttr.PROMPT_NAME)
     span_name = f"{method_name} {target}" if target else method_name
     return get_tracer().start_as_current_span(
