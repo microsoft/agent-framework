@@ -46,24 +46,23 @@ async def github_mcp_example() -> None:
         "Authorization": f"Bearer {github_pat}",
     }
 
-    # 4. Create HTTP client with authentication headers
-    http_client = AsyncClient(headers=auth_headers)
-
-    # 5. Create Azure OpenAI Chat Client
+    # 4. Create Azure OpenAI Chat Client
     # For authentication, run `az login` command in terminal or replace AzureCliCredential
     # with your preferred authentication option (e.g., api_key parameter)
     client = AzureOpenAIChatClient(credential=AzureCliCredential())
 
-    # 6. Create MCP tool for GitHub with PAT authentication
-    # The MCPStreamableHTTPTool manages the connection to the MCP server and makes its tools available
-    async with MCPStreamableHTTPTool(
+    # 5. Create HTTP client with authentication headers and MCP tool for GitHub with PAT authentication.
+    # The MCPStreamableHTTPTool manages the connection to the MCP server and makes its tools available.
+    # The HTTP client is used to pass the authentication headers to the MCP server and is closed when
+    # the context manager exits.
+    async with AsyncClient(headers=auth_headers) as http_client, MCPStreamableHTTPTool(
         name="GitHub",
         description="GitHub MCP server for interacting with GitHub repositories, issues, and more",
         url="https://api.githubcopilot.com/mcp/",
         http_client=http_client,  # Pass HTTP client with authentication headers
         approval_mode="never_require",  # For sample brevity; use "always_require" in production
     ) as github_mcp_tool:
-        # 7. Create agent with the GitHub MCP tool
+        # 6. Create agent with the GitHub MCP tool
         agent = client.as_agent(
             instructions=(
                 "You are a helpful assistant that can help users interact with GitHub. "

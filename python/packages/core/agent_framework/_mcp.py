@@ -950,6 +950,7 @@ class MCPTool:
 
         with get_mcp_call_span(span_attributes) as span:
             # Try the operation, reconnecting once if the connection is closed
+            _span_error_set = False
             for attempt in range(2):
                 try:
                     # Capture the JSON-RPC request ID before the call is made.
@@ -975,9 +976,13 @@ class MCPTool:
                         error_msg = text or str(parsed)
                         span.set_attribute(OtelAttr.ERROR_TYPE, "ToolError")
                         span.set_status(trace.StatusCode.ERROR, error_msg)
+                        _span_error_set = True
                         raise ToolExecutionException(error_msg)
                     return parser(result)
-                except ToolExecutionException:
+                except ToolExecutionException as ex:
+                    if not _span_error_set:
+                        span.set_attribute(OtelAttr.ERROR_TYPE, type(ex).__name__)
+                        span.set_status(trace.StatusCode.ERROR, str(ex))
                     raise
                 except ClosedResourceError as cl_ex:
                     if attempt == 0:
