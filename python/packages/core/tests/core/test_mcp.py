@@ -2940,9 +2940,7 @@ def mcp_test_server_class():
             # MCP SDK stores _request_id as int; call_tool converts it to str for the span.
             self._mock_session._request_id = 42
             self._mock_session.call_tool = AsyncMock(
-                return_value=types.CallToolResult(
-                    content=[types.TextContent(type="text", text="ok")]
-                )
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
             )
             self._mock_session.get_prompt = AsyncMock(
                 return_value=types.GetPromptResult(
@@ -2954,9 +2952,7 @@ def mcp_test_server_class():
                     ]
                 )
             )
-            self._mock_session.list_tools = AsyncMock(
-                return_value=types.ListToolsResult(tools=[])
-            )
+            self._mock_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[]))
 
         async def connect(self):
             self.session = self._mock_session
@@ -2998,11 +2994,9 @@ async def test_call_tool_span_sets_error_on_mcp_error(span_exporter, mcp_test_se
     server = mcp_test_server_class()
     async with server:
         server._mock_session.call_tool = AsyncMock(
-            side_effect=McpError(
-                types.ErrorData(code=-32600, message="bad request")
-            )
+            side_effect=McpError(types.ErrorData(code=-32600, message="bad request"))
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ToolExecutionException):
             await server.call_tool("my_tool")
 
     spans = span_exporter.get_finished_spans()
@@ -3024,7 +3018,7 @@ async def test_call_tool_span_sets_error_on_tool_error_result(span_exporter, mcp
                 content=[types.TextContent(type="text", text="tool error")],
             )
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ToolExecutionException):
             await server.call_tool("my_tool")
 
     spans = span_exporter.get_finished_spans()
@@ -3072,7 +3066,7 @@ async def test_get_prompt_span_sets_error_on_exception(span_exporter, mcp_test_s
     server = mcp_test_server_class()
     async with server:
         server._mock_session.get_prompt = AsyncMock(side_effect=RuntimeError("fail"))
-        with pytest.raises(Exception):
+        with pytest.raises(ToolExecutionException):
             await server.get_prompt("my_prompt")
 
     spans = span_exporter.get_finished_spans()

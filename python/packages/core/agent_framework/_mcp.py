@@ -494,7 +494,7 @@ class MCPTool:
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
-        self._mcp_protocol_version: str | None = None
+        self._mcp_protocol_version: str | int | None = None
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
