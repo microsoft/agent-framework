@@ -19,9 +19,7 @@ from copilot.generated.session_events import PermissionRequest
 from copilot.types import PermissionRequestResult
 
 
-def prompt_permission(
-    request: PermissionRequest, context: dict[str, str]
-) -> PermissionRequestResult:
+def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
     print(f"\n[Permission Request: {request.kind}]")
 

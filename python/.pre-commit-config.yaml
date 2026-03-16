@@ -52,7 +52,7 @@ repos:
     hooks:
       - id: poe-check
         name: Run checks through Poe
-        entry: uv run poe prek-check
+        entry: uv run python scripts/workspace_poe_tasks.py prek-check
         language: system
   - repo: https://github.com/PyCQA/bandit
     rev: 1.9.3

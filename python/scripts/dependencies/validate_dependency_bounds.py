@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: INP001, S404, S603
+# ruff: noqa: S404, S603
 
 """Unified dependency-bound validation entrypoint.
 
@@ -8,6 +8,10 @@ Modes:
 - lower: run lower-bound expansion for one package.
 - upper: run upper-bound expansion for one package.
 - both: run lower then upper expansion for one package.
+
+Package filters intentionally reuse the root task selector semantics so the
+same short package names (for example ``core``) work in both contributor
+commands and direct debugging entrypoints.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from pathlib import Path
 
 import tomli
 from rich import print
+
 from scripts.dependencies._dependency_bounds_runtime import (
     extend_command_with_runtime_tools,
     extend_command_with_task,
@@ -33,7 +38,7 @@ from scripts.dependencies._dependency_bounds_upper_impl import (
     _load_package_name,
     _resolve_internal_editables,
 )
-from scripts.task_runner import discover_projects, extract_poe_tasks
+from scripts.task_runner import discover_projects, extract_poe_tasks, project_filter_matches
 
 _LOWER_IMPL_MODULE = "scripts.dependencies._dependency_bounds_lower_impl"
 _UPPER_IMPL_MODULE = "scripts.dependencies._dependency_bounds_upper_impl"
@@ -76,10 +81,10 @@ def _coerce_subprocess_output(output: str | bytes | None) -> str:
 
 
 def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[PackageTestPlan]:
+    """Build per-package test plans for the requested workspace selector."""
     workspace_pyproject = workspace_root / "pyproject.toml"
     package_map = _build_workspace_package_map(workspace_root)
     internal_graph = _build_internal_graph(workspace_root, package_map)
-    normalized_filter = None if package_filter in {None, "", "*"} else package_filter
 
     plans: list[PackageTestPlan] = []
     missing_tasks: list[str] = []
@@ -89,7 +94,14 @@ def _build_test_plans(workspace_root: Path, package_filter: str | None) -> list[
             continue
 
         package_name = _load_package_name(pyproject_file)
-        if normalized_filter and str(project_path) != normalized_filter and package_name != normalized_filter:
+        # Reuse the shared matcher so dependency-bound test mode accepts the
+        # same short names and legacy path-style selectors as the root Poe
+        # commands.
+        if (
+            package_filter
+            and package_filter != "*"
+            and not project_filter_matches(project_path, package_filter, [package_name])
+        ):
             continue
 
         available_tasks = extract_poe_tasks(pyproject_file)
@@ -366,7 +378,10 @@ def main() -> None:
     parser.add_argument(
         "--package",
         default=None,
-        help="Optional workspace package path/name filter for all modes. Use '*' or omit it for the whole workspace.",
+        help=(
+            "Optional workspace package selector for all modes, such as `core`. "
+            "Use '*' or omit it for the whole workspace."
+        ),
     )
     parser.add_argument(
         "--dependencies",

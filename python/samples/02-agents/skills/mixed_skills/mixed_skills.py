@@ -137,8 +137,7 @@ async def main() -> None:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? "
-            "And how many liters is a 5-gallon bucket?"
+            "How many kilometers is a marathon (26.2 miles)? And how many liters is a 5-gallon bucket?"
         )
         print(f"Agent: {response}\n")
 

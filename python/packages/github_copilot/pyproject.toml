@@ -85,14 +85,17 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
-[tool.poe.tasks]
-test = "pytest -m \"not integration\" --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = "pytest -m \"not integration\" --cov=agent_framework_github_copilot --cov-report=term-missing:skip-covered tests"
 
 [tool.poe.tasks.pyright]
+help = "Run Pyright for this package, skipping automatically on unsupported Python versions."
 shell = "python -c \"import sys; exit(0 if sys.version_info < (3,11) else 1)\" || pyright"
 interpreter = "posix"
 
 [tool.poe.tasks.mypy]
+help = "Run MyPy for this package, skipping automatically on unsupported Python versions."
 shell = "python -c \"import sys; exit(0 if sys.version_info < (3,11) else 1)\" || mypy --config-file $POE_ROOT/pyproject.toml agent_framework_github_copilot"
 interpreter = "posix"
 
