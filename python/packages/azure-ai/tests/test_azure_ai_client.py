@@ -930,14 +930,7 @@ async def test_use_latest_version_no_spurious_warning_for_empty_tools(
 
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
-    # First call fetches the latest version
-    with patch(
-        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
-        return_value={"model": "test-model", "tools": []},
-    ):
-        await client._prepare_options(messages, {})
-
-    # Subsequent call with empty tools — should NOT warn
+    # Patch logger.warning across BOTH calls — neither should warn
     with (
         patch(
             "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
@@ -945,6 +938,9 @@ async def test_use_latest_version_no_spurious_warning_for_empty_tools(
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
     ):
+        # First call fetches the latest version
+        await client._prepare_options(messages, {})
+        # Subsequent call with empty tools
         await client._prepare_options(messages, {})
 
     mock_warning.assert_not_called()
