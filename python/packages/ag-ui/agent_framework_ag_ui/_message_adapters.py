@@ -242,8 +242,16 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
             unique_messages.append(msg)
 
         else:
-            content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
-            key = (role_value, hash(content_str))
+            # Use message_id for deduplication when available — two messages with the
+            # same id are definitively the same message (e.g. upstream replays), while
+            # different messages that happen to share identical content (e.g. repeated
+            # "yes" confirmations) will have distinct ids and be preserved.
+            # Fall back to content-hash when message_id is absent or empty.
+            if msg.message_id:
+                key = ("id", msg.message_id)
+            else:
+                content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
+                key = ("content", role_value, hash(content_str))
 
             if key in seen_keys:
                 logger.info(f"Skipping duplicate message at index {idx}: role={role_value}")
