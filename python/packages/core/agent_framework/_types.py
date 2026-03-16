@@ -1298,6 +1298,22 @@ class Content:
 
         return result
 
+    def to_json(self, *, exclude_none: bool = True, exclude: set[str] | None = None, **kwargs: Any) -> str:
+        """Serialize the content to a JSON string.
+
+        This is a convenience wrapper around ``to_dict()`` that returns a JSON
+        string via ``json.dumps()``.
+
+        Keyword Args:
+            exclude_none: Whether to exclude None values. Defaults to True.
+            exclude: Field names to exclude from serialization.
+            **kwargs: Additional keyword arguments passed to ``json.dumps()``.
+
+        Returns:
+            JSON string representation of the content.
+        """
+        return json.dumps(self.to_dict(exclude_none=exclude_none, exclude=exclude), **kwargs)
+
     def __eq__(self, other: object) -> bool:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
