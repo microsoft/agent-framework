@@ -437,7 +437,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
