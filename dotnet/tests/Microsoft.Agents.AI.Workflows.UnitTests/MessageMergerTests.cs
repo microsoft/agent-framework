@@ -17,7 +17,7 @@ public class MessageMergerTests
     [Fact]
     public void Test_MessageMerger_AssemblesMessage()
     {
-        DateTimeOffset creationTime = DateTimeOffset.UtcNow;
+        DateTimeOffset creationTime = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(1));
         string responseId = Guid.NewGuid().ToString("N");
         string messageId = Guid.NewGuid().ToString("N");
 
