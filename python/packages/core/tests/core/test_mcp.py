@@ -23,6 +23,7 @@ from agent_framework import (
 )
 from agent_framework._mcp import (
     MCPTool,
+    _classify_mcp_tool_failure,
     _get_input_model_from_mcp_prompt,
     _normalize_mcp_name,
     _parse_content_from_mcp,
@@ -51,6 +52,12 @@ def test_normalize_mcp_name():
     assert _normalize_mcp_name("name with spaces") == "name-with-spaces"
     assert _normalize_mcp_name("name@with#special$chars") == "name-with-special-chars"
     assert _normalize_mcp_name("name/with\\slashes") == "name-with-slashes"
+
+
+def test_classify_mcp_tool_failure():
+    assert _classify_mcp_tool_failure("Tool not found on remote server") == "mcp_tool_missing"
+    assert _classify_mcp_tool_failure("Invalid params for schema validation") == "mcp_tool_schema_mismatch"
+    assert _classify_mcp_tool_failure("transport closed") is None
 
 
 def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
@@ -1030,6 +1037,49 @@ async def test_local_mcp_server_function_execution_error():
 
         with pytest.raises(ToolExecutionException):
             await func.invoke(param="test_value")
+
+
+async def test_local_mcp_server_schema_drift_error_is_classified_and_refreshes():
+    """Schema drift should fail closed with a stable marker and trigger a tool refresh."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                side_effect=McpError(types.ErrorData(code=-32602, message="Invalid params: schema changed"))
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        with (
+            patch.object(server, "connect", new_callable=AsyncMock) as mock_connect,
+            pytest.raises(ToolExecutionException, match=r"\[mcp_tool_schema_mismatch\]") as exc_info,
+        ):
+            await func.invoke(param="test_value")
+
+        mock_connect.assert_awaited_once_with(reset=True)
+        assert "schema changed" in str(exc_info.value)
 
 
 async def test_mcp_tool_call_tool_raises_on_is_error():

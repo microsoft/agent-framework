@@ -488,5 +488,28 @@ public sealed class DefaultMcpToolHandlerTests
         dataContent.MediaType.Should().Be("audio/*");
     }
 
+    [Theory]
+    [InlineData("Tool not found on remote server", "mcp_tool_missing")]
+    [InlineData("Invalid params: schema changed", "mcp_tool_schema_mismatch")]
+    [InlineData("Request failed validation", "mcp_tool_schema_mismatch")]
+    public void TryClassifyToolInvocationFailure_WithKnownSchemaOrToolMessages_ReturnsStableCode(
+        string message,
+        string expectedCode)
+    {
+        bool classified = DefaultMcpToolHandler.TryClassifyToolInvocationFailure(message, out string? code);
+
+        classified.Should().BeTrue();
+        code.Should().Be(expectedCode);
+    }
+
+    [Fact]
+    public void TryClassifyToolInvocationFailure_WithUnrelatedMessage_ReturnsFalse()
+    {
+        bool classified = DefaultMcpToolHandler.TryClassifyToolInvocationFailure("Socket closed unexpectedly", out string? code);
+
+        classified.Should().BeFalse();
+        code.Should().BeNull();
+    }
+
     #endregion
 }

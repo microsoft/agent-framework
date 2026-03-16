@@ -286,6 +286,17 @@ def _parse_content_from_mcp(
     return return_types
 
 
+def _classify_mcp_tool_failure(message: str) -> str | None:
+    lowered = message.lower()
+
+    if "tool not found" in lowered or "unknown tool" in lowered or "no tool named" in lowered:
+        return "mcp_tool_missing"
+    if "invalid params" in lowered or "schema" in lowered or "validation" in lowered:
+        return "mcp_tool_schema_mismatch"
+
+    return None
+
+
 def _prepare_content_for_mcp(
     content: Content,
 ) -> types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None:
@@ -637,6 +648,9 @@ class MCPTool:
             self.session = None
             self.is_connected = False
             self._exit_stack = AsyncExitStack()
+            self._functions = []
+            self._tools_loaded = False
+            self._prompts_loaded = False
         if not self.session:
             try:
                 transport = await self._exit_stack.enter_async_context(self.get_mcp_client())
@@ -1054,6 +1068,18 @@ class MCPTool:
                         inner_exception=cl_ex,
                     ) from cl_ex
             except McpError as mcp_exc:
+                failure_code = _classify_mcp_tool_failure(mcp_exc.error.message)
+                if failure_code is not None:
+                    try:
+                        await self.connect(reset=True)
+                    except Exception:
+                        logger.debug(
+                            "Failed to refresh MCP tool definitions after classified tool failure.", exc_info=True
+                        )
+                    raise ToolExecutionException(
+                        f"[{failure_code}] {mcp_exc.error.message}",
+                        inner_exception=mcp_exc,
+                    ) from mcp_exc
                 raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
             except Exception as ex:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex

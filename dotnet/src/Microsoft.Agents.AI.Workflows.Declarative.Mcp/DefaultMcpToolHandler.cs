@@ -61,10 +61,18 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
             ? null
             : arguments as IReadOnlyDictionary<string, object?> ?? new Dictionary<string, object?>(arguments);
 
-        CallToolResult result = await client.CallToolAsync(
-            toolName,
-            readOnlyArguments,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        CallToolResult result;
+        try
+        {
+            result = await client.CallToolAsync(
+                toolName,
+                readOnlyArguments,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (TryClassifyToolInvocationFailure(ex.Message, out string? failureCode))
+        {
+            throw new InvalidOperationException($"[{failureCode}] {ex.Message}", ex);
+        }
 
         // Map MCP content blocks to MEAI AIContent types
         PopulateResultContent(resultContent, result);
@@ -181,6 +189,35 @@ public sealed class DefaultMcpToolHandler : IMcpToolHandler, IAsyncDisposable
         }
 
         return hashCode.ToString(CultureInfo.InvariantCulture);
+    }
+
+    internal static bool TryClassifyToolInvocationFailure(string? message, out string? failureCode)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            failureCode = null;
+            return false;
+        }
+
+        string normalized = message.ToLowerInvariant();
+        if (normalized.Contains("tool not found", StringComparison.Ordinal) ||
+            normalized.Contains("unknown tool", StringComparison.Ordinal) ||
+            normalized.Contains("no tool named", StringComparison.Ordinal))
+        {
+            failureCode = "mcp_tool_missing";
+            return true;
+        }
+
+        if (normalized.Contains("invalid params", StringComparison.Ordinal) ||
+            normalized.Contains("schema", StringComparison.Ordinal) ||
+            normalized.Contains("validation", StringComparison.Ordinal))
+        {
+            failureCode = "mcp_tool_schema_mismatch";
+            return true;
+        }
+
+        failureCode = null;
+        return false;
     }
 
     private static void PopulateResultContent(McpServerToolResultContent resultContent, CallToolResult result)
