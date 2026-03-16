@@ -32,7 +32,7 @@ dependencies = [
 dev = [
     "pytest==9.0.2",
     "watchdog==6.0.0",
-    "agent-framework-orchestrations==1.0.0b260304",
+    "agent-framework-orchestrations==1.0.0b260311",
 ]
 all = [
     "pytest==9.0.2",
