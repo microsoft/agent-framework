@@ -43,7 +43,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         => this._sessionState.GetOrInitializeState(session).Messages.AddRange(messages);
 
     protected override ValueTask<IEnumerable<ChatMessage>> ProvideChatHistoryAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        => new(this._sessionState.GetOrInitializeState(context.Session).Messages);
+        => new(this._sessionState.GetOrInitializeState(context.Session).Messages.AsReadOnly());
 
     protected override ValueTask StoreChatHistoryAsync(InvokedContext context, CancellationToken cancellationToken = default)
     {
@@ -65,7 +65,7 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
     public IEnumerable<ChatMessage> GetAllMessages(AgentSession session)
     {
         var state = this._sessionState.GetOrInitializeState(session);
-        return state.Messages;
+        return state.Messages.AsReadOnly();
     }
 
     public void UpdateBookmark(AgentSession session)

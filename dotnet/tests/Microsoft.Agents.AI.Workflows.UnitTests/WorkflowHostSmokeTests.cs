@@ -733,7 +733,30 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
     }
 
     [Fact]
-    public async Task Test_AsAgent_OutgoingMessagesInHistoryAsync()
+    public async Task Test_SingleAgent_AsAgent_OutgoingMessagesInHistoryAsync()
+    {
+        // Arrange
+        TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
+        Workflow singleAgentWorkflow = new WorkflowBuilder(agent).Build();
+        AIAgent workflowAgent = singleAgentWorkflow.AsAIAgent();
+
+        // Act
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentResponse response = await workflowAgent.RunAsync(session);
+
+        // Assert
+        WorkflowSession workflowSession = session.Should().BeOfType<WorkflowSession>().Subject;
+
+        ChatMessage[] responseMessages = response.Messages.ToArray();
+        ChatMessage[] sessionMessages = workflowSession.ChatHistoryProvider.GetAllMessages(workflowSession).ToArray();
+
+        // Since we never sent an incoming message, the expectation is that there should be nothing in the session
+        // except the response
+        responseMessages.Should().BeEquivalentTo(sessionMessages, options => options.WithStrictOrdering());
+    }
+
+    [Fact]
+    public async Task Test_Handoffs_AsAgent_OutgoingMessagesInHistoryAsync()
     {
         // Arrange
         TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
@@ -751,6 +774,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
         ChatMessage[] sessionMessages = workflowSession.ChatHistoryProvider.GetAllMessages(workflowSession).ToArray();
 
         // Since we never sent an incoming message, the expectation is that there should be nothing in the session
-        responseMessages.Should().BeEquivalentTo(sessionMessages);
+        // except the response
+        responseMessages.Should().BeEquivalentTo(sessionMessages, options => options.WithStrictOrdering());
     }
 }
