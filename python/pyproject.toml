@@ -41,7 +41,7 @@ dev = [
     "pyright==1.1.408",
     #tasks
     "poethepoet==0.42.1",
-    "rich==13.7.1",
+    "rich==14.3.3",
     "tomli==2.4.0",
     "prek==0.3.4",
 ]
