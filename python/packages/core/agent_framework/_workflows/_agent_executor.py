@@ -60,65 +60,40 @@ class AgentExecutorResponse:
     full_conversation: list[Message]
 
 
+@dataclass
 class ContextMode:
-    """Configuration for how AgentExecutor should manage conversation context when receiving new messages."""
+    """Configuration for how AgentExecutor should manage conversation context when receiving new messages.
 
-    def __init__(
-        self,
-        filter_mode: Literal["full", "last_agent", "custom"] = "full",
-        retain_cache: bool = True,
-        messages_filter: Callable[[list[Message]], list[Message]] | None = None,
-    ):
-        """Create a ContextMode with specified filtering and cache retention behavior.
+    Attributes:
+        filter_mode: Controls which messages from a prior ``AgentExecutorResponse`` are added to
+            the cache in the ``from_response`` handler. Has no effect on other handlers
+            (``run``, ``from_str``, ``from_message``, ``from_messages``), which always
+            append their messages as-is.
 
-        Attributes:
-            filter_mode: Determines which incoming messages are included in the context provided to the agent.
-                - "full": Include all incoming messages (default).
-                - "last_agent": Include only messages from the agent response.
-                - "custom": Use the provided messages_filter callable to filter messages.
-            retain_cache: A flag indicating whether the executor should retain its internal cache upon receiving new
-                messages. If False, the cache will be cleared before processing new messages.
-            messages_filter: A callable that takes a list of incoming messages and returns a filtered list
-                to be used as context for the agent. By default, all incoming messages are included. This is only used
-                if filter_mode is set to "custom".
+            - ``"last_agent"``: Include only the agent's response messages.
+            - ``"full"``: Include the entire prior conversation. Use with caution when
+              ``retain_cache=True``, as both the existing cache and the full incoming
+              conversation will be kept, which can produce duplicates.
+        retain_cache: Whether to keep previously cached messages when new messages arrive.
+            Respected by all handlers except ``run`` (which always appends). When ``False``,
+            the cache is cleared before new messages are added, so the agent only sees the
+            latest input.
 
-        Note:
-            1. `AgentExecutorRequest` is exempt from the `ContextMode` filtering behavior: its messages are always
-            appended to the cache unfiltered, and the `should_respond` flag controls whether those messages trigger
-            an agent run.
-            2. The cache stores messages received from other executors. It stores the messages until the agent is
-            run, after which the cache is cleared and the messages are added to the full conversation context. It's
-            important for the executor to be able to stage messages because in many multiple agent workflows, one
-            agent may receive many messages from different executors before it runs.
-        """
-        self.filter_mode = filter_mode
-        self.retain_cache = retain_cache
-        self.messages_filter = messages_filter
-        if filter_mode == "custom" and messages_filter is None:
-            raise ValueError("messages_filter must be provided when filter_mode is 'custom'.")
+    Note:
+        The cache accumulates messages between agent runs. When the agent runs, the cache
+        is consumed and its contents become part of the full conversation history. This
+        staging behavior is important in multi-agent workflows where an executor may
+        receive messages from several sources before it gets a chance to run.
+    """
+
+    filter_mode: Literal["last_agent", "full"]
+    retain_cache: bool
 
     # Some common context modes
     @classmethod
     def default(cls) -> "ContextMode":
         """Default context mode that includes all incoming messages and retains cache."""
-        return cls(filter_mode="full", retain_cache=True)
-
-    @classmethod
-    def last_agent(cls, retain_cache: bool = True) -> "ContextMode":
-        """Context mode that includes only messages from the most recent agent response."""
-        return cls(filter_mode="last_agent", retain_cache=retain_cache)
-
-    @classmethod
-    def last_n(cls, n: int, retain_cache: bool = True) -> "ContextMode":
-        """Context mode that includes only the last n messages from the full conversation so far."""
-
-        def _last_n_messages(messages: list[Message]) -> list[Message]:
-            length = len(messages)
-            if length <= n:
-                return messages
-            return messages[length - n :]
-
-        return cls(filter_mode="custom", retain_cache=retain_cache, messages_filter=_last_n_messages)
+        return cls(filter_mode="last_agent", retain_cache=True)
 
 
 class AgentExecutor(Executor):
@@ -144,7 +119,7 @@ class AgentExecutor(Executor):
         *,
         session: AgentSession | None = None,
         id: str | None = None,
-        context_mode: ContextMode | None = None,
+        context_mode: ContextMode | dict[str, Any] | None = None,
     ):
         """Initialize the executor with a unique identifier.
 
@@ -162,7 +137,10 @@ class AgentExecutor(Executor):
         super().__init__(exec_id)
         self._agent = agent
         self._session = session or self._agent.create_session()
-        self._context_mode = context_mode or ContextMode.default()
+        if isinstance(context_mode, dict):
+            self._context_mode = ContextMode(**context_mode)
+        else:
+            self._context_mode = context_mode or ContextMode.default()
 
         self._pending_agent_requests: dict[str, Content] = {}
         self._pending_responses_to_agent: list[Content] = []
@@ -215,8 +193,6 @@ class AgentExecutor(Executor):
             self._cache.extend(list(prior.full_conversation))
         elif self._context_mode.filter_mode == "last_agent":
             self._cache.extend(list(prior.agent_response.messages))
-        elif self._context_mode.filter_mode == "custom":
-            self._cache.extend(list(self._context_mode.messages_filter(prior.full_conversation)))  # type: ignore
 
         await self._run_agent_and_emit(ctx)
 
@@ -252,11 +228,7 @@ class AgentExecutor(Executor):
         if not self._context_mode.retain_cache:
             self._cache.clear()
 
-        normalized_messages = normalize_messages_input(messages)
-        if self._context_mode.filter_mode == "custom":
-            normalized_messages = self._context_mode.messages_filter(normalized_messages)  # type: ignore
-
-        self._cache.extend(normalized_messages)
+        self._cache.extend(normalize_messages_input(messages))
         await self._run_agent_and_emit(ctx)
 
     @response_handler
@@ -331,24 +303,10 @@ class AgentExecutor(Executor):
             state: Checkpoint data dict
         """
         cache_payload = state.get("cache")
-        if cache_payload:
-            try:
-                self._cache = cache_payload
-            except Exception as exc:
-                logger.warning("Failed to restore cache: %s", exc)
-                self._cache = []
-        else:
-            self._cache = []
+        self._cache = cache_payload or []
 
         full_conversation_payload = state.get("full_conversation")
-        if full_conversation_payload:
-            try:
-                self._full_conversation = full_conversation_payload
-            except Exception as exc:
-                logger.warning("Failed to restore full conversation: %s", exc)
-                self._full_conversation = []
-        else:
-            self._full_conversation = []
+        self._full_conversation = full_conversation_payload or []
 
         session_payload = state.get("agent_session")
         if session_payload:
@@ -361,22 +319,13 @@ class AgentExecutor(Executor):
             self._session = self._agent.create_session()
 
         context_mode_payload = state.get("context_mode")
-        if context_mode_payload:
-            try:
-                self._context_mode = context_mode_payload
-            except Exception as exc:
-                logger.warning("Failed to restore context mode: %s", exc)
-                self._context_mode = ContextMode.default()
-        else:
-            self._context_mode = ContextMode.default()
+        self._context_mode = context_mode_payload or ContextMode.default()
 
         pending_requests_payload = state.get("pending_agent_requests")
-        if pending_requests_payload:
-            self._pending_agent_requests = pending_requests_payload
+        self._pending_agent_requests = pending_requests_payload or {}
 
         pending_responses_payload = state.get("pending_responses_to_agent")
-        if pending_responses_payload:
-            self._pending_responses_to_agent = pending_responses_payload
+        self._pending_responses_to_agent = pending_responses_payload or []
 
     def reset(self) -> None:
         """Reset the internal cache of the executor."""
