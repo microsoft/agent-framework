@@ -2096,6 +2096,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
+            add_usage_details,
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
@@ -2153,8 +2154,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if not stream:
 
             async def _get_response() -> ChatResponse[Any]:
-                from ._types import add_usage_details
-
                 nonlocal mutable_options
                 nonlocal filtered_kwargs
                 errors_in_a_row: int = 0

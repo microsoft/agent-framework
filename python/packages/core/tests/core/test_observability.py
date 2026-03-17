@@ -2873,3 +2873,51 @@ async def test_agent_invoke_span_usage_single_call(span_exporter: InMemorySpanEx
 
     assert invoke_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
     assert invoke_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(span_exporter: InMemorySpanExporter):
+    """When the function invocation loop exhausts max_iterations, the final response aggregates usage from all rounds."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient(
+        function_invocation_configuration={"max_iterations": 1},
+    )
+    client.run_responses = [
+        # Iteration 0: model returns a tool call
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "Seattle"}')
+                ],
+            ),
+            usage_details=UsageDetails(input_token_count=500, output_token_count=100),
+        ),
+        # Exhaustion path: consumed by tool_choice="none" final call (mock ignores usage)
+        ChatResponse(
+            messages=Message(role="assistant", text="placeholder"),
+            usage_details=UsageDetails(input_token_count=300, output_token_count=60),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(
+        messages="What is the weather in Seattle?",
+        options={"tools": [_get_weather], "tool_choice": "auto"},
+    )
+
+    spans = span_exporter.get_finished_spans()
+
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+    agent_span = invoke_spans[0]
+
+    # The invoke_agent span must aggregate usage from the in-loop call and the final exhaustion call
+    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 500
+    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100
