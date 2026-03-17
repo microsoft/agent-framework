@@ -211,16 +211,13 @@ public class CompactionStrategyCreateTests
             // 1 tool-call group (assistant FunctionCall + tool result = 2 messages, 1 group)
             new(ChatRole.Assistant, [new FunctionCallContent("c1", "fetch")]),
             new(ChatRole.Tool, "data"),
-            // 8 user/assistant pairs = 16 messages, 16 groups
-            new(ChatRole.User, "Q1"), new(ChatRole.Assistant, "A1"),
-            new(ChatRole.User, "Q2"), new(ChatRole.Assistant, "A2"),
-            new(ChatRole.User, "Q3"), new(ChatRole.Assistant, "A3"),
-            new(ChatRole.User, "Q4"), new(ChatRole.Assistant, "A4"),
-            new(ChatRole.User, "Q5"), new(ChatRole.Assistant, "A5"),
-            new(ChatRole.User, "Q6"), new(ChatRole.Assistant, "A6"),
-            new(ChatRole.User, "Q7"), new(ChatRole.Assistant, "A7"),
-            new(ChatRole.User, "Q8"), new(ChatRole.Assistant, "A8"),
         ];
+
+        for (int index = 0; index < 99; ++index)
+        {
+            messages.Add(new(ChatRole.User, $"Q{index}"));
+            messages.Add(new(ChatRole.Assistant, $"A{index}"));
+        }
 
         // Two separate indexes so strategies run independently.
         CompactionMessageIndex compactIndex = CompactionMessageIndex.Create(messages);

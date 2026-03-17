@@ -5,6 +5,8 @@ using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI.Compaction;
 
+#pragma warning disable IDE0001 // Simplify Names for namespace in comments
+
 /// <summary>
 /// Describes the compaction approach used by a pre-configured <see cref="CompactionStrategy"/>.
 /// </summary>
@@ -33,3 +35,5 @@ public enum CompactionApproach
     /// </summary>
     Aggressive,
 }
+
+#pragma warning restore IDE0001 // Simplify Names

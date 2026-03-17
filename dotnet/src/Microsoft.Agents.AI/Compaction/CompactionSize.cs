@@ -19,19 +19,19 @@ namespace Microsoft.Agents.AI.Compaction;
 public enum CompactionSize
 {
     /// <summary>
-    /// Targets models with smaller context windows (approximately 4,000 tokens).
+    /// Maintains a smaller context windows.
     /// Compaction triggers earlier and keeps less history in context.
     /// </summary>
     Compact,
 
     /// <summary>
-    /// Targets models with a medium-sized context window (approximately 8,000 tokens).
+    /// Maintains a a medium-sized context window.
     /// This is a reasonable default for most common models.
     /// </summary>
     Moderate,
 
     /// <summary>
-    /// Targets models with large context windows (approximately 16,000 tokens or more).
+    /// Maintains a large context windows.
     /// Compaction triggers later and retains more history in context.
     /// </summary>
     Generous,
