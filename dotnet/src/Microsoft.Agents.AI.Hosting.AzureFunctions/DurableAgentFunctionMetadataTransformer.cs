@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Agents.AI.DurableTask;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 using Microsoft.Extensions.Logging;
 
@@ -16,10 +15,6 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
     private readonly IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> _agents;
     private readonly IServiceProvider _serviceProvider;
     private readonly IFunctionsAgentOptionsProvider _functionsAgentOptionsProvider;
-
-#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
-    private static readonly string s_builtInFunctionsScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
-#pragma warning restore IL3000
 
     public DurableAgentFunctionMetadataTransformer(
         IReadOnlyDictionary<string, Func<IServiceProvider, AIAgent>> agents,
@@ -45,14 +40,14 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
 
             this._logger.LogRegisteringTriggerForAgent(agentName, "entity");
 
-            original.Add(CreateAgentTrigger(agentName));
+            original.Add(FunctionMetadataFactory.CreateEntityTrigger(agentName));
 
             if (this._functionsAgentOptionsProvider.TryGet(agentName, out FunctionsAgentOptions? agentTriggerOptions))
             {
                 if (agentTriggerOptions.HttpTrigger.IsEnabled)
                 {
                     this._logger.LogRegisteringTriggerForAgent(agentName, "http");
-                    original.Add(CreateHttpTrigger(agentName, $"agents/{agentName}/run"));
+                    original.Add(FunctionMetadataFactory.CreateHttpTrigger(agentName, $"agents/{agentName}/run", BuiltInFunctions.RunAgentHttpFunctionEntryPoint));
                 }
 
                 if (agentTriggerOptions.McpToolTrigger.IsEnabled)
@@ -63,39 +58,6 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
                 }
             }
         }
-    }
-
-    private static DefaultFunctionMetadata CreateAgentTrigger(string name)
-    {
-        return new DefaultFunctionMetadata()
-        {
-            Name = AgentSessionId.ToEntityName(name),
-            Language = "dotnet-isolated",
-            RawBindings =
-            [
-                """{"name":"encodedEntityRequest","type":"entityTrigger","direction":"In"}""",
-                """{"name":"client","type":"durableClient","direction":"In"}"""
-            ],
-            EntryPoint = BuiltInFunctions.RunAgentEntityFunctionEntryPoint,
-            ScriptFile = s_builtInFunctionsScriptFile,
-        };
-    }
-
-    private static DefaultFunctionMetadata CreateHttpTrigger(string name, string route)
-    {
-        return new DefaultFunctionMetadata()
-        {
-            Name = $"{BuiltInFunctions.HttpPrefix}{name}",
-            Language = "dotnet-isolated",
-            RawBindings =
-            [
-                $"{{\"name\":\"req\",\"type\":\"httpTrigger\",\"direction\":\"In\",\"authLevel\":\"function\",\"methods\": [\"post\"],\"route\":\"{route}\"}}",
-                "{\"name\":\"$return\",\"type\":\"http\",\"direction\":\"Out\"}",
-                "{\"name\":\"client\",\"type\":\"durableClient\",\"direction\":\"In\"}"
-            ],
-            EntryPoint = BuiltInFunctions.RunAgentHttpFunctionEntryPoint,
-            ScriptFile = s_builtInFunctionsScriptFile,
-        };
     }
 
     private static DefaultFunctionMetadata CreateMcpToolTrigger(string agentName, string? description)
@@ -112,7 +74,7 @@ internal sealed class DurableAgentFunctionMetadataTransformer : IFunctionMetadat
                 """{"name":"client","type":"durableClient","direction":"In"}"""
             ],
             EntryPoint = BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint,
-            ScriptFile = s_builtInFunctionsScriptFile,
+            ScriptFile = BuiltInFunctions.ScriptFile,
         };
     }
 }

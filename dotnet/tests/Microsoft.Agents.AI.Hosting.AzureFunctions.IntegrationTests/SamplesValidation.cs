@@ -30,6 +30,10 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
 
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
+
+    // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
+    private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
+
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "AzureFunctions"));
 
@@ -930,7 +934,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
                 }
             },
             message: "Azure Functions Core Tools is ready",
-            timeout: TimeSpan.FromSeconds(60));
+            timeout: s_functionsReadyTimeout);
     }
 
     private async Task WaitForOrchestrationCompletionAsync(Uri statusUri)
