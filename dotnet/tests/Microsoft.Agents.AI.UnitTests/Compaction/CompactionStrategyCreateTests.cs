@@ -191,18 +191,20 @@ public class CompactionStrategyCreateTests
 
     /// <summary>
     /// Verifies that <see cref="CompactionSize.Compact"/> and <see cref="CompactionSize.Moderate"/>
-    /// configure different message thresholds: 18 messages (17 groups) should trigger the Compact
-    /// ToolResultCompaction stage (threshold 10) but NOT the Moderate one (threshold 20).
+    /// configure different message thresholds. With the current factory settings, the arranged
+    /// message list (200 messages) exceeds the Compact message limit but remains below the Moderate
+    /// limit, so only the Compact ToolResultCompaction stage is expected to run.
     /// </summary>
     [Fact]
     public async Task CreateGentleSizeDifferentiatesMessageThresholdsAsync()
     {
-        // Arrange: 17 groups = 1 ToolCall + 8 User + 8 AssistantText = 18 messages.
-        //   Compact ToolResult triggers at MessagesExceed(10) → 18 > 10 → fires.
-        //   Moderate ToolResult triggers at MessagesExceed(20) → 18 < 20 → does not fire.
+        // Arrange: 1 tool-call group + 99 (User, Assistant) groups = 100 groups / 200 messages.
+        //   Compact ToolResult triggers at MessagesExceed(50)  → 200 > 50  → fires.
+        //   Moderate ToolResult triggers at MessagesExceed(500) → 200 < 500 → does not fire.
         //
-        //   With minimumPreservedGroups=16 and 17 total groups the oldest 1 group (the tool-call
-        //   group) is eligible for collapsing, making the behavioral difference observable.
+        //   The configuration preserves a number of most-recent groups, leaving the oldest
+        //   tool-call group eligible for collapsing, which makes the behavioral difference
+        //   between Compact and Moderate sizes observable in this test.
         CompactionStrategy compactPipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Compact);
         CompactionStrategy moderatePipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate);
 
@@ -228,7 +230,7 @@ public class CompactionStrategyCreateTests
         bool moderateCompacted = await moderatePipeline.CompactAsync(moderateIndex);
 
         // Assert
-        Assert.True(compactCompacted, "Compact size should trigger ToolResult compaction at 18 messages (> threshold of 10).");
-        Assert.False(moderateCompacted, "Moderate size should NOT trigger ToolResult compaction at 18 messages (< threshold of 20).");
+        Assert.True(compactCompacted, "Compact size should trigger ToolResult compaction because the transcript exceeds the Compact message threshold.");
+        Assert.False(moderateCompacted, "Moderate size should NOT trigger ToolResult compaction because the transcript does not exceed the Moderate message threshold.");
     }
 }
