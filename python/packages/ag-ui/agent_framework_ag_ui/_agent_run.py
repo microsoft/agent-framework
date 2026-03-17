@@ -1015,7 +1015,7 @@ async def run_agent_stream(
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
-                        flow.interrupts = [
+                        flow.interrupts.append(
                             {
                                 "id": str(confirm_id),
                                 "value": {
@@ -1027,7 +1027,7 @@ async def run_agent_stream(
                                     },
                                 },
                             }
-                        ]
+                        )
 
     # Close any open message
     if flow.message_id:
