@@ -8,9 +8,6 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
 
-from openai.lib.azure import AsyncAzureOpenAI
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -23,8 +20,7 @@ from agent_framework import (
     FunctionInvocationLayer,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai import OpenAIChatOptions
-from agent_framework.openai._chat_client import RawOpenAIChatClient
+from agent_framework.openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 
 from .._settings import load_settings
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
@@ -48,6 +44,8 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from openai.lib.azure import AsyncAzureOpenAI
+
     from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -290,14 +288,16 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         )
 
     @override
-    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
+    def _parse_text_from_openai(self, choice: Any) -> Content | None:
         """Parse the choice into a Content object with type='text'.
 
         Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
-        message = choice.message if isinstance(choice, Choice) else choice.delta
+        message = getattr(choice, "message", None)
+        if message is None:
+            message = getattr(choice, "delta", None)
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
         if message is None:  # type: ignore
             return None
