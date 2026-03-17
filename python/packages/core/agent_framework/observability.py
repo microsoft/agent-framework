@@ -942,8 +942,6 @@ def enable_instrumentation(
     else:
         # Re-read from current environment in case env vars were set after import (e.g. load_dotenv())
         OBSERVABILITY_SETTINGS.enable_sensitive_data = _read_bool_env("ENABLE_SENSITIVE_DATA")
-    # Also refresh enable_console_exporters so the global stays in sync with the environment
-    OBSERVABILITY_SETTINGS.enable_console_exporters = _read_bool_env("ENABLE_CONSOLE_EXPORTERS")
 
 
 def configure_otel_providers(
