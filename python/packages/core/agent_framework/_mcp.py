@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import sys
@@ -87,8 +88,6 @@ def _parse_prompt_result_from_mcp(
     Returns:
         A string representation of the prompt result.
     """
-    import json
-
     parts: list[str] = []
     for message in mcp_type.messages:
         content = message.content
@@ -194,7 +193,7 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result:
-        result.append(Content.from_text(""))
+        result.append(Content.from_text("null"))
     return result
 
 
@@ -481,6 +480,10 @@ class MCPTool:
         self.load_prompts_flag = load_prompts
         self.parse_prompt_results = parse_prompt_results
         self._exit_stack = AsyncExitStack()
+        self._lifecycle_lock = asyncio.Lock()
+        self._lifecycle_request_lock = asyncio.Lock()
+        self._lifecycle_queue: asyncio.Queue[tuple[str, bool, asyncio.Future[None]]] | None = None
+        self._lifecycle_owner_task: asyncio.Task[None] | None = None
         self.session = session
         self.request_timeout = request_timeout
         self.client = client
@@ -511,39 +514,113 @@ class MCPTool:
                 filtered_functions.append(func)
         return filtered_functions
 
+    async def _ensure_lifecycle_owner(self) -> None:
+        async with self._lifecycle_lock:
+            if self._lifecycle_owner_task is not None and not self._lifecycle_owner_task.done():
+                return
+
+            self._lifecycle_queue = asyncio.Queue()
+            self._lifecycle_owner_task = asyncio.create_task(
+                self._run_lifecycle_owner(),
+                name=f"mcp-lifecycle:{self.name}",
+            )
+
+    async def _run_lifecycle_owner(self) -> None:
+        queue = self._lifecycle_queue
+        if queue is None:
+            return
+
+        stop_error: BaseException | None = None
+        try:
+            while True:
+                action, reset, future = await queue.get()
+
+                try:
+                    if action == "connect":
+                        await self._connect_on_owner(reset=reset)
+                    elif action == "close":
+                        await self._close_on_owner()
+                    else:
+                        raise RuntimeError(f"Unknown MCP lifecycle action: {action}")
+                except asyncio.CancelledError as ex:
+                    stop_error = ex
+                    if not future.done():
+                        future.set_exception(ex)
+                    raise
+                except Exception as ex:
+                    if not future.done():
+                        future.set_exception(ex)
+                else:
+                    if not future.done():
+                        future.set_result(None)
+
+                if action == "close":
+                    return
+        except asyncio.CancelledError as ex:
+            stop_error = ex
+            raise
+        finally:
+            while True:
+                try:
+                    _, _, future = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if not future.done():
+                    future.set_exception(stop_error or RuntimeError("MCP lifecycle owner stopped unexpectedly."))
+
+            self._lifecycle_queue = None
+            self._lifecycle_owner_task = None
+
+    def _is_lifecycle_owner_task(self) -> bool:
+        owner_task = self._lifecycle_owner_task
+        return owner_task is not None and asyncio.current_task() is owner_task
+
+    async def _run_on_lifecycle_owner(self, action: str, *, reset: bool = False) -> None:
+        await self._ensure_lifecycle_owner()
+
+        if self._is_lifecycle_owner_task():
+            if action == "connect":
+                await self._connect_on_owner(reset=reset)
+            elif action == "close":
+                await self._close_on_owner()
+            else:
+                raise RuntimeError(f"Unknown MCP lifecycle action: {action}")
+            return
+
+        queue = self._lifecycle_queue
+        if queue is None:
+            raise RuntimeError("MCP lifecycle owner is not available.")
+
+        future = asyncio.get_running_loop().create_future()
+        await queue.put((action, reset, future))
+        await future
+
     async def _safe_close_exit_stack(self) -> None:
-        """Safely close the exit stack, handling cross-task boundary errors.
-
-        anyio's cancel scopes are bound to the task they were created in.
-        If aclose() is called from a different task (e.g., during streaming reconnection),
-        anyio will raise a RuntimeError or CancelledError. In this case, we log a warning
-        and allow garbage collection to clean up the resources.
-
-        Known error variants:
-        - "Attempted to exit cancel scope in a different task than it was entered in"
-        - "Attempted to exit a cancel scope that isn't the current task's current cancel scope"
-        - CancelledError from anyio cancel scope cleanup
-        """
+        """Safely close the exit stack, handling unexpected cleanup failures."""
         try:
             await self._exit_stack.aclose()
         except RuntimeError as e:
             error_msg = str(e).lower()
-            # Check for anyio cancel scope errors (multiple variants exist)
             if "cancel scope" in error_msg:
                 logger.warning(
                     "Could not cleanly close MCP exit stack due to cancel scope error. "
-                    "Old resources will be garbage collected. Error: %s",
+                    "This indicates MCP lifecycle ownership was lost. Error: %s",
                     e,
                 )
             else:
                 raise
         except asyncio.CancelledError:
-            # CancelledError can occur during cleanup when cancel scopes are involved
-            logger.warning(
-                "Could not cleanly close MCP exit stack due to cancellation. Old resources will be garbage collected."
-            )
+            logger.warning("Could not cleanly close MCP exit stack because the lifecycle owner task was cancelled.")
 
     async def connect(self, *, reset: bool = False) -> None:
+        if self._is_lifecycle_owner_task():
+            await self._connect_on_owner(reset=reset)
+            return
+
+        async with self._lifecycle_request_lock:
+            await self._run_on_lifecycle_owner("connect", reset=reset)
+
+    async def _connect_on_owner(self, *, reset: bool = False) -> None:
         """Connect to the MCP server.
 
         Establishes a connection to the MCP server, initializes the session,
@@ -845,14 +922,23 @@ class MCPTool:
                 break
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
+    async def _close_on_owner(self) -> None:
+        await self._safe_close_exit_stack()
+        self._exit_stack = AsyncExitStack()
+        self.session = None
+        self.is_connected = False
+
     async def close(self) -> None:
         """Disconnect from the MCP server.
 
         Closes the connection and cleans up resources.
         """
-        await self._safe_close_exit_stack()
-        self.session = None
-        self.is_connected = False
+        if self._is_lifecycle_owner_task():
+            await self._close_on_owner()
+            return
+
+        async with self._lifecycle_request_lock:
+            await self._run_on_lifecycle_owner("close")
 
     @abstractmethod
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
@@ -1044,7 +1130,7 @@ class MCPTool:
         except ToolException:
             raise
         except Exception as ex:
-            await self._safe_close_exit_stack()
+            await self.close()
             raise ToolExecutionException("Failed to enter context manager.", inner_exception=ex) from ex
 
     async def __aexit__(

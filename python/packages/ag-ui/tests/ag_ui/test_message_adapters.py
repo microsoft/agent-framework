@@ -1015,15 +1015,111 @@ def test_deduplicate_assistant_tool_calls():
     assert len(result) == 1
 
 
-def test_deduplicate_general_messages():
-    """Duplicate general user messages are deduplicated."""
+def test_deduplicate_by_message_id():
+    """Messages with the same message_id are deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg1.message_id = "msg-1"
+    msg2 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg2.message_id = "msg-1"
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert len(result) == 1
+    assert result == [msg1]
+
+
+def test_deduplicate_preserves_repeated_confirmations_with_distinct_ids():
+    """Identical content with different message_ids is preserved."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    assistant = Message(role="assistant", contents=[Content.from_text(text="Are you sure?")])
+    assistant.message_id = "msg-1"
+    confirm1 = Message(role="user", contents=[Content.from_text(text="yes")])
+    confirm1.message_id = "msg-2"
+    confirm2 = Message(role="user", contents=[Content.from_text(text="yes")])
+    confirm2.message_id = "msg-3"
+
+    result = _deduplicate_messages([confirm1, assistant, confirm2])
+    assert result == [confirm1, assistant, confirm2]
+
+
+def test_deduplicate_preserves_repeated_system_messages_with_distinct_ids():
+    """Non-consecutive identical system messages with different ids are preserved."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    sys1 = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
+    sys1.message_id = "msg-1"
+    user_msg = Message(role="user", contents=[Content.from_text(text="Hi")])
+    user_msg.message_id = "msg-2"
+    sys2 = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
+    sys2.message_id = "msg-3"
+
+    result = _deduplicate_messages([sys1, user_msg, sys2])
+    assert result == [sys1, user_msg, sys2]
+
+
+def test_deduplicate_skips_replayed_system_messages_with_same_id():
+    """System messages replayed with the same message_id are deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msgs = []
+    for _ in range(3):
+        m = Message(role="system", contents=[Content.from_text(text="You are a helpful assistant.")])
+        m.message_id = "msg-1"
+        msgs.append(m)
+
+    result = _deduplicate_messages(msgs)
+    assert len(result) == 1
+
+
+def test_deduplicate_without_message_id_uses_content_hash():
+    """Messages without message_id are deduplicated by content hash."""
     from agent_framework_ag_ui._message_adapters import _deduplicate_messages
 
     msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
     msg2 = Message(role="user", contents=[Content.from_text(text="Hello")])
 
     result = _deduplicate_messages([msg1, msg2])
-    assert len(result) == 1
+    assert result == [msg1]
+
+
+def test_deduplicate_without_message_id_preserves_different_content():
+    """Messages without message_id but different content are preserved."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg2 = Message(role="user", contents=[Content.from_text(text="World")])
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert result == [msg1, msg2]
+
+
+def test_deduplicate_handles_none_contents():
+    """Messages with contents=None pass through without errors; duplicates are deduped."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=None)
+    msg2 = Message(role="assistant", contents=[Content.from_text(text="Hello")])
+    msg3 = Message(role="user", contents=None)
+
+    result = _deduplicate_messages([msg1, msg2, msg3])
+    assert result == [msg1, msg2]
+
+
+def test_deduplicate_mixed_id_and_no_id():
+    """Messages with and without message_id coexist correctly."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg1.message_id = "msg-1"
+    msg2 = Message(role="user", contents=[Content.from_text(text="Hello")])  # no id
+    msg3 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg3.message_id = "msg-1"  # duplicate of msg1
+
+    result = _deduplicate_messages([msg1, msg2, msg3])
+    assert len(result) == 2
+    assert result == [msg1, msg2]
 
 
 def test_deduplicate_replaces_empty_tool_result():
@@ -1038,7 +1134,30 @@ def test_deduplicate_replaces_empty_tool_result():
     assert result[0].contents[0].result == "actual result"
 
 
-# ── Multimodal & content conversion edge cases ──
+def test_deduplicate_empty_string_message_id_falls_back_to_content_hash():
+    """Empty-string message_id is treated as missing; content-hash dedup is used."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg1.message_id = ""
+    msg2 = Message(role="user", contents=[Content.from_text(text="World")])
+    msg2.message_id = ""
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert result == [msg1, msg2], "Different content with empty IDs should both be preserved"
+
+
+def test_deduplicate_empty_string_message_id_deduplicates_same_content():
+    """Empty-string message_id with identical content should be deduplicated."""
+    from agent_framework_ag_ui._message_adapters import _deduplicate_messages
+
+    msg1 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg1.message_id = ""
+    msg2 = Message(role="user", contents=[Content.from_text(text="Hello")])
+    msg2.message_id = ""
+
+    result = _deduplicate_messages([msg1, msg2])
+    assert result == [msg1], "Same content with empty IDs should be deduplicated"
 
 
 def test_convert_agui_content_unknown_source_type_fallback():
