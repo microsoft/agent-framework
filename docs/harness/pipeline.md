@@ -10,26 +10,7 @@ What it provides:
 - **Governance** — permissions, human-in-the-loop, policies
 - **Context management** — compaction, eviction, externalization
 - **Observability** — traces, transcripts, replay
-
-### The Three-Layer Model
-
-| Layer | Question it answers | Examples |
-|---|---|---|
-| **Harness** (Control Plane) | _How_ does the agent execute? | Turn loop, checkpointing, stop conditions, context pressure, policy, tracing |
-| **Environment** (Capability Plane) | _What_ can the agent do? | Filesystem, shell, browser, APIs, artifact storage — pluggable per deployment |
-| **Persona** (Configuration) | _Who_ is the agent? | System instructions, tool visibility, risk tolerance, autonomy level, what "done" means |
-
-### Persona × Tool Matrix
-
-| Capability | Chat-Only | API Agent | Research | Coding | Ops/Infra |
-|---|---|---|---|---|---|
-| Filesystem | No | No | Optional | **Yes** | Optional |
-| Shell | No | No | No | **Yes** (sandboxed) | Restricted |
-| Web Search | No | Optional | **Yes** | Optional | No |
-| Browser | No | No | **Yes** | No | No |
-| HTTP APIs | No | **Yes** | Yes | Optional | **Yes** |
-
-### Where We Stand (Gap Analysis)
+### Where We Stand
 
 MAF compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex, and Claude Code — every one of them has these capabilities. MAF has some partially, most not at all.
 
@@ -67,15 +48,12 @@ harnessBuilder.AddCompaction(Approach.Balanced, Size.Compact, summarizingChatCli
 1. **Gentle:** Collapse old tool-call groups into short summaries (`ToolResultCompactionStrategy`)
 2. **Moderate:** LLM-based summarization of older conversation spans (`SummarizationCompactionStrategy`)
 3. **Aggressive:** Sliding window — keep only last N user turns (`SlidingWindowCompactionStrategy`)
-4. **Emergency:** Drop oldest groups until under token budget (`TruncationCompactionStrategy`)
-
-Triggers: `TokensExceed(threshold)`, `TurnsExceed(count)`, custom. Reference thresholds from competitors: 85% token capacity trigger, keep last 10%, fallback at 170K tokens / 6 messages.
 
 Open questions: What are the right defaults? How do triggers compose when multiple strategies are pipelined?
 
 ### Tools: File System / Shell
 
-Both follow the same pattern: **interface-based, with pluggable backends**. Local is the default. Remote/sandboxed is supported.
+Both should follow the same pattern: **interface-based, with pluggable backends**. Local is the default. Remote/sandboxed is supported.
 
 - **File System** — `FilesystemTool` with `read`, `write`, `edit`, `list`, `glob`, `grep`. Backed by a `FilesystemProtocol` with `LocalFilesystem` (direct access) and `HostedFilesystem` (remote sandbox). Must include path validation, traversal prevention, large-file pagination. Consider snapshot/restore for tracking changes during execution.
 
