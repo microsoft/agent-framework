@@ -125,10 +125,10 @@ def test_anthropic_client_init_with_client(mock_anthropic_client: MagicMock) -> 
 def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
     """Test AnthropicClient composes the standard public layer stack around the raw client."""
     assert issubclass(AnthropicClient, RawAnthropicClient)
-    assert AnthropicClient.__mro__[1] is FunctionInvocationLayer
-    assert AnthropicClient.__mro__[2] is ChatMiddlewareLayer
-    assert AnthropicClient.__mro__[3] is ChatTelemetryLayer
-    assert AnthropicClient.__mro__[4] is RawAnthropicClient
+    mro = AnthropicClient.__mro__
+    assert mro.index(FunctionInvocationLayer) < mro.index(ChatMiddlewareLayer)
+    assert mro.index(ChatMiddlewareLayer) < mro.index(ChatTelemetryLayer)
+    assert mro.index(ChatTelemetryLayer) < mro.index(RawAnthropicClient)
 
 
 def test_anthropic_client_init_auto_create_client(

@@ -1424,7 +1424,7 @@ def categorize_middleware(
     all_middleware: list[Any] = []
     for source in middleware_sources:
         if source:
-            if isinstance(source, list):
+            if isinstance(source, Sequence):
                 all_middleware.extend(source)  # type: ignore
             else:
                 all_middleware.append(source)
