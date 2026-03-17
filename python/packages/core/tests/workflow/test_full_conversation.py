@@ -460,10 +460,10 @@ async def test_run_request_with_full_history_clears_service_session_id() -> None
     assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_from_response_preserves_service_session_id() -> None:
-    """from_response hands off a prior agent's full conversation to the next executor.
-    The receiving executor's service_session_id is preserved so the API can continue
-    the conversation using previous_response_id."""
+async def test_from_response_clears_service_session_id_on_new_run() -> None:
+    """service_session_id set before a workflow run is cleared by the executor reset
+    that happens at the start of each run, preventing stale previous_response_id
+    from leaking between runs."""
     tool_agent = _ToolHistoryAgent(id="tool_agent2", name="ToolAgent", summary_text="Done.")
     tool_exec = AgentExecutor(tool_agent, id="tool_agent2")
 
@@ -477,4 +477,6 @@ async def test_from_response_preserves_service_session_id() -> None:
     result = await wf.run("start")
     assert result.get_outputs() is not None
 
-    assert spy_agent._captured_service_session_id == "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
+    # service_session_id is cleared at the start of run() to prevent stale
+    # previous_response_id from causing "No tool output found" errors on re-runs.
+    assert spy_agent._captured_service_session_id is None  # pyright: ignore[reportPrivateUsage]

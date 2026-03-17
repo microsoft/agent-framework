@@ -1,0 +1,749 @@
+# Copyright (c) Microsoft. All rights reserved.
+
+"""Tests for evaluator checks and LocalEvaluator."""
+
+from __future__ import annotations
+
+import inspect
+
+import pytest
+
+from agent_framework._evaluation import (
+    CheckResult,
+    EvalItem,
+    ExpectedToolCall,
+    LocalEvaluator,
+    evaluator,
+    keyword_check,
+    tool_call_args_match,
+    tool_calls_present,
+)
+from agent_framework._types import Content, Message
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_item(
+    query: str = "What's the weather in Paris?",
+    response: str = "It's sunny and 75°F",
+    expected_output: str | None = None,
+    conversation: list | None = None,
+    tools: list | None = None,
+    context: str | None = None,
+) -> EvalItem:
+    if conversation is None:
+        conversation = [Message("user", [query]), Message("assistant", [response])]
+    return EvalItem(
+        conversation=conversation,
+        expected_output=expected_output,
+        tools=tools,
+        context=context,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: (query, response) -> result
+# ---------------------------------------------------------------------------
+
+
+class TestTier1SimpleChecks:
+    @pytest.mark.asyncio
+    async def test_bool_return_true(self):
+        @evaluator
+        def has_temperature(query: str, response: str) -> bool:
+            return "°F" in response
+
+        result = await has_temperature(_make_item())
+        assert result.passed is True
+        assert result.check_name == "has_temperature"
+
+    @pytest.mark.asyncio
+    async def test_bool_return_false(self):
+        @evaluator
+        def has_celsius(query: str, response: str) -> bool:
+            return "°C" in response
+
+        result = await has_celsius(_make_item())
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_float_return_passing(self):
+        @evaluator
+        def length_score(response: str) -> float:
+            return min(len(response) / 10, 1.0)
+
+        result = await length_score(_make_item())
+        assert result.passed is True
+        assert "score=" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_float_return_failing(self):
+        @evaluator
+        def always_low(response: str) -> float:
+            return 0.1
+
+        result = await always_low(_make_item())
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_response_only(self):
+        """Function with only 'response' param should work."""
+
+        @evaluator
+        def is_short(response: str) -> bool:
+            return len(response) < 1000
+
+        result = await is_short(_make_item())
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_query_only(self):
+        """Function with only 'query' param should work."""
+
+        @evaluator
+        def is_question(query: str) -> bool:
+            return "?" in query
+
+        result = await is_question(_make_item())
+        assert result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: (query, response, expected_output) -> result
+# ---------------------------------------------------------------------------
+
+
+class TestTier2GroundTruth:
+    @pytest.mark.asyncio
+    async def test_exact_match(self):
+        @evaluator
+        def exact_match(response: str, expected_output: str) -> bool:
+            return response.strip() == expected_output.strip()
+
+        item = _make_item(response="42", expected_output="42")
+        assert (await exact_match(item)).passed is True
+
+        item2 = _make_item(response="43", expected_output="42")
+        assert (await exact_match(item2)).passed is False
+
+    @pytest.mark.asyncio
+    async def test_expected_output_defaults_to_empty(self):
+        """When expected_output is None on the item, it should be passed as ''."""
+
+        @evaluator
+        def check_expected(expected_output: str) -> bool:
+            return expected_output == ""
+
+        result = await check_expected(_make_item(expected_output=None))
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_similarity_score(self):
+        @evaluator
+        def word_overlap(response: str, expected_output: str) -> float:
+            r_words = set(response.lower().split())
+            e_words = set(expected_output.lower().split())
+            if not e_words:
+                return 1.0
+            return len(r_words & e_words) / len(e_words)
+
+        item = _make_item(response="sunny warm day", expected_output="warm sunny afternoon")
+        result = await word_overlap(item)
+        assert result.passed is True  # 2/3 overlap ≥ 0.5
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: full context (conversation, tools, context)
+# ---------------------------------------------------------------------------
+
+
+class TestTier3FullContext:
+    @pytest.mark.asyncio
+    async def test_conversation_access(self):
+        @evaluator
+        def multi_turn(query: str, response: str, *, conversation: list) -> bool:
+            return len(conversation) >= 2
+
+        item = _make_item(conversation=[Message("user", []), Message("assistant", [])])
+        assert (await multi_turn(item)).passed is True
+
+        item2 = _make_item(conversation=[Message("user", [])])
+        assert (await multi_turn(item2)).passed is False
+
+    @pytest.mark.asyncio
+    async def test_tools_access(self):
+        @evaluator
+        def has_tools(tools: list) -> bool:
+            return len(tools) > 0
+
+        mock_tool = type(
+            "MockTool",
+            (),
+            {"name": "get_weather", "description": "Get weather", "parameters": lambda self: {}},
+        )()
+        item = _make_item(tools=[mock_tool])
+        assert (await has_tools(item)).passed is True
+
+    @pytest.mark.asyncio
+    async def test_context_access(self):
+        @evaluator
+        def grounded(response: str, context: str) -> bool:
+            if not context:
+                return True
+            return any(word in response.lower() for word in context.lower().split())
+
+        item = _make_item(response="It's sunny", context="sunny warm")
+        assert (await grounded(item)).passed is True
+
+    @pytest.mark.asyncio
+    async def test_all_params(self):
+        @evaluator
+        def full_check(
+            query: str,
+            response: str,
+            expected_output: str,
+            conversation: list,
+            tools: list,
+            context: str,
+        ) -> bool:
+            return all([query, response, expected_output is not None, isinstance(conversation, list)])
+
+        item = _make_item(expected_output="foo", context="bar")
+        assert (await full_check(item)).passed is True
+
+
+# ---------------------------------------------------------------------------
+# Return type coercion
+# ---------------------------------------------------------------------------
+
+
+class TestReturnTypeCoercion:
+    @pytest.mark.asyncio
+    async def test_dict_with_score(self):
+        @evaluator
+        def scored(response: str) -> dict:
+            return {"score": 0.9, "reason": "good answer"}
+
+        result = await scored(_make_item())
+        assert result.passed is True
+        assert result.reason == "good answer"
+
+    @pytest.mark.asyncio
+    async def test_dict_with_score_below_threshold(self):
+        @evaluator
+        def low_scored(response: str) -> dict:
+            return {"score": 0.3}
+
+        result = await low_scored(_make_item())
+        assert result.passed is False
+
+    @pytest.mark.asyncio
+    async def test_dict_with_custom_threshold(self):
+        @evaluator
+        def custom_threshold(response: str) -> dict:
+            return {"score": 0.3, "threshold": 0.2}
+
+        result = await custom_threshold(_make_item())
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_dict_with_passed(self):
+        @evaluator
+        def explicit_pass(response: str) -> dict:
+            return {"passed": True, "reason": "all good"}
+
+        result = await explicit_pass(_make_item())
+        assert result.passed is True
+        assert result.reason == "all good"
+
+    @pytest.mark.asyncio
+    async def test_check_result_passthrough(self):
+        @evaluator
+        def returns_check_result(response: str) -> CheckResult:
+            return CheckResult(True, "direct result", "custom")
+
+        result = await returns_check_result(_make_item())
+        assert result.passed is True
+        assert result.reason == "direct result"
+        assert result.check_name == "custom"
+
+    @pytest.mark.asyncio
+    async def test_unsupported_return_type(self):
+        @evaluator
+        def bad_return(response: str) -> str:
+            return "oops"
+
+        with pytest.raises(TypeError, match="unsupported type"):
+            await bad_return(_make_item())
+
+    @pytest.mark.asyncio
+    async def test_int_return(self):
+        @evaluator
+        def int_score(response: str) -> int:
+            return 1
+
+        result = await int_score(_make_item())
+        assert result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# Decorator variants
+# ---------------------------------------------------------------------------
+
+
+class TestDecoratorVariants:
+    @pytest.mark.asyncio
+    async def test_decorator_no_parens(self):
+        @evaluator
+        def my_check(response: str) -> bool:
+            return True
+
+        assert (await my_check(_make_item())).passed is True
+
+    @pytest.mark.asyncio
+    async def test_decorator_with_name(self):
+        @evaluator(name="custom_name")
+        def my_check(response: str) -> bool:
+            return True
+
+        assert my_check.__name__ == "custom_name"
+        result = await my_check(_make_item())
+        assert result.check_name == "custom_name"
+
+    @pytest.mark.asyncio
+    async def test_direct_call(self):
+        def raw_fn(query: str, response: str) -> bool:
+            return len(response) > 0
+
+        check = evaluator(raw_fn, name="direct")
+        result = await check(_make_item())
+        assert result.passed is True
+        assert result.check_name == "direct"
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandling:
+    @pytest.mark.asyncio
+    async def test_unknown_required_param_raises(self):
+        @evaluator
+        def bad_params(query: str, unknown_param: str) -> bool:
+            return True
+
+        with pytest.raises(TypeError, match="unknown required parameter"):
+            await bad_params(_make_item())
+
+    @pytest.mark.asyncio
+    async def test_unknown_optional_param_ok(self):
+        @evaluator
+        def optional_unknown(query: str, foo: str = "default") -> bool:
+            return foo == "default"
+
+        result = await optional_unknown(_make_item())
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_async_function_works_with_evaluator(self):
+        """Using an async function with @evaluator should work."""
+
+        @evaluator
+        async def async_fn(response: str) -> bool:
+            return True
+
+        result = async_fn(_make_item())
+        # Should return an awaitable
+        assert inspect.isawaitable(result)
+        check_result = await result
+        assert check_result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# Integration with LocalEvaluator
+# ---------------------------------------------------------------------------
+
+
+class TestLocalEvaluatorIntegration:
+    @pytest.mark.asyncio
+    async def test_mixed_checks(self):
+        """Function evaluators mix with built-in checks in LocalEvaluator."""
+
+        @evaluator
+        def length_ok(response: str) -> bool:
+            return len(response) > 5
+
+        local = LocalEvaluator(
+            keyword_check("sunny"),
+            length_ok,
+        )
+        items = [_make_item()]
+        results = await local.evaluate(items, eval_name="mixed test")
+
+        assert results.status == "completed"
+        assert results.result_counts["passed"] == 1
+        assert results.result_counts["failed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_evaluator_failure_counted(self):
+        @evaluator
+        def always_fail(response: str) -> bool:
+            return False
+
+        local = LocalEvaluator(always_fail)
+        results = await local.evaluate([_make_item()])
+
+        assert results.result_counts["failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_multiple_evaluators(self):
+        @evaluator
+        def check_a(response: str) -> float:
+            return 0.9
+
+        @evaluator
+        def check_b(query: str, response: str, expected_output: str) -> bool:
+            return True
+
+        @evaluator(name="check_c")
+        def check_c(response: str, conversation: list) -> dict:
+            return {"score": 0.8, "reason": "looks good"}
+
+        local = LocalEvaluator(check_a, check_b, check_c)
+        results = await local.evaluate([_make_item(expected_output="test")])
+
+        assert results.result_counts["passed"] == 1
+        assert "check_a" in results.per_evaluator
+        assert "check_b" in results.per_evaluator
+        assert "check_c" in results.per_evaluator
+
+
+# ---------------------------------------------------------------------------
+# Async evaluator (via @evaluator which handles async automatically)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncFunctionEvaluator:
+    @pytest.mark.asyncio
+    async def test_async_evaluator_in_local(self):
+        @evaluator
+        async def async_check(query: str, response: str) -> bool:
+            return len(response) > 0
+
+        local = LocalEvaluator(async_check)
+        results = await local.evaluate([_make_item()])
+        assert results.result_counts["passed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_async_with_name(self):
+        @evaluator(name="named_async")
+        async def my_async(response: str) -> float:
+            return 0.75
+
+        result = await my_async(_make_item())
+        assert result.passed is True
+        assert result.check_name == "named_async"
+
+
+# ---------------------------------------------------------------------------
+# Auto-wrapping bare checks in evaluate_agent
+# ---------------------------------------------------------------------------
+
+
+class TestAutoWrapEvalChecks:
+    @pytest.mark.asyncio
+    async def test_bare_check_in_evaluators_list(self):
+        """Bare EvalCheck callables are auto-wrapped in LocalEvaluator."""
+        from agent_framework._evaluation import _run_evaluators
+
+        @evaluator
+        def is_long(response: str) -> bool:
+            return len(response.split()) > 2
+
+        items = [_make_item(response="It is sunny and warm today")]
+        results = await _run_evaluators(is_long, items, eval_name="test")
+        assert len(results) == 1
+        assert results[0].result_counts["passed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_evaluators_and_checks(self):
+        """Mix of Evaluator instances and bare checks works."""
+        from agent_framework._evaluation import _run_evaluators
+
+        @evaluator
+        def has_words(response: str) -> bool:
+            return len(response.split()) > 0
+
+        local = LocalEvaluator(keyword_check("sunny"))
+
+        items = [_make_item(response="It is sunny")]
+        results = await _run_evaluators([local, has_words], items, eval_name="test")
+        assert len(results) == 2
+        assert all(r.result_counts["passed"] == 1 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_adjacent_checks_grouped(self):
+        """Adjacent bare checks are grouped into a single LocalEvaluator."""
+        from agent_framework._evaluation import _run_evaluators
+
+        @evaluator
+        def check_a(response: str) -> bool:
+            return True
+
+        @evaluator
+        def check_b(response: str) -> bool:
+            return True
+
+        items = [_make_item()]
+        results = await _run_evaluators([check_a, check_b], items, eval_name="test")
+        # Two adjacent checks → one LocalEvaluator → one result
+        assert len(results) == 1
+        assert results[0].result_counts["passed"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Expected Tool Calls
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_call_item(
+    calls: list[tuple[str, dict | None]],
+    expected: list[ExpectedToolCall] | None = None,
+) -> EvalItem:
+    """Build an EvalItem with tool calls in the conversation."""
+    msgs: list[Message] = [Message("user", ["Do something"])]
+    for name, args in calls:
+        msgs.append(Message("assistant", [Content.from_function_call("call_" + name, name, arguments=args)]))
+    msgs.append(Message("assistant", ["Done"]))
+    return EvalItem(conversation=msgs, expected_tool_calls=expected)
+
+
+class TestExpectedToolCallType:
+    def test_name_only(self):
+        tc = ExpectedToolCall("get_weather")
+        assert tc.name == "get_weather"
+        assert tc.arguments is None
+
+    def test_name_and_args(self):
+        tc = ExpectedToolCall("get_weather", {"location": "NYC"})
+        assert tc.name == "get_weather"
+        assert tc.arguments == {"location": "NYC"}
+
+
+class TestToolCallsPresent:
+    def test_all_present(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", None), ("get_news", None)],
+            expected=[ExpectedToolCall("get_weather"), ExpectedToolCall("get_news")],
+        )
+        result = tool_calls_present(item)
+        assert result.passed is True
+        assert result.check_name == "tool_calls_present"
+
+    def test_missing_tool(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", None)],
+            expected=[ExpectedToolCall("get_weather"), ExpectedToolCall("get_news")],
+        )
+        result = tool_calls_present(item)
+        assert result.passed is False
+        assert "get_news" in result.reason
+
+    def test_extras_ok(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", None), ("get_news", None), ("get_stock", None)],
+            expected=[ExpectedToolCall("get_weather")],
+        )
+        result = tool_calls_present(item)
+        assert result.passed is True
+
+    def test_no_expected(self):
+        item = _make_tool_call_item(calls=[("get_weather", None)])
+        result = tool_calls_present(item)
+        assert result.passed is True
+        assert "No expected" in result.reason
+
+
+class TestToolCallArgsMatch:
+    def test_name_only_match(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", {"location": "NYC"})],
+            expected=[ExpectedToolCall("get_weather")],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_args_exact_match(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", {"location": "NYC", "units": "fahrenheit"})],
+            expected=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+        # Subset match — extra "units" key is OK
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_args_mismatch(self):
+        item = _make_tool_call_item(
+            calls=[("get_weather", {"location": "LA"})],
+            expected=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "args mismatch" in result.reason
+
+    def test_tool_not_called(self):
+        item = _make_tool_call_item(
+            calls=[("get_news", None)],
+            expected=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is False
+        assert "not called" in result.reason
+
+    def test_multiple_expected(self):
+        item = _make_tool_call_item(
+            calls=[
+                ("get_weather", {"location": "NYC"}),
+                ("book_flight", {"destination": "LA", "date": "tomorrow"}),
+            ],
+            expected=[
+                ExpectedToolCall("get_weather", {"location": "NYC"}),
+                ExpectedToolCall("book_flight", {"destination": "LA"}),
+            ],
+        )
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+    def test_no_expected(self):
+        item = _make_tool_call_item(calls=[("get_weather", None)])
+        result = tool_call_args_match(item)
+        assert result.passed is True
+
+
+class TestExpectedToolCallsFieldInjection:
+    """Test that @evaluator can receive expected_tool_calls via parameter injection."""
+
+    @pytest.mark.asyncio
+    async def test_injection(self):
+        @evaluator
+        def check_tools(expected_tool_calls: list) -> bool:
+            return len(expected_tool_calls) == 2
+
+        item = _make_tool_call_item(
+            calls=[],
+            expected=[ExpectedToolCall("a"), ExpectedToolCall("b")],
+        )
+        result = await check_tools(item)
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_injection_empty_default(self):
+        @evaluator
+        def check_tools(expected_tool_calls: list) -> bool:
+            return len(expected_tool_calls) == 0
+
+        item = _make_tool_call_item(calls=[])
+        result = await check_tools(item)
+        assert result.passed is True
+
+
+# ---------------------------------------------------------------------------
+# Per-item results (auditing)
+# ---------------------------------------------------------------------------
+
+
+class TestPerItemResults:
+    """LocalEvaluator should produce per-item EvalItemResult with query/response."""
+
+    @pytest.mark.asyncio
+    async def test_items_populated_with_query_and_response(self):
+        @evaluator
+        def is_sunny(response: str) -> bool:
+            return "sunny" in response.lower()
+
+        item = _make_item(query="Weather?", response="It's sunny!")
+        local = LocalEvaluator(is_sunny)
+        results = await local.evaluate([item])
+
+        assert len(results.items) == 1
+        ri = results.items[0]
+        assert ri.item_id == "0"
+        assert ri.status == "pass"
+        assert ri.input_text == "Weather?"
+        assert ri.output_text == "It's sunny!"
+        assert len(ri.scores) == 1
+        assert ri.scores[0].name == "is_sunny"
+        assert ri.scores[0].passed is True
+
+    @pytest.mark.asyncio
+    async def test_items_populated_on_failure(self):
+        @evaluator
+        def always_fail(response: str) -> bool:
+            return False
+
+        item = _make_item(query="Hello", response="World")
+        local = LocalEvaluator(always_fail)
+        results = await local.evaluate([item])
+
+        assert len(results.items) == 1
+        ri = results.items[0]
+        assert ri.status == "fail"
+        assert ri.input_text == "Hello"
+        assert ri.output_text == "World"
+        assert ri.scores[0].passed is False
+        assert ri.scores[0].score == 0.0
+
+    @pytest.mark.asyncio
+    async def test_multiple_items_indexed(self):
+        @evaluator
+        def pass_all(response: str) -> bool:
+            return True
+
+        items = [
+            _make_item(query="Q1", response="R1"),
+            _make_item(query="Q2", response="R2"),
+        ]
+        local = LocalEvaluator(pass_all)
+        results = await local.evaluate(items)
+
+        assert len(results.items) == 2
+        assert results.items[0].item_id == "0"
+        assert results.items[0].input_text == "Q1"
+        assert results.items[0].output_text == "R1"
+        assert results.items[1].item_id == "1"
+        assert results.items[1].input_text == "Q2"
+        assert results.items[1].output_text == "R2"
+
+
+# ---------------------------------------------------------------------------
+# num_repetitions validation
+# ---------------------------------------------------------------------------
+
+
+class TestNumRepetitions:
+    """Tests for the num_repetitions parameter on evaluate_agent."""
+
+    @pytest.mark.asyncio
+    async def test_num_repetitions_validation_rejects_zero(self):
+        from agent_framework._evaluation import evaluate_agent
+
+        with pytest.raises(ValueError, match="num_repetitions must be >= 1"):
+            await evaluate_agent(
+                queries=["Hello"],
+                evaluators=LocalEvaluator(keyword_check("hello")),
+                num_repetitions=0,
+            )
+
+    @pytest.mark.asyncio
+    async def test_num_repetitions_validation_rejects_negative(self):
+        from agent_framework._evaluation import evaluate_agent
+
+        with pytest.raises(ValueError, match="num_repetitions must be >= 1"):
+            await evaluate_agent(
+                queries=["Hello"],
+                evaluators=LocalEvaluator(keyword_check("hello")),
+                num_repetitions=-1,
+            )
