@@ -2832,9 +2832,7 @@ async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporte
     assert len(invoke_spans) == 1
     agent_span = invoke_spans[0]
 
-    chat_spans = [
-        s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
-    ]
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
     assert len(chat_spans) == 2
 
     # Individual chat spans retain their own usage
