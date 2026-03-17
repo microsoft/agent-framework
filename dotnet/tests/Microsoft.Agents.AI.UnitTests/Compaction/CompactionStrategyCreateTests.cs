@@ -191,9 +191,7 @@ public class CompactionStrategyCreateTests
 
     /// <summary>
     /// Verifies that <see cref="CompactionSize.Compact"/> and <see cref="CompactionSize.Moderate"/>
-    /// configure different message thresholds. With the current factory settings, the arranged
-    /// message list (200 messages) exceeds the Compact message limit but remains below the Moderate
-    /// limit, so only the Compact ToolResultCompaction stage is expected to run.
+    /// configure different message thresholds.
     /// </summary>
     [Fact]
     public async Task CreateGentleSizeDifferentiatesMessageThresholdsAsync()
@@ -230,7 +228,7 @@ public class CompactionStrategyCreateTests
         bool moderateCompacted = await moderatePipeline.CompactAsync(moderateIndex);
 
         // Assert
-        Assert.True(compactCompacted, "Compact size should trigger ToolResult compaction because the transcript exceeds the Compact message threshold.");
-        Assert.False(moderateCompacted, "Moderate size should NOT trigger ToolResult compaction because the transcript does not exceed the Moderate message threshold.");
+        Assert.True(compactCompacted, "Compact size should trigger ToolResult compaction.");
+        Assert.False(moderateCompacted, "Moderate size should NOT trigger ToolResult compaction.");
     }
 }
