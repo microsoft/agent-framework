@@ -104,15 +104,17 @@ public sealed class InMemoryChatHistoryProvider : ChatHistoryProvider
     {
         State state = this._sessionState.GetOrInitializeState(context.Session);
 
+        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
+        {
+            // Reduce existing messages before adding new messages from the current turn.
+            // This ensures messages from the current turn (including function calls and tool results)
+            // are always preserved in full and are not immediately reduced.
+            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
+        }
+
         // Add request and response messages to the provider
         var allNewMessages = context.RequestMessages.Concat(context.ResponseMessages ?? []);
         state.Messages.AddRange(allNewMessages);
-
-        if (this.ReducerTriggerEvent is InMemoryChatHistoryProviderOptions.ChatReducerTriggerEvent.AfterMessageAdded && this.ChatReducer is not null)
-        {
-            // Apply pre-write reduction strategy if configured
-            await ReduceMessagesAsync(this.ChatReducer, state, cancellationToken).ConfigureAwait(false);
-        }
     }
 
     private static async Task ReduceMessagesAsync(IChatReducer reducer, State state, CancellationToken cancellationToken = default)
