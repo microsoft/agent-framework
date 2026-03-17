@@ -16,6 +16,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// <param name="IsPartialClass">Whether the class is declared as partial.</param>
 /// <param name="DerivesFromExecutor">Whether the class derives from Executor.</param>
 /// <param name="HasManualConfigureRoutes">Whether the class has a manually defined ConfigureRoutes method.</param>
+/// <param name="BaseHasConfigureProtocol">Whether a base class already overrides ConfigureProtocol.</param>
 /// <param name="ClassLocation">Location info for diagnostics.</param>
 /// <param name="TypeName">The fully qualified type name from the attribute.</param>
 /// <param name="AttributeKind">Whether this is from a SendsMessage or YieldsOutput attribute.</param>
@@ -29,6 +30,7 @@ internal sealed record ClassProtocolInfo(
     bool IsPartialClass,
     bool DerivesFromExecutor,
     bool HasManualConfigureRoutes,
+    bool BaseHasConfigureProtocol,
     DiagnosticLocationInfo? ClassLocation,
     string TypeName,
     ProtocolAttributeKind AttributeKind)
@@ -38,5 +40,5 @@ internal sealed record ClassProtocolInfo(
     /// </summary>
     public static ClassProtocolInfo Empty { get; } = new(
         string.Empty, null, string.Empty, null, false, string.Empty,
-        false, false, false, null, string.Empty, ProtocolAttributeKind.Send);
+        false, false, false, false, null, string.Empty, ProtocolAttributeKind.Send);
 }
