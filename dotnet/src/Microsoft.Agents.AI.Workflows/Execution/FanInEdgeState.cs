@@ -37,6 +37,7 @@ internal sealed class FanInEdgeState
         List<PortableMessageEnvelope>? takenMessages = null;
 
         // Serialize concurrent calls from parallel executor tasks during superstep execution.
+        // NOTE - IMPORTANT: If this ProcessMessage method ever becomes async, replace this lock with an async friendly solution to avoid deadlocks.
         lock (this._syncLock)
         {
             this.PendingMessages.Add(new(envelope));
