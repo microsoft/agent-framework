@@ -228,11 +228,11 @@ class AnthropicClient(
         model_id: str | None = None,
         anthropic_client: AsyncAnthropic | None = None,
         additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Anthropic Agent client.
 
@@ -244,11 +244,11 @@ class AnthropicClient(
                 For instance if you need to set a different base_url for testing or private deployments.
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -319,9 +319,9 @@ class AnthropicClient(
 
         # Initialize parent
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
         # Initialize instance variables

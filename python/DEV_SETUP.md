@@ -217,10 +217,13 @@ uv run poe setup --python 3.12
 ```
 
 #### `install`
-Install all dependencies including extras and dev dependencies, including updates:
+Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
+
+For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
@@ -277,6 +280,35 @@ Lint markdown code blocks:
 ```bash
 uv run poe markdown-code-lint
 ```
+
+#### `validate-dependency-bounds-test`
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
+```bash
+uv run poe validate-dependency-bounds-test
+# Defaults to --project "*"; pass a package to scope test mode
+uv run poe validate-dependency-bounds-test --project <workspace-package-name>
+```
+
+#### `validate-dependency-bounds-project`
+Validate and extend dependency bounds for a single dependency in a single package. Use `--mode lower`, `--mode upper`, or the default `--mode both`:
+```bash
+uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
+```
+`--project` defaults to `*`, and `--dependency` is optional. Automation can use `--mode upper --project "*"` to run the upper-bound pass across the workspace.
+For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may still be a single patch or minor line, but multi-minor ranges are fine when the package's checks/tests prove they work.
+
+#### `add-dependency-and-validate-bounds`
+Add an external dependency to a workspace project and run both validators for that same project/dependency:
+```bash
+uv run poe add-dependency-and-validate-bounds --project <workspace-package-name> --dependency "<dependency-spec>"
+```
+
+#### `upgrade-dev-dependencies`
+Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+```bash
+uv run poe upgrade-dev-dependencies
+```
+Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
 ### Comprehensive Checks
 

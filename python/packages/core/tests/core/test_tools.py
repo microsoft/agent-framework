@@ -12,6 +12,7 @@ from agent_framework import (
     FunctionTool,
     tool,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
     _parse_annotation,
     _parse_inputs,
@@ -950,6 +951,128 @@ async def test_ai_function_with_kwargs_injection():
     )
     assert isinstance(result_default, list)
     assert result_default[0].text == "x=10, user=unknown"
+
+
+async def test_ai_function_with_explicit_invocation_context():
+    """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
+
+    @tool
+    def tool_with_context(x: int, ctx: FunctionInvocationContext) -> str:
+        """A tool that accepts runtime context injection."""
+        user_id = ctx.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_context,
+        arguments=tool_with_context.input_model(x=7),
+        kwargs={"user_id": "ctx-user"},
+    )
+
+    result = await tool_with_context.invoke(context=context)
+
+    assert result[0].text == "x=7, user=ctx-user"
+
+
+async def test_ai_function_with_typed_context_parameter_using_custom_name():
+    """Test that typed context injection works for names other than ctx."""
+
+    @tool
+    def tool_with_runtime_context(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool that uses a custom context parameter name."""
+        user_id = runtime.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_runtime_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_runtime_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_runtime_context,
+        arguments=tool_with_runtime_context.input_model(x=8),
+        kwargs={"user_id": "runtime-user"},
+    )
+
+    result = await tool_with_runtime_context.invoke(context=context)
+
+    assert result[0].text == "x=8, user=runtime-user"
+
+
+async def test_ai_function_with_explicit_schema_and_untyped_ctx():
+    """Test that explicit schemas allow an untyped ctx parameter."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x, ctx) -> str:
+        """A tool with explicit schema and implicit ctx injection."""
+        return f"x={x}, user={ctx.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=9),
+        kwargs={"user_id": "schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert result[0].text == "x=9, user=schema-user"
+
+
+async def test_ai_function_with_explicit_schema_and_typed_ctx():
+    """Test that explicit schemas also work with typed context injection."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool with explicit schema and typed context injection."""
+        return f"x={x}, user={runtime.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=11),
+        kwargs={"user_id": "typed-schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert tool_with_schema.parameters() == ToolInput.model_json_schema()
+    assert result[0].text == "x=11, user=typed-schema-user"
+
+
+def test_ai_function_with_multiple_typed_context_parameters_fails():
+    """Test that tools reject multiple typed FunctionInvocationContext parameters."""
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool
+        def invalid_tool(ctx_one: FunctionInvocationContext, ctx_two: FunctionInvocationContext) -> str:
+            return f"{ctx_one.kwargs}-{ctx_two.kwargs}"
+
+
+def test_ai_function_with_ctx_and_typed_context_parameter_fails():
+    """Test that explicit-schema tools reject both implicit ctx and typed context parameters."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool(schema=ToolInput)
+        def invalid_tool(x, ctx, runtime: FunctionInvocationContext) -> str:
+            return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
 # region _parse_annotation tests

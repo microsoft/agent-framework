@@ -157,8 +157,8 @@ public sealed class FunctionTriggers
 
         this._logger.LogInformation(
             "Resuming stream for conversation {ConversationId} from cursor: {Cursor}",
-            conversationId,
-            cursor ?? "(beginning)");
+            SanitizeLogValue(conversationId),
+            SanitizeLogValue(cursor) ?? "(beginning)");
 
         // Check Accept header to determine response format
         // text/plain = raw text output (ideal for terminals)
@@ -205,7 +205,7 @@ public sealed class FunctionTriggers
             {
                 if (chunk.Error != null)
                 {
-                    this._logger.LogWarning("Stream error for conversation {ConversationId}: {Error}", conversationId, chunk.Error);
+                    this._logger.LogWarning("Stream error for conversation {ConversationId}: {Error}", SanitizeLogValue(conversationId), chunk.Error);
                     await WriteErrorAsync(httpContext.Response, chunk.Error, useSseFormat, cancellationToken);
                     break;
                 }
@@ -224,7 +224,7 @@ public sealed class FunctionTriggers
         }
         catch (OperationCanceledException)
         {
-            this._logger.LogInformation("Client disconnected from stream {ConversationId}", conversationId);
+            this._logger.LogInformation("Client disconnected from stream {ConversationId}", SanitizeLogValue(conversationId));
         }
 
         return new EmptyResult();
@@ -315,5 +315,21 @@ public sealed class FunctionTriggers
         sb.AppendLine(); // Empty line marks end of event
 
         await response.WriteAsync(sb.ToString());
+    }
+
+    /// <summary>
+    /// Sanitizes a user-provided value for safe inclusion in log entries
+    /// by removing control characters that could be used for log forging.
+    /// </summary>
+    private static string? SanitizeLogValue(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return value
+            .Replace("\r", string.Empty, StringComparison.Ordinal)
+            .Replace("\n", string.Empty, StringComparison.Ordinal);
     }
 }

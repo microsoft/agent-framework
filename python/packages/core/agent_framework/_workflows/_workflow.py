@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: RUF070, RUF100
 from __future__ import annotations
 
 import asyncio
