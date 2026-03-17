@@ -1711,41 +1711,23 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
 
 
-def test_content_from_json() -> None:
-    """Test Content.from_json creates a Content instance from a JSON string."""
-    json_str = json.dumps({"type": "text", "text": "Hello world"})
-    content = Content.from_json(json_str)
+def test_content_from_dict_via_json() -> None:
+    """Test Content.from_dict with data parsed from a JSON string."""
+    data = json.loads(json.dumps({"type": "text", "text": "Hello world"}))
+    content = Content.from_dict(data)
     assert content.type == "text"
     assert content.text == "Hello world"
 
 
-def test_content_from_json_roundtrip() -> None:
-    """Test Content.from_json roundtrip via to_dict and json.dumps."""
+def test_content_from_dict_roundtrip_via_json() -> None:
+    """Test Content.from_dict roundtrip via to_dict and json.dumps."""
     original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
-    json_str = json.dumps(original.to_dict())
-    restored = Content.from_json(json_str)
+    data = json.loads(json.dumps(original.to_dict()))
+    restored = Content.from_dict(data)
     assert restored.type == "function_call"
     assert restored.call_id == "call1"
     assert restored.name == "my_func"
     assert restored.arguments == {"key": "value"}
-
-
-def test_content_from_json_invalid_missing_type() -> None:
-    """Test Content.from_json raises ValueError on missing type."""
-    with pytest.raises(ValueError, match="Content mapping requires 'type'"):
-        Content.from_json(json.dumps({"text": "missing type"}))
-
-
-def test_content_from_json_invalid_non_object() -> None:
-    """Test Content.from_json raises ValueError on non-object JSON."""
-    with pytest.raises(ValueError, match="Expected a JSON object"):
-        Content.from_json("[1, 2, 3]")
-
-
-def test_content_from_json_invalid_malformed() -> None:
-    """Test Content.from_json raises ValueError on malformed JSON."""
-    with pytest.raises(ValueError, match="Invalid JSON"):
-        Content.from_json("{not valid json")
 
 
 def test_content_to_dict_exclude_none() -> None:

@@ -1315,17 +1315,6 @@ class Content:
         return f"Content(type={self.type})"
 
     @classmethod
-    def from_json(cls: type[ContentT], value: str) -> ContentT:
-        """Create a Content instance from a JSON string."""
-        try:
-            data = json.loads(value)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}") from e
-        if not isinstance(data, dict):
-            raise ValueError(f"Expected a JSON object, got {type(data).__name__}")
-        return cls.from_dict(cast(dict[str, Any], data))
-
-    @classmethod
     def from_dict(cls: type[ContentT], data: Mapping[str, Any]) -> ContentT:
         """Create a Content instance from a mapping."""
         if not (content_type := data.get("type")):
