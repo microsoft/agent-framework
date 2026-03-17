@@ -65,7 +65,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     {
         if (!this._userInputHandler!.MarkRequestAsHandled(response.RequestId))
         {
-            throw new InvalidOperationException($"No pending UserInputRequest found with id '{response.RequestId}'.");
+            throw new InvalidOperationException($"No pending ToolApprovalRequest found with id '{response.RequestId}'.");
         }
 
         List<ChatMessage> implicitTurnMessages = [new ChatMessage(ChatRole.User, [response])];

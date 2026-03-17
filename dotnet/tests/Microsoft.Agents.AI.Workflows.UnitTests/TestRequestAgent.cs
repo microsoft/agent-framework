@@ -183,12 +183,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
     {
         public ToolApprovalResponseContent CreatePairedResponse(ToolApprovalRequestContent request)
         {
-            if (request is not ToolApprovalRequestContent approvalRequest)
-            {
-                throw new InvalidOperationException($"Invalid request: Expecting {typeof(ToolApprovalResponseContent)}, got {request.GetType()}");
-            }
-
-            return new ToolApprovalResponseContent(approvalRequest.RequestId, true, approvalRequest.ToolCall);
+            return new ToolApprovalResponseContent(request.RequestId, true, request.ToolCall);
         }
 
         public IEnumerable<(string, ToolApprovalRequestContent)> CreateRequests(int count)
@@ -205,18 +200,8 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
         {
             if (session.UnservicedRequests.TryGetValue(response.RequestId, out ToolApprovalRequestContent? request))
             {
-                if (request is not ToolApprovalRequestContent approvalRequest)
-                {
-                    throw new InvalidOperationException($"Invalid request: Expecting {typeof(ToolApprovalResponseContent)}, got {request.GetType()}");
-                }
-
-                if (response is not ToolApprovalResponseContent approvalResponse)
-                {
-                    throw new InvalidOperationException($"Invalid response: Expecting {typeof(ToolApprovalResponseContent)}, got {response.GetType()}");
-                }
-
-                approvalResponse.Approved.Should().BeTrue();
-            ((FunctionCallContent)approvalResponse.ToolCall).Should().Be((FunctionCallContent)approvalRequest.ToolCall);
+                response.Approved.Should().BeTrue();
+                ((FunctionCallContent)response.ToolCall).Should().Be((FunctionCallContent)request.ToolCall);
                 session.ServicedRequests.Add(response.RequestId);
                 session.UnservicedRequests.Remove(response.RequestId);
             }
