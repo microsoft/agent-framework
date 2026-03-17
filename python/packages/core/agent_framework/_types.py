@@ -70,6 +70,21 @@ def _parse_content_list(contents_data: Sequence[Any]) -> list[Content]:
     return contents
 
 
+def normalize_function_call_arguments(
+    arguments: str | Mapping[str, Any] | None,
+) -> str | dict[str, Any] | None:
+    """Normalize provider tool-call arguments to a mapping when possible."""
+    if not isinstance(arguments, str):
+        return dict(arguments) if isinstance(arguments, Mapping) else arguments
+
+    try:
+        loaded = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return arguments
+
+    return loaded if isinstance(loaded, dict) else arguments
+
+
 # region Internal Helper functions for unified Content
 
 

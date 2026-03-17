@@ -862,6 +862,32 @@ def test_function_approval_content_is_skipped_in_preparation(
     assert prepared_mixed[0]["content"] == "I need approval for this action."
 
 
+def test_parse_tool_calls_from_openai_normalizes_json_object_arguments(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    client = OpenAIChatClient()
+
+    mock_tool_function = MagicMock()
+    mock_tool_function.name = "get_weather"
+    mock_tool_function.arguments = '{"city": "Seattle"}'
+
+    mock_tool = MagicMock()
+    mock_tool.id = "call_123"
+    mock_tool.function = mock_tool_function
+
+    mock_message = MagicMock()
+    mock_message.tool_calls = [mock_tool]
+
+    mock_choice = MagicMock()
+    mock_choice.delta = mock_message
+
+    contents = client._parse_tool_calls_from_openai(mock_choice)
+
+    assert len(contents) == 1
+    assert contents[0].type == "function_call"
+    assert contents[0].arguments == {"city": "Seattle"}
+
+
 def test_usage_content_in_streaming_response(
     openai_unit_test_env: dict[str, str],
 ) -> None:

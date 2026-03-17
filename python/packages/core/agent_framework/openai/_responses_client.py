@@ -73,6 +73,7 @@ from .._types import (
     TextSpanRegion,
     UsageDetails,
     detect_media_type_from_base64,
+    normalize_function_call_arguments,
     prepend_instructions_to_messages,
     validate_tool_mode,
 )
@@ -1523,7 +1524,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         Content.from_function_call(
                             call_id=item.call_id,
                             name=item.name,
-                            arguments=item.arguments,
+                            arguments=normalize_function_call_arguments(item.arguments),
                             additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
@@ -1535,7 +1536,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             function_call=Content.from_function_call(
                                 call_id=item.id,
                                 name=item.name,
-                                arguments=item.arguments,
+                                arguments=normalize_function_call_arguments(item.arguments),
                                 additional_properties={"server_label": item.server_label},
                                 raw_representation=item,
                             ),
@@ -1915,7 +1916,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 function_call=Content.from_function_call(
                                     call_id=event_item.id,
                                     name=event_item.name,
-                                    arguments=event_item.arguments,
+                                    arguments=normalize_function_call_arguments(event_item.arguments),
                                     additional_properties={"server_label": event_item.server_label},
                                     raw_representation=event_item,
                                 ),
