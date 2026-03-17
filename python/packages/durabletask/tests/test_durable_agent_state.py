@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 
 import pytest
-from agent_framework import Content, UsageDetails
+from agent_framework import Content, Message, UsageDetails
 
 from agent_framework_durabletask._durable_agent_state import (
     DurableAgentState,
@@ -433,6 +433,16 @@ class TestDurableAgentStateUnknownContent:
 
         assert unknown.content == {"some": "data"}
 
+    def test_unknown_content_to_ai_content_fallback_on_invalid_type_dict(self) -> None:
+        """Test that to_ai_content falls back when dict has 'type' but is not valid Content."""
+        invalid = {"type": "bogus_not_a_real_content_type", "extra": "stuff"}
+        unknown = DurableAgentStateUnknownContent(content=invalid)
+
+        result = unknown.to_ai_content()
+
+        assert result.type == "unknown"
+        assert result.additional_properties == {"content": invalid}
+
     def test_from_ai_content_unknown_type_produces_serializable_state(self) -> None:
         """Test that unknown content types in message conversion produce JSON-serializable state."""
         content = Content.from_mcp_server_tool_call(
@@ -463,7 +473,7 @@ class TestDurableAgentStateUnknownContent:
             arguments={"query": "azure functions"},
         )
         message = DurableAgentStateMessage.from_chat_message(
-            __import__("agent_framework").Message(role="assistant", contents=[mcp_content])
+            Message(role="assistant", contents=[mcp_content])
         )
         state.data.conversation_history.append(
             DurableAgentStateRequest(

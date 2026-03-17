@@ -1711,28 +1711,6 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
 
 
-def test_content_to_json() -> None:
-    """Test Content.to_json serializes to a JSON string."""
-    content = Content.from_text("Hello world")
-    json_str = content.to_json()
-    parsed = json.loads(json_str)
-    assert parsed["type"] == "text"
-    assert parsed["text"] == "Hello world"
-
-
-def test_content_to_json_exclude_none() -> None:
-    """Test Content.to_json excludes None fields by default."""
-    content = Content.from_text("Hello")
-    json_str = content.to_json()
-    parsed = json.loads(json_str)
-    assert "uri" not in parsed
-
-    json_str_with_none = content.to_json(exclude_none=False)
-    parsed_with_none = json.loads(json_str_with_none)
-    assert "uri" in parsed_with_none
-    assert parsed_with_none["uri"] is None
-
-
 def test_content_from_json() -> None:
     """Test Content.from_json creates a Content instance from a JSON string."""
     json_str = json.dumps({"type": "text", "text": "Hello world"})
@@ -1741,10 +1719,10 @@ def test_content_from_json() -> None:
     assert content.text == "Hello world"
 
 
-def test_content_json_roundtrip() -> None:
-    """Test Content.to_json and Content.from_json roundtrip."""
+def test_content_from_json_roundtrip() -> None:
+    """Test Content.from_json roundtrip via to_dict and json.dumps."""
     original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
-    json_str = original.to_json()
+    json_str = json.dumps(original.to_dict())
     restored = Content.from_json(json_str)
     assert restored.type == "function_call"
     assert restored.call_id == "call1"
@@ -1752,10 +1730,44 @@ def test_content_json_roundtrip() -> None:
     assert restored.arguments == {"key": "value"}
 
 
-def test_content_from_json_invalid() -> None:
-    """Test Content.from_json raises on invalid input."""
+def test_content_from_json_invalid_missing_type() -> None:
+    """Test Content.from_json raises ValueError on missing type."""
     with pytest.raises(ValueError, match="Content mapping requires 'type'"):
         Content.from_json(json.dumps({"text": "missing type"}))
+
+
+def test_content_from_json_invalid_non_object() -> None:
+    """Test Content.from_json raises ValueError on non-object JSON."""
+    with pytest.raises(ValueError, match="Expected a JSON object"):
+        Content.from_json("[1, 2, 3]")
+
+
+def test_content_from_json_invalid_malformed() -> None:
+    """Test Content.from_json raises ValueError on malformed JSON."""
+    with pytest.raises(ValueError, match="Invalid JSON"):
+        Content.from_json("{not valid json")
+
+
+def test_content_to_dict_exclude_none() -> None:
+    """Test Content.to_dict excludes None fields by default."""
+    content = Content.from_text("Hello")
+    d = content.to_dict()
+    parsed = json.loads(json.dumps(d))
+    assert "uri" not in parsed
+
+    d_with_none = content.to_dict(exclude_none=False)
+    parsed_with_none = json.loads(json.dumps(d_with_none))
+    assert "uri" in parsed_with_none
+    assert parsed_with_none["uri"] is None
+
+
+def test_content_to_dict_exclude_fields() -> None:
+    """Test Content.to_dict with explicit field exclusion."""
+    content = Content.from_text("Hello")
+    d = content.to_dict(exclude={"text"})
+    parsed = json.loads(json.dumps(d))
+    assert "text" not in parsed
+    assert parsed["type"] == "text"
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:

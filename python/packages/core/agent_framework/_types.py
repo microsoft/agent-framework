@@ -1298,10 +1298,6 @@ class Content:
 
         return result
 
-    def to_json(self, *, exclude_none: bool = True, exclude: set[str] | None = None, **kwargs: Any) -> str:
-        """Serialize the content to a JSON string."""
-        return json.dumps(self.to_dict(exclude_none=exclude_none, exclude=exclude), **kwargs)
-
     def __eq__(self, other: object) -> bool:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
@@ -1321,7 +1317,12 @@ class Content:
     @classmethod
     def from_json(cls: type[ContentT], value: str) -> ContentT:
         """Create a Content instance from a JSON string."""
-        data = json.loads(value)
+        try:
+            data = json.loads(value)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}") from e
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected a JSON object, got {type(data).__name__}")
         return cls.from_dict(data)
 
     @classmethod
