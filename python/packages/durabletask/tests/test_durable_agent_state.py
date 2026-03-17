@@ -472,9 +472,7 @@ class TestDurableAgentStateUnknownContent:
             server_name="learn-mcp",
             arguments={"query": "azure functions"},
         )
-        message = DurableAgentStateMessage.from_chat_message(
-            Message(role="assistant", contents=[mcp_content])
-        )
+        message = DurableAgentStateMessage.from_chat_message(Message(role="assistant", contents=[mcp_content]))
         state.data.conversation_history.append(
             DurableAgentStateRequest(
                 correlation_id="test-mcp",
