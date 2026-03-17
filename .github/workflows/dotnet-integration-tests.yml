@@ -50,7 +50,7 @@ jobs:
           echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
 
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v5.1.0
+        uses: actions/setup-dotnet@v5.2.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
 
