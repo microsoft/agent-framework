@@ -62,6 +62,12 @@ internal sealed class WorkflowChatHistoryProvider : ChatHistoryProvider
         }
     }
 
+    public IEnumerable<ChatMessage> GetAllMessages(AgentSession session)
+    {
+        var state = this._sessionState.GetOrInitializeState(session);
+        return state.Messages;
+    }
+
     public void UpdateBookmark(AgentSession session)
     {
         var state = this._sessionState.GetOrInitializeState(session);
