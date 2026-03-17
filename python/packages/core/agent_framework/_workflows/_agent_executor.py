@@ -287,9 +287,12 @@ class AgentExecutor(Executor):
             self._pending_responses_to_agent = pending_responses_payload
 
     def reset(self) -> None:
-        """Reset the internal cache of the executor."""
-        logger.debug("AgentExecutor %s: Resetting cache", self.id)
+        """Reset the internal cache and service session state of the executor for a new run."""
+        logger.debug("AgentExecutor %s: Resetting cache and service session", self.id)
         self._cache.clear()
+        # Clear service_session_id to prevent stale previous_response_id
+        # from leaking between workflow runs (e.g. in evaluate_workflow loops).
+        self._session.service_session_id = None
 
     async def _run_agent_and_emit(
         self,

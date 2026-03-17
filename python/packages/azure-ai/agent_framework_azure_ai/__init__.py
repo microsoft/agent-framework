@@ -11,6 +11,11 @@ from ._embedding_client import (
     AzureAIInferenceEmbeddingSettings,
     RawAzureAIInferenceEmbeddingClient,
 )
+from ._foundry_evals import (
+    FoundryEvals,
+    evaluate_foundry_target,
+    evaluate_traces,
+)
 from ._foundry_memory_provider import FoundryMemoryProvider
 from ._project_provider import AzureAIProjectAgentProvider
 from ._shared import AzureAISettings
@@ -31,8 +36,11 @@ __all__ = [
     "AzureAIProjectAgentOptions",
     "AzureAIProjectAgentProvider",
     "AzureAISettings",
+    "FoundryEvals",
     "FoundryMemoryProvider",
     "RawAzureAIClient",
     "RawAzureAIInferenceEmbeddingClient",
     "__version__",
+    "evaluate_foundry_target",
+    "evaluate_traces",
 ]

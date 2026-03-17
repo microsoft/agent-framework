@@ -639,7 +639,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 client=client,
                 name="reasoning-agent",
                 instructions="You are a reasoning assistant.",
-                options={
+                default_options={
                     "temperature": 0.7,
                     "max_tokens": 500,
                     "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
@@ -697,6 +697,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 If both this and a tokenizer on the underlying client are set, this one is used.
             kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
         """
+        # Accept 'options' as an alias for 'default_options' so that
+        # Agent(options={"store": False}) works as expected instead of
+        # silently dropping the options into additional_properties.
+        if "options" in kwargs and default_options is None:
+            default_options = kwargs.pop("options")
+
         opts = dict(default_options) if default_options else {}
 
         if not isinstance(client, FunctionInvocationLayer) and isinstance(client, BaseChatClient):
