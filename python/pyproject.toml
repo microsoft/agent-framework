@@ -43,7 +43,7 @@ dev = [
     "poethepoet==0.42.1",
     "rich==13.7.1",
     "tomli==2.4.0",
-    "prek==0.3.4",
+    "prek==0.3.6",
 ]
 
 [tool.uv]
