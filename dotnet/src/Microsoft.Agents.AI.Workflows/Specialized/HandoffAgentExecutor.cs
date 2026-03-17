@@ -250,7 +250,18 @@ internal sealed class HandoffAgentExecutor(
             }
         }
 
-        allMessages.AddRange(updates.ToAgentResponse().Messages);
+        AgentResponse agentResponse = updates.ToAgentResponse();
+
+        // Since there is no good way to configure the agent output behaviour due to how we add it to Handoff orchestration
+        // configurations, treat the emitEvents flag as simply determining whether to stream updates or to emit the whole response
+        // It would make little sense to avoid emitting any agent responses since this is only used in Orchestration workflows,
+        // which are Agent-only, and thus would do nothing.
+        if (message.TurnToken.EmitEvents is not true)
+        {
+            await context.YieldOutputAsync(agentResponse, cancellationToken).ConfigureAwait(false);
+        }
+
+        allMessages.AddRange(agentResponse.Messages);
 
         roleChanges.ResetUserToAssistantForChangedRoles();
 
