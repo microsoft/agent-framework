@@ -2,9 +2,10 @@
 
 import contextlib
 import inspect
+import json
 from collections.abc import AsyncIterable, MutableSequence
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -1941,6 +1942,128 @@ async def test_stores_by_default_with_store_false_in_default_options_injects_inm
 
     # User explicitly disabled server storage in default_options, so InMemoryHistoryProvider should be injected
     assert any(isinstance(p, InMemoryHistoryProvider) for p in agent.context_providers)
+
+
+async def test_shared_local_storage_cross_provider_responses_history_does_not_leak_fc_id() -> None:
+    """Responses-specific replay metadata should stay local to Responses when session storage is shared."""
+    from openai.types.chat.chat_completion import ChatCompletion, Choice
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+
+    from agent_framework._sessions import InMemoryHistoryProvider
+    from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+
+    @tool(approval_mode="never_require")
+    def search_hotels(city: str) -> str:
+        return f"Found 3 hotels in {city}"
+
+    responses_client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    responses_agent = Agent(
+        client=responses_client,
+        tools=[search_hotels],
+        default_options={"store": False},
+    )
+    session = responses_agent.create_session()
+
+    responses_tool_call = MagicMock()
+    responses_tool_call.type = "function_call"
+    responses_tool_call.id = "fc_provider123"
+    responses_tool_call.call_id = "call_1"
+    responses_tool_call.name = "search_hotels"
+    responses_tool_call.arguments = '{"city": "Paris"}'
+    responses_tool_call.status = "completed"
+
+    responses_first = MagicMock()
+    responses_first.output_parsed = None
+    responses_first.metadata = {}
+    responses_first.usage = None
+    responses_first.id = "resp_1"
+    responses_first.model = "test-model"
+    responses_first.created_at = 1000000000
+    responses_first.status = "completed"
+    responses_first.finish_reason = "tool_calls"
+    responses_first.incomplete = None
+    responses_first.output = [responses_tool_call]
+
+    responses_text_item = MagicMock()
+    responses_text_item.type = "message"
+    responses_text_content = MagicMock()
+    responses_text_content.type = "output_text"
+    responses_text_content.text = "Hotel Lutetia is the cheapest option."
+    responses_text_item.content = [responses_text_content]
+
+    responses_second = MagicMock()
+    responses_second.output_parsed = None
+    responses_second.metadata = {}
+    responses_second.usage = None
+    responses_second.id = "resp_2"
+    responses_second.model = "test-model"
+    responses_second.created_at = 1000000001
+    responses_second.status = "completed"
+    responses_second.finish_reason = "stop"
+    responses_second.incomplete = None
+    responses_second.output = [responses_text_item]
+
+    with patch.object(
+        responses_client.client.responses,
+        "create",
+        side_effect=[responses_first, responses_second],
+    ) as mock_responses_create:
+        responses_result = await responses_agent.run("Find me a hotel in Paris", session=session)
+
+    assert responses_result.text == "Hotel Lutetia is the cheapest option."
+    assert any(isinstance(provider, InMemoryHistoryProvider) for provider in responses_agent.context_providers)
+
+    shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
+    shared_function_call = next(
+        content for message in shared_messages for content in message.contents if content.type == "function_call"
+    )
+    assert shared_function_call.additional_properties is not None
+    assert shared_function_call.additional_properties.get("fc_id") == "fc_provider123"
+
+    responses_replay_input = mock_responses_create.call_args_list[1].kwargs["input"]
+    responses_replay_call = next(item for item in responses_replay_input if item.get("type") == "function_call")
+    assert responses_replay_call["id"] == "fc_provider123"
+
+    chat_client = OpenAIChatClient(model_id="test-model", api_key="test-key")
+    chat_agent = Agent(client=chat_client)
+
+    chat_response = ChatCompletion(
+        id="chatcmpl-test",
+        object="chat.completion",
+        created=1234567890,
+        model="gpt-4o-mini",
+        choices=[
+            Choice(
+                index=0,
+                message=ChatCompletionMessage(role="assistant", content="The cheapest option is still Hotel Lutetia."),
+                finish_reason="stop",
+            )
+        ],
+    )
+
+    with patch.object(
+        chat_client.client.chat.completions,
+        "create",
+        new=AsyncMock(return_value=chat_response),
+    ) as mock_chat_create:
+        chat_result = await chat_agent.run("Which option is cheapest?", session=session)
+
+    assert chat_result.text == "The cheapest option is still Hotel Lutetia."
+
+    chat_request_messages = mock_chat_create.call_args.kwargs["messages"]
+    assistant_tool_call_message = next(
+        message for message in chat_request_messages if message.get("role") == "assistant" and message.get("tool_calls")
+    )
+    assert assistant_tool_call_message["tool_calls"][0]["id"] == "call_1"
+    assert assistant_tool_call_message["tool_calls"][0]["function"]["name"] == "search_hotels"
+
+    tool_result_message = next(
+        message
+        for message in chat_request_messages
+        if message.get("role") == "tool" and message.get("tool_call_id") == "call_1"
+    )
+    assert tool_result_message["content"] == "Found 3 hotels in Paris"
+    assert "fc_provider123" not in json.dumps(chat_request_messages)
 
 
 # region as_tool user_input_request propagation
