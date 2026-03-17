@@ -17,6 +17,7 @@ MAF compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex,
 
 | Priority | Capability | Layer | MAF Today |
 |---|---|---|---|
+| **P0** | Agent/User Orchestration | Harness | Workflows |
 | **P0** | Filesystem tools | Environment | Local access |
 | **P0** | Shell execution | Environment | Local access |
 | **P0** | Context compaction | Harness | Pipeline + initial strategies |
