@@ -10,31 +10,29 @@ Microsoft has no responsibility to you or others with respect to any of these sa
 
 This sample demonstrates a **key advantage of code-based hosted agents**:
 
-- **Local Python tool execution** - Run custom Python functions as agent tools
+- **Agents in Workflows** - Use AI agents as executors within a workflow pipeline
 
-Code-based agents can execute **any Python code** you write. This sample includes a Seattle Hotel Agent with a `get_available_hotels` tool that searches for available hotels based on check-in/check-out dates and budget preferences.
+Code-based agents can execute **any Python code** you write. This sample includes a multi-agent workflow where Writer and Reviewer agents collaborate to draft content and provide review feedback.
 
 The agent is hosted using the [Azure AI AgentServer SDK](https://pypi.org/project/azure-ai-agentserver-agentframework/) and can be deployed to Microsoft Foundry using the Azure Developer CLI.
 
 ## How It Works
 
-### Local Tools Integration
+### Agents in Workflows
 
-In [main.py](main.py), the agent uses a local Python function (`get_available_hotels`) that simulates a hotel availability API. This demonstrates how code-based agents can execute custom server-side logic that prompt agents cannot access.
+This sample demonstrates the integration of AI agents within a workflow pipeline. The workflow operates as follows:
 
-The tool accepts:
-- **check_in_date** - Check-in date in YYYY-MM-DD format
-- **check_out_date** - Check-out date in YYYY-MM-DD format
-- **max_price** - Maximum price per night in USD (optional, defaults to $500)
+1. **Writer Agent** - Drafts content
+2. **Reviewer Agent** - Reviews the draft and provides concise, actionable feedback
 
 ### Agent Hosting
 
-The agent is hosted using the [Azure AI AgentServer SDK](https://pypi.org/project/azure-ai-agentserver-agentframework/),
+The agent workflow is hosted using the [Azure AI AgentServer SDK](https://pypi.org/project/azure-ai-agentserver-agentframework/),
 which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
 
 ### Agent Deployment
 
-The hosted agent can be deployed to Microsoft Foundry using the Azure Developer CLI [ai agent](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry&tabs=cli#create-a-hosted-agent) extension.
+The hosted agent workflow can be deployed to Microsoft Foundry using the Azure Developer CLI [ai agent](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry&tabs=cli#create-a-hosted-agent) extension.
 
 ## Running the Agent Locally
 
@@ -53,10 +51,6 @@ Before running this sample, ensure you have:
 
 3. **Python 3.10 or higher**
    - Verify your version: `python --version`
-   - If you have Python 3.9 or older, install a newer version:
-     - Windows: `winget install Python.Python.3.12`
-     - macOS: `brew install python@3.12`
-     - Linux: Use your package manager
 
 ### Environment Variables
 
@@ -82,42 +76,39 @@ $env:PROJECT_ENDPOINT="https://<your-resource>.services.ai.azure.com/api/project
 $env:MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
 ```
 
-### Setting Up a Virtual Environment
+### Running the Sample
 
-It's recommended to use a virtual environment to isolate project dependencies:
+**Recommended (`uv`):**
 
-**macOS/Linux:**
+We recommend using [uv](https://docs.astral.sh/uv/) to create and manage the virtual environment for this sample.
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+uv venv .venv
+uv pip install --prerelease=allow -r requirements.txt
+uv run main.py
 ```
 
+The sample depends on preview packages, so `--prerelease=allow` is required when installing with `uv`.
+
+**Alternative (`venv`):**
+
+If you do not have `uv` installed, you can use Python's built-in `venv` module instead:
+
 **Windows (PowerShell):**
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
 ```
 
-### Installing Dependencies
-
-Install the required Python dependencies using pip:
+**macOS/Linux:**
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-The required packages are:
-- `azure-ai-agentserver-agentframework` - Agent Framework and AgentServer SDK
-- `python-dotenv` - Load environment variables from `.env` file
-- `azure-identity` - Azure authentication
-- `azure-monitor-opentelemetry-exporter` - Azure Monitor telemetry export
-- `opentelemetry-sdk` / `opentelemetry-api` - OpenTelemetry for tracing
-
-### Running the Sample
-
-To run the agent, execute the following command in your terminal:
-
-```powershell
 python main.py
 ```
 
@@ -126,9 +117,10 @@ This will start the hosted agent locally on `http://localhost:8088/`.
 ### Interacting with the Agent
 
 **PowerShell (Windows):**
+
 ```powershell
 $body = @{
-   input = "I need a hotel in Seattle from 2025-03-15 to 2025-03-18, budget under $200 per night"
+   input = "Create a slogan for a new electric SUV that is affordable and fun to drive."
     stream = $false
 } | ConvertTo-Json
 
@@ -136,12 +128,11 @@ Invoke-RestMethod -Uri http://localhost:8088/responses -Method Post -Body $body 
 ```
 
 **Bash/curl (Linux/macOS):**
+
 ```bash
 curl -sS -H "Content-Type: application/json" -X POST http://localhost:8088/responses \
-   -d '{"input": "Find me hotels in Seattle for March 20-23, 2025 under $200 per night","stream":false}'
+   -d '{"input": "Create a slogan for a new electric SUV that is affordable and fun to drive.","stream":false}'
 ```
-
-The agent will use the `get_available_hotels` tool to search for available hotels matching your criteria.
 
 ### Deploying the Agent to Microsoft Foundry
 
