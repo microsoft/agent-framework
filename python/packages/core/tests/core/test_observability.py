@@ -1059,6 +1059,8 @@ def test_configure_otel_providers_reads_env_sensitive_data(monkeypatch):
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "false")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -1115,6 +1117,8 @@ def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -1129,6 +1133,72 @@ def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
     # Explicit False should override the env var True
     observability.configure_otel_providers(enable_sensitive_data=False)
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
+    """Test that explicit enable_sensitive_data parameter to enable_instrumentation overrides env var."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Explicit False should override the env var True
+    observability.enable_instrumentation(enable_sensitive_data=False)
+    assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
+    assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_configure_otel_providers_reads_env_console_exporters(monkeypatch):
+    """Test configure_otel_providers re-reads ENABLE_CONSOLE_EXPORTERS from os.environ when not explicitly passed."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
+
+    # Simulate load_dotenv() setting env var after import
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+
+    observability.configure_otel_providers()
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
+
+
+def test_configure_otel_providers_explicit_console_exporters_overrides_env(monkeypatch):
+    """Test that explicit enable_console_exporters parameter overrides the environment variable."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+    monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    for key in [
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    # Explicit False should override the env var True
+    observability.configure_otel_providers(enable_console_exporters=False)
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
 
 
 # region Test _to_otel_part content types
