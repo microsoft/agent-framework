@@ -1053,7 +1053,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     def _prepare_message_for_openai(
         self,
         message: Message,
-        _call_id_to_id: Mapping[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1071,28 +1070,28 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 case "text_reasoning":
                     if not has_function_call:
                         continue  # reasoning not followed by a function_call is invalid in input
-                    reasoning = self._prepare_content_for_openai(message.role, content, message=message)  # type: ignore[arg-type]
+                    reasoning = self._prepare_content_for_openai(message.role, content, message=message)
                     if reasoning:
                         all_messages.append(reasoning)
                 case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, message=message))  # type: ignore[arg-type]
+                    new_args.update(self._prepare_content_for_openai(message.role, content, message=message))
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
-                    function_call = self._prepare_content_for_openai(message.role, content, message=message)  # type: ignore[arg-type]
+                    function_call = self._prepare_content_for_openai(message.role, content, message=message)
                     if function_call:
-                        all_messages.append(function_call)  # type: ignore
+                        all_messages.append(function_call)
                 case "function_approval_response" | "function_approval_request":
                     prepared = self._prepare_content_for_openai(message.role, content, message=message)
                     if prepared:
-                        all_messages.append(prepared)  # type: ignore
+                        all_messages.append(prepared)
                 case _:
-                    prepared_content = self._prepare_content_for_openai(message.role, content, message=message)  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(message.role, content, message=message)
                     if prepared_content:
                         if "content" not in args:
                             args["content"] = []
-                        args["content"].append(prepared_content)  # type: ignore
+                        args["content"].append(prepared_content)  # type: ignore[reportUnknownMemberType]
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
@@ -1101,7 +1100,6 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         self,
         role: Role | str,
         content: Content,
-        _call_id_to_id: Mapping[str, str] | None = None,
         *,
         message: Message | None = None,
     ) -> dict[str, Any]:
@@ -1235,7 +1233,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         if item.type == "text":
                             output_parts.append({"type": "input_text", "text": item.text or ""})
                         else:
-                            part = self._prepare_content_for_openai("user", item)  # type: ignore[arg-type]
+                            part = self._prepare_content_for_openai("user", item)
                             if part:
                                 output_parts.append(part)
                     if output_parts:

@@ -2015,10 +2015,7 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
 
     shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
     shared_function_call = next(
-        content
-        for message in shared_messages
-        for content in message.contents
-        if content.type == "function_call"
+        content for message in shared_messages for content in message.contents if content.type == "function_call"
     )
     assert shared_function_call.additional_properties is not None
     assert shared_function_call.additional_properties.get("fc_id") == "fc_provider123"

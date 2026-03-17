@@ -38,7 +38,11 @@ from agent_framework import (
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework._sessions import AgentSession, InMemoryHistoryProvider, SessionContext
+from agent_framework._sessions import (
+    AgentSession,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -1052,7 +1056,7 @@ def test_prepare_content_for_opentool_approval_response() -> None:
         function_call=function_call,
     )
 
-    result = client._prepare_content_for_openai("assistant", approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response)
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_001"
@@ -1069,7 +1073,7 @@ def test_prepare_content_for_openai_error_content() -> None:
         error_details="Invalid parameter",
     )
 
-    result = client._prepare_content_for_openai("assistant", error_content, {})
+    result = client._prepare_content_for_openai("assistant", error_content)
 
     # ErrorContent should return empty dict (logged but not sent)
     assert result == {}
@@ -1087,7 +1091,7 @@ def test_prepare_content_for_openai_usage_content() -> None:
         }
     )
 
-    result = client._prepare_content_for_openai("assistant", usage_content, {})
+    result = client._prepare_content_for_openai("assistant", usage_content)
 
     # UsageContent should return empty dict (logged but not sent)
     assert result == {}
@@ -1101,7 +1105,7 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
         vector_store_id="vs_123",
     )
 
-    result = client._prepare_content_for_openai("assistant", vector_store_content, {})
+    result = client._prepare_content_for_openai("assistant", vector_store_content)
 
     # HostedVectorStoreContent should return empty dict (logged but not sent)
     assert result == {}
@@ -1113,8 +1117,8 @@ def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
 
     text_content = Content.from_text(text="hello")
 
-    user_result = client._prepare_content_for_openai("user", text_content, {})
-    assistant_result = client._prepare_content_for_openai("assistant", text_content, {})
+    user_result = client._prepare_content_for_openai("user", text_content)
+    assistant_result = client._prepare_content_for_openai("assistant", text_content)
 
     assert user_result["type"] == "input_text"
     assert assistant_result["type"] == "output_text"
@@ -1236,9 +1240,8 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     )
 
     message = Message(role="user", contents=[approval_response])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # FunctionApprovalResponseContent is added directly, not nested in args with role
     assert len(result) == 1
@@ -1269,9 +1272,8 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     )
 
     message = Message(role="assistant", contents=[reasoning, function_call])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Both reasoning and function_call should be present as top-level items
     types = [item["type"] for item in result]
@@ -1357,9 +1359,8 @@ def test_prepare_message_for_openai_filters_error_content() -> None:
     )
 
     message = Message(role="assistant", contents=[error_content])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Message should be empty since ErrorContent is filtered out
     assert len(result) == 0
@@ -1378,9 +1379,8 @@ def test_chat_message_with_usage_content() -> None:
     )
 
     message = Message(role="assistant", contents=[usage_content])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Message should be empty since UsageContent is filtered out
     assert len(result) == 0
@@ -1396,8 +1396,7 @@ def test_hosted_file_content_preparation() -> None:
         name="document.pdf",
     )
 
-    result = client._prepare_content_for_openai("user", hosted_file, {})
-
+    result = client._prepare_content_for_openai("user", hosted_file)
     assert result["type"] == "input_file"
     assert result["file_id"] == "file_abc123"
 
@@ -1419,7 +1418,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
         function_call=mcp_call,
     )
 
-    result = client._prepare_content_for_openai("assistant", approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response)
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_mcp_001"
@@ -2248,7 +2247,7 @@ def test_prepare_content_for_openai_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._prepare_content_for_openai("user", image_content_with_detail, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_with_detail)
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
@@ -2256,7 +2255,7 @@ def test_prepare_content_for_openai_image_content() -> None:
 
     # Test image content without additional properties (defaults)
     image_content_basic = Content.from_uri(uri="https://example.com/basic.png", media_type="image/png")
-    result = client._prepare_content_for_openai("user", image_content_basic, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_basic)
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
     assert result["file_id"] is None
@@ -2268,14 +2267,14 @@ def test_prepare_content_for_openai_audio_content() -> None:
 
     # Test WAV audio content
     wav_content = Content.from_uri(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
-    result = client._prepare_content_for_openai("user", wav_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", wav_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
     mp3_content = Content.from_uri(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
-    result = client._prepare_content_for_openai("user", mp3_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", mp3_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
@@ -2286,12 +2285,12 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
 
     # Test unsupported audio format
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
-    result = client._prepare_content_for_openai("user", unsupported_audio, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", unsupported_audio)
     assert result == {}
 
     # Test non-media content
     text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
-    result = client._prepare_content_for_openai("user", text_uri_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", text_uri_content)
     assert result == {}
 
 
@@ -2305,7 +2304,7 @@ def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
         result=[Content.from_text("Result text"), image_content],
     )
 
-    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", content)
 
     assert result["type"] == "function_call_output"
     assert result["call_id"] == "call_rich"
@@ -2327,7 +2326,7 @@ def test_prepare_content_for_openai_function_result_without_items() -> None:
         result="Simple result",
     )
 
-    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", content)
 
     assert result["type"] == "function_call_output"
     assert result["call_id"] == "call_plain"
@@ -2351,7 +2350,7 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     mock_item_image.code = None
     mock_event_image.item = mock_item_image
 
-    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_result"
     assert result.contents[0].outputs
@@ -2374,7 +2373,7 @@ def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
     mock_delta_event.call_id = None  # Ensure fallback to item_id
     mock_delta_event.id = None
 
-    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_call"
     assert result.contents[0].call_id == "ci_123"
@@ -2403,7 +2402,7 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     mock_done_event.call_id = None  # Ensure fallback to item_id
     mock_done_event.id = None
 
-    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_call"
     assert result.contents[0].call_id == "ci_456"
@@ -2432,7 +2431,7 @@ def test_parse_chunk_from_openai_reasoning() -> None:
     mock_item_reasoning.summary = ["Problem analysis summary"]
     mock_event_reasoning.item = mock_item_reasoning
 
-    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "text_reasoning"
     assert result.contents[0].text == "Analyzing the problem step by step..."
@@ -2454,7 +2453,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
+    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning)
     assert result["type"] == "reasoning"
     assert result["id"] == "rs_comprehensive"
     assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
@@ -3262,10 +3261,7 @@ async def test_integration_agent_replays_local_tool_history_without_stale_fc_id(
 
     shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
     shared_function_call = next(
-        content
-        for message in shared_messages
-        for content in message.contents
-        if content.type == "function_call"
+        content for message in shared_messages for content in message.contents if content.type == "function_call"
     )
     assert shared_function_call.additional_properties is not None
     assert isinstance(shared_function_call.additional_properties.get("fc_id"), str)
