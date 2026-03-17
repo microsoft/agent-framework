@@ -1,11 +1,11 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
-COPY . user_agent/
-WORKDIR /app/user_agent
+COPY ./ .
 
-RUN if [ -f requirements.txt ]; then \
+RUN pip install --upgrade pip && \
+    if [ -f requirements.txt ]; then \
         pip install -r requirements.txt; \
     else \
         echo "No requirements.txt found"; \
