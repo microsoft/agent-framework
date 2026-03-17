@@ -11,12 +11,11 @@ import logging
 import types
 import uuid
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
-from .._sessions import BaseContextProvider
+from .._sessions import ContextProvider
 from .._types import ResponseStream
 from ..observability import OtelAttr, capture_exception, create_workflow_span
-from ._agent import WorkflowAgent
 from ._checkpoint import CheckpointStorage
 from ._const import DEFAULT_MAX_ITERATIONS, GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._edge import (
@@ -35,6 +34,9 @@ from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
+
+if TYPE_CHECKING:
+    from ._agent import WorkflowAgent
 
 logger = logging.getLogger(__name__)
 
@@ -916,7 +918,7 @@ class Workflow(DictConvertible):
         name: str | None = None,
         *,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         **kwargs: Any,
     ) -> WorkflowAgent:
         """Create a WorkflowAgent that wraps this workflow.
