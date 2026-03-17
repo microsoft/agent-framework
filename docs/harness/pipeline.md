@@ -1,9 +1,3 @@
-# Brainstorming on MAF Harness
-
-**Reference Document:** [Agent Harness in Microsoft Agent Framework](https://microsoft-my.sharepoint.com/:w:/r/personal/bentho_microsoft_com/Documents/Agent%20Harness%20in%20Microsoft%20Agent%20Framework.docx?d=w49895009445b4f74be796340601906a2&csf=1&web=1&e=SWyNP7)
-
----
-
 ## What Is the Agent Harness?
 
 The runtime control plane that enables reliable, long-running agent execution. Not a specific agent. Not a specific set of tools. It's the **infrastructure layer** that any agent can run within.
@@ -17,11 +11,7 @@ What it provides:
 - **Context management** — compaction, eviction, externalization
 - **Observability** — traces, transcripts, replay
 
----
-
-## The Three-Layer Model
-
-Everything in the harness maps to one of three layers:
+### The Three-Layer Model
 
 | Layer | Question it answers | Examples |
 |---|---|---|
@@ -29,7 +19,7 @@ Everything in the harness maps to one of three layers:
 | **Environment** (Capability Plane) | _What_ can the agent do? | Filesystem, shell, browser, APIs, artifact storage — pluggable per deployment |
 | **Persona** (Configuration) | _Who_ is the agent? | System instructions, tool visibility, risk tolerance, autonomy level, what "done" means |
 
-Different personas need different environments:
+### Persona × Tool Matrix
 
 | Capability | Chat-Only | API Agent | Research | Coding | Ops/Infra |
 |---|---|---|---|---|---|
@@ -39,70 +29,41 @@ Different personas need different environments:
 | Browser | No | No | **Yes** | No | No |
 | HTTP APIs | No | **Yes** | Yes | Optional | **Yes** |
 
----
+### Where We Stand (Gap Analysis)
 
-## Where We Stand: Gap Analysis
+MAF compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex, and Claude Code — every one of them has these capabilities. MAF has some partially, most not at all.
 
-MAF was compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex, and Claude Code. Every one of them has these capabilities. MAF has some partially, most not at all.
-
-### P0 — Must Have
-
-| Capability | Layer | What MAF Has Today |
-|---|---|---|
-| **Filesystem tools** | Environment | Hosted tools only (remote code interpreter, file search) — no local filesystem access |
-| **Shell execution** | Environment | Nothing — no ability to run shell commands locally or sandboxed |
-| **Context compaction** | Harness | Nothing built-in — developers must implement summarization/windowing manually |
-| **Todo / planning tool** | Harness | Magentic has advanced planning, but no simple self-organizing task list for agents |
-| **Sub-agent delegation** | Harness | Partial — orchestration patterns exist (Sequential, Concurrent, Group Chat, etc.) but state isolation between parent/child is incomplete |
-| **Memory** | Environment | Partial — Python core has `_memory.py`, but no unified cross-platform story |
-
-### P1 — Important but Deferrable
-
-| Capability | Layer | What MAF Has Today |
-|---|---|---|
-| **Skills / prompt presets** | Persona | Nothing — instructions must be authored from scratch every time |
-| **Model routing / cost-aware scheduling** | Harness | Nothing — no dynamic model selection based on task complexity or cost |
-| **Computer use** | Environment | Nothing — future interface for screen/mouse/keyboard interaction |
-
-### Open Priority Debates (from document reviewers)
-
-- **Todo/Planning — P0 or P1?** "An agent _can_ execute tasks using only filesystem + shell. For simple tasks, P1 is fine. For Claude Code-like complex multi-step tasks, this is P0."
-- **Sub-Agent Delegation — definitely P0?** "A lot of task planners and coding agents use sub-agents to run multiple tasks. Good mental model: take coding agents as the main use case."
-- **What is our MVP persona?** If it's a coding agent, that drives which P0 items matter most.
+| Priority | Capability | Layer | MAF Today |
+|---|---|---|---|
+| **P0** | Filesystem tools | Environment | Local access |
+| **P0** | Shell execution | Environment | Local access |
+| **P0** | Context compaction | Harness | Pipeline + initial strategies |
+| **P0** | Todo / planning tool | Harness | Nothing |
+| **P0** | Sub-agent delegation | Harness | Partial — orchestration exists, state isolation incomplete |
+| **P0** | Memory | Environment | Partial — Python core only |
+| **P1** | Skills / prompt presets | Persona | Nothing |
+| **P1** | Model routing | Harness | Nothing |
 
 ---
 
-## Feature Details
+## Features
 
-### Filesystem Tools
+### Agent/User Orchestration
 
-Create a `FilesystemTool` with operations: `read`, `write`, `edit`, `list`, `glob`, `grep`.
+#### Slot Filling (a.k.a. "Guided Conversations")
 
-The key design decision is **abstraction**: define a `FilesystemProtocol` interface with pluggable backends.
+How does the harness manage structured, multi-turn data collection from the user? What's the interaction model between the outer loop and user-facing slot-filling prompts? How does it compose with compaction and task management? How does the agent re-ask or repair slot values after partial completion?
 
-- `LocalFilesystem` — direct local access (the default; used when running inside Foundry Hosted Agents)
-- `HostedFilesystem` — remote sandbox access (agent runs locally, filesystem lives in a remote sandbox of the user's choice)
+### Compaction Strategy
 
-Must include: path validation, traversal prevention, pagination for large files. Consider: snapshot/restore for tracking file changes during execution.
+Two API tiers — **simple for most developers, advanced for full control**.
 
-### Shell / Command Execution
-
-Same interface-based pattern as filesystem. `LocalShellTool` for direct execution, `HostedShellTool` for remote sandboxes.
-
-Configuration surface: timeout, output truncation, working directory, environment variables.
-
-Open question: What sandboxing and permission model? How do we prevent destructive commands?
-
-### Context Compaction
-
-Two API tiers — **simple for most developers, advanced for full control**:
-
-**Simple (menu-driven):**
+**Simple (menu-driven)** — developer picks from preset enums:
 ```csharp
 harnessBuilder.AddCompaction(Approach.Balanced, Size.Compact, summarizingChatClient);
 ```
 
-**Advanced (pipeline) — ordered stages, least to most aggressive:**
+**Advanced (pipeline)** — ordered stages, least to most aggressive:
 1. **Gentle:** Collapse old tool-call groups into short summaries (`ToolResultCompactionStrategy`)
 2. **Moderate:** LLM-based summarization of older conversation spans (`SummarizationCompactionStrategy`)
 3. **Aggressive:** Sliding window — keep only last N user turns (`SlidingWindowCompactionStrategy`)
@@ -110,21 +71,35 @@ harnessBuilder.AddCompaction(Approach.Balanced, Size.Compact, summarizingChatCli
 
 Triggers: `TokensExceed(threshold)`, `TurnsExceed(count)`, custom. Reference thresholds from competitors: 85% token capacity trigger, keep last 10%, fallback at 170K tokens / 6 messages.
 
-Open question: How do triggers compose when multiple strategies are pipelined?
+Open questions: What are the right defaults? How do triggers compose when multiple strategies are pipelined?
 
-### Todo / Planning Tool
+### Tools: File System / Shell
 
-`TodoTool` with `write_todos` operation. `TodoItem` has content + status (pending / in progress / completed).
+Both follow the same pattern: **interface-based, with pluggable backends**. Local is the default. Remote/sandboxed is supported.
 
-`TodoMiddleware` injects current todos into the system prompt — this is what gives the agent the ability to self-plan and track progress.
+- **File System** — `FilesystemTool` with `read`, `write`, `edit`, `list`, `glob`, `grep`. Backed by a `FilesystemProtocol` with `LocalFilesystem` (direct access) and `HostedFilesystem` (remote sandbox). Must include path validation, traversal prevention, large-file pagination. Consider snapshot/restore for tracking changes during execution.
+
+- **Shell** — `LocalShellTool` / `HostedShellTool`. Configurable timeout, output truncation, working directory, environment variables. Open question: what sandboxing and permission model?
+
+- **Computer Use (TODO)** — same interface pattern for screen/mouse/keyboard interaction. Future work. Security and governance implications are significant.
+
+### Task Management
+
+`TodoTool` with `write_todos`. `TodoItem` has content + status (pending / in progress / completed). `TodoMiddleware` injects current todos into the system prompt — this is what gives the agent the ability to self-plan and track its own progress.
+
+Open debate: P0 or P1? "An agent _can_ work with only filesystem + shell. But for Claude Code-like complex multi-step tasks, this is P0."
+
+### Data Driven: Input Schema / Structured Data Output
+
+How does the harness support defining what data the agent needs (input schema) and what the agent produces (structured output)? Is this related to or distinct from slot filling? How does the developer define and validate schemas?
+
+### Memories
+
+Loads from backend storage, injects into system prompt automatically. Open questions: How does memory interact with compaction — should compacted summaries become long-term memories? Which backends out of the box? What's the cross-session story?
 
 ### Sub-Agent Delegation
 
-MAF already has orchestration (Sequential, Concurrent, Group Chat, Magentic, Handoff, Human-in-the-loop). The gap is **state isolation**: sub-agents need their own message history and todo state, isolated from the parent, returning results as tool responses.
-
-### Memory
-
-Loads memories from backend storage, injects into system prompt automatically. Open questions: How does memory interact with compaction? Should compacted summaries become long-term memories? Which backends out of the box?
+MAF already has orchestration (Sequential, Concurrent, Group Chat, Magentic, Handoff, Human-in-the-loop). The gap is **state isolation**: sub-agents need their own message history and todo state, isolated from the parent, returning results as tool responses. "A lot of task planners and coding agents use sub-agents. This feels P0."
 
 ### Skills / Prompt Presets (P1)
 
@@ -136,7 +111,7 @@ Loads memories from backend storage, injects into system prompt automatically. O
 
 ---
 
-## Developer Experience: The Builder API
+## Shape
 
 Everything hangs off a **fluent builder pattern**:
 
@@ -147,17 +122,14 @@ harnessBuilder
     .AddTool(shellTool)
     .AddMemory(...)
     .AddTodo(...)
-    ...
 ```
 
-Key considerations:
-
 - **Composability** — developers opt in/out of individual capabilities. Minimal harness = just the outer loop. Full harness = everything.
-- **Hosting** — the builder must integrate cleanly with DI and hosting (ASP.NET, Azure Functions).
-- **Presets** — should we offer opinionated starters? (`HarnessPresets.CodingAgent`, `HarnessPresets.Conversational`, `HarnessPresets.Research`)
+- **Hosting** — must integrate cleanly with DI and hosting (ASP.NET, Azure Functions).
+- **Presets** — opinionated starters? (`HarnessPresets.CodingAgent`, `HarnessPresets.Conversational`, `HarnessPresets.Research`)
 - **Two-tier deployment** — "develop local, deploy remote":
-  - _Local:_ Direct filesystem/shell on the developer machine, fast iteration, debugging, human-in-the-loop
-  - _Production (Foundry Hosted Agents):_ Managed containers, autoscaling, identity, observability, publishing to Teams / M365 Copilot / Web
+  - _Local:_ Direct filesystem/shell, fast iteration, debugging, human-in-the-loop
+  - _Production (Foundry Hosted Agents):_ Managed containers, autoscaling, identity, observability, Teams / M365 Copilot / Web
 - The interface-based tool abstractions (`LocalFilesystem` ↔ `HostedFilesystem`, `LocalShell` ↔ `HostedShell`) are what make the two-tier model work.
 
 ---
@@ -165,13 +137,13 @@ Key considerations:
 ## Validation
 
 - **Prompt evaluation** — test default harness prompts (compaction, slot filling, etc.) across OpenAI, Azure OpenAI, Anthropic, and other providers
-- **Custom prompt override** — developers can replace default prompts; we need to document and validate the override mechanism
+- **Custom prompt override** — developers can replace default prompts; need to document and validate the override mechanism
 - **Compaction testing** — verify different pipeline configurations produce correct and useful results
 - **Test strategy** — unit tests, integration tests, model-in-the-loop evaluation, benchmarks
 
 ---
 
-## Tutorials & Onboarding
+## Tutorials
 
 Suggested progression:
 
@@ -181,17 +153,4 @@ Suggested progression:
 4. Slot filling / guided conversations
 5. Task management and structured output
 6. Advanced — custom compaction pipelines, memory, sub-agents
-
----
-
-## Competitive Reference
-
-| Tool | Filesystem | Shell | Compaction | Todo | Sub-Agent | Skills | Memory | Model Routing |
-|---|---|---|---|---|---|---|---|---|
-| **DeepAgents** | filesystem.py | shell.py | graph.py | todo.py | subagents.py | skills.py | memory.py | — |
-| **Amplifier** | tool-filesystem | tool-bash | context-simple | tool-todo | tool-task | tool-skills | bundle-memory | scheduler-cost-aware |
-| **Opencode** | read.ts | bash.ts | compaction.ts | todo.ts | task.ts | skill.ts | storage.ts | provider.ts (partial) |
-| **Copilot CLI** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| **OpenAI Codex** | read_file.rs | shell.rs | compact.rs | plan.rs | collab.rs | skills/ | message_history.rs | models_manager/ |
-| **Claude Code** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 
