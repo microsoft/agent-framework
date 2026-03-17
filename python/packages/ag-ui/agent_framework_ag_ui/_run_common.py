@@ -320,7 +320,7 @@ def _emit_approval_request(
     )
     interrupt_id = func_call_id or content.id
     if interrupt_id:
-        flow.interrupts = [
+        flow.interrupts.append(
             {
                 "id": str(interrupt_id),
                 "value": {
@@ -332,7 +332,7 @@ def _emit_approval_request(
                     },
                 },
             }
-        ]
+        )
 
     if require_confirmation:
         confirm_id = generate_event_id()
