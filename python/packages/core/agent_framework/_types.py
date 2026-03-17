@@ -1323,7 +1323,7 @@ class Content:
             raise ValueError(f"Invalid JSON: {e}") from e
         if not isinstance(data, dict):
             raise ValueError(f"Expected a JSON object, got {type(data).__name__}")
-        return cls.from_dict(data)
+        return cls.from_dict(cast(dict[str, Any], data))
 
     @classmethod
     def from_dict(cls: type[ContentT], data: Mapping[str, Any]) -> ContentT:
