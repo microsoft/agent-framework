@@ -1089,6 +1089,7 @@ def test_configure_otel_providers_reads_env_vs_code_port(monkeypatch):
 
     monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
     monkeypatch.delenv("VS_CODE_EXTENSION_PORT", raising=False)
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
     for key in [
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
@@ -1149,6 +1150,25 @@ def test_enable_instrumentation_explicit_param_overrides_env(monkeypatch):
     observability.enable_instrumentation(enable_sensitive_data=False)
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
+
+
+def test_enable_instrumentation_reads_env_console_exporters(monkeypatch):
+    """Test enable_instrumentation re-reads ENABLE_CONSOLE_EXPORTERS from os.environ."""
+    import importlib
+
+    monkeypatch.setenv("ENABLE_INSTRUMENTATION", "false")
+    monkeypatch.delenv("ENABLE_CONSOLE_EXPORTERS", raising=False)
+
+    observability = importlib.import_module("agent_framework.observability")
+    importlib.reload(observability)
+
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
+
+    # Simulate load_dotenv() setting env var after import
+    monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
+
+    observability.enable_instrumentation()
+    assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
 
 
 def test_configure_otel_providers_reads_env_console_exporters(monkeypatch):
