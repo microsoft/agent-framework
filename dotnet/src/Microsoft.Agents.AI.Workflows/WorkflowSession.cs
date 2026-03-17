@@ -26,9 +26,9 @@ internal sealed class WorkflowSession : AgentSession
     private InMemoryCheckpointManager? _inMemoryCheckpointManager;
 
     /// <summary>
-    /// Tracks pending external requests by their content ID (e.g., <see cref="FunctionCallContent.CallId"/>
-    /// or <see cref="UserInputRequestContent.Id"/>). This mapping enables converting incoming response
-    /// content back to <see cref="ExternalResponse"/> when resuming a workflow from a checkpoint.
+    /// Tracks pending external requests by their workflow-facing request ID.
+    /// This mapping enables converting incoming response content back to <see cref="ExternalResponse"/>
+    /// when resuming a workflow from a checkpoint.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -176,8 +176,8 @@ internal sealed class WorkflowSession : AgentSession
                             .ConfigureAwait(false);
 
             // Process messages: convert response content to ExternalResponse, send regular messages as-is
-            bool hasMatchedExternalResponses = await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
-            return new ResumeRunResult(run, hasMatchedExternalResponses: hasMatchedExternalResponses);
+            ResumeDispatchInfo dispatchInfo = await this.SendMessagesWithResponseConversionAsync(run, messages).ConfigureAwait(false);
+            return new ResumeRunResult(run, dispatchInfo);
         }
 
         StreamingRun newRun = await this._executionEnvironment
@@ -194,15 +194,15 @@ internal sealed class WorkflowSession : AgentSession
     /// to ExternalResponse when there's a matching pending request.
     /// </summary>
     /// <returns>
-    /// <see langword="true"/> if any external responses were sent; otherwise, <see langword="false"/>.
+    /// Structured information about how resume content was dispatched.
     /// </returns>
-    private async ValueTask<bool> SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
+    private async ValueTask<ResumeDispatchInfo> SendMessagesWithResponseConversionAsync(StreamingRun run, List<ChatMessage> messages)
     {
         List<ChatMessage> regularMessages = [];
         // Responses are deferred until after regular messages are queued so response handlers
         // can merge buffered regular content in the same continuation turn.
-        List<(ExternalResponse Response, string? ContentId)> externalResponses = [];
-        bool hasMatchedExternalResponses = false;
+        List<(ExternalResponse Response, string RequestId)> externalResponses = [];
+        bool hasMatchedResponseForStartExecutor = false;
 
         // Tracks content IDs already matched to pending requests within this invocation,
         // preventing duplicate responses for the same ID from being sent to the workflow engine.
@@ -225,8 +225,16 @@ internal sealed class WorkflowSession : AgentSession
                 if (contentId != null
                     && this.TryGetPendingRequest(contentId) is ExternalRequest pendingRequest)
                 {
-                    externalResponses.Add((pendingRequest.CreateResponse(content), contentId));
-                    (matchedContentIds ??= new(StringComparer.OrdinalIgnoreCase)).Add(contentId);
+                    if (!run.TryGetResponsePortExecutorId(pendingRequest.PortInfo.PortId, out string? responseExecutorId))
+                    {
+                        throw new InvalidOperationException(
+                            $"Matched pending request '{pendingRequest.RequestId}' refers to unknown response port '{pendingRequest.PortInfo.PortId}'.");
+                    }
+
+                    AIContent normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
+                    externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
+                    (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
+                    hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                 }
                 else
                 {
@@ -243,28 +251,54 @@ internal sealed class WorkflowSession : AgentSession
         }
 
         // Send regular messages first so response handlers can merge them with responses.
-        if (regularMessages.Count > 0)
+        bool hasRegularMessages = regularMessages.Count > 0;
+        if (hasRegularMessages)
         {
             await run.TrySendMessageAsync(regularMessages).ConfigureAwait(false);
         }
 
         // Send external responses after regular messages.
-        foreach ((ExternalResponse response, string? contentId) in externalResponses)
+        bool hasMatchedExternalResponses = false;
+        foreach ((ExternalResponse response, string requestId) in externalResponses)
         {
             await run.SendResponseAsync(response).ConfigureAwait(false);
             hasMatchedExternalResponses = true;
-
-            if (contentId is string id)
-            {
-                this.RemovePendingRequest(id);
-            }
+            this.RemovePendingRequest(requestId);
         }
 
-        return hasMatchedExternalResponses;
+        return new ResumeDispatchInfo(
+            hasRegularMessages,
+            hasMatchedExternalResponses,
+            hasMatchedResponseForStartExecutor);
     }
 
     /// <summary>
-    /// Gets the content ID from response content types.
+    /// Creates the workflow-facing request content surfaced in response updates.
+    /// </summary>
+    private static AIContent CreateRequestContentForDelivery(ExternalRequest request) => request switch
+    {
+        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
+            => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
+        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out UserInputRequestContent? userInputRequestContent)
+            => CloneUserInputRequestContent(userInputRequestContent, externalRequest.RequestId),
+        ExternalRequest externalRequest
+            => externalRequest.ToFunctionCall(),
+    };
+
+    /// <summary>
+    /// Rewrites workflow-facing response content back to the original agent-owned content ID.
+    /// </summary>
+    private static AIContent NormalizeResponseContentForDelivery(AIContent content, ExternalRequest request) => content switch
+    {
+        FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent)
+            => CloneFunctionResultContent(functionResultContent, functionCallContent.CallId),
+        UserInputResponseContent userInputResponseContent when request.TryGetDataAs(out UserInputRequestContent? userInputRequestContent)
+            => CloneUserInputResponseContent(userInputResponseContent, userInputRequestContent.Id),
+        _ => content,
+    };
+
+    /// <summary>
+    /// Gets the workflow-facing request ID from response content types.
     /// </summary>
     private static string? GetResponseContentId(AIContent content) => content switch
     {
@@ -274,22 +308,21 @@ internal sealed class WorkflowSession : AgentSession
     };
 
     /// <summary>
-    /// Tries to get a pending request by content ID.
+    /// Tries to get a pending request by workflow-facing request ID.
     /// </summary>
-    private ExternalRequest? TryGetPendingRequest(string contentId) =>
-        this._pendingRequests.TryGetValue(contentId, out ExternalRequest? request) ? request : null;
+    private ExternalRequest? TryGetPendingRequest(string requestId) =>
+        this._pendingRequests.TryGetValue(requestId, out ExternalRequest? request) ? request : null;
 
     /// <summary>
-    /// Adds a pending request indexed by content ID.
+    /// Adds a pending request indexed by workflow-facing request ID.
     /// </summary>
-    private void AddPendingRequest(string contentId, ExternalRequest request) =>
-        this._pendingRequests[contentId] = request;
+    private void AddPendingRequest(string requestId, ExternalRequest request) => this._pendingRequests[requestId] = request;
 
     /// <summary>
-    /// Removes a pending request by content ID.
+    /// Removes a pending request by workflow-facing request ID.
     /// </summary>
-    private void RemovePendingRequest(string contentId) =>
-        this._pendingRequests.Remove(contentId);
+    private void RemovePendingRequest(string requestId) =>
+        this._pendingRequests.Remove(requestId);
 
     internal async
     IAsyncEnumerable<AgentResponseUpdate> InvokeStageAsync(
@@ -306,10 +339,11 @@ internal sealed class WorkflowSession : AgentSession
             await using StreamingRun run = resumeResult.Run;
 #pragma warning restore CA2007
 
-            // Send a TurnToken only when no external responses were delivered.
-            // External response handlers already drive continuation turns and can merge
-            // buffered regular messages, so an extra TurnToken would cause a redundant turn.
-            if (!resumeResult.HasMatchedExternalResponses)
+            ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+            bool shouldSendTurnToken =
+                !dispatchInfo.HasMatchedExternalResponses
+                || (dispatchInfo.HasRegularMessages && !dispatchInfo.HasMatchedResponseForStartExecutor);
+            if (shouldSendTurnToken)
             {
                 await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);
             }
@@ -324,18 +358,11 @@ internal sealed class WorkflowSession : AgentSession
                         break;
 
                     case RequestInfoEvent requestInfo:
-                        (AIContent requestContent, string? contentId) = requestInfo.Request switch
-                        {
-                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? fcc) => (fcc, fcc.CallId),
-                            ExternalRequest externalRequest when externalRequest.TryGetDataAs(out UserInputRequestContent? uic) => (uic, uic.Id),
-                            ExternalRequest externalRequest => ((AIContent)externalRequest.ToFunctionCall(), externalRequest.RequestId)
-                        };
+                        AIContent requestContent = CreateRequestContentForDelivery(requestInfo.Request);
 
-                        // Track the pending request so we can convert incoming responses back to ExternalResponse
-                        if (contentId != null)
-                        {
-                            this.AddPendingRequest(contentId, requestInfo.Request);
-                        }
+                        // Track the pending request so we can convert incoming responses back to ExternalResponse.
+                        // External callers respond using the workflow-facing request ID, which is always RequestId.
+                        this.AddPendingRequest(requestInfo.Request.RequestId, requestInfo.Request);
 
                         AgentResponseUpdate update = this.CreateUpdate(this.LastResponseId, evt, requestContent);
                         yield return update;
@@ -420,14 +447,111 @@ internal sealed class WorkflowSession : AgentSession
         /// <summary>The streaming run that was created or resumed.</summary>
         public StreamingRun Run { get; }
 
-        /// <summary>Whether any external responses (e.g., <see cref="FunctionResultContent"/>) were delivered.</summary>
-        public bool HasMatchedExternalResponses { get; }
+        /// <summary>How resume-time content was dispatched into the workflow runtime.</summary>
+        public ResumeDispatchInfo DispatchInfo { get; }
 
-        public ResumeRunResult(StreamingRun run, bool hasMatchedExternalResponses = false)
+        public ResumeRunResult(StreamingRun run, ResumeDispatchInfo dispatchInfo = default)
         {
             this.Run = Throw.IfNull(run);
-            this.HasMatchedExternalResponses = hasMatchedExternalResponses;
+            this.DispatchInfo = dispatchInfo;
         }
+    }
+
+    /// <summary>
+    /// Captures how resumed input was split across regular-message and external-response delivery paths.
+    /// </summary>
+    private readonly struct ResumeDispatchInfo
+    {
+        public ResumeDispatchInfo(bool hasRegularMessages, bool hasMatchedExternalResponses, bool hasMatchedResponseForStartExecutor)
+        {
+            this.HasRegularMessages = hasRegularMessages;
+            this.HasMatchedExternalResponses = hasMatchedExternalResponses;
+            this.HasMatchedResponseForStartExecutor = hasMatchedResponseForStartExecutor;
+        }
+
+        public bool HasRegularMessages { get; }
+
+        public bool HasMatchedExternalResponses { get; }
+
+        public bool HasMatchedResponseForStartExecutor { get; }
+    }
+
+    /// <summary>
+    /// Clones a <see cref="FunctionCallContent"/> with a workflow-facing call ID.
+    /// </summary>
+    private static FunctionCallContent CloneFunctionCallContent(FunctionCallContent content, string callId)
+    {
+        FunctionCallContent clone = new(callId, content.Name, content.Arguments)
+        {
+            Exception = content.Exception,
+            InformationalOnly = content.InformationalOnly,
+        };
+
+        return CopyContentMetadata(content, clone);
+    }
+
+    /// <summary>
+    /// Clones a <see cref="FunctionResultContent"/> with an agent-owned call ID.
+    /// </summary>
+    private static FunctionResultContent CloneFunctionResultContent(FunctionResultContent content, string callId)
+    {
+        FunctionResultContent clone = new(callId, content.Result)
+        {
+            Exception = content.Exception,
+        };
+
+        return CopyContentMetadata(content, clone);
+    }
+
+    /// <summary>
+    /// Clones a <see cref="UserInputRequestContent"/> with a workflow-facing request ID.
+    /// </summary>
+    private static UserInputRequestContent CloneUserInputRequestContent(UserInputRequestContent content, string id)
+    {
+        UserInputRequestContent clone = content switch
+        {
+            FunctionApprovalRequestContent functionApprovalRequestContent =>
+                new FunctionApprovalRequestContent(id, functionApprovalRequestContent.FunctionCall),
+            McpServerToolApprovalRequestContent mcpApprovalRequestContent =>
+                new McpServerToolApprovalRequestContent(id, mcpApprovalRequestContent.ToolCall),
+            _ => throw new NotSupportedException(
+                $"Unsupported user input request content type '{content.GetType().Name}' for workflow request ID rewriting."),
+        };
+
+        return CopyContentMetadata(content, clone);
+    }
+
+    /// <summary>
+    /// Clones a <see cref="UserInputResponseContent"/> with an agent-owned request ID.
+    /// </summary>
+    private static UserInputResponseContent CloneUserInputResponseContent(UserInputResponseContent content, string id)
+    {
+        UserInputResponseContent clone = content switch
+        {
+            FunctionApprovalResponseContent functionApprovalResponseContent =>
+                new FunctionApprovalResponseContent(id, functionApprovalResponseContent.Approved, functionApprovalResponseContent.FunctionCall)
+                {
+                    Reason = functionApprovalResponseContent.Reason,
+                },
+            McpServerToolApprovalResponseContent mcpApprovalResponseContent =>
+                new McpServerToolApprovalResponseContent(id, mcpApprovalResponseContent.Approved),
+            _ => throw new NotSupportedException(
+                $"Unsupported user input response content type '{content.GetType().Name}' for workflow response ID rewriting."),
+        };
+
+        return CopyContentMetadata(content, clone);
+    }
+
+    /// <summary>
+    /// Copies shared <see cref="AIContent"/> metadata to a cloned content instance.
+    /// </summary>
+    private static TContent CopyContentMetadata<TContent>(AIContent source, TContent target)
+        where TContent : AIContent
+    {
+        target.AdditionalProperties = source.AdditionalProperties;
+        target.Annotations = source.Annotations;
+        target.RawRepresentation = source.RawRepresentation;
+        return target;
     }
 
     internal sealed class SessionState(

@@ -85,6 +85,71 @@ internal sealed class RequestEmittingAgent : AIAgent
     }
 }
 
+internal sealed class KickoffOnStartExecutor : ChatProtocolExecutor
+{
+    private static readonly ChatProtocolExecutorOptions s_options = new()
+    {
+        AutoSendTurnToken = false,
+    };
+
+    private readonly string _downstreamExecutorId;
+    private readonly string _kickoffInputText;
+    private readonly string _kickoffMessageText;
+    private readonly string _regularResumeText;
+    private readonly string _regularProcessedText;
+
+    public KickoffOnStartExecutor(
+        string id,
+        string downstreamExecutorId,
+        string kickoffInputText,
+        string kickoffMessageText,
+        string regularResumeText,
+        string regularProcessedText)
+        : base(id, s_options)
+    {
+        this._downstreamExecutorId = downstreamExecutorId;
+        this._kickoffInputText = kickoffInputText;
+        this._kickoffMessageText = kickoffMessageText;
+        this._regularResumeText = regularResumeText;
+        this._regularProcessedText = regularProcessedText;
+    }
+
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+    {
+        List<string> textContents =
+        [
+            .. messages
+                .SelectMany(message => message.Contents.OfType<TextContent>())
+                .Select(content => content.Text)
+        ];
+
+        if (textContents.Contains(this._kickoffInputText, StringComparer.Ordinal))
+        {
+            await context.SendMessageAsync(
+                new List<ChatMessage> { new(ChatRole.User, this._kickoffMessageText) },
+                this._downstreamExecutorId,
+                cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(
+                new TurnToken(emitEvents),
+                this._downstreamExecutorId,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (textContents.Contains(this._regularResumeText, StringComparer.Ordinal))
+        {
+            AgentResponseUpdate update = new(ChatRole.Assistant, [new TextContent(this._regularProcessedText)])
+            {
+                CreatedAt = DateTimeOffset.UtcNow,
+                MessageId = Guid.NewGuid().ToString("N"),
+                ResponseId = Guid.NewGuid().ToString("N"),
+                Role = ChatRole.Assistant,
+            };
+
+            await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+        }
+    }
+}
+
 public class WorkflowHostSmokeTests
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
@@ -193,7 +258,7 @@ public class WorkflowHostSmokeTests
 
         // Assert
         AgentResponseUpdate? updateWithFunctionCall = updates.FirstOrDefault(u =>
-            u.Contents.Any(c => c is FunctionCallContent));
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
 
         updateWithFunctionCall.Should().NotBeNull("a FunctionCallContent should be present in the response updates");
         FunctionCallContent retrievedContent = updateWithFunctionCall!.Contents
@@ -201,7 +266,8 @@ public class WorkflowHostSmokeTests
             .Should().ContainSingle()
             .Which;
 
-        retrievedContent.CallId.Should().Be(CallId);
+        retrievedContent.CallId.Should().NotBe(CallId);
+        retrievedContent.CallId.Should().EndWith($":{CallId}");
         retrievedContent.Name.Should().Be(FunctionName);
     }
 
@@ -228,7 +294,7 @@ public class WorkflowHostSmokeTests
 
         // Assert
         AgentResponseUpdate? updateWithUserInput = updates.FirstOrDefault(u =>
-            u.Contents.Any(c => c is UserInputRequestContent));
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is UserInputRequestContent));
 
         updateWithUserInput.Should().NotBeNull("a UserInputRequestContent should be present in the response updates");
         UserInputRequestContent retrievedContent = updateWithUserInput!.Contents
@@ -237,7 +303,8 @@ public class WorkflowHostSmokeTests
             .Which;
 
         retrievedContent.Should().BeOfType<McpServerToolApprovalRequestContent>();
-        retrievedContent.Id.Should().Be(RequestId);
+        retrievedContent.Id.Should().NotBe(RequestId);
+        retrievedContent.Id.Should().EndWith($":{RequestId}");
     }
 
     /// <summary>
@@ -264,16 +331,16 @@ public class WorkflowHostSmokeTests
 
         // Assert 1: We should have received a FunctionCallContent
         AgentResponseUpdate? updateWithRequest = firstCallUpdates.FirstOrDefault(u =>
-            u.Contents.Any(c => c is FunctionCallContent));
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
         updateWithRequest.Should().NotBeNull("a FunctionCallContent should be present in the response updates");
 
         FunctionCallContent receivedRequest = updateWithRequest!.Contents
             .OfType<FunctionCallContent>()
             .First();
-        receivedRequest.CallId.Should().Be(CallId);
+        receivedRequest.CallId.Should().EndWith($":{CallId}");
 
         // Act 2: Send the response back
-        FunctionResultContent responseContent = new(CallId, "test result");
+        FunctionResultContent responseContent = new(receivedRequest.CallId, "test result");
         ChatMessage responseMessage = new(ChatRole.Tool, [responseContent]);
 
         // Act 2: Run the workflow with the response and capture the resulting updates
@@ -284,9 +351,10 @@ public class WorkflowHostSmokeTests
         secondCallUpdates.Should().NotBeNull("processing the response should produce updates");
         secondCallUpdates.Should().NotBeEmpty("processing the response should progress the workflow");
         secondCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Should()
-            .NotContain(c => c.CallId == CallId, "the original FunctionCallContent request should be cleared after processing the response");
+            .NotContain(c => c.CallId == receivedRequest.CallId, "the external FunctionCallContent request should be cleared after processing the response");
     }
 
     /// <summary>
@@ -314,16 +382,17 @@ public class WorkflowHostSmokeTests
 
         // Assert 1: We should have received a UserInputRequestContent
         AgentResponseUpdate? updateWithRequest = firstCallUpdates.FirstOrDefault(u =>
-            u.Contents.Any(c => c is UserInputRequestContent));
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is UserInputRequestContent));
         updateWithRequest.Should().NotBeNull("a UserInputRequestContent should be present in the response updates");
 
         UserInputRequestContent receivedRequest = updateWithRequest!.Contents
             .OfType<UserInputRequestContent>()
             .First();
-        receivedRequest.Id.Should().Be(RequestId);
+        receivedRequest.Id.Should().EndWith($":{RequestId}");
+        receivedRequest.Should().BeOfType<McpServerToolApprovalRequestContent>();
 
         // Act 2: Send the response back - use CreateResponse to get the right response type
-        UserInputResponseContent responseContent = requestContent.CreateResponse(approved: true);
+        UserInputResponseContent responseContent = ((McpServerToolApprovalRequestContent)receivedRequest).CreateResponse(approved: true);
         ChatMessage responseMessage = new(ChatRole.User, [responseContent]);
 
         // Act 2: Run the workflow again with the response and capture the updates
@@ -331,7 +400,9 @@ public class WorkflowHostSmokeTests
 
         // Assert 2: The response should be applied so that the original request is no longer pending
         secondCallUpdates.Should().NotBeEmpty("handling the user input response should produce follow-up updates");
-        bool requestStillPresent = secondCallUpdates.Any(u => u.Contents.OfType<UserInputRequestContent>().Any(r => r.Id == RequestId));
+        bool requestStillPresent = secondCallUpdates.Any(u =>
+            u.RawRepresentation is RequestInfoEvent
+            && u.Contents.OfType<UserInputRequestContent>().Any(r => r.Id == receivedRequest.Id));
         requestStillPresent.Should().BeFalse("the original UserInputRequestContent should not be re-emitted after its response is processed");
     }
 
@@ -363,11 +434,15 @@ public class WorkflowHostSmokeTests
             session).ToListAsync();
 
         // Assert 1: We should have received a FunctionCallContent
+        AgentResponseUpdate requestUpdate = firstCallUpdates.First(u =>
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is FunctionCallContent));
+        FunctionCallContent emittedRequest = requestUpdate.Contents.OfType<FunctionCallContent>().Single();
+
         firstCallUpdates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent),
             "the first call should emit a FunctionCallContent request");
 
         // Act 2: Send a mixed message containing both the function result AND regular non-response content
-        FunctionResultContent responseContent = new(CallId, "tool output");
+        FunctionResultContent responseContent = new(emittedRequest.CallId, "tool output");
         ChatMessage mixedMessage = new(ChatRole.Tool, [responseContent, new TextContent("additional context")]);
 
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(mixedMessage, session).ToListAsync();
@@ -375,9 +450,10 @@ public class WorkflowHostSmokeTests
         // Assert 2: The workflow should have processed both parts without errors
         secondCallUpdates.Should().NotBeEmpty("the mixed message should produce follow-up updates");
         secondCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Should()
-            .NotContain(c => c.CallId == CallId, "the original FunctionCallContent should be cleared after the response is processed");
+            .NotContain(c => c.CallId == emittedRequest.CallId, "the external FunctionCallContent should be cleared after the response is processed");
         secondCallUpdates
             .SelectMany(u => u.Contents.OfType<ErrorContent>())
             .Should()
@@ -398,11 +474,14 @@ public class WorkflowHostSmokeTests
 
         AgentSession session = await agent.CreateSessionAsync();
         List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "Start"), session).ToListAsync();
-        firstCallUpdates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent));
+        FunctionCallContent emittedRequest = firstCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
+            .Single();
 
         ChatMessage[] resumeMessages =
         [
-            new(ChatRole.Tool, [new FunctionResultContent(CallId, "tool output")]),
+            new(ChatRole.Tool, [new FunctionResultContent(emittedRequest.CallId, "tool output")]),
             new(ChatRole.Tool, [new TextContent("extra context in separate message")])
         ];
 
@@ -410,9 +489,10 @@ public class WorkflowHostSmokeTests
 
         secondCallUpdates.Should().NotBeEmpty();
         secondCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
             .Should()
-            .NotContain(c => c.CallId == CallId, "response+regular content split across messages should not re-emit the handled request");
+            .NotContain(c => c.CallId == emittedRequest.CallId, "response+regular content split across messages should not re-emit the handled external request");
         secondCallUpdates
             .SelectMany(u => u.Contents.OfType<ErrorContent>())
             .Should()
@@ -433,18 +513,80 @@ public class WorkflowHostSmokeTests
 
         AgentSession session = await agent.CreateSessionAsync();
         List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(new ChatMessage(ChatRole.User, "Start"), session).ToListAsync();
-        firstCallUpdates.Should().Contain(u => u.Contents.Any(c => c is FunctionCallContent));
+        FunctionCallContent emittedRequest = firstCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
+            .Single();
 
         List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(
-            new ChatMessage(ChatRole.Tool, [new FunctionResultContent(CallId, "tool output")]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent(emittedRequest.CallId, "tool output")]),
             session).ToListAsync();
 
         int functionCallCount = secondCallUpdates
             .Where(u => u.RawRepresentation is RequestInfoEvent)
             .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
-            .Count(c => c.CallId == CallId);
+            .Count(c => c.CallId == emittedRequest.CallId);
 
         functionCallCount.Should().Be(1, "a matching external response should not trigger an extra TurnToken-driven turn");
+    }
+
+    [Fact]
+    public async Task Test_AsAgent_MixedResponseAndRegularMessage_CrossExecutorStartExecutorIsReawakenedAsync()
+    {
+        const string StartExecutorId = "start-executor";
+        const string KickoffInputText = "Start";
+        const string KickoffMessageText = "kickoff downstream";
+        const string ResumeRegularText = "resume regular";
+        const string ResumeProcessedText = "regular message processed";
+        const string CallId = "cross-executor-call-id";
+        const string FunctionName = "crossExecutorFunction";
+
+        RequestEmittingAgent requestAgent = new(new FunctionCallContent(CallId, FunctionName), completeOnResponse: true);
+        ExecutorBinding requestBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = true });
+
+        KickoffOnStartExecutor startExecutor = new(
+            StartExecutorId,
+            requestBinding.Id,
+            KickoffInputText,
+            KickoffMessageText,
+            ResumeRegularText,
+            ResumeProcessedText);
+        ExecutorBinding startBinding = startExecutor.BindExecutor();
+
+        Workflow workflow = new WorkflowBuilder(startBinding)
+            .AddEdge<List<ChatMessage>>(startBinding, requestBinding, messages =>
+                messages?.Any(message => message.Contents.OfType<TextContent>().Any(content => content.Text == KickoffMessageText)) == true)
+            .AddEdge<TurnToken>(startBinding, requestBinding, _ => true)
+            .Build();
+        AIAgent agent = workflow.AsAIAgent("WorkflowAgent");
+
+        AgentSession session = await agent.CreateSessionAsync();
+        List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, KickoffInputText),
+            session).ToListAsync();
+        FunctionCallContent emittedRequest = firstCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
+            .Single();
+
+        ChatMessage[] resumeMessages =
+        [
+            new(ChatRole.Tool, [new FunctionResultContent(emittedRequest.CallId, "tool output")]),
+            new(ChatRole.User, ResumeRegularText)
+        ];
+
+        List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(resumeMessages, session).ToListAsync();
+        List<string> textContents = [.. secondCallUpdates.SelectMany(update => update.Contents.OfType<TextContent>()).Select(content => content.Text)];
+
+        textContents.Should().Contain(ResumeProcessedText, "the start executor should receive an explicit TurnToken when the matched response wakes a different executor");
+        textContents.Should().Contain("Request processed", "the matched external response should still be delivered to the downstream request owner");
+        secondCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
+            .Should()
+            .NotContain(c => c.CallId == emittedRequest.CallId, "the handled external request should not be re-emitted while waking the start executor");
+        secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()).Should().BeEmpty();
     }
 
     [Fact]
