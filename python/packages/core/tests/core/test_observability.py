@@ -2877,7 +2877,8 @@ async def test_agent_invoke_span_usage_single_call(span_exporter: InMemorySpanEx
 
 @pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
 async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(span_exporter: InMemorySpanExporter):
-    """When the function invocation loop exhausts max_iterations, the final response aggregates usage from all rounds."""
+    """When the function invocation loop exhausts max_iterations, the final response aggregates usage
+    from all rounds."""
     from tests.core.conftest import MockBaseChatClient
 
     class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
