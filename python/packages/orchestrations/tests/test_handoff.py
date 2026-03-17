@@ -33,7 +33,7 @@ from agent_framework_orchestrations._handoff import (
 from agent_framework_orchestrations._orchestrator_helpers import clean_conversation_for_handoff
 
 
-class MockChatClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+class MockChatClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
     """Mock chat client for testing handoff workflows."""
 
     def __init__(
@@ -134,7 +134,7 @@ class MockHandoffAgent(Agent):
         super().__init__(client=MockChatClient(name=name, handoff_to=handoff_to), name=name, id=name)
 
 
-class ContextAwareRefundClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+class ContextAwareRefundClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
     """Mock client that expects prior user context to remain available on resume."""
 
     def __init__(self) -> None:
@@ -298,7 +298,7 @@ async def test_tool_approval_responses_are_not_replayed_from_history() -> None:
         execution_count += 1
         return "ok"
 
-    class ApprovalReplayClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class ApprovalReplayClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)
@@ -383,7 +383,7 @@ async def test_handoff_resume_preserves_approval_function_call_for_stateless_run
     def submit_refund() -> str:
         return "ok"
 
-    class StrictStatelessApprovalClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class StrictStatelessApprovalClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)
@@ -475,7 +475,7 @@ async def test_handoff_resume_preserves_approval_function_call_for_stateless_run
 async def test_handoff_replay_serializes_handoff_function_results() -> None:
     """Returning to the same agent must not replay dict tool outputs."""
 
-    class ReplaySafeHandoffClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class ReplaySafeHandoffClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self, name: str, handoff_sequence: list[str | None]) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)
@@ -550,7 +550,7 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
     def submit_refund() -> str:
         return "submitted"
 
-    class RefundReplayClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class RefundReplayClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)
@@ -608,7 +608,7 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
 
             return _get()
 
-    class OrderReplayClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class OrderReplayClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)
@@ -907,7 +907,7 @@ async def test_handoff_async_termination_condition() -> None:
 async def test_handoff_terminates_without_request_info_when_latest_response_meets_condition() -> None:
     """Termination triggered by the latest assistant response should not emit request_info."""
 
-    class FinalizingClient(ChatMiddlewareLayer[Any], FunctionInvocationLayer[Any], BaseChatClient[Any]):
+    class FinalizingClient(FunctionInvocationLayer[Any], ChatMiddlewareLayer[Any], BaseChatClient[Any]):
         def __init__(self) -> None:
             ChatMiddlewareLayer.__init__(self)
             FunctionInvocationLayer.__init__(self)

@@ -362,11 +362,15 @@ def _create_otlp_exporters(
     if protocol == "grpc":
         # Import all gRPC exporters
         try:
-            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter as GRPCLogExporter
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-                OTLPMetricExporter as GRPCMetricExporter,
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import (  # type: ignore[reportMissingImports]
+                OTLPLogExporter as GRPCLogExporter,  # type: ignore[reportUnknownVariableType]
             )
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter as GRPCSpanExporter
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (  # type: ignore[reportMissingImports]
+                OTLPMetricExporter as GRPCMetricExporter,  # type: ignore[reportUnknownVariableType]
+            )
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[reportMissingImports]
+                OTLPSpanExporter as GRPCSpanExporter,  # type: ignore[reportUnknownVariableType]
+            )
         except ImportError as exc:
             raise ImportError(
                 "opentelemetry-exporter-otlp-proto-grpc is required for OTLP gRPC exporters. "
@@ -375,21 +379,21 @@ def _create_otlp_exporters(
 
         if actual_logs_endpoint:
             exporters.append(
-                GRPCLogExporter(
+                GRPCLogExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_logs_endpoint,
                     headers=actual_logs_headers if actual_logs_headers else None,
                 )
             )
         if actual_traces_endpoint:
             exporters.append(
-                GRPCSpanExporter(
+                GRPCSpanExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_traces_endpoint,
                     headers=actual_traces_headers if actual_traces_headers else None,
                 )
             )
         if actual_metrics_endpoint:
             exporters.append(
-                GRPCMetricExporter(
+                GRPCMetricExporter(  # type: ignore[reportUnknownArgumentType]
                     endpoint=actual_metrics_endpoint,
                     headers=actual_metrics_headers if actual_metrics_headers else None,
                 )

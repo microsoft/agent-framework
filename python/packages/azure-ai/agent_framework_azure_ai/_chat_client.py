@@ -206,8 +206,8 @@ AzureAIAgentOptionsT = TypeVar(
 
 
 class AzureAIAgentClient(
-    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     FunctionInvocationLayer[AzureAIAgentOptionsT],
+    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     ChatTelemetryLayer[AzureAIAgentOptionsT],
     BaseChatClient[AzureAIAgentOptionsT],
     Generic[AzureAIAgentOptionsT],

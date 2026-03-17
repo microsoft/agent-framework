@@ -2170,7 +2170,7 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
     """Test that with correct layer ordering, spans appear in the expected sequence.
 
-    When using the correct layer ordering (ChatMiddlewareLayer, FunctionInvocationLayer,
+    When using the correct layer ordering (FunctionInvocationLayer, ChatMiddlewareLayer,
     ChatTelemetryLayer, BaseChatClient), the spans should appear in this order:
     1. First 'chat' span (initial LLM call that returns function call)
     2. 'execute_tool' span (function invocation)
@@ -2187,11 +2187,11 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
     def get_weather(location: str) -> str:
         return f"The weather in {location} is sunny."
 
-    # Correct layer ordering: FunctionInvocationLayer BEFORE ChatTelemetryLayer
-    # This ensures each inner LLM call gets its own telemetry span
+    # Correct layer ordering: FunctionInvocationLayer BEFORE ChatMiddlewareLayer BEFORE ChatTelemetryLayer
+    # This ensures each inner LLM call traverses chat middleware and still gets its own telemetry span
     class MockChatClientWithLayers(
-        ChatMiddlewareLayer,
         FunctionInvocationLayer,
+        ChatMiddlewareLayer,
         ChatTelemetryLayer,
         BaseChatClient,
     ):

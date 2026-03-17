@@ -152,8 +152,8 @@ AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAICha
 
 class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     FunctionInvocationLayer[AzureOpenAIChatOptionsT],
+    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     ChatTelemetryLayer[AzureOpenAIChatOptionsT],
     RawOpenAIChatClient[AzureOpenAIChatOptionsT],
     Generic[AzureOpenAIChatOptionsT],

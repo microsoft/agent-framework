@@ -63,7 +63,12 @@ if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._mcp import MCPTool
-    from ._middleware import FunctionInvocationContext, FunctionMiddlewarePipeline, FunctionMiddlewareTypes
+    from ._middleware import (
+        ChatAndFunctionMiddlewareTypes,
+        FunctionInvocationContext,
+        FunctionMiddlewarePipeline,
+        FunctionMiddlewareTypes,
+    )
     from ._sessions import AgentSession
     from ._types import (
         ChatOptions,
@@ -2023,17 +2028,36 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
     def __init__(
         self,
         *,
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:
-        self.function_middleware: list[FunctionMiddlewareTypes] = (
-            list(function_middleware) if function_middleware else []
-        )
+        from ._middleware import categorize_middleware
+
+        middleware_list = categorize_middleware(middleware)
+        self.function_middleware: list[FunctionMiddlewareTypes] = list(middleware_list["function"])
+        self._cached_function_middleware_pipeline: FunctionMiddlewarePipeline | None = None
         self.function_invocation_configuration = normalize_function_invocation_configuration(
             function_invocation_configuration
         )
+        if (chat_middleware := (middleware_list["chat"] or None)) is not None:
+            kwargs["middleware"] = chat_middleware
         super().__init__(**kwargs)
+
+    def _get_function_middleware_pipeline(
+        self,
+        middleware: Sequence[FunctionMiddlewareTypes],
+    ) -> FunctionMiddlewarePipeline:
+        from ._middleware import FunctionMiddlewarePipeline
+
+        effective_middleware = [*self.function_middleware, *middleware]
+        if self._cached_function_middleware_pipeline is not None and self._cached_function_middleware_pipeline.matches(
+            effective_middleware
+        ):
+            return self._cached_function_middleware_pipeline
+
+        self._cached_function_middleware_pipeline = FunctionMiddlewarePipeline(*effective_middleware)
+        return self._cached_function_middleware_pipeline
 
     @overload
     def get_response(
@@ -2083,14 +2107,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        from ._middleware import FunctionMiddlewarePipeline
+        from ._middleware import categorize_middleware
         from ._types import (
             ChatResponse,
             ChatResponseUpdate,
@@ -2107,16 +2130,11 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        effective_function_middleware = function_middleware
-        if effective_function_middleware is None:
-            middleware_from_client_kwargs = effective_client_kwargs.pop("function_middleware", None)
-            if middleware_from_client_kwargs is not None:
-                effective_function_middleware = cast(Sequence[Any], middleware_from_client_kwargs)
+        runtime_middleware = categorize_middleware(effective_client_kwargs.pop("middleware", []))
 
-        # ChatMiddleware adds this kwarg
-        function_middleware_pipeline = FunctionMiddlewarePipeline(
-            *(self.function_middleware), *(effective_function_middleware or [])
-        )
+        function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_middleware["function"])
+        if runtime_middleware["chat"]:
+            effective_client_kwargs["middleware"] = runtime_middleware["chat"]
         max_errors = self.function_invocation_configuration.get(
             "max_consecutive_errors_per_request", DEFAULT_MAX_CONSECUTIVE_ERRORS_PER_REQUEST
         )
