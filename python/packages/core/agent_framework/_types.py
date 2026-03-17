@@ -1298,6 +1298,10 @@ class Content:
 
         return result
 
+    def to_json(self, *, exclude_none: bool = True, exclude: set[str] | None = None, **kwargs: Any) -> str:
+        """Serialize the content to a JSON string."""
+        return json.dumps(self.to_dict(exclude_none=exclude_none, exclude=exclude), **kwargs)
+
     def __eq__(self, other: object) -> bool:
         """Check if two Content instances are equal by comparing their dict representations."""
         if not isinstance(other, Content):
@@ -1313,6 +1317,12 @@ class Content:
         if self.type == "text":
             return self.text or ""
         return f"Content(type={self.type})"
+
+    @classmethod
+    def from_json(cls: type[ContentT], value: str) -> ContentT:
+        """Create a Content instance from a JSON string."""
+        data = json.loads(value)
+        return cls.from_dict(data)
 
     @classmethod
     def from_dict(cls: type[ContentT], data: Mapping[str, Any]) -> ContentT:

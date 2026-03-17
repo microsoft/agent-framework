@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
+import json
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1708,6 +1709,53 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert isinstance(annotation, dict)
     assert annotation[GROUP_ID_KEY] == "group_2"
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_content_to_json() -> None:
+    """Test Content.to_json serializes to a JSON string."""
+    content = Content.from_text("Hello world")
+    json_str = content.to_json()
+    parsed = json.loads(json_str)
+    assert parsed["type"] == "text"
+    assert parsed["text"] == "Hello world"
+
+
+def test_content_to_json_exclude_none() -> None:
+    """Test Content.to_json excludes None fields by default."""
+    content = Content.from_text("Hello")
+    json_str = content.to_json()
+    parsed = json.loads(json_str)
+    assert "uri" not in parsed
+
+    json_str_with_none = content.to_json(exclude_none=False)
+    parsed_with_none = json.loads(json_str_with_none)
+    assert "uri" in parsed_with_none
+    assert parsed_with_none["uri"] is None
+
+
+def test_content_from_json() -> None:
+    """Test Content.from_json creates a Content instance from a JSON string."""
+    json_str = json.dumps({"type": "text", "text": "Hello world"})
+    content = Content.from_json(json_str)
+    assert content.type == "text"
+    assert content.text == "Hello world"
+
+
+def test_content_json_roundtrip() -> None:
+    """Test Content.to_json and Content.from_json roundtrip."""
+    original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
+    json_str = original.to_json()
+    restored = Content.from_json(json_str)
+    assert restored.type == "function_call"
+    assert restored.call_id == "call1"
+    assert restored.name == "my_func"
+    assert restored.arguments == {"key": "value"}
+
+
+def test_content_from_json_invalid() -> None:
+    """Test Content.from_json raises on invalid input."""
+    with pytest.raises(ValueError, match="Content mapping requires 'type'"):
+        Content.from_json(json.dumps({"text": "missing type"}))
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
