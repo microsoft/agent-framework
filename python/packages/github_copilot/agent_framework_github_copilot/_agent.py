@@ -477,13 +477,15 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             elif event.type == SessionEventType.TOOL_EXECUTION_COMPLETE:
                 tool_call_id = getattr(event.data, "tool_call_id", None) or ""
                 result_obj = getattr(event.data, "result", None)
-                result_text = getattr(result_obj, "text_result_for_llm", "") if result_obj else ""
-                result_type = getattr(result_obj, "result_type", "success") if result_obj else "success"
-                error = getattr(result_obj, "error", None) if result_obj else None
-                exception = error if result_type == "failure" else None
+                result_text = getattr(result_obj, "content", "") if result_obj else ""
+                success = getattr(event.data, "success", None)
+                error_val = getattr(event.data, "error", None)
+                exception = None
+                if success is False and error_val is not None:
+                    exception = error_val.message if hasattr(error_val, "message") else str(error_val)
                 fr = Content.from_function_result(
                     call_id=tool_call_id,
-                    result=result_text,
+                    result=result_text or "",
                     exception=exception,
                     raw_representation=event.data,
                 )
