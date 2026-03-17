@@ -17,6 +17,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     Message,
+    RawAgent,
     ResponseStream,
     SupportsAgentRun,
     UsageDetails,
@@ -2781,3 +2782,96 @@ def test_get_meter_typeerror_fallback():
         meter = get_meter(name="test", attributes={"key": "val"})
         assert meter is not None
         assert call_count == 2
+
+
+# region Agent token usage aggregation
+
+
+@tool(name="get_weather", description="Get weather for a city", approval_mode="never_require")
+def _get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return "Sunny, 72°F"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporter: InMemorySpanExporter):
+    """The invoke_agent span should sum token usage from all chat completions in the function invocation loop."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient()
+    client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "Seattle"}')
+                ],
+            ),
+            usage_details=UsageDetails(input_token_count=2239, output_token_count=192),
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", text="The weather in Seattle is sunny."),
+            usage_details=UsageDetails(input_token_count=2569, output_token_count=99),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(
+        messages="What is the weather in Seattle?",
+        options={"tools": [_get_weather], "tool_choice": "auto"},
+    )
+
+    spans = span_exporter.get_finished_spans()
+
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+    agent_span = invoke_spans[0]
+
+    chat_spans = [
+        s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION
+    ]
+    assert len(chat_spans) == 2
+
+    # Individual chat spans retain their own usage
+    assert chat_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 2239
+    assert chat_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 192
+    assert chat_spans[1].attributes.get(OtelAttr.INPUT_TOKENS) == 2569
+    assert chat_spans[1].attributes.get(OtelAttr.OUTPUT_TOKENS) == 99
+
+    # The invoke_agent span must report the aggregate across all LLM round-trips
+    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
+    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_usage_single_call(span_exporter: InMemorySpanExporter):
+    """When only one chat completion occurs, the invoke_agent span usage equals that single call."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient()
+    client.run_responses = [
+        ChatResponse(
+            messages=Message(role="assistant", text="Hello!"),
+            usage_details=UsageDetails(input_token_count=100, output_token_count=50),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(messages="Hi")
+
+    spans = span_exporter.get_finished_spans()
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+
+    assert invoke_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
+    assert invoke_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
