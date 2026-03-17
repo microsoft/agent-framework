@@ -10,6 +10,7 @@ What it provides:
 - **Governance** — permissions, human-in-the-loop, policies
 - **Context management** — compaction, eviction, externalization
 - **Observability** — traces, transcripts, replay
+
 ### Where We Stand
 
 MAF compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex, and Claude Code — every one of them has these capabilities. MAF has some partially, most not at all.
@@ -30,8 +31,6 @@ MAF compared against DeepAgents, Amplifier, Opencode, Copilot CLI, OpenAI Codex,
 ## Features
 
 ### Agent/User Orchestration
-
-#### Slot Filling (a.k.a. "Guided Conversations")
 
 How does the harness manage structured, multi-turn data collection from the user? What's the interaction model between the outer loop and user-facing slot-filling prompts? How does it compose with compaction and task management? How does the agent re-ask or repair slot values after partial completion?
 
