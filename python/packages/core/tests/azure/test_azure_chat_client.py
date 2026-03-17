@@ -652,6 +652,88 @@ async def test_streaming_with_none_delta(
     assert any(msg.contents for msg in results)
 
 
+# region _parse_text_from_openai direct unit tests
+
+
+def test_parse_text_from_openai_with_choice_message(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai correctly reads message from a Choice."""
+    client = AzureOpenAIChatClient()
+    choice = Choice(
+        index=0,
+        message=ChatCompletionMessage(content="hello", role="assistant"),
+        finish_reason="stop",
+    )
+    result = client._parse_text_from_openai(choice)
+    assert result is not None
+    assert result.type == "text"
+    assert result.text == "hello"
+
+
+def test_parse_text_from_openai_with_chunk_choice_delta(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai correctly reads delta from a ChunkChoice."""
+    client = AzureOpenAIChatClient()
+    choice = ChunkChoice(
+        index=0,
+        delta=ChunkChoiceDelta(content="streamed", role="assistant"),
+        finish_reason=None,
+    )
+    result = client._parse_text_from_openai(choice)
+    assert result is not None
+    assert result.type == "text"
+    assert result.text == "streamed"
+
+
+def test_parse_text_from_openai_refusal_choice(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai returns refusal text from a Choice."""
+    client = AzureOpenAIChatClient()
+    choice = Choice(
+        index=0,
+        message=ChatCompletionMessage(content=None, role="assistant", refusal="I cannot help with that"),
+        finish_reason="stop",
+    )
+    result = client._parse_text_from_openai(choice)
+    assert result is not None
+    assert result.type == "text"
+    assert result.text == "I cannot help with that"
+
+
+def test_parse_text_from_openai_refusal_chunk_choice(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai returns refusal text from a ChunkChoice."""
+    client = AzureOpenAIChatClient()
+    choice = ChunkChoice(
+        index=0,
+        delta=ChunkChoiceDelta(content=None, role="assistant", refusal="I cannot help with that"),
+        finish_reason=None,
+    )
+    result = client._parse_text_from_openai(choice)
+    assert result is not None
+    assert result.type == "text"
+    assert result.text == "I cannot help with that"
+
+
+def test_parse_text_from_openai_no_content_no_refusal(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai returns None when no content or refusal."""
+    client = AzureOpenAIChatClient()
+    choice = Choice(
+        index=0,
+        message=ChatCompletionMessage(content=None, role="assistant"),
+        finish_reason="stop",
+    )
+    result = client._parse_text_from_openai(choice)
+    assert result is None
+
+
+def test_parse_text_from_openai_none_delta(azure_openai_unit_test_env: dict[str, str]) -> None:
+    """Test _parse_text_from_openai returns None when delta is None (async content filtering)."""
+    client = AzureOpenAIChatClient()
+    choice = ChunkChoice.model_construct(index=0, delta=None, finish_reason=None)
+    result = client._parse_text_from_openai(choice)
+    assert result is None
+
+
+# endregion
+
+
 @patch.object(AsyncChatCompletions, "create", new_callable=AsyncMock)
 async def test_cmc_with_conversation_id(
     mock_create: AsyncMock,

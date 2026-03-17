@@ -45,6 +45,8 @@ else:
 
 if TYPE_CHECKING:
     from openai.lib.azure import AsyncAzureOpenAI
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 
     from agent_framework._middleware import MiddlewareTypes
 
@@ -288,7 +290,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         )
 
     @override
-    def _parse_text_from_openai(self, choice: Any) -> Content | None:
+    def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:
         """Parse the choice into a Content object with type='text'.
 
         Overwritten from RawOpenAIChatClient to deal with Azure On Your Data function.
