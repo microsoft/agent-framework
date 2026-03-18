@@ -2060,17 +2060,31 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     tool.session = mock_session
     tool.load_tools_flag = True
 
+    original_zero_arg_schema = {"type": "object"}
+    original_string_schema = {"type": "string"}
+    original_empty_schema: dict[str, object] = {}
+
     page = MagicMock()
     page.tools = [
         types.Tool(
             name="zero_arg_tool",
             description="A tool with no parameters",
-            inputSchema={"type": "object"},
+            inputSchema=original_zero_arg_schema,
         ),
         types.Tool(
             name="normal_tool",
             description="A tool with parameters",
             inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        ),
+        types.Tool(
+            name="string_schema_tool",
+            description="A tool with a non-object schema",
+            inputSchema=original_string_schema,
+        ),
+        types.Tool(
+            name="empty_schema_tool",
+            description="A tool with an empty schema",
+            inputSchema=original_empty_schema,
         ),
     ]
     page.nextCursor = None
@@ -2079,22 +2093,35 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
 
     await tool.load_tools()
 
-    assert len(tool._functions) == 2
+    assert len(tool._functions) == 4
 
-    zero_arg = tool._functions[0]
-    normal = tool._functions[1]
+    funcs_by_name = {f.name: f for f in tool._functions}
 
     # Zero-arg tool must have "properties" injected
-    zero_params = zero_arg.parameters()
+    zero_params = funcs_by_name["zero_arg_tool"].parameters()
     assert "properties" in zero_params
     assert zero_params["properties"] == {}
     assert zero_params["type"] == "object"
 
     # Normal tool must retain its existing properties
-    normal_params = normal.parameters()
+    normal_params = funcs_by_name["normal_tool"].parameters()
     assert "properties" in normal_params
     assert "x" in normal_params["properties"]
     assert normal_params["required"] == ["x"]
+
+    # Non-object schema must NOT have "properties" injected
+    string_params = funcs_by_name["string_schema_tool"].parameters()
+    assert "properties" not in string_params
+    assert string_params["type"] == "string"
+
+    # Empty schema (no "type" key) must NOT have "properties" injected
+    empty_params = funcs_by_name["empty_schema_tool"].parameters()
+    assert "properties" not in empty_params
+
+    # Original inputSchema dicts must not be mutated
+    assert "properties" not in original_zero_arg_schema
+    assert "properties" not in original_string_schema
+    assert "properties" not in original_empty_schema
 
 
 async def test_load_prompts_with_pagination():

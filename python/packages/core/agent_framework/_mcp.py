@@ -905,7 +905,7 @@ class MCPTool:
                 # Normalize inputSchema: ensure "properties" exists for object schemas.
                 # Some MCP servers (e.g. zero-argument tools) omit "properties",
                 # which causes OpenAI API to reject the schema with a 400 error.
-                input_schema = dict(tool.inputSchema)
+                input_schema = dict(tool.inputSchema or {})
                 if input_schema.get("type") == "object" and "properties" not in input_schema:
                     input_schema["properties"] = {}
                 # Create FunctionTools out of each tool
