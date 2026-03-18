@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.AI.Extensions.OpenAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;

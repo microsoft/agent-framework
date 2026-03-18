@@ -2,7 +2,6 @@
 
 using System.ClientModel.Primitives;
 using System.IO;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;

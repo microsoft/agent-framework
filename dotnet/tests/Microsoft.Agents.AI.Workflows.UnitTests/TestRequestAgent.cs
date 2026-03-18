@@ -191,7 +191,7 @@ internal sealed class TestRequestAgent(TestAgentRequestType requestType, int unp
             for (int i = 0; i < count; i++)
             {
                 string id = Guid.NewGuid().ToString("N");
-                ToolApprovalRequestContent request = new ToolApprovalRequestContent(id, new FunctionCallContent(id, "TestFunction"));
+                ToolApprovalRequestContent request = new(id, new FunctionCallContent(id, "TestFunction"));
                 yield return (id, request);
             }
         }

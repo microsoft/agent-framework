@@ -4,9 +4,9 @@
 // The Memory Search Tool enables agents to recall information from previous conversations,
 // supporting user profile persistence and chat summaries across sessions.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
-using Azure.AI.Extensions.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
