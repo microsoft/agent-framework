@@ -41,7 +41,7 @@ internal sealed class AGUIUserMessageJsonConverter : JsonConverter<AGUIUserMessa
 
         if (!jsonElement.TryGetProperty("content", out JsonElement contentElement))
         {
-            throw new JsonException("Missing required property 'content' for AGUIUserMessage deserialization");
+            throw new JsonException("Missing required property 'content' for AGUIUserMessage deserialization.");
         }
 
         switch (contentElement.ValueKind)

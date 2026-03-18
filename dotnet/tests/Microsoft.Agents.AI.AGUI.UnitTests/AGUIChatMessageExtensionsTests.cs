@@ -32,6 +32,10 @@ public sealed class WeatherResponse
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 internal sealed partial class CustomTypesContext : JsonSerializerContext;
 
+internal sealed class UnsupportedUserContent : AIContent
+{
+}
+
 /// <summary>
 /// Unit tests for the <see cref="AGUIChatMessageExtensions"/> class.
 /// </summary>
@@ -365,6 +369,51 @@ public sealed class AGUIChatMessageExtensionsTests
         // Assert
         Assert.Equal("alice", message.Name);
         Assert.NotNull(message.InputContents);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithUnsupportedUserContent_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new(ChatRole.User, [new UnsupportedUserContent()])
+            {
+                MessageId = "msg1"
+            }
+        ];
+
+        // Act & Assert
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList());
+        Assert.Contains("Unsupported user AI content type", ex.Message);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithHostedFileWithoutMediaType_DoesNotSerializeEmptyMimeType()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new(ChatRole.User,
+            [
+                new HostedFileContent("file_123")
+                {
+                    Name = "hosted.png"
+                }
+            ])
+            {
+                MessageId = "msg1"
+            }
+        ];
+
+        // Act
+        AGUIUserMessage message = Assert.IsType<AGUIUserMessage>(chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single());
+        string json = System.Text.Json.JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+        System.Text.Json.JsonElement jsonElement = System.Text.Json.JsonElement.Parse(json);
+        System.Text.Json.JsonElement binaryContent = jsonElement.GetProperty("content")[0];
+
+        // Assert
+        Assert.False(binaryContent.TryGetProperty("mimeType", out _));
     }
 
     [Fact]

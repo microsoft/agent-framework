@@ -356,6 +356,7 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
     {
+        this.CaptureMessages(messages);
         return this.RunCoreStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
     }
 
@@ -365,8 +366,7 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
         AgentRunOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        this.ReceivedMessages.Clear();
-        this.ReceivedMessages.AddRange(messages);
+        this.CaptureMessages(messages);
 
         // Extract forwarded properties from ChatOptions.AdditionalProperties (set by AG-UI hosting layer)
         if (options is ChatClientAgentRunOptions { ChatOptions.AdditionalProperties: { } properties } &&
@@ -417,4 +417,10 @@ internal sealed class FakeForwardedPropsAgent : AIAgent
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+    private void CaptureMessages(IEnumerable<ChatMessage> messages)
+    {
+        this.ReceivedMessages.Clear();
+        this.ReceivedMessages.AddRange(messages);
+    }
 }

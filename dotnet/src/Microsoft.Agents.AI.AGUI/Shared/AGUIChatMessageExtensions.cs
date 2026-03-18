@@ -258,7 +258,7 @@ internal static class AGUIChatMessageExtensions
         {
             try
             {
-                return new DataContent(Convert.FromBase64String(binaryInput.Data), binaryInput.MimeType)
+                return new DataContent(Convert.FromBase64String(binaryInput.Data), binaryInput.MimeType ?? string.Empty)
                 {
                     Name = binaryInput.Filename
                 };
@@ -271,7 +271,7 @@ internal static class AGUIChatMessageExtensions
 
         if (!string.IsNullOrEmpty(binaryInput.Url))
         {
-            return new UriContent(binaryInput.Url, binaryInput.MimeType);
+            return new UriContent(binaryInput.Url, binaryInput.MimeType ?? string.Empty);
         }
 
         if (!string.IsNullOrEmpty(binaryInput.Id))
@@ -320,11 +320,13 @@ internal static class AGUIChatMessageExtensions
                 case HostedFileContent hostedFileContent:
                     inputContents.Add(new AGUIBinaryInputContent
                     {
-                        MimeType = hostedFileContent.MediaType ?? string.Empty,
+                        MimeType = hostedFileContent.MediaType,
                         Id = hostedFileContent.FileId,
                         Filename = hostedFileContent.Name
                     });
                     break;
+                default:
+                    throw new InvalidOperationException($"Unsupported user AI content type '{content.GetType().Name}'.");
             }
         }
 

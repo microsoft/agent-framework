@@ -16,7 +16,8 @@ internal sealed class AGUIBinaryInputContent : AGUIInputContent
     }
 
     [JsonPropertyName("mimeType")]
-    public string MimeType { get; set; } = string.Empty;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; set; }
 
     [JsonPropertyName("id")]
     public string? Id { get; set; }
