@@ -2066,6 +2066,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -2080,6 +2081,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[False] = ...,
         options: OptionsCoT | ChatOptions[None] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -2094,6 +2096,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: Literal[True],
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -2107,6 +2110,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         *,
         stream: bool = False,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
@@ -2130,6 +2134,9 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             )
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        if middleware is not None:
+            existing = effective_client_kwargs.get("middleware", [])
+            effective_client_kwargs["middleware"] = [*(existing if isinstance(existing, list) else [existing]), *middleware]
         runtime_middleware = categorize_middleware(effective_client_kwargs.pop("middleware", []))
 
         function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_middleware["function"])

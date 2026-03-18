@@ -362,6 +362,29 @@ class TestChatMiddleware:
         assert first_pipeline is second_pipeline
         assert third_pipeline is not first_pipeline
 
+    def test_chat_middleware_pipeline_cache_includes_base_middleware(
+        self,
+        chat_client_base: "MockBaseChatClient",
+    ) -> None:
+        """Test that chat middleware cache key includes base middleware to prevent incorrect reuse."""
+
+        @chat_middleware
+        async def base_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def runtime_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        # Without base middleware
+        pipeline_no_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
+
+        # With base middleware
+        chat_client_base.chat_middleware = [base_middleware]
+        pipeline_with_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
+
+        assert pipeline_with_base is not pipeline_no_base
+
     def test_function_middleware_pipeline_cache_reuses_matching_middleware(
         self,
         chat_client_base: "MockBaseChatClient",

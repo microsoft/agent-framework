@@ -129,6 +129,10 @@ def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
     assert mro.index(FunctionInvocationLayer) < mro.index(ChatMiddlewareLayer)
     assert mro.index(ChatMiddlewareLayer) < mro.index(ChatTelemetryLayer)
     assert mro.index(ChatTelemetryLayer) < mro.index(RawAnthropicClient)
+    # RawAnthropicClient must not include the convenience layers
+    assert not issubclass(RawAnthropicClient, FunctionInvocationLayer)
+    assert not issubclass(RawAnthropicClient, ChatMiddlewareLayer)
+    assert not issubclass(RawAnthropicClient, ChatTelemetryLayer)
 
 
 def test_anthropic_client_init_auto_create_client(

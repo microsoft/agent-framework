@@ -1712,3 +1712,18 @@ class TestCategorizeMiddleware:
         assert result["chat"] == []
         assert result["function"] == []
         assert result["agent"] == []
+
+    def test_categorize_middleware_with_single_item(self) -> None:
+        """Test that a single unwrapped middleware item is appended correctly."""
+        chat_mw = TestChatMiddleware()
+        result = categorize_middleware(chat_mw)
+        assert result["chat"] == [chat_mw]
+        assert result["function"] == []
+        assert result["agent"] == []
+
+    def test_categorize_middleware_with_string_does_not_decompose(self) -> None:
+        """Test that a string is not decomposed character-by-character."""
+        result = categorize_middleware("not_a_middleware")
+        # String should be treated as a single item, not decomposed into characters
+        total_items = len(result["chat"]) + len(result["function"]) + len(result["agent"])
+        assert total_items <= 1
