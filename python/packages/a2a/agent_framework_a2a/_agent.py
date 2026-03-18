@@ -291,7 +291,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
             async def _run_non_streaming() -> AgentResponse[Any]:
                 active_session, session_context = await self._run_before_providers(
-                    session=session, input_messages=normalized_messages,
+                    session=session,
+                    input_messages=normalized_messages,
                 )
                 if continuation_token is not None:
                     a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
@@ -325,7 +326,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         async def _get_stream() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
             active_session, session_context = await self._run_before_providers(
-                session=session, input_messages=normalized_messages,
+                session=session,
+                input_messages=normalized_messages,
             )
             active_session_holder["session"] = active_session
             context_holder["ctx"] = session_context
@@ -343,11 +345,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 finalizer=AgentResponse.from_updates,
             )
 
-        return (
-            ResponseStream
-            .from_awaitable(_get_stream())
-            .with_result_hook(_post_hook)
-        )
+        return ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)
 
     async def _run_before_providers(
         self,
