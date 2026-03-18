@@ -195,7 +195,7 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result and mcp_type.structuredContent is not None:
-        result.append(Content.from_text(json.dumps(mcp_type.structuredContent, default=str)))
+        result.append(Content.from_text(json.dumps(mcp_type.structuredContent)))
 
     if not result:
         result.append(Content.from_text("null"))
@@ -1016,6 +1016,9 @@ class MCPTool:
 
         # TODO(Copilot): forward server's expected result schema as response_format
         # when result_type support is added to ChatOptions.
+        # Note: _parse_tool_result_from_mcp returns list[Content] with no structured-data
+        # channel, so retrofitting typed results will require a parallel code path or
+        # richer return type.
         options: ChatOptions[None] = {}
         if params.systemPrompt is not None:
             options["instructions"] = params.systemPrompt

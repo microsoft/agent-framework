@@ -387,6 +387,19 @@ def test_parse_tool_result_from_mcp_structured_content_nested():
     assert json.loads(result[0].text) == structured
 
 
+def test_parse_tool_result_from_mcp_structured_content_non_serializable():
+    """Test that structuredContent with non-JSON-serializable values raises TypeError."""
+    from datetime import datetime
+
+    structured = {"timestamp": datetime(2025, 1, 1)}
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent=structured,
+    )
+    with pytest.raises(TypeError):
+        _parse_tool_result_from_mcp(mcp_result)
+
+
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
@@ -1958,6 +1971,76 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     call_kwargs = mock_chat_client.get_response.call_args
     options = call_kwargs.kwargs.get("options") or {}
     assert options.get("tool_choice") == "required"
+
+
+async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
+    """Test sampling callback forwards empty string systemPrompt as instructions."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = ""
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options.get("instructions") == ""
+
+
+async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
+    """Test sampling callback forwards empty tools list in options."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = []
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options.get("tools") == []
 
 
 async def test_connect_creates_session_with_sampling_capabilities():
