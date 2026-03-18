@@ -26,7 +26,12 @@ internal sealed class AGUIUserMessageJsonConverter : JsonConverter<AGUIUserMessa
 
         if (jsonElement.TryGetProperty("role", out JsonElement roleElement))
         {
-            message.Role = roleElement.GetString() ?? AGUIRoles.User;
+            string? role = roleElement.GetString();
+            if (!string.IsNullOrEmpty(role) &&
+                !string.Equals(role, AGUIRoles.User, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new JsonException("AGUI user message role must be 'user'.");
+            }
         }
 
         if (jsonElement.TryGetProperty("name", out JsonElement nameElement))
@@ -64,7 +69,7 @@ internal sealed class AGUIUserMessageJsonConverter : JsonConverter<AGUIUserMessa
             writer.WriteString("id", value.Id);
         }
 
-        writer.WriteString("role", value.Role);
+        writer.WriteString("role", AGUIRoles.User);
 
         if (value.InputContents is { Length: > 0 })
         {

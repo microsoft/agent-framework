@@ -838,6 +838,41 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     [Fact]
+    public void AGUIUserMessage_Deserialize_WithNonUserRole_ThrowsJsonException()
+    {
+        // Arrange
+        const string Json = """
+            {
+                "id": "user3",
+                "role": "assistant",
+                "content": "Hello"
+            }
+            """;
+
+        // Act & Assert
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize(Json, AGUIJsonSerializerContext.Default.AGUIUserMessage));
+    }
+
+    [Fact]
+    public void AGUIUserMessage_Serialize_AlwaysWritesUserRole()
+    {
+        // Arrange
+        AGUIUserMessage message = new()
+        {
+            Id = "user4",
+            Role = AGUIRoles.Assistant,
+            Content = "Hello"
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(message, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIRoles.User, jsonElement.GetProperty("role").GetString());
+    }
+
+    [Fact]
     public void AGUISystemMessage_SerializesAndDeserializes_Correctly()
     {
         // Arrange

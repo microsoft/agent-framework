@@ -269,6 +269,27 @@ public sealed class AGUIChatMessageExtensionsTests
     }
 
     [Fact]
+    public void AsChatMessages_WithNamedUserMessage_MapsNameToAuthorName()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage
+            {
+                Id = "msg1",
+                Name = "alice",
+                Content = "Hello"
+            }
+        ];
+
+        // Act
+        ChatMessage message = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        Assert.Equal("alice", message.AuthorName);
+    }
+
+    [Fact]
     public void AsAGUIMessages_WithMultimodalUserMessage_SerializesAsInputContentArray()
     {
         // Arrange
@@ -298,6 +319,52 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal("image/png", binaryInput.MimeType);
         Assert.Equal("pixel.png", binaryInput.Filename);
         Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("png-bytes")), binaryInput.Data);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithNamedUserMessage_PreservesNameForTextContent()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.User, "Hello")
+            {
+                MessageId = "msg1",
+                AuthorName = "alice"
+            }
+        ];
+
+        // Act
+        AGUIUserMessage message = Assert.IsType<AGUIUserMessage>(chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single());
+
+        // Assert
+        Assert.Equal("alice", message.Name);
+        Assert.Equal("Hello", message.Content);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithNamedMultimodalUserMessage_PreservesName()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new(ChatRole.User,
+            [
+                new TextContent("What is in this image?"),
+                new DataContent(Encoding.UTF8.GetBytes("png-bytes"), "image/png")
+            ])
+            {
+                MessageId = "msg1",
+                AuthorName = "alice"
+            }
+        ];
+
+        // Act
+        AGUIUserMessage message = Assert.IsType<AGUIUserMessage>(chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single());
+
+        // Assert
+        Assert.Equal("alice", message.Name);
+        Assert.NotNull(message.InputContents);
     }
 
     [Fact]

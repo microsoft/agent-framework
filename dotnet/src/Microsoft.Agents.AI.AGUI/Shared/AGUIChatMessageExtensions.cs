@@ -103,7 +103,8 @@ internal static class AGUIChatMessageExtensions
                     {
                         yield return new ChatMessage(role, MapUserContents(userMessage))
                         {
-                            MessageId = message.Id
+                            MessageId = message.Id,
+                            AuthorName = userMessage.Name
                         };
                     }
                     else
@@ -330,14 +331,29 @@ internal static class AGUIChatMessageExtensions
         if (inputContents.Count == 1 &&
             inputContents[0] is AGUITextInputContent textInputContent)
         {
-            return new AGUIUserMessage { Id = message.MessageId, Content = textInputContent.Text };
+            return new AGUIUserMessage
+            {
+                Id = message.MessageId,
+                Name = message.AuthorName,
+                Content = textInputContent.Text
+            };
         }
 
         if (inputContents.Count > 0)
         {
-            return new AGUIUserMessage { Id = message.MessageId, InputContents = [.. inputContents] };
+            return new AGUIUserMessage
+            {
+                Id = message.MessageId,
+                Name = message.AuthorName,
+                InputContents = [.. inputContents]
+            };
         }
 
-        return new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty };
+        return new AGUIUserMessage
+        {
+            Id = message.MessageId,
+            Name = message.AuthorName,
+            Content = message.Text ?? string.Empty
+        };
     }
 }
