@@ -25,6 +25,7 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseContextProvider,
+    BaseHistoryProvider,
     Content,
     Message,
 )
@@ -968,6 +969,87 @@ async def test_multiple_providers_invoked_in_order(mock_a2a_client: MockA2AClien
     await agent.run("Hi")
 
     assert call_order == ["before:a", "before:b", "after:b", "after:a"]
+
+
+class TrackingHistoryProvider(BaseHistoryProvider):
+    """History provider that tracks before_run/after_run calls."""
+
+    def __init__(self, source_id: str = "history", *, load_messages: bool = True) -> None:
+        super().__init__(source_id=source_id, load_messages=load_messages)
+        self.before_run_called = False
+        self.after_run_called = False
+
+    async def before_run(self, *, agent, session, context, state) -> None:
+        self.before_run_called = True
+
+    async def after_run(self, *, agent, session, context, state) -> None:
+        self.after_run_called = True
+
+    async def get_messages(self, session_id, **kwargs) -> list[Message]:
+        return []
+
+    async def save_messages(self, session_id, messages, **kwargs) -> None:
+        pass
+
+
+async def test_history_provider_load_messages_false_skips_before_run(mock_a2a_client: MockA2AClient) -> None:
+    """Test that BaseHistoryProvider with load_messages=False has before_run skipped."""
+    provider = TrackingHistoryProvider(load_messages=False)
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-hist", "Hello!", "agent")
+
+    await agent.run("Hi")
+
+    assert not provider.before_run_called
+    assert provider.after_run_called
+
+
+async def test_history_provider_load_messages_true_calls_before_run(mock_a2a_client: MockA2AClient) -> None:
+    """Test that BaseHistoryProvider with load_messages=True (default) has before_run called."""
+    provider = TrackingHistoryProvider(load_messages=True)
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-hist-true", "Hello!", "agent")
+
+    await agent.run("Hi")
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+
+
+async def test_history_provider_load_messages_false_streaming(mock_a2a_client: MockA2AClient) -> None:
+    """Test that streaming skips before_run for BaseHistoryProvider with load_messages=False."""
+    provider = TrackingHistoryProvider(load_messages=False)
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-hist-stream", "Streamed!", "agent")
+
+    await agent.run("Hi", stream=True).get_final_response()
+
+    assert not provider.before_run_called
+    assert provider.after_run_called
+
+
+async def test_mixed_providers_with_history_load_messages_false(mock_a2a_client: MockA2AClient) -> None:
+    """Test that a regular provider's before_run is called while history provider's is skipped."""
+    context_provider = TrackingContextProvider(source_id="ctx")
+    history_provider = TrackingHistoryProvider(source_id="hist", load_messages=False)
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+        context_providers=[context_provider, history_provider],
+    )
+
+    mock_a2a_client.add_message_response("msg-mixed", "Mixed!", "agent")
+
+    await agent.run("Hi")
+
+    assert context_provider.before_run_called
+    assert not history_provider.before_run_called
+    assert context_provider.after_run_called
+    assert history_provider.after_run_called
 
 
 # endregion

@@ -347,7 +347,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             )
 
         return (
-            ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)  # type: ignore[reportUnknownMemberType]  # type: ignore[reportUnknownMemberType, reportUnknownVariableType]
+            ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         )
 
     async def _run_before_providers(
