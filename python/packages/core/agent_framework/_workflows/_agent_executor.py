@@ -169,7 +169,9 @@ class AgentExecutor(Executor):
         elif self._context_mode == "last_agent":
             self._cache.extend(prior.agent_response.messages)
         else:
-            assert self._context_filter is not None
+            if not self._context_filter:
+                # This should never happen due to validation in __init__, but mypy doesn't track that well
+                raise ValueError("context_filter function must be provided for 'custom' context_mode.")
             self._cache.extend(self._context_filter(prior.full_conversation))
 
         await self._run_agent_and_emit(ctx)
