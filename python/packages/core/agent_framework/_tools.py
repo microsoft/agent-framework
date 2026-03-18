@@ -2136,7 +2136,10 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             existing = effective_client_kwargs.get("middleware", [])
-            effective_client_kwargs["middleware"] = [*(existing if isinstance(existing, list) else [existing]), *middleware]
+            effective_client_kwargs["middleware"] = [
+                *(existing if isinstance(existing, list) else [existing]),
+                *middleware,
+            ]
         runtime_middleware = categorize_middleware(effective_client_kwargs.pop("middleware", []))
 
         function_middleware_pipeline = self._get_function_middleware_pipeline(runtime_middleware["function"])
