@@ -364,6 +364,8 @@ def test_parse_tool_result_from_mcp_structured_content_only():
     assert len(result) == 1
     assert result[0].type == "text"
     assert json.loads(result[0].text) == structured
+    assert result[0].additional_properties is not None
+    assert result[0].additional_properties["structured_content"] == structured
 
 
 def test_parse_tool_result_from_mcp_structured_content_nested():
@@ -2043,7 +2045,82 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     assert options.get("tools") == []
 
 
-async def test_connect_creates_session_with_sampling_capabilities():
+async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options():
+    """Test sampling callback passes temperature, max_tokens, and stop in options."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = 0.7
+    params.maxTokens = 256
+    params.stopSequences = ["STOP"]
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options.get("temperature") == 0.7
+    assert options.get("max_tokens") == 256
+    assert options.get("stop") == ["STOP"]
+    # These should not be passed as top-level kwargs
+    assert "temperature" not in call_kwargs.kwargs
+    assert "max_tokens" not in call_kwargs.kwargs
+    assert "stop" not in call_kwargs.kwargs
+
+
+async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
+    """Test sampling callback does not set temperature in options when it is None."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = 100
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert "temperature" not in options
+    assert options.get("max_tokens") == 100
+    assert "stop" not in options
     """Test connect() passes sampling_capabilities to ClientSession when client is set."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
     tool.client = Mock()

@@ -195,7 +195,12 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result and mcp_type.structuredContent is not None:
-        result.append(Content.from_text(json.dumps(mcp_type.structuredContent)))
+        result.append(
+            Content.from_text(
+                json.dumps(mcp_type.structuredContent),
+                additional_properties={"structured_content": mcp_type.structuredContent},
+            )
+        )
 
     if not result:
         result.append(Content.from_text("null"))
@@ -1014,11 +1019,6 @@ class MCPTool:
         for msg in params.messages:
             messages.append(self._parse_message_from_mcp(msg))
 
-        # TODO(Copilot): forward server's expected result schema as response_format
-        # when result_type support is added to ChatOptions.
-        # Note: _parse_tool_result_from_mcp returns list[Content] with no structured-data
-        # channel, so retrofitting typed results will require a parallel code path or
-        # richer return type.
         options: ChatOptions[None] = {}
         if params.systemPrompt is not None:
             options["instructions"] = params.systemPrompt
@@ -1034,19 +1034,22 @@ class MCPTool:
         if params.toolChoice is not None and params.toolChoice.mode is not None:
             options["tool_choice"] = params.toolChoice.mode
 
+        if params.temperature is not None:
+            options["temperature"] = params.temperature
+        options["max_tokens"] = params.maxTokens
+        if params.stopSequences is not None:
+            options["stop"] = params.stopSequences
+
         try:
             response = await self.client.get_response(
                 messages,
-                temperature=params.temperature,
-                max_tokens=params.maxTokens,
-                stop=params.stopSequences,
                 options=options or None,
             )
         except Exception as ex:
             logger.debug("Sampling callback error: %s", ex, exc_info=True)
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
-                message="Failed to get chat message content.",
+                message=f"Failed to get chat message content: {ex}",
             )
         if not response or not response.messages:
             return types.ErrorData(
