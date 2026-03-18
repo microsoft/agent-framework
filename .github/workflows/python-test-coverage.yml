@@ -42,7 +42,7 @@ jobs:
       - name: Check coverage threshold
         run: python ${{ github.workspace }}/.github/workflows/python-check-coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           path: |
             python/python-coverage.xml

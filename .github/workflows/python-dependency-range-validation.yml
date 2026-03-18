@@ -44,7 +44,7 @@ jobs:
       - name: Upload dependency range report
         # Always publish the report so failures are inspectable even when validation fails.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-range-results
           path: python/scripts/dependencies/dependency-range-results.json
