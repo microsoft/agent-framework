@@ -2270,6 +2270,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     case "reasoning":  # ResponseOutputReasoning
                         reasoning_id = getattr(event_item, "id", None)
                         added_reasoning = False
+                        # Extract encrypted_content once so it is propagated
+                        # through whichever branch fires – mirrors the
+                        # non-streaming fix in _parse_response_from_openai.
+                        # See #4644.
+                        encrypted_content = getattr(event_item, "encrypted_content", None)
                         if hasattr(event_item, "content") and event_item.content:
                             for index, reasoning_content in enumerate(event_item.content):
                                 additional_properties: dict[str, Any] = {}
@@ -2279,6 +2284,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                     and index < len(event_item.summary)
                                 ):
                                     additional_properties["summary"] = event_item.summary[index]
+                                if encrypted_content:
+                                    additional_properties["encrypted_content"] = encrypted_content
                                 contents.append(
                                     Content.from_text_reasoning(
                                         id=reasoning_id or None,
@@ -2292,8 +2299,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             # Reasoning item with no visible text (e.g. encrypted reasoning).
                             # Always emit an empty marker so co-occurrence detection can occur.
                             additional_properties_empty: dict[str, Any] = {}
-                            if encrypted := getattr(event_item, "encrypted_content", None):
-                                additional_properties_empty["encrypted_content"] = encrypted
+                            if encrypted_content:
+                                additional_properties_empty["encrypted_content"] = encrypted_content
                             contents.append(
                                 Content.from_text_reasoning(
                                     id=reasoning_id or None,
