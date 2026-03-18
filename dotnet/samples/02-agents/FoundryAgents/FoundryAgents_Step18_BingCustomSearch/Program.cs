@@ -3,7 +3,8 @@
 // This sample shows how to use Bing Custom Search Tool with AI Agents.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
+using Azure.AI.Extensions.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
@@ -25,7 +26,7 @@ const string AgentInstructions = """
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Bing Custom Search tool parameters shared by both options
-BingCustomSearchToolParameters bingCustomSearchToolParameters = new([
+BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
     new BingCustomSearchConfiguration(connectionId, instanceName)
 ]);
 

@@ -11,7 +11,8 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
+using Azure.AI.Extensions.OpenAI;
 using Azure.Core;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
@@ -149,7 +150,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                     agentName,
                     cancellationToken).ConfigureAwait(false);
 
-            targetAgent = agentRecord.Versions.Latest;
+            targetAgent = agentRecord.GetLatestVersion();
         }
         else
         {

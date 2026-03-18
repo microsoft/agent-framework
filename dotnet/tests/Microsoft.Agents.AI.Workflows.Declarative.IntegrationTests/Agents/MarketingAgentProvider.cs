@@ -3,7 +3,8 @@
 using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
+using Azure.AI.Extensions.OpenAI;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
 using Shared.IntegrationTests;

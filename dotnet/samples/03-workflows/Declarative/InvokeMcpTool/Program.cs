@@ -5,7 +5,8 @@
 // invoked to perform specific tasks, like searching documentation or executing operations.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
+using Azure.AI.Extensions.OpenAI;
 using Azure.Core;
 using Azure.Identity;
 using Microsoft.Agents.AI.Workflows.Declarative.Mcp;

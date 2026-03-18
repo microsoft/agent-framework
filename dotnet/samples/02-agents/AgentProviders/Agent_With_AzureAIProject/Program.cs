@@ -3,7 +3,8 @@
 // This sample shows how to create and use a AI agents with Azure Foundry Agents as the backend.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
+using Azure.AI.Extensions.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 

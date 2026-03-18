@@ -3,7 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 
