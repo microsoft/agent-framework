@@ -23,6 +23,8 @@ from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentSession,
+    BaseContextProvider,
     Content,
     Message,
 )
@@ -848,6 +850,124 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
     assert response.continuation_token is None
     assert len(response.messages) == 1
     assert response.messages[0].text == "Poll result"
+
+
+# region context_providers
+
+
+class TrackingContextProvider(BaseContextProvider):
+    """Context provider that tracks before_run/after_run calls."""
+
+    def __init__(self, source_id: str = "tracking") -> None:
+        super().__init__(source_id=source_id)
+        self.before_run_called = False
+        self.after_run_called = False
+        self.before_run_session: AgentSession | None = None
+        self.after_run_session: AgentSession | None = None
+        self.after_run_response: AgentResponse | None = None
+
+    async def before_run(self, *, agent, session, context, state) -> None:
+        self.before_run_called = True
+        self.before_run_session = session
+
+    async def after_run(self, *, agent, session, context, state) -> None:
+        self.after_run_called = True
+        self.after_run_session = session
+        self.after_run_response = context.response
+
+
+async def test_run_invokes_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() calls before_run and after_run on context providers."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-ctx", "Hello!", "agent")
+
+    response = await agent.run("Hi")
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+    assert provider.after_run_response is not None
+    assert isinstance(response, AgentResponse)
+    assert response.messages[0].text == "Hello!"
+
+
+async def test_run_invokes_context_providers_with_session(mock_a2a_client: MockA2AClient) -> None:
+    """Test that context providers receive the provided session."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+    session = AgentSession(session_id="test-session")
+
+    mock_a2a_client.add_message_response("msg-sess", "With session", "agent")
+
+    await agent.run("Hi", session=session)
+
+    assert provider.before_run_session is session
+    assert provider.after_run_session is session
+
+
+async def test_run_creates_session_for_providers_when_none(mock_a2a_client: MockA2AClient) -> None:
+    """Test that a session is auto-created when context_providers are set but no session is passed."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-auto", "Auto session", "agent")
+
+    await agent.run("Hi")
+
+    assert provider.before_run_session is not None
+    assert provider.after_run_session is not None
+
+
+async def test_streaming_invokes_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that streaming run() calls before_run and after_run on context providers."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-stream-ctx", "Streamed!", "agent")
+
+    response = await agent.run("Hi", stream=True).get_final_response()
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+    assert provider.after_run_response is not None
+    assert response.messages[0].text == "Streamed!"
+
+
+async def test_run_without_providers_still_works(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() without context_providers still works correctly."""
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None)
+
+    mock_a2a_client.add_message_response("msg-no-ctx", "No providers", "agent")
+
+    response = await agent.run("Hi")
+
+    assert isinstance(response, AgentResponse)
+    assert response.messages[0].text == "No providers"
+
+
+async def test_multiple_providers_invoked_in_order(mock_a2a_client: MockA2AClient) -> None:
+    """Test that multiple context providers are called in forward/reverse order."""
+    call_order: list[str] = []
+
+    class OrderTrackingProvider(BaseContextProvider):
+        async def before_run(self, *, agent, session, context, state) -> None:
+            call_order.append(f"before:{self.source_id}")
+
+        async def after_run(self, *, agent, session, context, state) -> None:
+            call_order.append(f"after:{self.source_id}")
+
+    provider_a = OrderTrackingProvider(source_id="a")
+    provider_b = OrderTrackingProvider(source_id="b")
+    agent = A2AAgent(
+        name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider_a, provider_b]
+    )
+
+    mock_a2a_client.add_message_response("msg-order", "Ordered", "agent")
+
+    await agent.run("Hi")
+
+    assert call_order == ["before:a", "before:b", "after:b", "after:a"]
 
 
 # endregion
