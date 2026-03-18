@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 from typing import Annotated
 
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -127,15 +127,13 @@ def get_credential():
 
 async def main():
     """Main function to run the agent as a web server."""
-    async with (
-        get_credential() as credential,
-        AzureAIProjectAgentProvider(
+    async with get_credential() as credential:
+        client = AzureOpenAIResponsesClient(
             project_endpoint=PROJECT_ENDPOINT,
-            model=MODEL_DEPLOYMENT_NAME,
+            deployment_name=MODEL_DEPLOYMENT_NAME,
             credential=credential,
-        ) as provider,
-    ):
-        agent = await provider.create_agent(
+        )
+        agent = client.as_agent(
             name="SeattleHotelAgent",
             instructions="""You are a helpful travel assistant specializing in finding hotels in Seattle, Washington.
 
