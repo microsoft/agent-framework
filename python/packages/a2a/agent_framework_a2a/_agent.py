@@ -307,7 +307,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     finalizer=AgentResponse.from_updates,
                 )
                 result = await response_stream.get_final_response()
-                session_context._response = result
+                session_context._response = result  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
                 await self._run_after_providers(session=active_session, context=session_context)
                 return result
 
@@ -321,7 +321,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             session_context = context_holder["ctx"]
             if session_context is None:
                 return
-            session_context._response = response
+            session_context._response = response  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
             await self._run_after_providers(session=active_session_holder["session"], context=session_context)
 
         async def _get_stream() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
@@ -345,7 +345,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 finalizer=AgentResponse.from_updates,
             )
 
-        return ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)
+        return (
+            ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)  # type: ignore[reportUnknownMemberType]  # type: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        )
 
     async def _run_before_providers(
         self,
