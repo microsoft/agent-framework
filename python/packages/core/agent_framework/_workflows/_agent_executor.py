@@ -60,42 +60,6 @@ class AgentExecutorResponse:
     full_conversation: list[Message]
 
 
-@dataclass
-class ContextMode:
-    """Configuration for how AgentExecutor should manage conversation context when receiving new messages.
-
-    Attributes:
-        filter_mode: Controls which messages from a prior ``AgentExecutorResponse`` are added to
-            the cache in the ``from_response`` handler. Has no effect on other handlers
-            (``run``, ``from_str``, ``from_message``, ``from_messages``), which always
-            append their messages as-is.
-
-            - ``"last_agent"``: Include only the agent's response messages.
-            - ``"full"``: Include the entire prior conversation. Use with caution when
-              ``retain_cache=True``, as both the existing cache and the full incoming
-              conversation will be kept, which can produce duplicates.
-        retain_cache: Whether to keep previously cached messages when new messages arrive.
-            Respected by all handlers except ``run`` (which always appends). When ``False``,
-            the cache is cleared before new messages are added, so the agent only sees the
-            latest input.
-
-    Note:
-        The cache accumulates messages between agent runs. When the agent runs, the cache
-        is consumed and its contents become part of the full conversation history. This
-        staging behavior is important in multi-agent workflows where an executor may
-        receive messages from several sources before it gets a chance to run.
-    """
-
-    filter_mode: Literal["last_agent", "full"]
-    retain_cache: bool
-
-    # Some common context modes
-    @classmethod
-    def default(cls) -> "ContextMode":
-        """Default context mode that includes all incoming messages and retains cache."""
-        return cls(filter_mode="last_agent", retain_cache=True)
-
-
 class AgentExecutor(Executor):
     """built-in executor that wraps an agent for handling messages.
 
@@ -119,7 +83,8 @@ class AgentExecutor(Executor):
         *,
         session: AgentSession | None = None,
         id: str | None = None,
-        context_mode: ContextMode | dict[str, Any] | None = None,
+        context_mode: Literal["full", "last_agent", "custom"] = "full",
+        context_filter: Callable[[list[Message]], list[Message]] | None = None,
     ):
         """Initialize the executor with a unique identifier.
 
@@ -127,8 +92,16 @@ class AgentExecutor(Executor):
             agent: The agent to be wrapped by this executor.
             session: The session to use for running the agent. If None, a new session will be created.
             id: A unique identifier for the executor. If None, the agent's name will be used if available.
-            context_mode: Configuration for how the executor should manage conversation context. If None,
-                defaults to ContextMode.default().
+            context_mode: Configuration for how the executor should manage conversation context upon
+                receiving an AgentExecutorResponse as input. Options:
+                - "full": append the full conversation (all prior messages + latest agent response) to the
+                   cache for the agent run. This is the default mode.
+                - "last_agent": provide only the messages from the latest agent response as context for
+                   the agent run.
+                - "custom": use the provided context_filter function to determine which messages to include
+                   as context for the agent run.
+            context_filter: An optional function for filtering conversation context when context_mode is set
+                to "custom".
         """
         # Prefer provided id; else use agent.name if present; else generate deterministic prefix
         exec_id = id or resolve_agent_id(agent)
@@ -137,10 +110,6 @@ class AgentExecutor(Executor):
         super().__init__(exec_id)
         self._agent = agent
         self._session = session or self._agent.create_session()
-        if isinstance(context_mode, dict):
-            self._context_mode = ContextMode(**context_mode)
-        else:
-            self._context_mode = context_mode or ContextMode.default()
 
         self._pending_agent_requests: dict[str, Content] = {}
         self._pending_responses_to_agent: list[Content] = []
@@ -149,6 +118,12 @@ class AgentExecutor(Executor):
         self._cache: list[Message] = []
         # This tracks the full conversation after each run
         self._full_conversation: list[Message] = []
+
+        # Context mode validation
+        if context_mode == "custom" and not context_filter:
+            raise ValueError("context_filter must be provided when context_mode is set to 'custom'.")
+        self._context_mode = context_mode
+        self._context_filter = context_filter
 
     @property
     def agent(self) -> SupportsAgentRun:
@@ -172,6 +147,7 @@ class AgentExecutor(Executor):
         run the agent and emit an AgentExecutorResponse downstream.
         """
         self._cache.extend(request.messages)
+
         if request.should_respond:
             await self._run_agent_and_emit(ctx)
 
@@ -186,13 +162,12 @@ class AgentExecutor(Executor):
         Strategy: treat the prior response's messages as the conversation state and
         immediately run the agent to produce a new response.
         """
-        if not self._context_mode.retain_cache:
-            self._cache.clear()
-
-        if self._context_mode.filter_mode == "full":
-            self._cache.extend(list(prior.full_conversation))
-        elif self._context_mode.filter_mode == "last_agent":
-            self._cache.extend(list(prior.agent_response.messages))
+        if self._context_mode == "full":
+            self._cache.extend(prior.full_conversation)
+        elif self._context_mode == "last_agent":
+            self._cache.extend(prior.agent_response.messages)
+        else:
+            self._cache.extend(self._context_filter(prior.full_conversation))  # type: ignore
 
         await self._run_agent_and_emit(ctx)
 
@@ -200,9 +175,10 @@ class AgentExecutor(Executor):
     async def from_str(
         self, text: str, ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate]
     ) -> None:
-        """Accept a raw user prompt string and run the agent (one-shot)."""
-        if not self._context_mode.retain_cache:
-            self._cache.clear()
+        """Accept a raw user prompt string and run the agent.
+
+        The new string input will be added to the cache which is used as the conversation context for the agent run.
+        """
         self._cache.extend(normalize_messages_input(text))
         await self._run_agent_and_emit(ctx)
 
@@ -212,9 +188,10 @@ class AgentExecutor(Executor):
         message: Message,
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
-        """Accept a single Message as input."""
-        if not self._context_mode.retain_cache:
-            self._cache.clear()
+        """Accept a single Message as input.
+
+        The new message will be added to the cache which is used as the conversation context for the agent run.
+        """
         self._cache.extend(normalize_messages_input(message))
         await self._run_agent_and_emit(ctx)
 
@@ -224,10 +201,10 @@ class AgentExecutor(Executor):
         messages: list[str | Message],
         ctx: WorkflowContext[AgentExecutorResponse, AgentResponse | AgentResponseUpdate],
     ) -> None:
-        """Accept a list of chat inputs (strings or Message) as conversation context."""
-        if not self._context_mode.retain_cache:
-            self._cache.clear()
+        """Accept a list of chat inputs (strings or Message) as conversation context.
 
+        The new messages will be added to the cache which is used as the conversation context for the agent run.
+        """
         self._cache.extend(normalize_messages_input(messages))
         await self._run_agent_and_emit(ctx)
 
@@ -290,7 +267,6 @@ class AgentExecutor(Executor):
             "cache": self._cache,
             "full_conversation": self._full_conversation,
             "agent_session": serialized_session,
-            "context_mode": self._context_mode,
             "pending_agent_requests": self._pending_agent_requests,
             "pending_responses_to_agent": self._pending_responses_to_agent,
         }
@@ -317,9 +293,6 @@ class AgentExecutor(Executor):
                 self._session = self._agent.create_session()
         else:
             self._session = self._agent.create_session()
-
-        context_mode_payload = state.get("context_mode")
-        self._context_mode = context_mode_payload or ContextMode.default()
 
         pending_requests_payload = state.get("pending_agent_requests")
         self._pending_agent_requests = pending_requests_payload or {}
