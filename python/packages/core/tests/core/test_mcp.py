@@ -2087,13 +2087,21 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
             inputSchema=original_empty_schema,
         ),
     ]
+
+    # Simulate a non-conforming MCP server that sends inputSchema=None.
+    # types.Tool requires inputSchema to be a dict, so we use a MagicMock.
+    none_schema_tool = MagicMock()
+    none_schema_tool.name = "none_schema_tool"
+    none_schema_tool.description = "A tool with None inputSchema"
+    none_schema_tool.inputSchema = None
+    page.tools.append(none_schema_tool)
     page.nextCursor = None
 
     mock_session.list_tools = AsyncMock(return_value=page)
 
     await tool.load_tools()
 
-    assert len(tool._functions) == 4
+    assert len(tool._functions) == 5
 
     funcs_by_name = {f.name: f for f in tool._functions}
 
@@ -2117,6 +2125,10 @@ async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     # Empty schema (no "type" key) must NOT have "properties" injected
     empty_params = funcs_by_name["empty_schema_tool"].parameters()
     assert "properties" not in empty_params
+
+    # None inputSchema must produce an empty dict (guard against non-conforming servers)
+    none_params = funcs_by_name["none_schema_tool"].parameters()
+    assert none_params == {}
 
     # Original inputSchema dicts must not be mutated
     assert "properties" not in original_zero_arg_schema
