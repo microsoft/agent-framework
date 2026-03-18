@@ -149,7 +149,8 @@ public class AzureAIProjectChatClientTests
         // Assert
         Assert.True(requestTriggered);
         var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
-        Assert.StartsWith("conv_", chatClientSession.ConversationId);
+        var conversationId = Assert.NotNull(chatClientSession.ConversationId);
+        Assert.StartsWith("conv_", conversationId);
     }
 
     /// <summary>
