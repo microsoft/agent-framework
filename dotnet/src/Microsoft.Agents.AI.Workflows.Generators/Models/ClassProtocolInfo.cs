@@ -5,7 +5,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// <summary>
 /// Represents protocol type information extracted from class-level [SendsMessage] or [YieldsOutput] attributes.
 /// Used by the incremental generator pipeline to capture classes that declare protocol types
-/// but may not have [MessageHandler] methods (e.g., when ConfigureRoutes is manually implemented).
+/// but may not have [MessageHandler] methods (e.g., when ConfigureProtocol is manually implemented).
 /// </summary>
 /// <param name="ClassKey">Unique identifier for the class (fully qualified name).</param>
 /// <param name="Namespace">The namespace of the class.</param>
@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.Workflows.Generators.Models;
 /// <param name="ContainingTypeChain">The chain of containing types for nested classes. Empty if not nested.</param>
 /// <param name="IsPartialClass">Whether the class is declared as partial.</param>
 /// <param name="DerivesFromExecutor">Whether the class derives from Executor.</param>
-/// <param name="HasManualConfigureRoutes">Whether the class has a manually defined ConfigureRoutes method.</param>
+/// <param name="HasManualConfigureProtocol">Whether the class has a manually defined ConfigureProtocol method.</param>
 /// <param name="BaseHasConfigureProtocol">Whether a base class already overrides ConfigureProtocol.</param>
 /// <param name="ClassLocation">Location info for diagnostics.</param>
 /// <param name="TypeName">The fully qualified type name from the attribute.</param>
@@ -29,7 +29,7 @@ internal sealed record ClassProtocolInfo(
     string ContainingTypeChain,
     bool IsPartialClass,
     bool DerivesFromExecutor,
-    bool HasManualConfigureRoutes,
+    bool HasManualConfigureProtocol,
     bool BaseHasConfigureProtocol,
     DiagnosticLocationInfo? ClassLocation,
     string TypeName,
