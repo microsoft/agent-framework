@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from opentelemetry import propagate
 
 from ._tools import FunctionTool
-from ._types import Content, Message
+from ._types import (
+    ChatOptions,
+    Content,
+    Message,
+)
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -741,7 +745,7 @@ class MCPTool:
         for msg in params.messages:
             messages.append(self._parse_message_from_mcp(msg))
 
-        options: dict[str, Any] = {}
+        options: ChatOptions[None] = {}
         if params.systemPrompt:
             options["instructions"] = params.systemPrompt
         if params.tools:

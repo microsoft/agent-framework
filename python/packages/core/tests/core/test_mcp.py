@@ -336,6 +336,38 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
     assert result[1].text == "Embedded result"
 
 
+def test_parse_tool_result_from_mcp_structured_content():
+    """Test that structuredContent from CallToolResult is included as JSON text."""
+    structured = {"name": "Pasta Carbonara", "ingredients": ["pasta", "eggs", "cheese"]}
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Here is a recipe")],
+        structuredContent=structured,
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == "text"
+    assert result[0].text == "Here is a recipe"
+    assert result[1].type == "text"
+    assert result[1].text == json.dumps(structured)
+
+
+def test_parse_tool_result_from_mcp_structured_content_only():
+    """Test that structuredContent alone (no regular content) produces a text Content."""
+    structured = {"temperature": 72, "unit": "F"}
+    mcp_result = types.CallToolResult(
+        content=[],
+        structuredContent=structured,
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == json.dumps(structured)
+
+
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
