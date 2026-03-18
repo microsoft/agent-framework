@@ -98,4 +98,27 @@ internal static class FunctionMetadataFactory
             ScriptFile = BuiltInFunctions.ScriptFile,
         };
     }
+
+    /// <summary>
+    /// Creates function metadata for an MCP tool trigger function that starts a workflow.
+    /// </summary>
+    /// <param name="workflowName">The name of the workflow to expose as an MCP tool.</param>
+    /// <param name="description">An optional description for the MCP tool. If null, a default description is generated.</param>
+    /// <returns>A <see cref="DefaultFunctionMetadata"/> configured for an MCP tool trigger.</returns>
+    internal static DefaultFunctionMetadata CreateWorkflowMcpToolTrigger(string workflowName, string? description)
+    {
+        return new DefaultFunctionMetadata
+        {
+            Name = $"{BuiltInFunctions.McpToolPrefix}{workflowName}",
+            Language = "dotnet-isolated",
+            RawBindings =
+            [
+                $$"""{"name":"context","type":"mcpToolTrigger","direction":"In","toolName":"{{workflowName}}","description":"{{description ?? $"Run the {workflowName} workflow"}}","toolProperties":"[{\"propertyName\":\"input\",\"propertyType\":\"string\",\"description\":\"The input to the workflow.\",\"isRequired\":true,\"isArray\":false}]"}""",
+                """{"name":"input","type":"mcpToolProperty","direction":"In","propertyName":"input","description":"The input to the workflow","isRequired":true,"dataType":"String","propertyType":"string"}""",
+                """{"name":"client","type":"durableClient","direction":"In"}"""
+            ],
+            EntryPoint = BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint,
+            ScriptFile = BuiltInFunctions.ScriptFile,
+        };
+    }
 }

@@ -107,7 +107,8 @@ public static class FunctionsApplicationBuilderExtensions
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.InvokeWorkflowActivityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.GetWorkflowStatusHttpFunctionEntryPoint, StringComparison.Ordinal) ||
-            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint, StringComparison.Ordinal)
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint, StringComparison.Ordinal)
         );
         builder.Services.TryAddSingleton<BuiltInFunctionExecutor>();
     }
