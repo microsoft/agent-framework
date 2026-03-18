@@ -1768,7 +1768,7 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
 
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
-    assert "Failed to get chat message content: Chat client error" in result.message
+    assert "Failed to get chat message content" in result.message
 
 
 async def test_mcp_tool_sampling_callback_no_valid_content():

@@ -1043,9 +1043,10 @@ class MCPTool:
                 options=options or None,
             )
         except Exception as ex:
+            logger.debug("Sampling callback error: %s", ex, exc_info=True)
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
-                message=f"Failed to get chat message content: {ex}",
+                message="Failed to get chat message content.",
             )
         if not response or not response.messages:
             return types.ErrorData(
