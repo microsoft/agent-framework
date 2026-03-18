@@ -100,9 +100,8 @@ jobs:
           os: ${{ runner.os }}
       - name: Test with pytest (unit tests only)
         run: >
-          uv run poe all-tests
+          uv run poe test -A
           -m "not integration"
-          -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
         working-directory: ./python
