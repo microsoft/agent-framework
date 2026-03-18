@@ -996,7 +996,7 @@ async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_cli
     )
     mock_a2a_client.add_message_response("msg-1", "Hello")
 
-    response = await agent.run("Hello")
+    await agent.run("Hello")
 
     assert provider.before_run_called
     assert provider.after_run_called
