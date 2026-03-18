@@ -416,7 +416,8 @@ internal static class BuiltInFunctions
 
         if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Failed)
         {
-            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' failed: {metadata.ReadOutputAs<string>()}");
+            string errorMessage = metadata.FailureDetails?.ErrorMessage ?? "Unknown error";
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' failed: {errorMessage}");
         }
 
         if (metadata.RuntimeStatus is not OrchestrationRuntimeStatus.Completed)
