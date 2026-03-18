@@ -20,7 +20,7 @@
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
     <PackageVersion Include="Azure.AI.Projects" Version="2.0.0-beta.2" />
-    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.8" />
+    <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.9" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
     <PackageVersion Include="Azure.Identity" Version="1.19.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
