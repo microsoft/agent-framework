@@ -533,6 +533,13 @@ def test_context_mode_defaults_to_full() -> None:
     assert executor._context_mode == "full"  # pyright: ignore[reportPrivateUsage]
 
 
+def test_context_mode_invalid_value_raises() -> None:
+    """Invalid context_mode value should raise ValueError."""
+    agent = _CountingAgent(id="a", name="A")
+    with pytest.raises(ValueError, match="context_mode must be one of"):
+        AgentExecutor(agent, context_mode="invalid_mode")  # type: ignore
+
+
 async def test_from_response_context_mode_full_passes_full_conversation() -> None:
     """context_mode='full' (default) should pass full_conversation to the second agent."""
     first = _MessageCapturingAgent(id="first", name="First", reply_text="first reply")

@@ -83,7 +83,7 @@ class AgentExecutor(Executor):
         *,
         session: AgentSession | None = None,
         id: str | None = None,
-        context_mode: Literal["full", "last_agent", "custom"] = "full",
+        context_mode: Literal["full", "last_agent", "custom"] | None = None,
         context_filter: Callable[[list[Message]], list[Message]] | None = None,
     ):
         """Initialize the executor with a unique identifier.
@@ -120,10 +120,12 @@ class AgentExecutor(Executor):
         self._full_conversation: list[Message] = []
 
         # Context mode validation
-        if context_mode == "custom" and not context_filter:
-            raise ValueError("context_filter must be provided when context_mode is set to 'custom'.")
-        self._context_mode = context_mode
+        self._context_mode = context_mode or "full"
         self._context_filter = context_filter
+        if self._context_mode not in {"full", "last_agent", "custom"}:
+            raise ValueError("context_mode must be one of 'full', 'last_agent', or 'custom'.")
+        if self._context_mode == "custom" and not self._context_filter:
+            raise ValueError("context_filter must be provided when context_mode is set to 'custom'.")
 
     @property
     def agent(self) -> SupportsAgentRun:
