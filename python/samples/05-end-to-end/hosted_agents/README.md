@@ -4,46 +4,13 @@ These samples demonstrate how to build and host AI agents in Python using the [A
 
 ## Samples
 
-| Sample | Description |
-|--------|-------------|
-| [`agent_with_hosted_mcp`](./agent_with_hosted_mcp/) | Hosted MCP tool that connects to Microsoft Learn via `https://learn.microsoft.com/api/mcp` |
-| [`agent_with_text_search_rag`](./agent_with_text_search_rag/) | Retrieval-augmented generation using a custom `BaseContextProvider` with Contoso Outdoors sample data |
-| [`agents_in_workflow`](./agents_in_workflow/) | Concurrent workflow that combines researcher, marketer, and legal specialist agents |
-| [`azure_ai_agent_with_local_tool`](./azure_ai_agent_with_local_tool/) | Azure AI Foundry project-backed agent with local Python tool execution for Seattle hotel search |
-| [`azure_ai_agents_in_workflow`](./azure_ai_agents_in_workflow/) | Azure AI Foundry project-backed Writer/Reviewer workflow |
-
-## Two Configuration Models
-
-These samples fall into two groups:
-
-### Azure OpenAI hosted agent samples
-
-These use `AzureOpenAIChatClient(...).as_agent(...)` with `DefaultAzureCredential`:
-
-- [`agent_with_hosted_mcp`](./agent_with_hosted_mcp/)
-- [`agent_with_text_search_rag`](./agent_with_text_search_rag/)
-- [`agents_in_workflow`](./agents_in_workflow/)
-
-Required environment variables:
-
-| Variable | Description |
-|----------|-------------|
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI resource endpoint |
-| `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` | Chat model deployment name |
-
-### Azure AI Foundry project-backed samples
-
-These use `AzureAIProjectAgentProvider` and create agents against a Foundry project:
-
-- [`azure_ai_agent_with_local_tool`](./azure_ai_agent_with_local_tool/)
-- [`azure_ai_agents_in_workflow`](./azure_ai_agents_in_workflow/)
-
-Required environment variables:
-
-| Variable | Description |
-|----------|-------------|
-| `PROJECT_ENDPOINT` | Foundry project endpoint, for example `https://<resource>.services.ai.azure.com/api/projects/<project>` |
-| `MODEL_DEPLOYMENT_NAME` | Model deployment name in that Foundry project |
+| Sample                                                                        | Description                                                                                           |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [`agent_with_hosted_mcp`](./agent_with_hosted_mcp/)                           | Hosted MCP tool that connects to Microsoft Learn via `https://learn.microsoft.com/api/mcp`            |
+| [`agent_with_text_search_rag`](./agent_with_text_search_rag/)                 | Retrieval-augmented generation using a custom `BaseContextProvider` with Contoso Outdoors sample data |
+| [`agents_in_workflow`](./agents_in_workflow/)                                 | Concurrent workflow that combines researcher, marketer, and legal specialist agents                   |
+| [`agent_with_local_tools`](./agent_with_local_tools/)                         | Local Python tool execution for Seattle hotel search                                                  |
+| [`writer_reviewer_agents_in_workflow`](./writer_reviewer_agents_in_workflow/) | Writer/Reviewer workflow using `AzureOpenAIResponsesClient`                                           |
 
 ## Common Prerequisites
 
@@ -51,9 +18,7 @@ Before running any sample, ensure you have:
 
 1. Python 3.10 or later
 2. [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) installed
-3. Azure access configured for one of these setups:
-	 - An Azure OpenAI resource with a chat model deployment
-	 - An Azure AI Foundry project with a chat model deployment
+3. An Azure OpenAI resource or a Microsoft Foundry project with a chat model deployment
 
 ### Authenticate with Azure CLI
 
@@ -63,8 +28,6 @@ All samples rely on Azure credentials. For local development, the simplest appro
 az login
 az account show
 ```
-
-Samples using `DefaultAzureCredential` will pick up Azure CLI credentials locally. The Foundry project-backed samples use `AzureCliCredential` locally and switch to managed identity automatically when running in Azure.
 
 ## Running a Sample
 
@@ -109,22 +72,18 @@ Each sample starts a hosted agent locally on `http://localhost:8088/`.
 
 You can either export variables in your shell or create a local `.env` file in the sample directory.
 
-### Azure OpenAI samples
-
-Example `.env`:
+Example `.env` for Azure OpenAI samples:
 
 ```dotenv
 AZURE_OPENAI_ENDPOINT=https://<your-openai-resource>.openai.azure.com/
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4.1
 ```
 
-### Azure AI Foundry project-backed samples
-
-Example `.env`:
+Example `.env` for Foundry project samples:
 
 ```dotenv
 PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
-MODEL_DEPLOYMENT_NAME=gpt-4.1-mini
+MODEL_DEPLOYMENT_NAME=gpt-4.1
 ```
 
 ## Interacting with the Agent
@@ -151,13 +110,13 @@ curl -sS -H "Content-Type: application/json" -X POST http://localhost:8088/respo
 
 Example prompts by sample:
 
-| Sample | Example input |
-|--------|---------------|
-| `agent_with_hosted_mcp` | `What does Microsoft Learn say about managed identities in Azure?` |
-| `agent_with_text_search_rag` | `What is Contoso Outdoors' return policy for refunds?` |
-| `agents_in_workflow` | `Create a launch strategy for a budget-friendly electric SUV.` |
-| `azure_ai_agent_with_local_tool` | `Find me Seattle hotels from 2025-03-15 to 2025-03-18 under $200 per night.` |
-| `azure_ai_agents_in_workflow` | `Write a slogan for a new affordable electric SUV.` |
+| Sample                               | Example input                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `agent_with_hosted_mcp`              | `What does Microsoft Learn say about managed identities in Azure?`           |
+| `agent_with_text_search_rag`         | `What is Contoso Outdoors' return policy for refunds?`                       |
+| `agents_in_workflow`                 | `Create a launch strategy for a budget-friendly electric SUV.`               |
+| `agent_with_local_tools`             | `Find me Seattle hotels from 2025-03-15 to 2025-03-18 under $200 per night.` |
+| `writer_reviewer_agents_in_workflow` | `Write a slogan for a new affordable electric SUV.`                          |
 
 ## Deploying to Microsoft Foundry
 
@@ -165,27 +124,13 @@ Each sample includes a `Dockerfile` and `agent.yaml` for deployment. For deploym
 
 - [Hosted agents overview](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents)
 - [Create a hosted agent with CLI](https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?tabs=cli#create-a-hosted-agent)
+- [Create a hosted agent in Visual Studio Code](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/vs-code-agents-workflow-pro-code?tabs=windows-powershell&pivots=python)
 
 ## Troubleshooting
 
 ### Missing Azure credentials
 
 If startup fails with authentication errors, run `az login` and verify the selected subscription with `az account show`.
-
-### Missing `PROJECT_ENDPOINT`
-
-The Foundry project-backed samples require `PROJECT_ENDPOINT` and `MODEL_DEPLOYMENT_NAME`. Make sure both are set before running:
-
-- [`azure_ai_agent_with_local_tool`](./azure_ai_agent_with_local_tool/)
-- [`azure_ai_agents_in_workflow`](./azure_ai_agents_in_workflow/)
-
-### Missing `AZURE_OPENAI_ENDPOINT` or deployment name
-
-The Azure OpenAI-based samples require `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`:
-
-- [`agent_with_hosted_mcp`](./agent_with_hosted_mcp/)
-- [`agent_with_text_search_rag`](./agent_with_text_search_rag/)
-- [`agents_in_workflow`](./agents_in_workflow/)
 
 ### Preview package install issues
 

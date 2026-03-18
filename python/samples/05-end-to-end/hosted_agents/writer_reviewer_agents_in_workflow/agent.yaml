@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
 
 kind: hosted
-name: azure-ai-agents-in-workflow
+name: writer-reviewer-agents-in-workflow
 description: >
   A multi-agent workflow featuring a Writer and Reviewer that collaborate
   to create and refine content.

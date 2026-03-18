@@ -43,8 +43,8 @@ The hosted agent can be deployed to Microsoft Foundry using the Azure Developer 
 
 Before running this sample, ensure you have:
 
-1. **Azure AI Foundry Project**
-   - Project created in [Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry#microsoft-foundry-portals)
+1. **Microsoft Foundry Project**
+   - Project created in [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry#microsoft-foundry-portals)
    - Chat model deployed (e.g., `gpt-4o` or `gpt-4.1`)
    - Note your project endpoint URL and model deployment name
 
@@ -59,7 +59,7 @@ Before running this sample, ensure you have:
 
 Set the following environment variables (matching `agent.yaml`):
 
-- `PROJECT_ENDPOINT` - Your Azure AI Foundry project endpoint URL (required)
+- `PROJECT_ENDPOINT` - Your Microsoft Foundry project endpoint URL (required)
 - `MODEL_DEPLOYMENT_NAME` - The deployment name for your chat model (defaults to `gpt-4.1-mini`)
 
 This sample loads environment variables from a local `.env` file if present.

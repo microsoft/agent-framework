@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 
 from agent_framework import WorkflowBuilder
-from agent_framework.azure import AzureAIProjectAgentProvider
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -33,19 +33,17 @@ def get_credential():
 
 @asynccontextmanager
 async def create_agents():
-    async with (
-        get_credential() as credential,
-        AzureAIProjectAgentProvider(
+    async with get_credential() as credential:
+        client = AzureOpenAIResponsesClient(
             project_endpoint=PROJECT_ENDPOINT,
-            model=MODEL_DEPLOYMENT_NAME,
+            deployment_name=MODEL_DEPLOYMENT_NAME,
             credential=credential,
-        ) as provider,
-    ):
-        writer = await provider.create_agent(
+        )
+        writer = client.as_agent(
             name="Writer",
             instructions="You are an excellent content writer. You create new content and edit contents based on the feedback.",
         )
-        reviewer = await provider.create_agent(
+        reviewer = client.as_agent(
             name="Reviewer",
             instructions="You are an excellent content reviewer. Provide actionable feedback to the writer about the provided content in the most concise manner possible.",
         )
