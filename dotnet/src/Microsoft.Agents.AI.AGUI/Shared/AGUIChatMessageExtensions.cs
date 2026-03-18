@@ -94,15 +94,26 @@ internal static class AGUIChatMessageExtensions
                     {
                         AGUIDeveloperMessage dev => dev.Content,
                         AGUISystemMessage sys => sys.Content,
-                        AGUIUserMessage user => user.Content,
+                        AGUIUserMessage => string.Empty,
                         AGUIAssistantMessage asst => asst.Content,
                         _ => string.Empty
                     };
 
-                    yield return new ChatMessage(role, content)
+                    if (message is AGUIUserMessage userMessage)
                     {
-                        MessageId = message.Id
-                    };
+                        yield return new ChatMessage(role, MapUserContents(userMessage))
+                        {
+                            MessageId = message.Id
+                        };
+                    }
+                    else
+                    {
+                        yield return new ChatMessage(role, content)
+                        {
+                            MessageId = message.Id
+                        };
+                    }
+
                     break;
                 }
             }
@@ -137,7 +148,7 @@ internal static class AGUIChatMessageExtensions
                 {
                     AGUIRoles.Developer => new AGUIDeveloperMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
                     AGUIRoles.System => new AGUISystemMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
-                    AGUIRoles.User => new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty },
+                    AGUIRoles.User => MapUserMessage(message),
                     _ => throw new InvalidOperationException($"Unknown role: {message.Role.Value}")
                 };
             }
@@ -213,4 +224,120 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
         throw new InvalidOperationException($"Unknown chat role: {role}");
+
+    private static List<AIContent> MapUserContents(AGUIUserMessage userMessage)
+    {
+        if (userMessage.InputContents is not { Length: > 0 })
+        {
+            return [new TextContent(userMessage.Content)];
+        }
+
+        List<AIContent> contents = [];
+        foreach (AGUIInputContent inputContent in userMessage.InputContents)
+        {
+            switch (inputContent)
+            {
+                case AGUITextInputContent textInput:
+                    contents.Add(new TextContent(textInput.Text));
+                    break;
+                case AGUIBinaryInputContent binaryInput:
+                    contents.Add(MapBinaryInput(binaryInput));
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unsupported AG-UI input content type '{inputContent.GetType().Name}'.");
+            }
+        }
+
+        return contents;
+    }
+
+    private static AIContent MapBinaryInput(AGUIBinaryInputContent binaryInput)
+    {
+        if (!string.IsNullOrEmpty(binaryInput.Data))
+        {
+            try
+            {
+                return new DataContent(Convert.FromBase64String(binaryInput.Data), binaryInput.MimeType)
+                {
+                    Name = binaryInput.Filename
+                };
+            }
+            catch (FormatException ex)
+            {
+                throw new InvalidOperationException("AG-UI binary input content contains invalid base64 data.", ex);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(binaryInput.Url))
+        {
+            return new UriContent(binaryInput.Url, binaryInput.MimeType);
+        }
+
+        if (!string.IsNullOrEmpty(binaryInput.Id))
+        {
+            HostedFileContent hostedFileContent = new(binaryInput.Id)
+            {
+                Name = binaryInput.Filename
+            };
+
+            if (!string.IsNullOrEmpty(binaryInput.MimeType))
+            {
+                hostedFileContent.MediaType = binaryInput.MimeType;
+            }
+
+            return hostedFileContent;
+        }
+
+        throw new InvalidOperationException("AG-UI binary input content must include id, url, or data.");
+    }
+
+    private static AGUIUserMessage MapUserMessage(ChatMessage message)
+    {
+        List<AGUIInputContent> inputContents = [];
+        foreach (AIContent content in message.Contents)
+        {
+            switch (content)
+            {
+                case TextContent textContent:
+                    inputContents.Add(new AGUITextInputContent { Text = textContent.Text });
+                    break;
+                case DataContent dataContent:
+                    inputContents.Add(new AGUIBinaryInputContent
+                    {
+                        MimeType = dataContent.MediaType,
+                        Data = dataContent.Base64Data.ToString(),
+                        Filename = dataContent.Name
+                    });
+                    break;
+                case UriContent uriContent:
+                    inputContents.Add(new AGUIBinaryInputContent
+                    {
+                        MimeType = uriContent.MediaType,
+                        Url = uriContent.Uri.ToString()
+                    });
+                    break;
+                case HostedFileContent hostedFileContent:
+                    inputContents.Add(new AGUIBinaryInputContent
+                    {
+                        MimeType = hostedFileContent.MediaType ?? string.Empty,
+                        Id = hostedFileContent.FileId,
+                        Filename = hostedFileContent.Name
+                    });
+                    break;
+            }
+        }
+
+        if (inputContents.Count == 1 &&
+            inputContents[0] is AGUITextInputContent textInputContent)
+        {
+            return new AGUIUserMessage { Id = message.MessageId, Content = textInputContent.Text };
+        }
+
+        if (inputContents.Count > 0)
+        {
+            return new AGUIUserMessage { Id = message.MessageId, InputContents = [.. inputContents] };
+        }
+
+        return new AGUIUserMessage { Id = message.MessageId, Content = message.Text ?? string.Empty };
+    }
 }

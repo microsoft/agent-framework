@@ -192,6 +192,63 @@ public sealed class AGUIEndpointRouteBuilderExtensionsTests
     }
 
     [Fact]
+    public async Task MapAGUIAgent_WithMultimodalUserMessage_ConvertsInputContentArrayAsync()
+    {
+        // Arrange
+        List<ChatMessage>? capturedMessages = null;
+
+        AIAgent factory(IEnumerable<ChatMessage> messages, IEnumerable<AITool> tools, IEnumerable<KeyValuePair<string, string>> context, JsonElement props)
+        {
+            capturedMessages = messages.ToList();
+            return new TestAgent();
+        }
+
+        const string Json = """
+            {
+                "threadId": "thread1",
+                "runId": "run1",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": [
+                            { "type": "text", "text": "What is in this image?" },
+                            {
+                                "type": "binary",
+                                "mimeType": "image/png",
+                                "filename": "pixel.png",
+                                "data": "aGVsbG8="
+                            }
+                        ]
+                    }
+                ]
+            }
+            """;
+
+        DefaultHttpContext httpContext = new();
+        httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(Json));
+        httpContext.Response.Body = new MemoryStream();
+
+        RequestDelegate handler = this.CreateRequestDelegate(factory);
+
+        // Act
+        await handler(httpContext);
+
+        // Assert
+        Assert.NotNull(capturedMessages);
+        ChatMessage message = Assert.Single(capturedMessages);
+        Assert.Equal(ChatRole.User, message.Role);
+        Assert.Equal(2, message.Contents.Count);
+
+        TextContent textContent = Assert.IsType<TextContent>(message.Contents[0]);
+        Assert.Equal("What is in this image?", textContent.Text);
+
+        DataContent dataContent = Assert.IsType<DataContent>(message.Contents[1]);
+        Assert.Equal("image/png", dataContent.MediaType);
+        Assert.Equal("pixel.png", dataContent.Name);
+    }
+
+    [Fact]
     public async Task MapAGUIAgent_ProducesValidAGUIEventStream_WithRunStartAndFinishAsync()
     {
         // Arrange

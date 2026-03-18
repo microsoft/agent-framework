@@ -805,6 +805,39 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     [Fact]
+    public void AGUIUserMessage_WithInputContentArray_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIUserMessage
+        {
+            Id = "user2",
+            InputContents =
+            [
+                new AGUITextInputContent { Text = "What is in this image?" },
+                new AGUIBinaryInputContent
+                {
+                    MimeType = "image/png",
+                    Data = "aGVsbG8=",
+                    Filename = "sample.png"
+                }
+            ]
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+        JsonElement jsonElement = JsonElement.Parse(json);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIUserMessage);
+
+        // Assert
+        Assert.Equal(JsonValueKind.Array, jsonElement.GetProperty("content").ValueKind);
+        Assert.NotNull(deserialized);
+        Assert.NotNull(deserialized.InputContents);
+        Assert.Equal(2, deserialized.InputContents.Length);
+        Assert.IsType<AGUITextInputContent>(deserialized.InputContents[0]);
+        Assert.IsType<AGUIBinaryInputContent>(deserialized.InputContents[1]);
+    }
+
+    [Fact]
     public void AGUISystemMessage_SerializesAndDeserializes_Correctly()
     {
         // Arrange

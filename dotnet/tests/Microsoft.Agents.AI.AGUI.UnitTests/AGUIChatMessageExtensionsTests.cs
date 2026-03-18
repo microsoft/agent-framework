@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.AGUI.Shared;
 using Microsoft.Extensions.AI;
@@ -168,6 +169,135 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal("First", ((AGUIUserMessage)aguiMessages[0]).Content);
         Assert.Equal("Second", ((AGUIAssistantMessage)aguiMessages[1]).Content);
         Assert.Equal("Third", ((AGUIUserMessage)aguiMessages[2]).Content);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithMultimodalUserMessage_MapsTextAndBinaryDataInOrder()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage
+            {
+                Id = "msg1",
+                InputContents =
+                [
+                    new AGUITextInputContent { Text = "Describe this image" },
+                    new AGUIBinaryInputContent
+                    {
+                        MimeType = "image/png",
+                        Filename = "pixel.png",
+                        Data = Convert.ToBase64String(Encoding.UTF8.GetBytes("png-bytes"))
+                    }
+                ]
+            }
+        ];
+
+        // Act
+        ChatMessage message = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        Assert.Equal(ChatRole.User, message.Role);
+        Assert.Equal(2, message.Contents.Count);
+        TextContent textContent = Assert.IsType<TextContent>(message.Contents[0]);
+        Assert.Equal("Describe this image", textContent.Text);
+
+        DataContent dataContent = Assert.IsType<DataContent>(message.Contents[1]);
+        Assert.Equal("image/png", dataContent.MediaType);
+        Assert.Equal("pixel.png", dataContent.Name);
+        Assert.Equal("png-bytes", Encoding.UTF8.GetString(dataContent.Data.ToArray()));
+    }
+
+    [Fact]
+    public void AsChatMessages_WithBinaryUrl_MapsToUriContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage
+            {
+                Id = "msg1",
+                InputContents =
+                [
+                    new AGUIBinaryInputContent
+                    {
+                        MimeType = "image/png",
+                        Url = "https://example.com/image.png"
+                    }
+                ]
+            }
+        ];
+
+        // Act
+        ChatMessage message = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        UriContent uriContent = Assert.IsType<UriContent>(message.Contents.Single());
+        Assert.Equal("image/png", uriContent.MediaType);
+        Assert.Equal("https://example.com/image.png", uriContent.Uri.ToString());
+    }
+
+    [Fact]
+    public void AsChatMessages_WithBinaryId_MapsToHostedFileContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage
+            {
+                Id = "msg1",
+                InputContents =
+                [
+                    new AGUIBinaryInputContent
+                    {
+                        MimeType = "image/png",
+                        Id = "file_123",
+                        Filename = "hosted.png"
+                    }
+                ]
+            }
+        ];
+
+        // Act
+        ChatMessage message = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        HostedFileContent hostedFileContent = Assert.IsType<HostedFileContent>(message.Contents.Single());
+        Assert.Equal("file_123", hostedFileContent.FileId);
+        Assert.Equal("image/png", hostedFileContent.MediaType);
+        Assert.Equal("hosted.png", hostedFileContent.Name);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithMultimodalUserMessage_SerializesAsInputContentArray()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new(ChatRole.User,
+            [
+                new TextContent("What is in this image?"),
+                new DataContent(Encoding.UTF8.GetBytes("png-bytes"), "image/png") { Name = "pixel.png" }
+            ])
+            {
+                MessageId = "msg1"
+            }
+        ];
+
+        // Act
+        AGUIUserMessage message = Assert.IsType<AGUIUserMessage>(chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single());
+
+        // Assert
+        Assert.NotNull(message.InputContents);
+        Assert.Equal(2, message.InputContents.Length);
+
+        AGUITextInputContent textInput = Assert.IsType<AGUITextInputContent>(message.InputContents[0]);
+        Assert.Equal("What is in this image?", textInput.Text);
+
+        AGUIBinaryInputContent binaryInput = Assert.IsType<AGUIBinaryInputContent>(message.InputContents[1]);
+        Assert.Equal("image/png", binaryInput.MimeType);
+        Assert.Equal("pixel.png", binaryInput.Filename);
+        Assert.Equal(Convert.ToBase64String(Encoding.UTF8.GetBytes("png-bytes")), binaryInput.Data);
     }
 
     [Fact]
