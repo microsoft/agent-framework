@@ -1084,4 +1084,49 @@ async def test_mixed_providers_with_history_load_messages_false(mock_a2a_client:
     assert history_provider.after_run_called
 
 
+async def test_resume_via_continuation_token_with_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that non-streaming run() with continuation_token correctly invokes context providers."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    status = TaskStatus(state=TaskState.completed, message=None)
+    artifact = Artifact(
+        artifact_id="art-ctx-resume",
+        name="result",
+        parts=[Part(root=TextPart(text="Resumed with providers"))],
+    )
+    task = Task(id="task-ctx-resume", context_id="ctx-cr", status=status, artifacts=[artifact])
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    token = A2AContinuationToken(task_id="task-ctx-resume", context_id="ctx-cr")
+    response = await agent.run(continuation_token=token)
+
+    assert isinstance(response, AgentResponse)
+    assert response.messages[0].text == "Resumed with providers"
+    assert provider.before_run_called
+    assert provider.after_run_called
+    assert provider.after_run_response is not None
+
+
+async def test_resume_via_continuation_token_no_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() with continuation_token and no context_providers works without crash."""
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None)
+
+    status = TaskStatus(state=TaskState.completed, message=None)
+    artifact = Artifact(
+        artifact_id="art-no-ctx",
+        name="result",
+        parts=[Part(root=TextPart(text="Resumed no providers"))],
+    )
+    task = Task(id="task-no-ctx", context_id="ctx-nc", status=status, artifacts=[artifact])
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    token = A2AContinuationToken(task_id="task-no-ctx", context_id="ctx-nc")
+    response = await agent.run(continuation_token=token)
+
+    assert isinstance(response, AgentResponse)
+    assert response.messages[0].text == "Resumed no providers"
+    assert response.continuation_token is None
+
+
 # endregion
