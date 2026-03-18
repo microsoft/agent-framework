@@ -902,13 +902,19 @@ class MCPTool:
                     continue
 
                 approval_mode = self._determine_approval_mode(local_name, normalized_name, tool.name)
+                # Normalize inputSchema: ensure "properties" exists for object schemas.
+                # Some MCP servers (e.g. zero-argument tools) omit "properties",
+                # which causes OpenAI API to reject the schema with a 400 error.
+                input_schema = dict(tool.inputSchema)
+                if input_schema.get("type") == "object" and "properties" not in input_schema:
+                    input_schema["properties"] = {}
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
                     func=partial(self.call_tool, tool.name),
                     name=local_name,
                     description=tool.description or "",
                     approval_mode=approval_mode,
-                    input_model=tool.inputSchema,
+                    input_model=input_schema,
                     additional_properties={
                         _MCP_REMOTE_NAME_KEY: tool.name,
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,

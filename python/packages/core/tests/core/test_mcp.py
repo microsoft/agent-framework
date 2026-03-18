@@ -2042,6 +2042,61 @@ async def test_load_tools_with_pagination():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
 
 
+async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
+    """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
+
+    Some MCP servers (e.g. matlab-mcp-core-server) declare zero-argument tools
+    with inputSchema={"type": "object"} and no "properties" key.  OpenAI's API
+    requires "properties" to be present on object schemas, so load_tools must
+    inject an empty "properties" dict when it is missing.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = MagicMock()
+    page.tools = [
+        types.Tool(
+            name="zero_arg_tool",
+            description="A tool with no parameters",
+            inputSchema={"type": "object"},
+        ),
+        types.Tool(
+            name="normal_tool",
+            description="A tool with parameters",
+            inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        ),
+    ]
+    page.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert len(tool._functions) == 2
+
+    zero_arg = tool._functions[0]
+    normal = tool._functions[1]
+
+    # Zero-arg tool must have "properties" injected
+    zero_params = zero_arg.parameters()
+    assert "properties" in zero_params
+    assert zero_params["properties"] == {}
+    assert zero_params["type"] == "object"
+
+    # Normal tool must retain its existing properties
+    normal_params = normal.parameters()
+    assert "properties" in normal_params
+    assert "x" in normal_params["properties"]
+    assert normal_params["required"] == ["x"]
+
+
 async def test_load_prompts_with_pagination():
     """Test that load_prompts handles pagination correctly."""
     from unittest.mock import AsyncMock, MagicMock
