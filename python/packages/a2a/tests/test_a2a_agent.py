@@ -1005,6 +1005,38 @@ async def test_history_provider_load_messages_false_skips_before_run(mock_a2a_cl
     assert provider.after_run_called
 
 
+async def test_history_provider_load_messages_false_raises_if_before_run_called(
+    mock_a2a_client: MockA2AClient,
+) -> None:
+    """Test with a stub whose before_run raises, proving it is never invoked."""
+
+    class FailingHistoryProvider(BaseHistoryProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="fail-hist", load_messages=False)
+            self.after_run_called = False
+
+        async def before_run(self, *, agent, session, context, state) -> None:
+            raise AssertionError("before_run should not be called when load_messages=False")
+
+        async def after_run(self, *, agent, session, context, state) -> None:
+            self.after_run_called = True
+
+        async def get_messages(self, session_id, **kwargs) -> list[Message]:
+            return []
+
+        async def save_messages(self, session_id, messages, **kwargs) -> None:
+            pass
+
+    provider = FailingHistoryProvider()
+    agent = A2AAgent(name="Test Agent", client=mock_a2a_client, http_client=None, context_providers=[provider])
+
+    mock_a2a_client.add_message_response("msg-fail", "OK", "agent")
+
+    # Should not raise — before_run is skipped
+    await agent.run("Hi")
+    assert provider.after_run_called
+
+
 async def test_history_provider_load_messages_true_calls_before_run(mock_a2a_client: MockA2AClient) -> None:
     """Test that BaseHistoryProvider with load_messages=True (default) has before_run called."""
     provider = TrackingHistoryProvider(load_messages=True)

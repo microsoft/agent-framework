@@ -291,10 +291,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not stream:
 
             async def _run_non_streaming() -> AgentResponse[Any]:
-                active_session, session_context = await self._run_before_providers(
-                    session=session,
-                    input_messages=normalized_messages,
-                )
+                if self.context_providers:
+                    active_session, session_context = await self._run_before_providers(
+                        session=session,
+                        input_messages=normalized_messages,
+                    )
                 if continuation_token is not None:
                     a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
                         TaskIdParams(id=continuation_token["task_id"])
@@ -308,8 +309,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     finalizer=AgentResponse.from_updates,
                 )
                 result = await response_stream.get_final_response()
-                session_context._response = result  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
-                await self._run_after_providers(session=active_session, context=session_context)
+                if self.context_providers:
+                    session_context._response = result  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
+                    await self._run_after_providers(session=active_session, context=session_context)
                 return result
 
             return _run_non_streaming()
@@ -319,6 +321,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         context_holder: dict[str, SessionContext | None] = {"ctx": None}
 
         async def _post_hook(response: AgentResponse) -> None:
+            if not self.context_providers:
+                return
             session_context = context_holder["ctx"]
             if session_context is None:
                 return
@@ -326,12 +330,13 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             await self._run_after_providers(session=active_session_holder["session"], context=session_context)
 
         async def _get_stream() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-            active_session, session_context = await self._run_before_providers(
-                session=session,
-                input_messages=normalized_messages,
-            )
-            active_session_holder["session"] = active_session
-            context_holder["ctx"] = session_context
+            if self.context_providers:
+                active_session, session_context = await self._run_before_providers(
+                    session=session,
+                    input_messages=normalized_messages,
+                )
+                active_session_holder["session"] = active_session
+                context_holder["ctx"] = session_context
 
             if continuation_token is not None:
                 a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
