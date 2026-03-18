@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/AgentSchema/refs/heads/main/schemas/v1.0/ContainerAgent.yaml
 
 kind: hosted
-name: azure_ai_agent_with_local_tool
+name: agent-with-local-tools
 # Brief description of what this agent does
 description: >
   A travel assistant agent that helps users find hotels in Seattle.
