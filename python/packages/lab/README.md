@@ -71,10 +71,10 @@ uv run --directory packages/lab poe test
 uv run --directory packages/lab pytest -q -m "not integration"
 ```
 
-When you need to run package tasks from the repository root, use sequential mode to avoid launching all package tests in parallel:
+When you need to run lab tests from the repository root, scope the root task to the lab package:
 
 ```bash
-uv run poe test --seq
+uv run poe test -P lab
 ```
 
 Lightning observability tests intentionally exercise heavier tracing paths and are marked as `resource_intensive`:

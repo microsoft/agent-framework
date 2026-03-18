@@ -899,6 +899,25 @@ def get_meter(
 OBSERVABILITY_SETTINGS: ObservabilitySettings = ObservabilitySettings()
 
 
+def _read_bool_env(name: str, *, default: bool = False) -> bool:
+    """Read a boolean from an environment variable."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes", "on")
+
+
+def _read_int_env(name: str, *, default: int | None = None) -> int | None:
+    """Read an optional integer from an environment variable."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 def enable_instrumentation(
     *,
     enable_sensitive_data: bool | None = None,
@@ -920,11 +939,15 @@ def enable_instrumentation(
     OBSERVABILITY_SETTINGS.enable_instrumentation = True
     if enable_sensitive_data is not None:
         OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
+    else:
+        # Re-read from current environment in case env vars were set after import (e.g. load_dotenv())
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = _read_bool_env("ENABLE_SENSITIVE_DATA")
 
 
 def configure_otel_providers(
     *,
     enable_sensitive_data: bool | None = None,
+    enable_console_exporters: bool | None = None,
     exporters: list[LogRecordExporter | SpanExporter | MetricExporter] | None = None,
     views: list[View] | None = None,
     vs_code_extension_port: int | None = None,
@@ -963,6 +986,8 @@ def configure_otel_providers(
     Keyword Args:
         enable_sensitive_data: Enable OpenTelemetry sensitive events. Overrides
             the environment variable ENABLE_SENSITIVE_DATA if set. Default is None.
+        enable_console_exporters: Enable console exporters for traces, logs, and metrics.
+            Overrides the environment variable ENABLE_CONSOLE_EXPORTERS if set. Default is None.
         exporters: A list of custom exporters for logs, metrics or spans, or any combination.
             These will be added in addition to exporters configured via environment variables.
             Default is None.
@@ -1051,6 +1076,8 @@ def configure_otel_providers(
             settings_kwargs["env_file_encoding"] = env_file_encoding
         if enable_sensitive_data is not None:
             settings_kwargs["enable_sensitive_data"] = enable_sensitive_data
+        if enable_console_exporters is not None:
+            settings_kwargs["enable_console_exporters"] = enable_console_exporters
         if vs_code_extension_port is not None:
             settings_kwargs["vs_code_extension_port"] = vs_code_extension_port
 
@@ -1064,12 +1091,22 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # type: ignore[reportPrivateUsage]
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
-        # Update the observability settings with the provided values
+        # Re-read settings from current environment in case env vars were set
+        # after import (e.g. via load_dotenv()). Explicit parameters take precedence.
         OBSERVABILITY_SETTINGS.enable_instrumentation = True
-        if enable_sensitive_data is not None:
-            OBSERVABILITY_SETTINGS.enable_sensitive_data = enable_sensitive_data
-        if vs_code_extension_port is not None:
-            OBSERVABILITY_SETTINGS.vs_code_extension_port = vs_code_extension_port
+        OBSERVABILITY_SETTINGS.enable_sensitive_data = (
+            enable_sensitive_data if enable_sensitive_data is not None else _read_bool_env("ENABLE_SENSITIVE_DATA")
+        )
+        OBSERVABILITY_SETTINGS.enable_console_exporters = (
+            enable_console_exporters
+            if enable_console_exporters is not None
+            else _read_bool_env("ENABLE_CONSOLE_EXPORTERS")
+        )
+        OBSERVABILITY_SETTINGS.vs_code_extension_port = (
+            vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
+        )
+        OBSERVABILITY_SETTINGS._resource = create_resource()  # type: ignore[reportPrivateUsage]
+        OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
         additional_exporters=exporters,

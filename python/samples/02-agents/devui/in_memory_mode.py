@@ -37,9 +37,7 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     temperature = 53
-    return (
-        f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
-    )
+    return f"The weather in {location} is {conditions[0]} with a high of {temperature}°C."
 
 
 @tool(approval_mode="never_require")
@@ -68,9 +66,7 @@ class AddExclamation(Executor):
     """Add exclamation mark to text."""
 
     @handler
-    async def add_exclamation(
-        self, text: str, ctx: WorkflowContext[Never, str]
-    ) -> None:
+    async def add_exclamation(self, text: str, ctx: WorkflowContext[Never, str]) -> None:
         """Add exclamation and yield as workflow output."""
         result = f"{text}!"
         await ctx.yield_output(result)

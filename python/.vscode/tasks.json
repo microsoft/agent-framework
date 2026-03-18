@@ -9,9 +9,8 @@
             "command": "uv",
             "args": [
                 "run",
-                "prek",
-                "run",
-                "-a"
+                "poe",
+                "check"
             ],
             "problemMatcher": {
                 "owner": "python",
@@ -32,13 +31,13 @@
             }
         },
         {
-            "label": "Format",
+            "label": "Syntax",
             "type": "shell",
             "command": "uv",
             "args": [
                 "run",
                 "poe",
-                "fmt",
+                "syntax",
             ],
             "problemMatcher": {
                 "owner": "python",
@@ -59,13 +58,42 @@
             }
         },
         {
-            "label": "Lint",
+            "label": "Syntax (format only)",
             "type": "shell",
             "command": "uv",
             "args": [
                 "run",
                 "poe",
-                "lint",
+                "syntax",
+                "-F",
+            ],
+            "problemMatcher": {
+                "owner": "python",
+                "fileLocation": [
+                    "relative",
+                    "${workspaceFolder}"
+                ],
+                "pattern": {
+                    "regexp": "^(.*):(\\d+):(\\d+):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "message": 4
+                }
+            },
+            "presentation": {
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Syntax (check only)",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "poe",
+                "syntax",
+                "-C",
             ],
             "problemMatcher": {
                 "owner": "python",
@@ -169,7 +197,14 @@
         {
             "label": "Create Venv",
             "type": "shell",
-            "command": "uv venv PYTHON=${input:py_version}",
+            "command": "uv",
+            "args": [
+                "run",
+                "poe",
+                "venv",
+                "-P",
+                "${input:py_version}"
+            ],
             "presentation": {
                 "reveal": "always",
                 "panel": "new"
@@ -184,7 +219,8 @@
                 "run",
                 "poe",
                 "setup",
-                "--python=${input:py_version}"
+                "-P",
+                "${input:py_version}"
             ],
             "presentation": {
                 "reveal": "always",
@@ -200,11 +236,12 @@
                 "3.10",
                 "3.11",
                 "3.12",
-                "3.13"
+                "3.13",
+                "3.14"
             ],
             "id": "py_version",
             "description": "Python version",
-            "default": "3.10"
+            "default": "3.13"
         }
     ]
 }
