@@ -129,9 +129,10 @@ class AgentApprovalExecutor(WorkflowExecutor):
             agent: The agent protocol to use for generating responses.
             context_mode: The mode for providing context to the agent.
         """
-        super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
-        self._description = agent.description
         self._context_mode = context_mode
+        self._description = agent.description
+
+        super().__init__(workflow=self._build_workflow(agent), id=resolve_agent_id(agent), propagate_request=True)
 
     def _build_workflow(self, agent: SupportsAgentRun) -> Workflow:
         """Build the internal workflow for the AgentApprovalExecutor."""

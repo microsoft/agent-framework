@@ -241,9 +241,9 @@ class SequentialBuilder:
                     not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
                     # Handle request info enabled agents
-                    executors.append(AgentApprovalExecutor(p, context_mode=context_mode))
+                    executors.append(AgentApprovalExecutor(p, context_mode=context_mode))  # type: ignore
                 else:
-                    executors.append(AgentExecutor(p, context_mode=context_mode))
+                    executors.append(AgentExecutor(p, context_mode=context_mode))  # type: ignore
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 
