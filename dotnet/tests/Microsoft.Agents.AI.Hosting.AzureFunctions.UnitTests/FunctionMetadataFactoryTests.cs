@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.Text.Json;
 using Microsoft.Azure.Functions.Worker.Core.FunctionMetadata;
 
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.UnitTests;
@@ -87,6 +88,12 @@ public sealed class FunctionMetadataFactoryTests
         Assert.Equal(BuiltInFunctions.RunWorkflowMcpToolFunctionEntryPoint, metadata.EntryPoint);
         Assert.NotNull(metadata.RawBindings);
         Assert.Equal(3, metadata.RawBindings.Count);
+
+        // Verify all bindings are valid JSON
+        foreach (string binding in metadata.RawBindings)
+        {
+            JsonDocument.Parse(binding);
+        }
 
         // mcpToolTrigger binding
         Assert.Contains("mcpToolTrigger", metadata.RawBindings[0]);

@@ -264,7 +264,8 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 "Translate",
                 arguments: new Dictionary<string, object?> { { "input", "hello world" } });
 
-            string translateResponse = ((TextContentBlock)translateResult.Content[0]).Text;
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
             this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
             Assert.NotEmpty(translateResponse);
             Assert.Contains("HELLO WORLD", translateResponse);
@@ -275,7 +276,8 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                 "OrderLookup",
                 arguments: new Dictionary<string, object?> { { "input", "ORD-2025-42" } });
 
-            string orderResponse = ((TextContentBlock)orderResult.Content[0]).Text;
+            Assert.NotEmpty(orderResult.Content);
+            string orderResponse = Assert.IsType<TextContentBlock>(orderResult.Content[0]).Text;
             this._outputHelper.WriteLine($"OrderLookup MCP tool response: {orderResponse}");
             Assert.NotEmpty(orderResponse);
             Assert.Contains("ORD-2025-42", orderResponse);

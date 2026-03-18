@@ -24,7 +24,7 @@ The sample creates two workflows exposed as MCP tools:
 | Executor | Input | Output | Description |
 |----------|-------|--------|-------------|
 | **LookupOrder** | `string` | `OrderInfo` | Looks up an order by ID |
-| **EnrichOrder** | `OrderInfo` | `OrderSummary` | Adds computed fields (total price, delivery estimate) |
+| **EnrichOrder** | `OrderInfo` | `OrderSummary` | Adds computed fields (total price, status) |
 
 ## Environment Setup
 
@@ -76,6 +76,6 @@ For this sample, you'll also need [Node.js](https://nodejs.org/en/download) to u
    - Select the `OrderLookup` tool
    - Set `ORD-2025-42` as the `input` parameter
    - Click **Run Tool**
-   - Expected result: A JSON object containing order details such as `OrderId`, `CustomerName`, `Product`, `TotalPrice`, `EstimatedDelivery`, and `Status`
+   - Expected result: A JSON object containing order details such as `OrderId`, `CustomerName`, `Product`, `TotalPrice`, and `Status`
 
 You'll see the workflow executor activities logged in the terminal where you ran `func start`.

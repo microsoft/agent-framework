@@ -409,7 +409,22 @@ internal static class BuiltInFunctions
             getInputsAndOutputs: true,
             cancellation: functionContext.CancellationToken);
 
-        return metadata?.ReadOutputAs<DurableWorkflowResult>()?.Result;
+        if (metadata is null)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' returned no metadata.");
+        }
+
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Failed)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' failed: {metadata.ReadOutputAs<string>()}");
+        }
+
+        if (metadata.RuntimeStatus is not OrchestrationRuntimeStatus.Completed)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' ended with unexpected status '{metadata.RuntimeStatus}'.");
+        }
+
+        return metadata.ReadOutputAs<DurableWorkflowResult>()?.Result;
     }
 
     /// <summary>

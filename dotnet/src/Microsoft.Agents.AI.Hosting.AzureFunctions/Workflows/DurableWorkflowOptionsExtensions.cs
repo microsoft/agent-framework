@@ -29,7 +29,7 @@ public static class DurableWorkflowOptionsExtensions
     }
 
     /// <summary>
-    /// Adds a workflow and optionally exposes a status HTTP endpoint and/or an MCP tool trigger.
+    /// Adds a workflow and configures whether to expose a status HTTP endpoint and/or an MCP tool trigger.
     /// </summary>
     /// <param name="options">The workflow options to add the workflow to.</param>
     /// <param name="workflow">The workflow instance to add.</param>
