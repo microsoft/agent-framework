@@ -9,9 +9,6 @@ from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Sample: Sequential workflow with chain_only_agent_responses=True
 
@@ -32,6 +29,9 @@ Prerequisites:
 - Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:

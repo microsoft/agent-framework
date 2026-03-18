@@ -169,7 +169,8 @@ class AgentExecutor(Executor):
         elif self._context_mode == "last_agent":
             self._cache.extend(prior.agent_response.messages)
         else:
-            self._cache.extend(self._context_filter(prior.full_conversation))  # type: ignore
+            assert self._context_filter is not None
+            self._cache.extend(self._context_filter(prior.full_conversation))
 
         await self._run_agent_and_emit(ctx)
 
