@@ -149,7 +149,8 @@ class SessionContext:
         middleware: Dict mapping source_id -> chat/function middleware added by that provider.
             Maintains insertion order (provider execution order).
         response: After invocation, contains the full AgentResponse, should not be changed.
-        options: Options passed to agent.run() - read-only, for reflection only.
+        options: Options passed to agent.run(). Providers can inspect these and may
+            update ``options["tools"]`` to influence per-run tool resolution.
         metadata: Shared metadata dictionary for cross-provider communication.
     """
 
@@ -176,7 +177,8 @@ class SessionContext:
             instructions: Pre-populated instructions.
             tools: Pre-populated tools.
             middleware: Pre-populated chat/function middleware by source.
-            options: Options from agent.run() - read-only for providers.
+            options: Options from agent.run(). Providers may inspect these and can
+                update ``options["tools"]`` to influence per-run tool resolution.
             metadata: Shared metadata for cross-provider communication.
         """
         self.session_id = session_id

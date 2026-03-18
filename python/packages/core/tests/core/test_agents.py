@@ -841,6 +841,69 @@ async def test_per_service_call_persistence_rejects_existing_conversation_id_whe
         await agent.run("Hello", session=session, options={"store": False, "conversation_id": "existing_conversation"})
 
 
+async def test_context_provider_can_inspect_runtime_tools_from_run(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    seen_tools: list[Any] = []
+
+    class RuntimeToolsProvider(BaseContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="runtime-tools")
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            del agent, session, state
+            tools = context.options.get("tools", [])
+            seen_tools.extend(list(tools) if isinstance(tools, list) else [tools])
+
+    runtime_tool = FunctionTool(func=lambda: "runtime", name="runtime_tool", description="Runtime tool")
+    agent = Agent(client=chat_client_base, context_providers=[RuntimeToolsProvider()])
+
+    await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
+        messages="Hello",
+        session=agent.create_session(),
+        tools=[runtime_tool],
+        options=None,
+        compaction_strategy=None,
+        tokenizer=None,
+        legacy_kwargs={},
+        function_invocation_kwargs=None,
+        client_kwargs=None,
+    )
+
+    assert seen_tools == [runtime_tool]
+
+
+async def test_context_provider_can_remove_runtime_tools_from_run(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    class RuntimeToolsProvider(BaseContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="runtime-tools")
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            del agent, session, state
+            context.options["tools"] = []
+
+    base_tool = FunctionTool(func=lambda: "base", name="base_tool", description="Base tool")
+    runtime_tool = FunctionTool(func=lambda: "runtime", name="runtime_tool", description="Runtime tool")
+    agent = Agent(client=chat_client_base, tools=[base_tool], context_providers=[RuntimeToolsProvider()])
+
+    ctx = await agent._prepare_run_context(  # type: ignore[reportPrivateUsage]
+        messages="Hello",
+        session=agent.create_session(),
+        tools=[runtime_tool],
+        options=None,
+        compaction_strategy=None,
+        tokenizer=None,
+        legacy_kwargs={},
+        function_invocation_kwargs=None,
+        client_kwargs=None,
+    )
+
+    tool_names = [_get_tool_name(tool_obj) for tool_obj in ctx["chat_options"]["tools"]]
+    assert tool_names == ["base_tool"]
+
+
 async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:
     mock_response = ChatResponse(
         messages=[Message(role="assistant", contents=[Content.from_text("test response")])],
