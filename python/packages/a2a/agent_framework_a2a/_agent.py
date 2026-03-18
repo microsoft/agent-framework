@@ -291,6 +291,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if not stream:
 
             async def _run_non_streaming() -> AgentResponse[Any]:
+                active_session: AgentSession | None = None
+                session_context: SessionContext | None = None
                 if self.context_providers:
                     active_session, session_context = await self._run_before_providers(
                         session=session,
@@ -309,7 +311,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     finalizer=AgentResponse.from_updates,
                 )
                 result = await response_stream.get_final_response()
-                if self.context_providers:
+                if self.context_providers and session_context is not None:
                     session_context._response = result  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
                     await self._run_after_providers(session=active_session, context=session_context)
                 return result
