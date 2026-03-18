@@ -1696,6 +1696,9 @@ async def test_mcp_tool_sampling_callback_chat_client_exception():
     params.temperature = None
     params.maxTokens = None
     params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -1739,6 +1742,9 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     params.temperature = None
     params.maxTokens = None
     params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
 
     result = await tool.sampling_callback(Mock(), params)
 
@@ -1785,6 +1791,178 @@ async def test_mcp_tool_logging_callback_logs_at_requested_level() -> None:
         await tool.logging_callback(types.LoggingMessageNotificationParams(level="warning", data="be careful"))
 
     mock_log.assert_called_once_with(logging.WARNING, "be careful")
+
+
+async def test_mcp_tool_sampling_callback_forwards_system_prompt():
+    """Test sampling callback passes systemPrompt as instructions in options."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = "You are a helpful assistant"
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options.get("instructions") == "You are a helpful assistant"
+
+
+async def test_mcp_tool_sampling_callback_forwards_tools():
+    """Test sampling callback converts MCP tools to FunctionTools and passes them in options."""
+    from agent_framework import FunctionTool, Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    mcp_tool = types.Tool(
+        name="get_weather",
+        description="Get weather",
+        inputSchema={"type": "object", "properties": {"city": {"type": "string"}}},
+    )
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = [mcp_tool]
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    tools = options.get("tools")
+    assert tools is not None
+    assert len(tools) == 1
+    assert isinstance(tools[0], FunctionTool)
+    assert tools[0].name == "get_weather"
+    assert tools[0].description == "Get weather"
+
+
+async def test_mcp_tool_sampling_callback_forwards_tool_choice():
+    """Test sampling callback passes toolChoice mode in options."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = types.ToolChoice(mode="required")
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options.get("tool_choice") == "required"
+
+
+async def test_connect_creates_session_with_sampling_capabilities():
+    """Test connect() passes sampling_capabilities to ClientSession when client is set."""
+    tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
+    tool.client = Mock()
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session = AsyncMock()
+        mock_session._request_id = 1
+
+        session_cm = AsyncMock()
+        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session_class.return_value = session_cm
+
+        await tool.connect()
+
+        call_kwargs = mock_session_class.call_args.kwargs
+        sampling_caps = call_kwargs.get("sampling_capabilities")
+        assert sampling_caps is not None
+        assert isinstance(sampling_caps, types.SamplingCapability)
+        assert sampling_caps.tools is not None
+        assert isinstance(sampling_caps.tools, types.SamplingToolsCapability)
+
+
+async def test_connect_no_sampling_capabilities_without_client():
+    """Test connect() does not pass sampling_capabilities when no client is set."""
+    tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
+    # No client set
+
+    mock_transport = (Mock(), Mock())
+    mock_context_manager = Mock()
+    mock_context_manager.__aenter__ = AsyncMock(return_value=mock_transport)
+    mock_context_manager.__aexit__ = AsyncMock(return_value=None)
+    tool.get_mcp_client = Mock(return_value=mock_context_manager)
+
+    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+        mock_session = AsyncMock()
+        mock_session._request_id = 1
+
+        session_cm = AsyncMock()
+        session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        session_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session_class.return_value = session_cm
+
+        await tool.connect()
+
+        call_kwargs = mock_session_class.call_args.kwargs
+        assert call_kwargs.get("sampling_capabilities") is None
 
 
 # Test error handling in connect() method

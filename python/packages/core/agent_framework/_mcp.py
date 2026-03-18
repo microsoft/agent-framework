@@ -647,6 +647,12 @@ class MCPTool:
                         "MCP support requires `mcp`. Please install `mcp`.",
                         inner_exception=ex,
                     ) from ex
+
+                sampling_capabilities = None
+                if self.client is not None:
+                    sampling_capabilities = types.SamplingCapability(
+                        tools=types.SamplingToolsCapability(),
+                    )
                 session = await self._exit_stack.enter_async_context(
                     runtime_client_session(
                         read_stream=transport[0],
@@ -657,6 +663,7 @@ class MCPTool:
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         sampling_callback=self.sampling_callback,
+                        sampling_capabilities=sampling_capabilities,
                     )
                 )
             except Exception as ex:
@@ -733,12 +740,29 @@ class MCPTool:
         messages: list[Message] = []
         for msg in params.messages:
             messages.append(self._parse_message_from_mcp(msg))
+
+        options: dict[str, Any] = {}
+        if params.systemPrompt:
+            options["instructions"] = params.systemPrompt
+        if params.tools:
+            options["tools"] = [
+                FunctionTool(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_model=tool.inputSchema,
+                )
+                for tool in params.tools
+            ]
+        if params.toolChoice is not None and params.toolChoice.mode is not None:
+            options["tool_choice"] = params.toolChoice.mode
+
         try:
             response = await self.client.get_response(
                 messages,
                 temperature=params.temperature,
                 max_tokens=params.maxTokens,
                 stop=params.stopSequences,
+                options=options or None,
             )
         except Exception as ex:
             return types.ErrorData(
