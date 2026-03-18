@@ -124,13 +124,13 @@ async Task EnsureMemoryStoreAsync()
     }
 
     Console.WriteLine("Storing memories from a prior conversation...");
-    MemoryUpdateOptions memoryOptions = new(userScope) { UpdateDelayInSecs = 0 };
+    MemoryUpdateOptions memoryOptions = new(userScope) { UpdateDelay = 0 };
     memoryOptions.Items.Add(ResponseItem.CreateUserMessageItem("My name is Alice and I love programming in C#."));
 
     MemoryUpdateResult updateResult = await aiProjectClient.MemoryStores.WaitForMemoriesUpdateAsync(
         memoryStoreName: memoryStoreName,
-        options: memoryOptions,
-        pollingInterval: 500);
+        pollingInterval: 500,
+        options: memoryOptions);
 
     if (updateResult.Status == MemoryStoreUpdateStatus.Failed)
     {
