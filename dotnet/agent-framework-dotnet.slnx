@@ -76,6 +76,7 @@
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/04_WorkflowMcpTool/04_WorkflowMcpTool.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

@@ -113,6 +113,17 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                 }
             }
 
+            // Register an MCP tool trigger if opted in via AddWorkflow(exposeMcpToolTrigger: true).
+            if (this._options.IsMcpToolTriggerEnabled(workflow.Key))
+            {
+                string mcpToolFunctionName = $"{BuiltInFunctions.McpToolPrefix}{workflow.Key}";
+                if (registeredFunctions.Add(mcpToolFunctionName))
+                {
+                    this._logger.LogRegisteringWorkflowTrigger(workflow.Key, mcpToolFunctionName, "mcpTool");
+                    original.Add(FunctionMetadataFactory.CreateWorkflowMcpToolTrigger(workflow.Key, workflow.Value.Description));
+                }
+            }
+
             // Register activity or entity functions for each executor in the workflow.
             // ReflectExecutors() returns all executors across the graph; no need to manually traverse edges.
             foreach (KeyValuePair<string, ExecutorBinding> entry in workflow.Value.ReflectExecutors())
