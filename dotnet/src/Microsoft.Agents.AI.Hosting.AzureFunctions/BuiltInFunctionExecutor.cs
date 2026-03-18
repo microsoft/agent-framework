@@ -174,8 +174,10 @@ internal sealed class BuiltInFunctionExecutor : IFunctionExecutor
                 throw new InvalidOperationException($"MCP tool invocation context binding is missing for the invocation {context.InvocationId}.");
             }
 
-            context.GetInvocationResult().Value =
-                await BuiltInFunctions.RunWorkflowMcpToolAsync(mcpToolInvocationContext, durableTaskClient, context);
+            context.GetInvocationResult().Value = await BuiltInFunctions.RunWorkflowMcpToolAsync(
+                mcpToolInvocationContext,
+                durableTaskClient,
+                context);
             return;
         }
 
