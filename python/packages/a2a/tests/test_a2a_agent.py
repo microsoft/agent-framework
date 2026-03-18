@@ -30,7 +30,7 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework.a2a import A2AAgent
-from pytest import fixture, raises
+from pytest import fixture, mark, raises
 
 from agent_framework_a2a import A2AContinuationToken
 from agent_framework_a2a._agent import _get_uri_data  # type: ignore
@@ -1003,7 +1003,10 @@ async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_cli
     assert provider.after_run_called
 
 
-async def test_run_raises_when_no_messages_and_no_continuation_token(mock_a2a_client: MockA2AClient) -> None:
+@mark.parametrize("messages", [None, []])
+async def test_run_raises_when_no_messages_and_no_continuation_token(
+    mock_a2a_client: MockA2AClient, messages: list[str] | None
+) -> None:
     """Test that run() raises ValueError when messages is None/empty and no continuation_token is provided."""
     agent = A2AAgent(
         name="Test Agent",
@@ -1012,7 +1015,27 @@ async def test_run_raises_when_no_messages_and_no_continuation_token(mock_a2a_cl
     )
 
     with raises(ValueError, match="At least one message is required"):
-        await agent.run(None)
+        await agent.run(messages)
+
+
+async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() does not raise when messages is None but a continuation_token is provided."""
+    task = Task(
+        id="task-cont",
+        context_id="ctx-cont",
+        status=TaskStatus(state=TaskState.completed, message=None),
+    )
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    token = A2AContinuationToken(task_id="task-cont", context_id="ctx-cont")
+    response = await agent.run(None, continuation_token=token)
+    assert response is not None
 
 
 # endregion
