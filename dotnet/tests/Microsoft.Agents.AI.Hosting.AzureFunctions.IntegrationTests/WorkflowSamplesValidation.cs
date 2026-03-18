@@ -20,6 +20,12 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     private const string DtsPort = "8080";
 
     private static readonly string s_dotnetTargetFramework = GetTargetFramework();
+
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
     private static readonly HttpClient s_sharedHttpClient = new();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
@@ -437,7 +443,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
