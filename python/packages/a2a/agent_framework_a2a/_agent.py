@@ -293,6 +293,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 TaskIdParams(id=continuation_token["task_id"])
             )
         else:
+            if not normalized_messages:
+                raise ValueError("At least one message is required when starting a new task (no continuation_token).")
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
             a2a_stream = self.client.send_message(a2a_message)
 
