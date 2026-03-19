@@ -72,56 +72,116 @@ def _random_date_within_last_two_months() -> datetime:
 def _build_invoices() -> list[Invoice]:
     """Build 10 mock invoices."""
     return [
-        Invoice("TICKET-XYZ987", "INV789", "Contoso", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 150, 10.00),
-            Product("Hats", 200, 15.00),
-            Product("Glasses", 300, 5.00),
-        ]),
-        Invoice("TICKET-XYZ111", "INV111", "XStore", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 2500, 12.00),
-            Product("Hats", 1500, 8.00),
-            Product("Glasses", 200, 20.00),
-        ]),
-        Invoice("TICKET-XYZ222", "INV222", "Cymbal Direct", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 1200, 14.00),
-            Product("Hats", 800, 7.00),
-            Product("Glasses", 500, 25.00),
-        ]),
-        Invoice("TICKET-XYZ333", "INV333", "Contoso", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 400, 11.00),
-            Product("Hats", 600, 15.00),
-            Product("Glasses", 700, 5.00),
-        ]),
-        Invoice("TICKET-XYZ444", "INV444", "XStore", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 800, 10.00),
-            Product("Hats", 500, 18.00),
-            Product("Glasses", 300, 22.00),
-        ]),
-        Invoice("TICKET-XYZ555", "INV555", "Cymbal Direct", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 1100, 9.00),
-            Product("Hats", 900, 12.00),
-            Product("Glasses", 1200, 15.00),
-        ]),
-        Invoice("TICKET-XYZ666", "INV666", "Contoso", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 2500, 8.00),
-            Product("Hats", 1200, 10.00),
-            Product("Glasses", 1000, 6.00),
-        ]),
-        Invoice("TICKET-XYZ777", "INV777", "XStore", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 1900, 13.00),
-            Product("Hats", 1300, 16.00),
-            Product("Glasses", 800, 19.00),
-        ]),
-        Invoice("TICKET-XYZ888", "INV888", "Cymbal Direct", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 2200, 11.00),
-            Product("Hats", 1700, 8.50),
-            Product("Glasses", 600, 21.00),
-        ]),
-        Invoice("TICKET-XYZ999", "INV999", "Contoso", _random_date_within_last_two_months(), [
-            Product("T-Shirts", 1400, 10.50),
-            Product("Hats", 1100, 9.00),
-            Product("Glasses", 950, 12.00),
-        ]),
+        Invoice(
+            "TICKET-XYZ987",
+            "INV789",
+            "Contoso",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 150, 10.00),
+                Product("Hats", 200, 15.00),
+                Product("Glasses", 300, 5.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ111",
+            "INV111",
+            "XStore",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 2500, 12.00),
+                Product("Hats", 1500, 8.00),
+                Product("Glasses", 200, 20.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ222",
+            "INV222",
+            "Cymbal Direct",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 1200, 14.00),
+                Product("Hats", 800, 7.00),
+                Product("Glasses", 500, 25.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ333",
+            "INV333",
+            "Contoso",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 400, 11.00),
+                Product("Hats", 600, 15.00),
+                Product("Glasses", 700, 5.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ444",
+            "INV444",
+            "XStore",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 800, 10.00),
+                Product("Hats", 500, 18.00),
+                Product("Glasses", 300, 22.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ555",
+            "INV555",
+            "Cymbal Direct",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 1100, 9.00),
+                Product("Hats", 900, 12.00),
+                Product("Glasses", 1200, 15.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ666",
+            "INV666",
+            "Contoso",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 2500, 8.00),
+                Product("Hats", 1200, 10.00),
+                Product("Glasses", 1000, 6.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ777",
+            "INV777",
+            "XStore",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 1900, 13.00),
+                Product("Hats", 1300, 16.00),
+                Product("Glasses", 800, 19.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ888",
+            "INV888",
+            "Cymbal Direct",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 2200, 11.00),
+                Product("Hats", 1700, 8.50),
+                Product("Glasses", 600, 21.00),
+            ],
+        ),
+        Invoice(
+            "TICKET-XYZ999",
+            "INV999",
+            "Contoso",
+            _random_date_within_last_two_months(),
+            [
+                Product("T-Shirts", 1400, 10.50),
+                Product("Hats", 1100, 9.00),
+                Product("Glasses", 950, 12.00),
+            ],
+        ),
     ]
 
 

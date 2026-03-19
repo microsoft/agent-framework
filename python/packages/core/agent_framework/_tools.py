@@ -77,6 +77,7 @@ if TYPE_CHECKING:
         Content,
         Message,
         ResponseStream,
+        UsageDetails,
     )
 
 else:
@@ -2122,6 +2123,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             ChatResponse,
             ChatResponseUpdate,
             ResponseStream,
+            add_usage_details,
         )
 
         super_get_response = super().get_response  # type: ignore[misc]
@@ -2188,6 +2190,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 prepped_messages = list(messages)
                 fcc_messages: list[Message] = []
                 response: ChatResponse[Any] | None = None
+                aggregated_usage: UsageDetails | None = None
 
                 loop_enabled = self.function_invocation_configuration.get("enabled", True)
                 max_iterations = self.function_invocation_configuration.get("max_iterations", DEFAULT_MAX_ITERATIONS)
@@ -2219,6 +2222,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                             client_kwargs=filtered_kwargs,
                         ),
                     )
+                    aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
 
                     if response.conversation_id is not None:
                         _update_conversation_id(kwargs, response.conversation_id, mutable_options)
@@ -2235,6 +2239,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         execute_function_calls=execute_function_calls,
                     )
                     if result.get("action") == "return":
+                        response.usage_details = aggregated_usage
                         return response
                     total_function_calls += result.get("function_call_count", 0)
                     if result.get("action") == "stop":
@@ -2290,6 +2295,8 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         client_kwargs=filtered_kwargs,
                     ),
                 )
+                aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                response.usage_details = aggregated_usage
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)

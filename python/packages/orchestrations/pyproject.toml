@@ -83,9 +83,13 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_orchestrations"
-test = 'pytest -m "not integration" --cov=agent_framework_orchestrations --cov-report=term-missing:skip-covered -n auto --dist worksteal tests'
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_orchestrations"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_orchestrations --cov-report=term-missing:skip-covered -n auto --dist worksteal tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]
