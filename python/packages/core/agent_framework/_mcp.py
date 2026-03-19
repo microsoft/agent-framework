@@ -195,9 +195,13 @@ def _parse_tool_result_from_mcp(
                 result.append(Content.from_text(str(item)))
 
     if not result and mcp_type.structuredContent is not None:
+        try:
+            text = json.dumps(mcp_type.structuredContent)
+        except (TypeError, ValueError):
+            text = str(mcp_type.structuredContent)
         result.append(
             Content.from_text(
-                json.dumps(mcp_type.structuredContent),
+                text,
                 additional_properties={"structured_content": mcp_type.structuredContent},
             )
         )
@@ -1036,7 +1040,8 @@ class MCPTool:
 
         if params.temperature is not None:
             options["temperature"] = params.temperature
-        options["max_tokens"] = params.maxTokens
+        if params.maxTokens is not None:
+            options["max_tokens"] = params.maxTokens
         if params.stopSequences is not None:
             options["stop"] = params.stopSequences
 

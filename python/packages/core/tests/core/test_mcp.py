@@ -390,7 +390,7 @@ def test_parse_tool_result_from_mcp_structured_content_nested():
 
 
 def test_parse_tool_result_from_mcp_structured_content_non_serializable():
-    """Test that structuredContent with non-JSON-serializable values raises TypeError."""
+    """Test that structuredContent with non-JSON-serializable values falls back to str()."""
     from datetime import datetime
 
     structured = {"timestamp": datetime(2025, 1, 1)}
@@ -398,8 +398,10 @@ def test_parse_tool_result_from_mcp_structured_content_non_serializable():
         content=[],
         structuredContent=structured,
     )
-    with pytest.raises(TypeError):
-        _parse_tool_result_from_mcp(mcp_result)
+    result = _parse_tool_result_from_mcp(mcp_result)
+    assert len(result) == 1
+    assert result[0].text == str(structured)
+    assert result[0].additional_properties["structured_content"] == structured
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -2121,6 +2123,44 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     assert "temperature" not in options
     assert options.get("max_tokens") == 100
     assert "stop" not in options
+
+
+async def test_mcp_tool_sampling_callback_omits_max_tokens_when_none():
+    """Test sampling callback does not set max_tokens in options when it is None."""
+    from agent_framework import Message
+
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    mock_chat_client = AsyncMock()
+    mock_response = Mock()
+    mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
+    mock_response.model_id = "test-model"
+    mock_chat_client.get_response.return_value = mock_response
+
+    tool.client = mock_chat_client
+
+    params = Mock()
+    mock_message = Mock()
+    mock_message.role = "user"
+    mock_message.content = Mock()
+    mock_message.content.text = "Test question"
+    params.messages = [mock_message]
+    params.temperature = None
+    params.maxTokens = None
+    params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
+
+    result = await tool.sampling_callback(Mock(), params)
+
+    assert isinstance(result, types.CreateMessageResult)
+    call_kwargs = mock_chat_client.get_response.call_args
+    options = call_kwargs.kwargs.get("options")
+    assert options is None or "max_tokens" not in options
+
+
+async def test_connect_sampling_capabilities_with_client():
     """Test connect() passes sampling_capabilities to ClientSession when client is set."""
     tool = MCPStdioTool(name="test", command="test-command", load_tools=False, load_prompts=False)
     tool.client = Mock()
