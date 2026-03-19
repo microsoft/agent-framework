@@ -9,6 +9,8 @@ informed:
 
 # Orchestration Run Output Types
 
+> Note: this document only applies to Python. .Net is out of scope for now since it does not have the same orchestration patterns or output model.
+
 ## Context and Problem Statement
 
 Python orchestrations (Concurrent, Sequential, Handoff, GroupChat, Magentic) currently all yield `list[Message]` — typically the full conversation history — as their final output via `ctx.yield_output(...)`. This creates several problems:
