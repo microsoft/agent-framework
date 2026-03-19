@@ -88,9 +88,17 @@ class MockA2AClient:
         task_id: str,
         context_id: str = "test-context",
         state: TaskState = TaskState.working,
+        text: str | None = None,
     ) -> None:
         """Add a mock in-progress Task response (non-terminal)."""
-        status = TaskStatus(state=state, message=None)
+        message = None
+        if text is not None:
+            message = A2AMessage(
+                message_id=str(uuid4()),
+                role=A2ARole.agent,
+                parts=[Part(root=TextPart(text=text))],
+            )
+        status = TaskStatus(state=state, message=message)
         task = Task(id=task_id, context_id=context_id, status=status)
         client_event = (task, None)
         self.responses.append(client_event)
@@ -99,9 +107,9 @@ class MockA2AClient:
         """Mock send_message method that yields responses."""
         self.call_count += 1
 
-        if self.responses:
-            response = self.responses.pop(0)
+        for response in self.responses:
             yield response
+        self.responses.clear()
 
     async def resubscribe(self, request: Any) -> AsyncIterator[Any]:
         """Mock resubscribe method that yields responses."""
@@ -848,6 +856,61 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
     assert response.continuation_token is None
     assert len(response.messages) == 1
     assert response.messages[0].text == "Poll result"
+
+
+# endregion
+
+# region Streaming with in-progress message content
+
+
+async def test_streaming_working_updates_yield_message_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that streaming working updates with status.message yield content."""
+    mock_a2a_client.add_in_progress_task_response("task-w", context_id="ctx-w", text="Processing step 1...")
+    mock_a2a_client.add_in_progress_task_response("task-w", context_id="ctx-w", text="Processing step 2...")
+    mock_a2a_client.add_task_response("task-w", [{"id": "art-w", "content": "Final result"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 3
+    assert updates[0].contents[0].text == "Processing step 1..."
+    assert updates[1].contents[0].text == "Processing step 2..."
+    assert updates[2].contents[0].text == "Final result"
+
+
+async def test_streaming_single_working_update_with_message(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that a single working update with message content is not dropped."""
+    mock_a2a_client.add_in_progress_task_response("task-s", context_id="ctx-s", text="Thinking...")
+    mock_a2a_client.add_task_response("task-s", [{"id": "art-s", "content": "Done"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 2
+    assert updates[0].contents[0].text == "Thinking..."
+    assert updates[0].role == "assistant"
+    assert updates[1].contents[0].text == "Done"
+
+
+async def test_streaming_working_update_without_message_is_skipped(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that working updates without status.message are still silently skipped."""
+    mock_a2a_client.add_in_progress_task_response("task-n", context_id="ctx-n")
+    mock_a2a_client.add_task_response("task-n", [{"id": "art-n", "content": "Result"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].contents[0].text == "Result"
 
 
 # endregion

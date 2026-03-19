@@ -342,9 +342,11 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """Convert an A2A Task into AgentResponseUpdate(s).
 
         Terminal tasks produce updates from their artifacts/history.
-        In-progress tasks produce a continuation token update only when
-        ``background=True``; otherwise they are silently skipped so the
-        caller keeps consuming the stream until completion.
+        In-progress tasks produce a continuation token update when
+        ``background=True``.  When ``background=False``, any message
+        content attached to the status update is surfaced; otherwise
+        the update is silently skipped so the caller keeps consuming
+        the stream until completion.
         """
         if task.status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
@@ -372,6 +374,19 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raw_representation=task,
                 )
             ]
+
+        # Surface message content from in-progress status updates (e.g. working state)
+        if task.status.message is not None and task.status.message.parts:
+            contents = self._parse_contents_from_a2a(task.status.message.parts)
+            if contents:
+                return [
+                    AgentResponseUpdate(
+                        contents=contents,
+                        role="assistant" if task.status.message.role == A2ARole.agent else "user",
+                        response_id=task.id,
+                        raw_representation=task,
+                    )
+                ]
 
         return []
 
