@@ -892,19 +892,19 @@ internal sealed class MCPCallItemResource : ItemResource
     /// The label of the MCP server running the tool.
     /// </summary>
     [JsonPropertyName("server_label")]
-    public string? ServerLabel { get; init; }
+    public required string ServerLabel { get; init; }
 
     /// <summary>
     /// The name of the tool that was run.
     /// </summary>
     [JsonPropertyName("name")]
-    public string? Name { get; init; }
+    public required string Name { get; init; }
 
     /// <summary>
     /// A JSON string of the arguments passed to the tool.
     /// </summary>
     [JsonPropertyName("arguments")]
-    public string? Arguments { get; init; }
+    public required string Arguments { get; init; }
 
     /// <summary>
     /// The output from the tool call.

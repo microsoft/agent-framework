@@ -48,6 +48,10 @@ internal static class AgentResponseUpdateExtensions
         // Track active item IDs by executor ID to pair invoked/completed/failed events
         Dictionary<string, string> executorItemIds = [];
 
+        // Stash MCP tool calls by CallId so the result can build a combined mcp_call item,
+        // matching the pattern in MEAI's OpenAIResponsesChatClient.
+        Dictionary<string, McpServerToolCallContent>? pendingMcpCalls = null;
+
         AgentResponseUpdate? previousUpdate = null;
         StreamingEventGenerator? generator = null;
         while (await updateEnumerator.MoveNextAsync().ConfigureAwait(false))
@@ -173,6 +177,14 @@ internal static class AgentResponseUpdateExtensions
                     continue;
                 }
 
+                // Stash MCP tool calls for later correlation with their results.
+                // The mcp_call spec type combines call + result in a single item.
+                if (content is McpServerToolCallContent mcpCall)
+                {
+                    (pendingMcpCalls ??= [])[mcpCall.CallId] = mcpCall;
+                    continue;
+                }
+
                 // Create a new generator if there is no existing one or the existing one does not support the content.
                 if (generator?.IsSupported(content) != true)
                 {
@@ -196,6 +208,7 @@ internal static class AgentResponseUpdateExtensions
                         TextReasoningContent => new TextReasoningContentEventGenerator(context.IdGenerator, seq, outputIndex),
                         FunctionCallContent => new FunctionCallEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
                         FunctionResultContent => new FunctionResultEventGenerator(context.IdGenerator, seq, outputIndex),
+                        McpServerToolResultContent => new McpCallEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions, pendingMcpCalls),
                         ToolApprovalRequestContent => new FunctionApprovalRequestEventGenerator(context.IdGenerator, seq, outputIndex, context.JsonSerializerOptions),
                         ToolApprovalResponseContent => new FunctionApprovalResponseEventGenerator(context.IdGenerator, seq, outputIndex),
                         ErrorContent => new ErrorContentEventGenerator(context.IdGenerator, seq, outputIndex),

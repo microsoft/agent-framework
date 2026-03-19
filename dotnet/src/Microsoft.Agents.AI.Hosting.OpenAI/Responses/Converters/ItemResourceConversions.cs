@@ -73,6 +73,30 @@ internal static class ItemResourceConversions
                     ]));
                     break;
 
+                case MCPCallItemResource mcpCall:
+                    var mcpCallArgs = ParseArguments(mcpCall.Arguments);
+
+                    // MEAI adds both the tool call and result as contents in the same
+                    // assistant message, matching AddMcpToolCallContent in OpenAIResponsesChatClient.
+                    var mcpCallContents = new List<AIContent>
+                    {
+                        new McpServerToolCallContent(mcpCall.Id, mcpCall.Name, mcpCall.ServerLabel)
+                        {
+                            Arguments = mcpCallArgs
+                        },
+                        new McpServerToolResultContent(mcpCall.Id)
+                        {
+                            Outputs =
+                            [
+                                mcpCall.Error is not null
+                                    ? new ErrorContent(mcpCall.Error)
+                                    : new TextContent(mcpCall.Output ?? string.Empty)
+                            ],
+                        }
+                    };
+                    messages.Add(new ChatMessage(ChatRole.Assistant, mcpCallContents));
+                    break;
+
                     // Skip all other item types (reasoning, executor_action, web_search, etc.)
                     // They are not relevant for conversation context.
             }

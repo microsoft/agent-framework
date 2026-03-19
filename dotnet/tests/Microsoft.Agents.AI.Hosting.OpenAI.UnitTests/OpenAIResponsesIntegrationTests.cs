@@ -1269,7 +1269,8 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         const string ServerName = "microsoft_learn";
 
         // First call: agent returns MCP approval request
-        // Second call: agent returns text (after approval was granted)
+        // Second call: agent returns MCP tool call + result + text (after approval was granted)
+        // Third call: agent returns text (follow-up)
         var mockChatClient = new TestHelpers.ConversationMemoryMockChatClient((callIndex, messages) =>
         {
             if (callIndex == 0)
@@ -1281,7 +1282,24 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
                 return [new ToolApprovalRequestContent(RequestId, mcpToolCall)];
             }
 
-            return [new TextContent("System.IO.Stream is an abstract base class for reading and writing bytes.")];
+            if (callIndex == 1)
+            {
+                // After approval: the MCP tool executes and returns a result, then the model responds
+                return
+                [
+                    new McpServerToolCallContent(CallId, ToolName, ServerName)
+                    {
+                        Arguments = new Dictionary<string, object?> { ["query"] = "System.IO.Stream" }
+                    },
+                    new McpServerToolResultContent(CallId)
+                    {
+                        Outputs = [new TextContent("Stream provides a generic view of a sequence of bytes.")]
+                    },
+                    new TextContent("System.IO.Stream is an abstract base class for reading and writing bytes.")
+                ];
+            }
+
+            return [new TextContent("Stream supports both synchronous and asynchronous operations.")];
         });
 
         this._httpClient = await this.CreateTestServerWithCustomClientAndConversationsAsync(
@@ -1360,6 +1378,50 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Equal(RequestId, responseContent.RequestId);
         Assert.True(responseContent.Approved);
         Assert.IsType<McpServerToolCallContent>(responseContent.ToolCall);
+
+        // Act - Third request: a new user message after the approval flow completed.
+        // This verifies that the approval request/response pair survived in storage
+        // and is correctly replayed as conversation history.
+        var thirdResponse = await this.SendRawResponseAsync(AgentName, "Tell me more about Stream.", conversationId, stream);
+        string thirdResponseBody = await thirdResponse.Content.ReadAsStringAsync();
+        Assert.Contains("Stream supports both synchronous and asynchronous operations.", thirdResponseBody);
+
+        // Assert - Third call
+        Assert.Equal(3, mockChatClient.CallHistory.Count);
+        var thirdCallMessages = mockChatClient.CallHistory[2];
+
+        // The replayed history should include the approval request from storage
+        var replayedRequest = thirdCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.NotNull(replayedRequest);
+
+        // The replayed history should include the approval response from storage
+        var replayedResponse = thirdCallMessages.FirstOrDefault(m =>
+            m.Contents.OfType<ToolApprovalResponseContent>().Any());
+        Assert.NotNull(replayedResponse);
+
+        // The replayed history should include the MCP tool call from storage
+        var replayedMcpCall = thirdCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<McpServerToolCallContent>().Any());
+        Assert.NotNull(replayedMcpCall);
+
+        // The MCP tool result should be in the same message as the call (matching MEAI pattern)
+        var replayedMcpResult = replayedMcpCall!.Contents.OfType<McpServerToolResultContent>().FirstOrDefault();
+        Assert.NotNull(replayedMcpResult);
+
+        // The text response from request 2 should also be in the history
+        var replayedText = thirdCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<TextContent>().Any(t => t.Text?.Contains("abstract base class") == true));
+        Assert.NotNull(replayedText);
+
+        // The new user message for request 3 should be present
+        var thirdUserMsg = thirdCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.User &&
+            m.Contents.OfType<TextContent>().Any(t => t.Text?.Contains("Tell me more") == true));
+        Assert.NotNull(thirdUserMsg);
     }
 
     /// <summary>
