@@ -56,6 +56,23 @@ internal static class ItemResourceConversions
                     ]));
                     break;
 
+                case MCPApprovalRequestItemResource mcpApproval:
+                    var mcpArgs = ParseArguments(mcpApproval.Arguments);
+
+                    // The mcp_approval_request spec item has a single Id field. MEAI reuses it as
+                    // both the McpServerToolCallContent.CallId and the ToolApprovalRequestContent.RequestId
+                    // because the spec doesn't provide a separate call ID.
+                    var mcpToolCall = new McpServerToolCallContent(
+                        mcpApproval.Id, mcpApproval.Name ?? string.Empty, mcpApproval.ServerLabel ?? string.Empty)
+                    {
+                        Arguments = mcpArgs
+                    };
+                    messages.Add(new ChatMessage(ChatRole.Assistant,
+                    [
+                        new ToolApprovalRequestContent(mcpApproval.Id, mcpToolCall)
+                    ]));
+                    break;
+
                     // Skip all other item types (reasoning, executor_action, web_search, etc.)
                     // They are not relevant for conversation context.
             }
@@ -79,7 +96,7 @@ internal static class ItemResourceConversions
         return result;
     }
 
-    private static Dictionary<string, object?>? ParseArguments(string? argumentsJson)
+    internal static Dictionary<string, object?>? ParseArguments(string? argumentsJson)
     {
         if (string.IsNullOrEmpty(argumentsJson))
         {

@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Collections.Generic;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
 
@@ -49,6 +51,9 @@ internal static class ItemContentConverter
 
             // Error/refusal content
             ItemContentRefusal refusal => new ErrorContent(refusal.Refusal),
+
+            // Tool approval response (DevUI extension)
+            ItemContentFunctionApprovalResponse approval => CreateFunctionApprovalResponse(approval),
 
             // Image content
             ItemContentInputImage inputImage when !string.IsNullOrEmpty(inputImage.ImageUrl) =>
@@ -158,5 +163,46 @@ internal static class ItemContentConverter
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Creates a <see cref="ToolApprovalResponseContent"/> from a DevUI function approval response,
+    /// extracting the function call ID, name, and arguments from the JSON payload.
+    /// </summary>
+    private static ToolApprovalResponseContent CreateFunctionApprovalResponse(ItemContentFunctionApprovalResponse approval)
+    {
+        string callId = string.Empty;
+        string name = string.Empty;
+        string? serverName = null;
+        Dictionary<string, object?>? arguments = null;
+
+        if (approval.FunctionCall is JsonElement fc && fc.ValueKind == JsonValueKind.Object)
+        {
+            if (fc.TryGetProperty("id", out var idProp))
+            {
+                callId = idProp.GetString() ?? string.Empty;
+            }
+
+            if (fc.TryGetProperty("name", out var nameProp))
+            {
+                name = nameProp.GetString() ?? string.Empty;
+            }
+
+            if (fc.TryGetProperty("server_label", out var serverProp))
+            {
+                serverName = serverProp.GetString();
+            }
+
+            if (fc.TryGetProperty("arguments", out var argsProp) && argsProp.ValueKind == JsonValueKind.Object)
+            {
+                arguments = ItemResourceConversions.ParseArguments(argsProp.GetRawText());
+            }
+        }
+
+        ToolCallContent toolCall = serverName is not null
+            ? new McpServerToolCallContent(callId, name, serverName) { Arguments = arguments }
+            : new FunctionCallContent(callId, name, arguments);
+
+        return new ToolApprovalResponseContent(approval.RequestId, approval.Approved, toolCall);
     }
 }

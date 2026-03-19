@@ -1249,6 +1249,211 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Equal(ChatRole.User, mockChatClient.CallHistory[1][2].Role);
     }
 
+    /// <summary>
+    /// Verifies that MCP approval requests are stored in conversation history and replayed
+    /// on the next request, so the approval response can be matched by the downstream API.
+    /// This tests the fix for the "approval responses but weren't passed as input" error.
+    /// Tests both streaming (SSE) and non-streaming (JSON) modes.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateResponse_WithMcpApproval_SecondRequestIncludesApprovalRequestInHistoryAsync(bool stream)
+    {
+        // Arrange
+        const string AgentName = "mcp-approval-memory-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string RequestId = "mcpr_test_123";
+        const string ToolName = "microsoft_docs_search";
+        const string CallId = "mcpr_test_123";
+        const string ServerName = "microsoft_learn";
+
+        // First call: agent returns MCP approval request
+        // Second call: agent returns text (after approval was granted)
+        var mockChatClient = new TestHelpers.ConversationMemoryMockChatClient((callIndex, messages) =>
+        {
+            if (callIndex == 0)
+            {
+                var mcpToolCall = new McpServerToolCallContent(CallId, ToolName, ServerName)
+                {
+                    Arguments = new Dictionary<string, object?> { ["query"] = "System.IO.Stream" }
+                };
+                return [new ToolApprovalRequestContent(RequestId, mcpToolCall)];
+            }
+
+            return [new TextContent("System.IO.Stream is an abstract base class for reading and writing bytes.")];
+        });
+
+        this._httpClient = await this.CreateTestServerWithCustomClientAndConversationsAsync(
+            AgentName, Instructions, mockChatClient);
+
+        // Create a conversation
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(
+            new { metadata = new { agent_id = AgentName } });
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative), createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode);
+
+        string convJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - First request: triggers MCP approval
+        await this.SendRawResponseAsync(AgentName, "What's System.IO.Stream?", conversationId, stream);
+
+        // Act - Second request: sends approval response (simulates DevUI approving)
+        // Send as a properly formatted function_approval_response content item,
+        // matching what DevUI actually sends over the wire.
+        string approvalInputJson = $$"""
+        [{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "function_approval_response",
+                "request_id": "{{RequestId}}",
+                "approved": true,
+                "function_call": {
+                    "id": "{{CallId}}",
+                    "name": "{{ToolName}}",
+                    "server_label": "{{ServerName}}",
+                    "arguments": { "query": "System.IO.Stream" }
+                }
+            }]
+        }]
+        """;
+        await this.SendRawJsonResponseAsync(AgentName, approvalInputJson, conversationId, stream);
+
+        // Assert
+        Assert.Equal(2, mockChatClient.CallHistory.Count);
+
+        // First call: should have just the user message
+        Assert.Single(mockChatClient.CallHistory[0]);
+        Assert.Equal(ChatRole.User, mockChatClient.CallHistory[0][0].Role);
+
+        // Second call: should include prior conversation history with the MCP approval request replayed
+        // and the new approval response from the user
+        var secondCallMessages = mockChatClient.CallHistory[1];
+        Assert.True(secondCallMessages.Count >= 2,
+            $"Expected at least 2 messages (approval request + approval response), got {secondCallMessages.Count}");
+
+        // Verify the MCP approval request was replayed in the conversation history
+        var approvalRequestMsg = secondCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.NotNull(approvalRequestMsg);
+
+        var approvalContent = approvalRequestMsg!.Contents.OfType<ToolApprovalRequestContent>().First();
+        Assert.Equal(RequestId, approvalContent.RequestId);
+        Assert.IsType<McpServerToolCallContent>(approvalContent.ToolCall);
+
+        var mcpCall = (McpServerToolCallContent)approvalContent.ToolCall;
+        Assert.Equal(ToolName, mcpCall.Name);
+        Assert.Equal(ServerName, mcpCall.ServerName);
+
+        // Verify the approval response was properly parsed from the DevUI wire format
+        var approvalResponseMsg = secondCallMessages.FirstOrDefault(m =>
+            m.Contents.OfType<ToolApprovalResponseContent>().Any());
+        Assert.NotNull(approvalResponseMsg);
+
+        var responseContent = approvalResponseMsg!.Contents.OfType<ToolApprovalResponseContent>().First();
+        Assert.Equal(RequestId, responseContent.RequestId);
+        Assert.True(responseContent.Approved);
+        Assert.IsType<McpServerToolCallContent>(responseContent.ToolCall);
+    }
+
+    /// <summary>
+    /// Verifies that local function call (FCC) approval requests flow through the conversation
+    /// correctly. Unlike MCP approvals, local function approvals have no corresponding OpenAI
+    /// item type, so they are NOT stored as ItemResource items in conversation history.
+    /// Tests both streaming (SSE) and non-streaming (JSON) modes.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateResponse_WithFccApproval_ApprovalResponseIsParsedCorrectlyAsync(bool stream)
+    {
+        // Arrange
+        const string AgentName = "fcc-approval-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string RequestId = "req_fcc_123";
+        const string FunctionName = "get_weather";
+        const string CallId = "call_fcc_456";
+
+        // First call: agent returns FCC approval request
+        // Second call: agent returns text (after approval was granted)
+        var mockChatClient = new TestHelpers.ConversationMemoryMockChatClient((callIndex, messages) =>
+        {
+            if (callIndex == 0)
+            {
+                var functionCall = new FunctionCallContent(CallId, FunctionName,
+                    new Dictionary<string, object?> { ["location"] = "Seattle" });
+                return [new ToolApprovalRequestContent(RequestId, functionCall)];
+            }
+
+            return [new TextContent("The weather in Seattle is 72°F and sunny.")];
+        });
+
+        this._httpClient = await this.CreateTestServerWithCustomClientAndConversationsAsync(
+            AgentName, Instructions, mockChatClient);
+
+        // Create a conversation
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(
+            new { metadata = new { agent_id = AgentName } });
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative), createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode);
+
+        string convJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - First request: triggers FCC approval
+        await this.SendRawResponseAsync(AgentName, "What's the weather in Seattle?", conversationId, stream);
+
+        // Act - Second request: sends approval response (simulates DevUI approving a local function call)
+        string approvalInputJson = $$"""
+        [{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "function_approval_response",
+                "request_id": "{{RequestId}}",
+                "approved": true,
+                "function_call": {
+                    "id": "{{CallId}}",
+                    "name": "{{FunctionName}}",
+                    "arguments": { "location": "Seattle" }
+                }
+            }]
+        }]
+        """;
+        await this.SendRawJsonResponseAsync(AgentName, approvalInputJson, conversationId, stream);
+
+        // Assert
+        Assert.Equal(2, mockChatClient.CallHistory.Count);
+
+        // First call: should have just the user message
+        Assert.Single(mockChatClient.CallHistory[0]);
+        Assert.Equal(ChatRole.User, mockChatClient.CallHistory[0][0].Role);
+
+        // Second call: FIC intercepts the ToolApprovalResponseContent, extracts the
+        // FunctionCallContent, and attempts to execute it. Since no tools are registered,
+        // FIC passes through to the inner client. The mock should see the conversation
+        // history (user message from request 1) plus new input.
+        var secondCallMessages = mockChatClient.CallHistory[1];
+        Assert.True(secondCallMessages.Count >= 1,
+            $"Expected at least 1 message, got {secondCallMessages.Count}");
+
+        // Local function approval requests should NOT be in the replayed history
+        // (no corresponding OpenAI item type exists for local function approvals)
+        var replayedApprovalRequest = secondCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.Null(replayedApprovalRequest);
+    }
+
     private async Task<HttpResponseMessage> SendRawResponseAsync(
         string agentName, string input, string conversationId, bool stream)
     {
@@ -1263,9 +1468,42 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         using StringContent content = new(json, Encoding.UTF8, "application/json");
         HttpResponseMessage response = await this._httpClient!.PostAsync(
             new Uri($"/{agentName}/v1/responses", UriKind.Relative), content);
+
         Assert.True(response.IsSuccessStatusCode, $"Response failed: {response.StatusCode}");
+        if (stream)
+        {
+            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+        }
 
         // Consume the full response body to ensure execution completes
+        await response.Content.ReadAsStringAsync();
+        return response;
+    }
+
+    /// <summary>
+    /// Sends a response request with pre-formatted JSON input (e.g., array of input items).
+    /// </summary>
+    private async Task<HttpResponseMessage> SendRawJsonResponseAsync(
+        string agentName, string inputJson, string conversationId, bool stream)
+    {
+        string json = $$"""
+        {
+            "input": {{inputJson}},
+            "agent": { "name": "{{agentName}}" },
+            "conversation": "{{conversationId}}",
+            "stream": {{(stream ? "true" : "false")}}
+        }
+        """;
+        using StringContent content = new(json, Encoding.UTF8, "application/json");
+        HttpResponseMessage response = await this._httpClient!.PostAsync(
+            new Uri($"/{agentName}/v1/responses", UriKind.Relative), content);
+
+        Assert.True(response.IsSuccessStatusCode, $"Response failed: {response.StatusCode}");
+        if (stream)
+        {
+            Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+        }
+
         await response.Content.ReadAsStringAsync();
         return response;
     }
