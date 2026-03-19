@@ -294,6 +294,58 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     }
 
     [Fact]
+    public async Task WorkflowAndAgentsSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "05_WorkflowAndAgents");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: true, async (logs) =>
+        {
+            // Connect to the MCP endpoint exposed by the Azure Functions host
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport);
+
+            // Verify both the agent and workflow tools are listed
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            this._outputHelper.WriteLine($"MCP tools found: {string.Join(", ", tools.Select(t => t.Name))}");
+
+            Assert.Single(tools, t => t.Name == "Assistant");
+            Assert.Single(tools, t => t.Name == "Translate");
+
+            // Invoke the Translate workflow via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Translate'...");
+            CallToolResult translateResult = await mcpClient.CallToolAsync(
+                "Translate",
+                arguments: new Dictionary<string, object?> { { "input", "hello world" } });
+
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
+            Assert.Contains("HELLO WORLD", translateResponse);
+
+            // Invoke the Assistant agent via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Assistant'...");
+            CallToolResult assistantResult = await mcpClient.CallToolAsync(
+                "Assistant",
+                arguments: new Dictionary<string, object?> { { "query", "What is 2 + 2?" } });
+
+            Assert.NotEmpty(assistantResult.Content);
+            string assistantResponse = Assert.IsType<TextContentBlock>(assistantResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Assistant MCP tool response: {assistantResponse}");
+            Assert.NotEmpty(assistantResponse);
+
+            // Verify workflow executor activities ran in the logs
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] TranslateText:")), "TranslateText activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] FormatOutput:")), "FormatOutput activity not found in logs.");
+            }
+        });
+    }
+
+    [Fact]
     public async Task ConcurrentWorkflowSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "02_ConcurrentWorkflow");

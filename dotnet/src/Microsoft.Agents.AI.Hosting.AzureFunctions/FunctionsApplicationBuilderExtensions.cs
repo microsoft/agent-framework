@@ -67,6 +67,13 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.Services.ConfigureDurableOptions(configure);
 
+        if (sharedOptions.Agents.GetAgentFactories().Count > 0)
+        {
+            builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
+                new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
+            builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableAgentFunctionMetadataTransformer>());
+        }
+
         if (sharedOptions.Workflows.Workflows.Count > 0)
         {
             builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<IFunctionMetadataTransformer, DurableWorkflowsFunctionMetadataTransformer>());
@@ -102,6 +109,7 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.UseWhen<BuiltInFunctionExecutionMiddleware>(static context =>
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentHttpFunctionEntryPoint, StringComparison.Ordinal) ||
+            string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentMcpToolFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunAgentEntityFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationHttpFunctionEntryPoint, StringComparison.Ordinal) ||
             string.Equals(context.FunctionDefinition.EntryPoint, BuiltInFunctions.RunWorkflowOrchestrationFunctionEntryPoint, StringComparison.Ordinal) ||
