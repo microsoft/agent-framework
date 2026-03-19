@@ -22,7 +22,7 @@ IChatClient chatClient = new AzureOpenAIClient(new Uri(openAiEndpoint), credenti
     .GetChatClient(deploymentName)
     .AsIChatClient()
     .AsBuilder()
-    .UseFoundryTools(new { type = "mcp", project_connection_id = toolConnectionId }, new { type = "code_interpreter" })
+    .UseFoundryTools(credential, new { type = "mcp", project_connection_id = toolConnectionId }, new { type = "code_interpreter" })
     .UseOpenTelemetry(sourceName: "Agents", configure: (cfg) => cfg.EnableSensitiveData = true)
     .Build();
 
