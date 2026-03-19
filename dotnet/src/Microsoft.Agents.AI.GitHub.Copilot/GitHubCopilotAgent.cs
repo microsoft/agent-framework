@@ -275,7 +275,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
-    /// preserving the <see cref="SessionConfig.Streaming"/> value from <paramref name="source"/>.
+    /// preserving the <see cref="SessionConfig.Streaming"/> value from <paramref name="source"/> when set.
+    /// When <paramref name="source"/> has no explicit <see cref="SessionConfig.Streaming"/> value, streaming defaults to <c>true</c>.
     /// </summary>
     internal static SessionConfig CopySessionConfig(SessionConfig source)
     {
@@ -298,7 +299,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             SkillDirectories = source.SkillDirectories,
             DisabledSkills = source.DisabledSkills,
             InfiniteSessions = source.InfiniteSessions,
-            Streaming = source.Streaming
+            Streaming = source.Streaming ?? true
         };
     }
 
