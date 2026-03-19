@@ -94,9 +94,7 @@ class EchoingChatClient(BaseChatClient[OptionsT]):
             response_text = f"{response_text} {suffix}"
         stream_delay_seconds = float(options.get("stream_delay_seconds", 0.05))
 
-        response_message = Message(
-            role="assistant", contents=[Content.from_text(response_text)]
-        )
+        response_message = Message(role="assistant", text=response_text)
 
         response = ChatResponse(
             messages=[response_message],

@@ -46,7 +46,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-01-get-started
@@ -89,7 +89,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 02-agents --save-report --report-name 02-agents
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-02-agents
@@ -126,7 +126,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 03-workflows --save-report --report-name 03-workflows
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-03-workflows
@@ -165,7 +165,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 04-hosting --save-report --report-name 04-hosting
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-04-hosting
@@ -209,7 +209,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir 05-end-to-end --save-report --report-name 05-end-to-end
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-05-end-to-end
@@ -249,7 +249,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-autogen-migration
@@ -295,7 +295,7 @@ jobs:
           cd scripts && uv run python -m sample_validation --subdir semantic-kernel-migration --save-report --report-name semantic-kernel-migration
 
       - name: Upload validation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: validation-report-semantic-kernel-migration

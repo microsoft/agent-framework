@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
@@ -28,6 +29,12 @@ namespace Microsoft.Agents.AI.Compaction;
 /// search_docs:
 ///   - Found 3 docs
 /// </code>
+/// </para>
+/// <para>
+/// A custom <see cref="ToolCallFormatter"/> can be supplied to override the default YAML-like
+/// summary format. The formatter receives the <see cref="CompactionMessageGroup"/> being collapsed
+/// and must return the replacement summary string. <see cref="DefaultToolCallFormatter"/> is the
+/// built-in default and can be reused inside a custom formatter when needed.
 /// </para>
 /// <para>
 /// <see cref="MinimumPreservedGroups"/> is a hard floor: even if the <see cref="CompactionStrategy.Target"/>
@@ -62,7 +69,10 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// An optional target condition that controls when compaction stops. When <see langword="null"/>,
     /// defaults to the inverse of the <paramref name="trigger"/> — compaction stops as soon as the trigger would no longer fire.
     /// </param>
-    public ToolResultCompactionStrategy(CompactionTrigger trigger, int minimumPreservedGroups = DefaultMinimumPreserved, CompactionTrigger? target = null)
+    public ToolResultCompactionStrategy(
+        CompactionTrigger trigger,
+        int minimumPreservedGroups = DefaultMinimumPreserved,
+        CompactionTrigger? target = null)
         : base(trigger, target)
     {
         this.MinimumPreservedGroups = EnsureNonNegative(minimumPreservedGroups);
@@ -73,6 +83,13 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     /// This is a hard floor that compaction cannot exceed, regardless of the target condition.
     /// </summary>
     public int MinimumPreservedGroups { get; }
+
+    /// <summary>
+    /// An optional custom formatter that converts a <see cref="CompactionMessageGroup"/> into a summary string.
+    /// When <see langword="null"/>, <see cref="DefaultToolCallFormatter"/> is used, which produces a YAML-like
+    /// block listing each tool name and its results.
+    /// </summary>
+    public Func<CompactionMessageGroup, string>? ToolCallFormatter { get; init; }
 
     /// <inheritdoc/>
     protected override ValueTask<bool> CompactCoreAsync(CompactionMessageIndex index, ILogger logger, CancellationToken cancellationToken)
@@ -120,7 +137,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
             int idx = eligibleIndices[e] + offset;
             CompactionMessageGroup group = index.Groups[idx];
 
-            string summary = BuildToolCallSummary(group);
+            string summary = (this.ToolCallFormatter ?? DefaultToolCallFormatter).Invoke(group);
 
             // Exclude the original group and insert a collapsed replacement
             group.IsExcluded = true;
@@ -145,14 +162,18 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
     }
 
     /// <summary>
-    /// Builds a concise summary string for a tool call group, including tool names,
+    /// The default formatter that produces a YAML-like summary of tool call groups, including tool names,
     /// results, and deduplication counts for repeated tool names.
     /// </summary>
-    private static string BuildToolCallSummary(CompactionMessageGroup group)
+    /// <remarks>
+    /// This is the formatter used when no custom <see cref="ToolCallFormatter"/> is supplied.
+    /// It can be referenced directly in a custom formatter to augment or wrap the default output.
+    /// </remarks>
+    public static string DefaultToolCallFormatter(CompactionMessageGroup group)
     {
         // Collect function calls (callId, name) and results (callId → result text)
         List<(string CallId, string Name)> functionCalls = [];
-        Dictionary<string, string> resultsByCallId = new();
+        Dictionary<string, string> resultsByCallId = [];
         List<string> plainTextResults = [];
 
         foreach (ChatMessage message in group.Messages)
@@ -187,7 +208,7 @@ public sealed class ToolResultCompactionStrategy : CompactionStrategy
         // grouping by tool name while preserving first-seen order.
         int plainTextIdx = 0;
         List<string> orderedNames = [];
-        Dictionary<string, List<string>> groupedResults = new();
+        Dictionary<string, List<string>> groupedResults = [];
 
         foreach ((string callId, string name) in functionCalls)
         {
