@@ -946,6 +946,44 @@ async def test_use_latest_version_no_spurious_warning_for_empty_tools(
     mock_warning.assert_not_called()
 
 
+async def test_use_latest_version_warns_for_non_empty_tools(
+    mock_project_client: MagicMock,
+) -> None:
+    """Test that use_latest_version=True with non-empty tools DOES emit a warning.
+
+    Companion to the empty-tools test above. When the user supplies actual
+    runtime tools while use_latest_version=True, the client should warn that
+    the tools differ from the agent's creation-time configuration.
+    """
+    client = create_test_azure_ai_client(
+        mock_project_client, agent_name="existing-agent", use_latest_version=True
+    )
+
+    # Mock existing agent
+    mock_existing_agent = MagicMock()
+    mock_existing_agent.name = "existing-agent"
+    mock_existing_agent.versions.latest.version = "2.5"
+    mock_project_client.agents.get = AsyncMock(return_value=mock_existing_agent)
+
+    messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
+
+    non_empty_tools = [{"type": "function", "function": {"name": "my_tool"}}]
+
+    with (
+        patch(
+            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            return_value={"model": "test-model", "tools": non_empty_tools},
+        ),
+        patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
+    ):
+        # First call fetches the latest version
+        await client._prepare_options(messages, {})
+        # Subsequent call with non-empty tools — SHOULD warn
+        await client._prepare_options(messages, {})
+
+    mock_warning.assert_called()
+
+
 async def test_use_latest_version_agent_not_found(
     mock_project_client: MagicMock,
 ) -> None:
