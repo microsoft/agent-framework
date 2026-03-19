@@ -1425,6 +1425,88 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// Verifies that orphaned MCP approval requests (user refreshed before approving)
+    /// are not replayed in conversation history, avoiding the Azure error
+    /// "The following MCP approval requests do not have an approval".
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CreateResponse_WithOrphanedMcpApproval_RequestIsNotReplayedAsync(bool stream)
+    {
+        // Arrange
+        const string AgentName = "mcp-orphan-approval-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string RequestId = "mcpr_orphan_456";
+        const string ToolName = "microsoft_docs_search";
+        const string CallId = "mcpr_orphan_456";
+        const string ServerName = "microsoft_learn";
+
+        // First call: agent returns MCP approval request
+        // Second call (after "refresh" — no approval sent): agent returns text
+        var mockChatClient = new TestHelpers.ConversationMemoryMockChatClient((callIndex, messages) =>
+        {
+            if (callIndex == 0)
+            {
+                var mcpToolCall = new McpServerToolCallContent(CallId, ToolName, ServerName)
+                {
+                    Arguments = new Dictionary<string, object?> { ["query"] = "System.IO.Stream" }
+                };
+                return [new ToolApprovalRequestContent(RequestId, mcpToolCall)];
+            }
+
+            return [new TextContent("Here is some information.")];
+        });
+
+        this._httpClient = await this.CreateTestServerWithCustomClientAndConversationsAsync(
+            AgentName, Instructions, mockChatClient);
+
+        // Create a conversation
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(
+            new { metadata = new { agent_id = AgentName } });
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative), createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode);
+
+        string convJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - First request: triggers MCP approval (stored in conversation)
+        await this.SendRawResponseAsync(AgentName, "What's System.IO.Stream?", conversationId, stream);
+
+        // Act - Second request: user refreshed and sends a new message WITHOUT approving.
+        // The orphaned approval request should NOT be replayed.
+        await this.SendRawResponseAsync(AgentName, "Tell me about something else.", conversationId, stream);
+
+        // Assert - Second call
+        Assert.Equal(2, mockChatClient.CallHistory.Count);
+
+        var secondCallMessages = mockChatClient.CallHistory[1];
+
+        // The orphaned approval request should NOT appear in the replayed history
+        var replayedApprovalRequest = secondCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.Null(replayedApprovalRequest);
+
+        // Act - Third request: another message, verifying the orphaned request stays
+        // skipped even after a full storage round-trip (tests the answeredApprovalIds loop path).
+        await this.SendRawResponseAsync(AgentName, "What about System.Text.Json?", conversationId, stream);
+
+        // Assert - Third call
+        Assert.Equal(3, mockChatClient.CallHistory.Count);
+
+        var thirdCallMessages = mockChatClient.CallHistory[2];
+
+        var replayedApprovalRequestOnThird = thirdCallMessages.FirstOrDefault(m =>
+            m.Role == ChatRole.Assistant &&
+            m.Contents.OfType<ToolApprovalRequestContent>().Any());
+        Assert.Null(replayedApprovalRequestOnThird);
+    }
+
+    /// <summary>
     /// Verifies that local function call (FCC) approval requests flow through the conversation
     /// correctly. Unlike MCP approvals, local function approvals have no corresponding OpenAI
     /// item type, so they are NOT stored as ItemResource items in conversation history.

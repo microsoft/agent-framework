@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
@@ -17,11 +18,36 @@ internal static class ItemResourceConversions
     /// Converts a sequence of <see cref="ItemResource"/> items to a list of <see cref="ChatMessage"/> objects.
     /// Only converts message, function call, and function result items. Other item types are skipped.
     /// </summary>
-    public static List<ChatMessage> ToChatMessages(IEnumerable<ItemResource> items)
+    /// <param name="items">The stored item resources to convert.</param>
+    /// <param name="incomingApprovalResponseIds">
+    /// Optional set of approval request IDs being answered by the current request's input.
+    /// Used to distinguish pending approvals (about to be answered) from orphaned ones.
+    /// </param>
+    public static List<ChatMessage> ToChatMessages(IEnumerable<ItemResource> items, ISet<string>? incomingApprovalResponseIds = null)
     {
         var messages = new List<ChatMessage>();
+        var itemsList = items as IList<ItemResource> ?? items.ToList();
 
-        foreach (var item in items)
+        // Collect IDs of approval requests that have a matching response stored
+        // as a user message containing ItemContentFunctionApprovalResponse.
+        // Orphaned requests (e.g. user refreshed before approving) are skipped
+        // to avoid sending unapproved approval requests to the AI provider.
+        var answeredApprovalIds = new HashSet<string>();
+        foreach (var item in itemsList)
+        {
+            if (item is ResponsesUserMessageItemResource userMsg)
+            {
+                foreach (var content in userMsg.Content)
+                {
+                    if (content is ItemContentFunctionApprovalResponse approval)
+                    {
+                        answeredApprovalIds.Add(approval.RequestId);
+                    }
+                }
+            }
+        }
+
+        foreach (var item in itemsList)
         {
             switch (item)
             {
@@ -57,6 +83,14 @@ internal static class ItemResourceConversions
                     break;
 
                 case MCPApprovalRequestItemResource mcpApproval:
+                    // Skip orphaned approval requests that were never responded to
+                    // (neither in stored history nor in the current incoming request).
+                    if (!answeredApprovalIds.Contains(mcpApproval.Id) &&
+                        !(incomingApprovalResponseIds?.Contains(mcpApproval.Id) ?? false))
+                    {
+                        break;
+                    }
+
                     var mcpArgs = ParseArguments(mcpApproval.Arguments);
 
                     // The mcp_approval_request spec item has a single Id field. MEAI reuses it as
