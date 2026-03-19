@@ -61,6 +61,25 @@
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
   </Folder>
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/" />
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/ConsoleApps/">
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/03_ConditionalEdges/03_ConditionalEdges.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/04_WorkflowAndAgents/04_WorkflowAndAgents.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/05_WorkflowEvents/05_WorkflowEvents.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/06_WorkflowSharedState/06_WorkflowSharedState.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/07_SubWorkflows/07_SubWorkflows.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/08_WorkflowHITL/08_WorkflowHITL.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/AzureFunctions/">
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/">
+    <File Path="samples/GettingStarted/README.md" />
+  </Folder>
   <Folder Name="/Samples/02-agents/AGUI/">
     <File Path="samples/02-agents/AGUI/README.md" />
   </Folder>

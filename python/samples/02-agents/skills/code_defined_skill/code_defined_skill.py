@@ -75,7 +75,9 @@ unit_converter_skill = Skill(
 # ---------------------------------------------------------------------------
 # 2. Dynamic Resources — callable function via @skill.resource
 # ---------------------------------------------------------------------------
-@unit_converter_skill.resource(name="conversion-policy", description="Current conversion formatting and rounding policy")
+@unit_converter_skill.resource(
+    name="conversion-policy", description="Current conversion formatting and rounding policy"
+)
 def conversion_policy(**kwargs: Any) -> Any:
     """Return the current conversion policy.
 
@@ -148,8 +150,7 @@ async def main() -> None:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? "
-            "And how many pounds is 75 kilograms?",
+            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
             precision=2,
         )
         print(f"Agent: {response}\n")

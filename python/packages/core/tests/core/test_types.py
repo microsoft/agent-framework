@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
+import json
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1708,6 +1709,47 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert isinstance(annotation, dict)
     assert annotation[GROUP_ID_KEY] == "group_2"
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
+
+
+def test_content_from_dict_via_json() -> None:
+    """Test Content.from_dict with data parsed from a JSON string."""
+    data = json.loads(json.dumps({"type": "text", "text": "Hello world"}))
+    content = Content.from_dict(data)
+    assert content.type == "text"
+    assert content.text == "Hello world"
+
+
+def test_content_from_dict_roundtrip_via_json() -> None:
+    """Test Content.from_dict roundtrip via to_dict and json.dumps."""
+    original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
+    data = json.loads(json.dumps(original.to_dict()))
+    restored = Content.from_dict(data)
+    assert restored.type == "function_call"
+    assert restored.call_id == "call1"
+    assert restored.name == "my_func"
+    assert restored.arguments == {"key": "value"}
+
+
+def test_content_to_dict_exclude_none() -> None:
+    """Test Content.to_dict excludes None fields by default."""
+    content = Content.from_text("Hello")
+    d = content.to_dict()
+    parsed = json.loads(json.dumps(d))
+    assert "uri" not in parsed
+
+    d_with_none = content.to_dict(exclude_none=False)
+    parsed_with_none = json.loads(json.dumps(d_with_none))
+    assert "uri" in parsed_with_none
+    assert parsed_with_none["uri"] is None
+
+
+def test_content_to_dict_exclude_fields() -> None:
+    """Test Content.to_dict with explicit field exclusion."""
+    content = Content.from_text("Hello")
+    d = content.to_dict(exclude={"text"})
+    parsed = json.loads(json.dumps(d))
+    assert "text" not in parsed
+    assert parsed["type"] == "text"
 
 
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:

@@ -486,13 +486,14 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raise ValueError(f"Unknown content type: {content.type}")
 
         # Exclude framework-internal keys (e.g. attribution) from wire metadata
-        internal_keys = {"_attribution"}
+        internal_keys = {"_attribution", "context_id"}
         metadata = {k: v for k, v in message.additional_properties.items() if k not in internal_keys} or None
 
         return A2AMessage(
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
+            context_id=message.additional_properties.get("context_id"),
             metadata=metadata,
         )
 
