@@ -129,6 +129,30 @@ class LoggingMiddleware(AgentMiddleware):
 agent = Agent(..., middleware=[LoggingMiddleware()])
 ```
 
+### Chat Client Layer Architecture
+
+Public chat clients (e.g., `OpenAIChatClient`, `AnthropicClient`) compose a standard stack of mixin layers on top of a raw/base client. The layer ordering from outermost to innermost is:
+
+```
+PublicClient (e.g., OpenAIChatClient)
+  └─ FunctionInvocationLayer   ← owns the tool/function calling loop; routes function middleware
+      └─ ChatMiddlewareLayer   ← applies chat middleware per inner model call (outside telemetry)
+          └─ ChatTelemetryLayer ← per-call OpenTelemetry spans (inside chat middleware)
+              └─ Raw/BaseChatClient ← raw provider API calls
+```
+
+
+**Key behaviors:**
+- **Chat middleware runs per inner model call** — within the function calling loop, so middleware sees each individual LLM call rather than only the outer request.
+- **Chat middleware is outside telemetry** — middleware latency does not skew per-call telemetry timings.
+- **Per-call middleware** can be passed via `client_kwargs={"middleware": [...]}` on `get_response()`. Mixed chat and function middleware is automatically categorized and routed to the appropriate layer.
+
+
+**Raw vs Public clients:**
+- **Raw clients** (e.g., `RawOpenAIChatClient`, `RawAnthropicClient`) only extend `BaseChatClient` — no middleware, telemetry, or function invocation support.
+- **Public clients** compose all standard layers around the raw client and are what most users should use.
+- Use raw clients only when you need to compose a custom subset of layers.
+
 ### Custom Chat Client
 
 ```python
