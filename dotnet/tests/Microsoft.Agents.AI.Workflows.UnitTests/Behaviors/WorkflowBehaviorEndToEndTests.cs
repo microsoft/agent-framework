@@ -148,7 +148,7 @@ public class WorkflowBehaviorEndToEndTests
         string runId;
         await using (var run = await InProcessExecution.RunAsync(workflow, "test-input"))
         {
-            runId = run.RunId;
+            runId = run.SessionId;
         }
 
         // Assert - all behavior contexts share the same RunId as the run itself
@@ -275,25 +275,25 @@ public class WorkflowBehaviorEndToEndTests
             this._log = log;
         }
 
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
             {
                 this._log.Add($"Executor:{this.Id}");
                 await context.SendMessageAsync(message, ct);
                 return message;
-            });
+            }));
     }
 
     private sealed class SimpleExecutor : Executor
     {
         public SimpleExecutor(string id) : base(id) { }
 
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
             {
                 await context.SendMessageAsync(message, ct);
                 return message;
-            });
+            }));
     }
 
     private sealed class DelayExecutor : Executor
@@ -305,13 +305,13 @@ public class WorkflowBehaviorEndToEndTests
             this._delay = delay;
         }
 
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context, ct) =>
             {
                 await Task.Delay(this._delay, ct);
                 await context.SendMessageAsync(message, ct);
                 return message;
-            });
+            }));
     }
 
     // Test Behaviors

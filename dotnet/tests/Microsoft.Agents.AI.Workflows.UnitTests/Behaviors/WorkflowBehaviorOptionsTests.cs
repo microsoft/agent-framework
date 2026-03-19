@@ -205,11 +205,11 @@ public class WorkflowBehaviorOptionsTests
     {
         public SimpleExecutor(string id) : base(id) { }
 
-        protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder) =>
-            routeBuilder.AddHandler<string, string>(async (message, context) =>
+        protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+            protocolBuilder.ConfigureRoutes(routeBuilder => routeBuilder.AddHandler<string, string>(async (message, context) =>
             {
                 await context.SendMessageAsync(message);
                 return message;
-            });
+            }));
     }
 }
