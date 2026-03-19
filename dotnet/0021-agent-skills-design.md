@@ -2,6 +2,7 @@
 status: proposed
 date: 2026-03-19
 contact: sergeymenshykh
+deciders: rbarreto, westey-m
 ---
 
 # Agent Skills: Multi-Source Architecture
