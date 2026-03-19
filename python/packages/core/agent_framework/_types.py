@@ -3115,6 +3115,9 @@ class _ChatOptionsBase(TypedDict, total=False):
     # System/instructions
     instructions: str
 
+    # History storage
+    store_final_function_result_content: bool
+
 
 if TYPE_CHECKING:
 

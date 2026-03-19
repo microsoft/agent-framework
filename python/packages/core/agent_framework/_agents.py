@@ -172,6 +172,7 @@ class _RunContext(TypedDict):
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
     function_invocation_kwargs: Mapping[str, Any]
+    store_final_function_result_content: bool
 
 
 # region Agent Protocol
@@ -940,6 +941,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     agent_name=ctx["agent_name"],
                     session=ctx["session"],
                     session_context=ctx["session_context"],
+                    store_final_function_result_content=ctx["store_final_function_result_content"],
                 )
                 response_format = ctx["chat_options"].get("response_format")
                 if not (
@@ -989,8 +991,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
             # Run after_run providers (reverse order)
             session_context = ctx["session_context"]
+            filtered_messages = self._filter_final_function_result_content(
+                response.messages, ctx["store_final_function_result_content"]
+            )
             session_context._response = AgentResponse(  # type: ignore[assignment]
-                messages=response.messages,
+                messages=filtered_messages,
                 response_id=response.response_id,
             )
             await self._run_after_providers(session=ctx["session"], context=session_context)
@@ -1109,6 +1114,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     ) -> _RunContext:
         opts = dict(options) if options else {}
         existing_additional_args: dict[str, Any] = opts.pop("additional_function_arguments", None) or {}
+        store_final_frc: bool = opts.pop("store_final_function_result_content", False)
 
         # Get tools from options or named parameter (named param takes precedence)
         tools_ = tools if tools is not None else opts.pop("tools", None)
@@ -1234,7 +1240,61 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "tokenizer": tokenizer or self.tokenizer,
             "client_kwargs": effective_client_kwargs,
             "function_invocation_kwargs": additional_function_arguments,
+            "store_final_function_result_content": store_final_frc,
         }
+
+    @staticmethod
+    def _filter_final_function_result_content(
+        response_messages: list[Message],
+        store_final_function_result_content: bool,
+    ) -> list[Message]:
+        """Filter trailing function result messages from response messages.
+
+        Walks backward through the response messages, removing consecutive trailing
+        messages whose role is ``"tool"`` and whose content is entirely
+        ``function_result`` type. Messages with mixed content are left unchanged.
+        The walk stops at the first message that does not match.
+
+        This aligns the behavior of chat history stored via a
+        :class:`BaseHistoryProvider` with the behavior of agents that store
+        chat history in the underlying AI service where the final function
+        result content is never stored.
+
+        Args:
+            response_messages: The response messages to filter.
+            store_final_function_result_content: When True, skip filtering
+                and return messages as-is.
+
+        Returns:
+            The filtered list of messages, or the original list if nothing was filtered.
+        """
+        if store_final_function_result_content:
+            return response_messages
+
+        if not response_messages:
+            return response_messages
+
+        # Walk backward, removing trailing tool-role messages that contain only function_result.
+        first_kept_index = len(response_messages)
+        for i in range(len(response_messages) - 1, -1, -1):
+            message = response_messages[i]
+
+            if message.role != "tool":
+                break
+
+            all_function_result = len(message.contents) > 0 and all(
+                content.type == "function_result" for content in message.contents
+            )
+
+            if not all_function_result:
+                break
+
+            first_kept_index = i
+
+        if first_kept_index == len(response_messages):
+            return response_messages
+
+        return response_messages[:first_kept_index]
 
     async def _finalize_response(
         self,
@@ -1242,6 +1302,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         agent_name: str,
         session: AgentSession | None,
         session_context: SessionContext,
+        store_final_function_result_content: bool = False,
     ) -> None:
         """Finalize response by setting author names and running after_run providers.
 
@@ -1250,6 +1311,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             agent_name: The name of the agent to set as author.
             session: The conversation session.
             session_context: The invocation context.
+            store_final_function_result_content: When True, keep trailing
+                function result content in the stored history.
         """
         # Ensure that the author name is set for each message in the response.
         for message in response.messages:
@@ -1262,9 +1325,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if session and response.conversation_id and session.service_session_id != response.conversation_id:
             session.service_session_id = response.conversation_id
 
+        filtered_messages = self._filter_final_function_result_content(
+            response.messages, store_final_function_result_content
+        )
+
         # Set the response on the context for after_run providers
         session_context._response = AgentResponse(  # type: ignore[assignment]
-            messages=response.messages,
+            messages=filtered_messages,
             response_id=response.response_id,
         )
 
