@@ -68,7 +68,7 @@ internal static class SemanticAnalyzer
         string classKey = GetClassKey(classSymbol);
         bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
-        bool configureProtocol = HasConfigureProtocolDefined(classSymbol);
+        bool hasManualConfigureProtocol = HasConfigureProtocolDefined(classSymbol);
 
         // Extract class metadata
         string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
@@ -97,7 +97,7 @@ internal static class SemanticAnalyzer
         return new MethodAnalysisResult(
             classKey, @namespace, className, genericParameters, isNested, containingTypeChain,
             baseHasConfigureProtocol, classSendTypes, classYieldTypes,
-            isPartialClass, derivesFromExecutor, configureProtocol,
+            isPartialClass, derivesFromExecutor, hasManualConfigureProtocol,
             classLocation,
             handler,
             Diagnostics: new ImmutableEquatableArray<DiagnosticInfo>(methodDiagnostics.ToImmutable()));
@@ -149,7 +149,7 @@ internal static class SemanticAnalyzer
             return AnalysisResult.WithDiagnostics(allDiagnostics.ToImmutable());
         }
 
-        if (first.HasManualConfigureRoutes)
+        if (first.HasManualConfigureProtocol)
         {
             allDiagnostics.Add(Diagnostic.Create(
                 DiagnosticDescriptors.ConfigureProtocolAlreadyDefined,
@@ -212,6 +212,7 @@ internal static class SemanticAnalyzer
         bool isPartialClass = IsPartialClass(classSymbol, cancellationToken);
         bool derivesFromExecutor = DerivesFromExecutor(classSymbol);
         bool hasManualConfigureProtocol = HasConfigureProtocolDefined(classSymbol);
+        bool baseHasConfigureProtocol = BaseHasConfigureProtocol(classSymbol);
 
         string? @namespace = classSymbol.ContainingNamespace?.IsGlobalNamespace == true
             ? null
@@ -241,6 +242,7 @@ internal static class SemanticAnalyzer
                     isPartialClass,
                     derivesFromExecutor,
                     hasManualConfigureProtocol,
+                    baseHasConfigureProtocol,
                     classLocation,
                     typeName,
                     attributeKind));
@@ -321,7 +323,7 @@ internal static class SemanticAnalyzer
             first.GenericParameters,
             first.IsNested,
             first.ContainingTypeChain,
-            BaseHasConfigureProtocol: false, // Not relevant for protocol-only
+            first.BaseHasConfigureProtocol,
             Handlers: ImmutableEquatableArray<HandlerInfo>.Empty,
             ClassSendTypes: new ImmutableEquatableArray<string>(sendTypes.ToImmutable()),
             ClassYieldTypes: new ImmutableEquatableArray<string>(yieldTypes.ToImmutable()));
