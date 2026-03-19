@@ -23,8 +23,6 @@ from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    AgentSession,
-    BaseContextProvider,
     Content,
     Message,
     SessionContext,
@@ -1036,6 +1034,71 @@ async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_cl
     token = A2AContinuationToken(task_id="task-cont", context_id="ctx-cont")
     response = await agent.run(None, continuation_token=token)
     assert response is not None
+
+
+# endregion
+
+
+# region Context ID Propagation Tests (issue #4663)
+
+
+class TestContextIdPropagation:
+    """Tests verifying that session.session_id is propagated as A2A context_id."""
+
+    def test_context_id_set_from_session(self, a2a_agent: A2AAgent) -> None:
+        """When a session is provided, its session_id should become the A2A context_id."""
+        session = AgentSession(session_id="my-session-123")
+        message = Message(role="user", contents=[Content.from_text(text="hello")])
+
+        a2a_msg = a2a_agent._prepare_message_for_a2a(message, context_id=session.session_id)
+
+        assert a2a_msg.context_id == "my-session-123"
+
+    def test_context_id_auto_generated_when_no_session(self, a2a_agent: A2AAgent) -> None:
+        """When no context_id is provided, a random one is generated."""
+        message = Message(role="user", contents=[Content.from_text(text="hello")])
+
+        a2a_msg = a2a_agent._prepare_message_for_a2a(message)
+
+        assert a2a_msg.context_id is not None
+        assert len(a2a_msg.context_id) > 0
+
+    def test_context_id_none_generates_random(self, a2a_agent: A2AAgent) -> None:
+        """Explicitly passing context_id=None should also auto-generate."""
+        message = Message(role="user", contents=[Content.from_text(text="hello")])
+
+        a2a_msg = a2a_agent._prepare_message_for_a2a(message, context_id=None)
+
+        assert a2a_msg.context_id is not None
+        assert len(a2a_msg.context_id) > 0
+
+    def test_different_sessions_produce_different_context_ids(self, a2a_agent: A2AAgent) -> None:
+        """Different session IDs should produce different context_ids."""
+        message = Message(role="user", contents=[Content.from_text(text="hello")])
+
+        msg1 = a2a_agent._prepare_message_for_a2a(message, context_id="session-A")
+        msg2 = a2a_agent._prepare_message_for_a2a(message, context_id="session-B")
+
+        assert msg1.context_id != msg2.context_id
+        assert msg1.context_id == "session-A"
+        assert msg2.context_id == "session-B"
+
+    def test_message_role_is_user(self, a2a_agent: A2AAgent) -> None:
+        """Outgoing messages should always have role='user'."""
+        message = Message(role="user", contents=[Content.from_text(text="hello")])
+
+        a2a_msg = a2a_agent._prepare_message_for_a2a(message, context_id="test")
+
+        assert a2a_msg.role == A2ARole.user
+
+    def test_message_parts_preserved(self, a2a_agent: A2AAgent) -> None:
+        """Text content should be converted to A2A TextPart."""
+        message = Message(role="user", contents=[Content.from_text(text="test content")])
+
+        a2a_msg = a2a_agent._prepare_message_for_a2a(message, context_id="test")
+
+        assert len(a2a_msg.parts) == 1
+        assert a2a_msg.parts[0].root.text == "test content"
 
 
 # endregion
