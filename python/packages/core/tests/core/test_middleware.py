@@ -1726,4 +1726,5 @@ class TestCategorizeMiddleware:
         result = categorize_middleware("not_a_middleware")
         # String should be treated as a single item, not decomposed into characters
         total_items = len(result["chat"]) + len(result["function"]) + len(result["agent"])
-        assert total_items <= 1
+        assert total_items == 1
+        assert result["agent"] == ["not_a_middleware"]

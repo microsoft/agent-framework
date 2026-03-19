@@ -619,3 +619,83 @@ class TestChatMiddleware:
             "chat_middleware_before_2",
             "chat_middleware_after_2",
         ]
+
+    async def test_run_level_chat_and_function_middleware_split_per_function_loop_round_streaming(self) -> None:
+        """Test mixed run-level middleware is split so chat middleware runs per model call in streaming mode."""
+        execution_order: list[str] = []
+        chat_round = 0
+
+        @chat_middleware
+        async def run_level_chat_middleware(
+            context: ChatContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal chat_round
+            chat_round += 1
+            execution_order.append(f"chat_middleware_before_{chat_round}")
+            await call_next()
+            execution_order.append(f"chat_middleware_after_{chat_round}")
+
+        @function_middleware
+        async def run_level_function_middleware(
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await call_next()
+            execution_order.append("function_middleware_after")
+
+        def sample_tool(location: str) -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: sunny"
+
+        sample_tool_wrapped = FunctionTool(
+            func=sample_tool,
+            name="sample_tool",
+            description="Get weather for a location",
+            approval_mode="never_require",
+        )
+
+        client = MockBaseChatClient()
+        client.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_3",
+                            name="sample_tool",
+                            arguments='{"location": "Seattle"}',
+                        )
+                    ],
+                    role="assistant",
+                    finish_reason="tool_calls",
+                ),
+            ],
+            [
+                ChatResponseUpdate(
+                    contents=[Content.from_text("Based on the weather data, it's sunny!")],
+                    role="assistant",
+                    finish_reason="stop",
+                ),
+            ],
+        ]
+
+        updates: list[ChatResponseUpdate] = []
+        async for update in client.get_response(
+            [Message(role="user", text="What's the weather in Seattle?")],
+            options={"tools": [sample_tool_wrapped]},
+            client_kwargs={"middleware": [run_level_chat_middleware, run_level_function_middleware]},
+            stream=True,
+        ):
+            updates.append(update)
+
+        assert client.call_count == 2
+        assert len(updates) > 0
+        assert execution_order == [
+            "chat_middleware_before_1",
+            "chat_middleware_after_1",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before_2",
+            "chat_middleware_after_2",
+        ]

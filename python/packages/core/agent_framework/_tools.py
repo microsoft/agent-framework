@@ -2139,7 +2139,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         if middleware is not None:
             existing = effective_client_kwargs.get("middleware", [])
             effective_client_kwargs["middleware"] = [
-                *(existing if isinstance(existing, list) else [existing]),
+                *(existing if isinstance(existing, Sequence) and not isinstance(existing, (str, bytes)) else [existing]),
                 *middleware,
             ]
         runtime_middleware = categorize_middleware(effective_client_kwargs.pop("middleware", []))
