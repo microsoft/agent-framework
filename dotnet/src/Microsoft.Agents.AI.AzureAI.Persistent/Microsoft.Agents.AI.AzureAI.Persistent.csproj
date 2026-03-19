@@ -3,6 +3,8 @@
   <PropertyGroup>
     <VersionSuffix>preview</VersionSuffix>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Disabled until Azure.AI.Agents.Persistent targets ME.AI 10.4.0+ (https://github.com/microsoft/agent-framework/issues/4769) -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
