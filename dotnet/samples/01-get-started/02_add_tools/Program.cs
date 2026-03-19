@@ -14,7 +14,10 @@ var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 [Description("Get the weather for a given location.")]
 static string GetWeather([Description("The location to get the weather for.")] string location)
-    => $"The weather in {location} is cloudy with a high of 15°C.";
+{
+    Thread.Sleep(1000); // simulate api call delay
+    return $"The weather in {location} is cloudy with a high of 15°C.";
+}
 
 // Create the chat client and agent, and provide the function tool to the agent.
 AIAgent agent = new OpenAIClient(apiKey)

@@ -1,0 +1,22 @@
+# For more info on HTTP files go to https://aka.ms/vs/httpfile
+
+### Start a new conversation (JSON)
+POST http://localhost:7071/api/agents/HostedAgent/run
+Content-Type: application/json
+Accept: application/json
+
+{
+    "message": "Co wiesz o eventach w Lublinie?"
+}
+
+###
+
+### Continue a conversation — replace <thread_id> with the ID returned above
+POST http://localhost:7071/api/agents/HostedAgent/run
+Content-Type: application/json
+Accept: application/json
+
+{
+    "message": "O jakie miasto chodzi?",
+    "thread_id": "a5457ed9-59cd-4bad-bbc1-5d2db11505c2"
+}

@@ -39,9 +39,9 @@ AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(">> Use session with blank memory\n");
 
 // Invoke the agent and output the text result.
-Console.WriteLine(await agent.RunAsync("Hello, what is the square root of 9?", session));
-Console.WriteLine(await agent.RunAsync("My name is Ruaidhrí", session));
-Console.WriteLine(await agent.RunAsync("I am 20 years old", session));
+Console.WriteLine(await agent.RunAsync("What's my name and age?", session));
+Console.WriteLine(await agent.RunAsync("My name is Lukasz", session));
+Console.WriteLine(await agent.RunAsync("I am 67 years old", session));
 
 // We can serialize the session. The serialized state will include the state of the memory component.
 JsonElement sesionElement = await agent.SerializeSessionAsync(session);
