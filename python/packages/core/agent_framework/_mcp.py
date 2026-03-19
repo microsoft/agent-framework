@@ -1040,8 +1040,7 @@ class MCPTool:
 
         if params.temperature is not None:
             options["temperature"] = params.temperature
-        if params.maxTokens is not None:
-            options["max_tokens"] = params.maxTokens
+        options["max_tokens"] = params.maxTokens
         if params.stopSequences is not None:
             options["stop"] = params.stopSequences
 

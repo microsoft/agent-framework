@@ -2125,8 +2125,8 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     assert "stop" not in options
 
 
-async def test_mcp_tool_sampling_callback_omits_max_tokens_when_none():
-    """Test sampling callback does not set max_tokens in options when it is None."""
+async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
+    """Test sampling callback always sets max_tokens in options since maxTokens is a required int field."""
     from agent_framework import Message
 
     tool = MCPStdioTool(name="test_tool", command="python")
@@ -2146,7 +2146,7 @@ async def test_mcp_tool_sampling_callback_omits_max_tokens_when_none():
     mock_message.content.text = "Test question"
     params.messages = [mock_message]
     params.temperature = None
-    params.maxTokens = None
+    params.maxTokens = 200
     params.stopSequences = None
     params.systemPrompt = None
     params.tools = None
@@ -2156,8 +2156,8 @@ async def test_mcp_tool_sampling_callback_omits_max_tokens_when_none():
 
     assert isinstance(result, types.CreateMessageResult)
     call_kwargs = mock_chat_client.get_response.call_args
-    options = call_kwargs.kwargs.get("options")
-    assert options is None or "max_tokens" not in options
+    options = call_kwargs.kwargs.get("options") or {}
+    assert options["max_tokens"] == 200
 
 
 async def test_connect_sampling_capabilities_with_client():
