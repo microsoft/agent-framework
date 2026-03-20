@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 FoundryAgentOptionsT = TypeVar(
     "FoundryAgentOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIChatOptions",  # noqa: F821  # pyright: ignore[reportUndefinedVariable]
+    default="OpenAIChatOptions",  # noqa: F821  # pyright: ignore[reportUndefinedVariable]  # type: ignore[name-defined]
     covariant=True,
 )
 

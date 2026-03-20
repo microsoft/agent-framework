@@ -68,7 +68,7 @@ else:
 logger = logging.getLogger("agent_framework.azure")
 
 
-class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):  # type: ignore[misc]
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):  # type: ignore[misc, call-arg]
     """Azure AI Project Agent options."""
 
     rai_config: RaiConfig
@@ -218,7 +218,7 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         # Initialize parent with OpenAI client from project
         super().__init__(
             async_client=project_client.get_openai_client(),
-            model=azure_ai_settings.get("model"),
+            model=azure_ai_settings.get("model"),  # type: ignore[arg-type]
             additional_properties=additional_properties,
         )
 

@@ -200,7 +200,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             )
 
         # Extract options from default_options if present
-        opts = dict(default_options) if default_options else {}
+        opts: dict[str, Any] = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
