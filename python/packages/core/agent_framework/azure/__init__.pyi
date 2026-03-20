@@ -1,7 +1,80 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# This is a dynamic namespace — all symbols are lazily loaded from optional packages.
-from typing import Any
+# Type stubs for the agent_framework.azure lazy-loading namespace.
+# Install the relevant packages for full type support.
 
-def __getattr__(name: str) -> Any: ...  # pyright: ignore[reportIncompleteStub]
-def __dir__() -> list[str]: ...
+from agent_framework_azure_ai import (
+    AzureAIAgentClient,
+    AzureAIAgentsProvider,
+    AzureAIClient,
+    AzureAIProjectAgentOptions,
+    AzureAIProjectAgentProvider,
+    AzureAISettings,
+    AzureCredentialTypes,
+    AzureOpenAIAssistantsClient,
+    AzureOpenAIAssistantsOptions,
+    AzureOpenAIChatClient,
+    AzureOpenAIChatOptions,
+    AzureOpenAIEmbeddingClient,
+    AzureOpenAIResponsesClient,
+    AzureOpenAIResponsesOptions,
+    AzureOpenAISettings,
+    AzureTokenProvider,
+    AzureUserSecurityContext,
+    FoundryAgent,
+    FoundryChatClient,
+    FoundryMemoryProvider,
+    RawAzureAIClient,
+    RawFoundryAgent,
+    RawFoundryAgentChatClient,
+    RawFoundryChatClient,
+)
+from agent_framework_azure_ai_search import (
+    AzureAISearchContextProvider,
+    AzureAISearchSettings,
+)
+from agent_framework_azurefunctions import AgentFunctionApp
+from agent_framework_durabletask import (
+    AgentCallbackContext,
+    AgentResponseCallbackProtocol,
+    DurableAIAgent,
+    DurableAIAgentClient,
+    DurableAIAgentOrchestrationContext,
+    DurableAIAgentWorker,
+)
+
+__all__ = [
+    "AgentCallbackContext",
+    "AgentFunctionApp",
+    "AgentResponseCallbackProtocol",
+    "AzureAIAgentClient",
+    "AzureAIAgentsProvider",
+    "AzureAIClient",
+    "AzureAIProjectAgentOptions",
+    "AzureAIProjectAgentProvider",
+    "AzureAISearchContextProvider",
+    "AzureAISearchSettings",
+    "AzureAISettings",
+    "AzureCredentialTypes",
+    "AzureOpenAIAssistantsClient",
+    "AzureOpenAIAssistantsOptions",
+    "AzureOpenAIChatClient",
+    "AzureOpenAIChatOptions",
+    "AzureOpenAIEmbeddingClient",
+    "AzureOpenAIResponsesClient",
+    "AzureOpenAIResponsesOptions",
+    "AzureOpenAISettings",
+    "AzureTokenProvider",
+    "AzureUserSecurityContext",
+    "DurableAIAgent",
+    "DurableAIAgentClient",
+    "DurableAIAgentOrchestrationContext",
+    "DurableAIAgentWorker",
+    "FoundryAgent",
+    "FoundryChatClient",
+    "FoundryMemoryProvider",
+    "RawAzureAIClient",
+    "RawFoundryAgent",
+    "RawFoundryAgentChatClient",
+    "RawFoundryChatClient",
+]
