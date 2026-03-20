@@ -9,6 +9,7 @@ that connect to existing PromptAgents or HostedAgents in Foundry. Use
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from agent_framework._middleware import MiddlewareTypes
     from agent_framework._tools import FunctionTool
     from agent_framework_openai._chat_client import OpenAIChatOptions
+
+logger: logging.Logger = logging.getLogger("agent_framework.azure")
 
 FoundryAgentOptionsT = TypeVar(
     "FoundryAgentOptionsT",
@@ -132,6 +135,63 @@ class RawFoundryAgent(  # type: ignore[misc]
             context_providers=context_providers,
             **kwargs,
         )
+
+    async def configure_azure_monitor(
+        self,
+        enable_sensitive_data: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Setup observability with Azure Monitor (Microsoft Foundry integration).
+
+        This method configures Azure Monitor for telemetry collection using the
+        connection string from the Foundry project client (accessed via the internal client).
+
+        Args:
+            enable_sensitive_data: Enable sensitive data logging (prompts, responses).
+                Should only be enabled in development/test environments. Default is False.
+            **kwargs: Additional arguments passed to configure_azure_monitor().
+
+        Raises:
+            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
+        from ._foundry_agent_client import RawFoundryAgentChatClient
+
+        client = self.client
+        if not isinstance(client, RawFoundryAgentChatClient):
+            raise TypeError("configure_azure_monitor requires a RawFoundryAgentChatClient-based client.")
+
+        try:
+            conn_string = await client.project_client.telemetry.get_application_insights_connection_string()
+        except ResourceNotFoundError:
+            logger.warning(
+                "No Application Insights connection string found for the Foundry project. "
+                "Please ensure Application Insights is configured in your project, "
+                "or call configure_otel_providers() manually with custom exporters."
+            )
+            return
+
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor  # type: ignore[import]
+        except ImportError as exc:
+            raise ImportError(
+                "azure-monitor-opentelemetry is required for Azure Monitor integration. "
+                "Install it with: pip install azure-monitor-opentelemetry"
+            ) from exc
+
+        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
+
+        if "resource" not in kwargs:
+            kwargs["resource"] = create_resource()
+
+        configure_azure_monitor(
+            connection_string=conn_string,
+            views=create_metric_views(),
+            **kwargs,
+        )
+
+        enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
 
 
 class FoundryAgent(  # type: ignore[misc]

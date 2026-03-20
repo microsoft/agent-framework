@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
@@ -48,7 +49,8 @@ if TYPE_CHECKING:
         FunctionMiddleware,
         FunctionMiddlewareCallable,
     )
-    from openai import AsyncOpenAI
+
+logger: logging.Logger = logging.getLogger("agent_framework.azure")
 
 
 class FoundrySettings(TypedDict, total=False):
@@ -134,56 +136,38 @@ class RawFoundryChatClient(  # type: ignore[misc]
         if not resolved_model:
             raise ValueError("Model is required. Set via 'model' parameter or 'FOUNDRY_MODEL' environment variable.")
 
-        resolved_endpoint = foundry_settings.get("project_endpoint")
+        project_endpoint = foundry_settings.get("project_endpoint")
 
-        if resolved_endpoint is None and project_client is None:
+        if project_endpoint is None and project_client is None:
             raise ValueError(
                 "Either 'project_endpoint' or 'project_client' is required. "
                 "Set project_endpoint via parameter or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
             )
-
-        async_client = self._create_client_from_project(
-            project_client=project_client,
-            project_endpoint=resolved_endpoint,
-            credential=credential,
-            allow_preview=allow_preview,
-        )
+        if not project_client:
+            if not project_endpoint:
+                raise ValueError(
+                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable,"
+                    "or pass in a AIProjectClient."
+                )
+            if not credential:
+                raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": project_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
 
         super().__init__(
             model=resolved_model,
-            async_client=async_client,
+            async_client=project_client.get_openai_client(),
             instruction_role=instruction_role,
             **kwargs,
         )
-
-    @staticmethod
-    def _create_client_from_project(
-        *,
-        project_client: AIProjectClient | None,
-        project_endpoint: str | None,
-        credential: AzureCredentialTypes | AzureTokenProvider | None,
-        allow_preview: bool | None = None,
-    ) -> AsyncOpenAI:
-        """Create an AsyncOpenAI client from a Foundry project."""
-        if project_client is not None:
-            return project_client.get_openai_client()
-
-        if not project_endpoint:
-            raise ValueError(
-                "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
-            )
-        if not credential:
-            raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
-        project_client_kwargs: dict[str, Any] = {
-            "endpoint": project_endpoint,
-            "credential": credential,  # type: ignore[arg-type]
-            "user_agent": AGENT_FRAMEWORK_USER_AGENT,
-        }
-        if allow_preview is not None:
-            project_client_kwargs["allow_preview"] = allow_preview
-        project_client = AIProjectClient(**project_client_kwargs)
-        return project_client.get_openai_client()
+        self.project_client = project_client
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
@@ -191,6 +175,61 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if not self.model:
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
+
+    async def configure_azure_monitor(
+        self,
+        enable_sensitive_data: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Setup observability with Azure Monitor (Microsoft Foundry integration).
+
+        This method configures Azure Monitor for telemetry collection using the
+        connection string from the Foundry project client.
+
+        Args:
+            enable_sensitive_data: Enable sensitive data logging (prompts, responses).
+                Should only be enabled in development/test environments. Default is False.
+            **kwargs: Additional arguments passed to configure_azure_monitor().
+                Common options include:
+                - enable_live_metrics (bool): Enable Azure Monitor Live Metrics
+                - credential (TokenCredential): Azure credential for Entra ID auth
+                - resource (Resource): Custom OpenTelemetry resource
+
+        Raises:
+            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+        """
+        from azure.core.exceptions import ResourceNotFoundError
+
+        try:
+            conn_string = await self.project_client.telemetry.get_application_insights_connection_string()
+        except ResourceNotFoundError:
+            logger.warning(
+                "No Application Insights connection string found for the Foundry project. "
+                "Please ensure Application Insights is configured in your project, "
+                "or call configure_otel_providers() manually with custom exporters."
+            )
+            return
+
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor  # type: ignore[import]
+        except ImportError as exc:
+            raise ImportError(
+                "azure-monitor-opentelemetry is required for Azure Monitor integration. "
+                "Install it with: pip install azure-monitor-opentelemetry"
+            ) from exc
+
+        from agent_framework.observability import create_metric_views, create_resource, enable_instrumentation
+
+        if "resource" not in kwargs:
+            kwargs["resource"] = create_resource()
+
+        configure_azure_monitor(
+            connection_string=conn_string,
+            views=create_metric_views(),
+            **kwargs,
+        )
+
+        enable_instrumentation(enable_sensitive_data=enable_sensitive_data)
 
     # region Tool factory methods (override OpenAI defaults with Foundry versions)
 
