@@ -466,9 +466,15 @@ class FunctionTool(SerializationMixin):
         if func is None:
             return create_model(f"{self.name}_input")
         sig = inspect.signature(func)
+        try:
+            type_hints = typing.get_type_hints(func, include_extras=True)
+        except Exception:
+            type_hints = {}
         fields: dict[str, Any] = {
             pname: (
-                _parse_annotation(param.annotation) if param.annotation is not inspect.Parameter.empty else str,
+                _parse_annotation(type_hints.get(pname, param.annotation))
+                if type_hints.get(pname, param.annotation) is not inspect.Parameter.empty
+                else str,
                 param.default if param.default is not inspect.Parameter.empty else ...,
             )
             for pname, param in sig.parameters.items()
