@@ -82,7 +82,7 @@ def test_tool_with_optional_custom_type():
     """Optional[CustomType] is resolved under PEP 563 (original bug pattern)."""
 
     @tool
-    def search(query: str, config: Optional[SearchConfig] = None) -> str:
+    def search(query: str, config: SearchConfig | None = None) -> str:
         """Search for something."""
         return query
 
