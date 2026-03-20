@@ -65,7 +65,8 @@ async def main() -> None:
 
     client = OpenAIResponsesClient()
 
-    research_agent = Agent(client=client,
+    research_agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions="You are a research assistant. Provide concise answers and store your findings.",
         middleware=[log_session],
@@ -80,7 +81,8 @@ async def main() -> None:
         propagate_session=True,
     )
 
-    coordinator = Agent(client=client,
+    coordinator = Agent(
+        client=client,
         name="CoordinatorAgent",
         instructions=(
             "You coordinate research. Use the 'research' tool to start research "

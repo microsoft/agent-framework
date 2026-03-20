@@ -61,13 +61,15 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 # 1. Create multiple agents, each with its own instruction set and tools.
 client = FoundryChatClient(credential=AzureCliCredential())
 
-weather_agent = Agent(client=client,
+weather_agent = Agent(
+    client=client,
     name="WeatherAgent",
     instructions="You are a helpful weather assistant. Provide current weather information.",
     tools=[get_weather],
 )
 
-math_agent = Agent(client=client,
+math_agent = Agent(
+    client=client,
     name="MathAgent",
     instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
     tools=[calculate_tip],

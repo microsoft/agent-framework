@@ -89,7 +89,8 @@ async def main() -> None:
     )
 
     # 4. Create agent with Azure Redis history provider
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
         context_providers=[history_provider],

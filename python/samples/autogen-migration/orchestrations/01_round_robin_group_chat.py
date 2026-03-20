@@ -3,7 +3,7 @@
 
 import asyncio
 
-from agent_framework import Message
+from agent_framework import Agent, Message
 from dotenv import load_dotenv
 
 """AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.

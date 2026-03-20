@@ -59,6 +59,8 @@ class UserMemoryProvider(BaseContextProvider):
             text = msg.text if hasattr(msg, "text") else ""
             if isinstance(text, str) and "my name is" in text.lower():
                 state["user_name"] = text.lower().split("my name is")[-1].strip().split()[0].capitalize()
+
+
 # </context_provider>
 
 

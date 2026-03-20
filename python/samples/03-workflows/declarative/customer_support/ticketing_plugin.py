@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """Ticketing plugin for CustomerSupport workflow."""
+
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ RESET = "\033[0m"
 
 class TicketStatus(Enum):
     """Status of a support ticket."""
+
     OPEN = "open"
     IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
@@ -22,6 +24,7 @@ class TicketStatus(Enum):
 @dataclass
 class TicketItem:
     """A support ticket."""
+
     id: str
     subject: str = ""
     description: str = ""
@@ -31,6 +34,7 @@ class TicketItem:
 
 class TicketingPlugin:
     """Mock ticketing plugin for customer support workflow."""
+
     def __init__(self) -> None:
         self._ticket_store: dict[str, TicketItem] = {}
 

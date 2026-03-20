@@ -13,6 +13,7 @@ Prerequisites:
 To run this sample:
     python sample.py
 """
+
 import logging
 
 # Import helper functions from worker and client modules

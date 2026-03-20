@@ -199,10 +199,10 @@ async def main() -> None:
     # Create agent and executor
     guessing_agent = Agent(
         client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ),
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "

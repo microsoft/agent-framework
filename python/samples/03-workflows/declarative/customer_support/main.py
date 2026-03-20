@@ -178,40 +178,46 @@ async def main() -> None:
     )
 
     # Create agents with structured outputs
-    self_service_agent = Agent(client=client,
+    self_service_agent = Agent(
+        client=client,
         name="SelfServiceAgent",
         instructions=SELF_SERVICE_INSTRUCTIONS,
         default_options={"response_format": SelfServiceResponse},
     )
 
-    ticketing_agent = Agent(client=client,
+    ticketing_agent = Agent(
+        client=client,
         name="TicketingAgent",
         instructions=TICKETING_INSTRUCTIONS,
         tools=plugin.get_functions(),
         default_options={"response_format": TicketingResponse},
     )
 
-    routing_agent = Agent(client=client,
+    routing_agent = Agent(
+        client=client,
         name="TicketRoutingAgent",
         instructions=TICKET_ROUTING_INSTRUCTIONS,
         tools=[plugin.get_ticket],
         default_options={"response_format": RoutingResponse},
     )
 
-    windows_support_agent = Agent(client=client,
+    windows_support_agent = Agent(
+        client=client,
         name="WindowsSupportAgent",
         instructions=WINDOWS_SUPPORT_INSTRUCTIONS,
         tools=[plugin.get_ticket],
         default_options={"response_format": SupportResponse},
     )
 
-    resolution_agent = Agent(client=client,
+    resolution_agent = Agent(
+        client=client,
         name="TicketResolutionAgent",
         instructions=RESOLUTION_INSTRUCTIONS,
         tools=[plugin.resolve_ticket],
     )
 
-    escalation_agent = Agent(client=client,
+    escalation_agent = Agent(
+        client=client,
         name="TicketEscalationAgent",
         instructions=ESCALATION_INSTRUCTIONS,
         tools=[plugin.get_ticket, plugin.send_notification],

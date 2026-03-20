@@ -31,7 +31,8 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[mcp_tool, web_search_tool],

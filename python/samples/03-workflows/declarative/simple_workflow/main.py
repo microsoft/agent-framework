@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 """Simple workflow sample - demonstrates basic variable setting and output."""
+
 import asyncio
 from pathlib import Path
 

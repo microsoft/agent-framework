@@ -64,12 +64,14 @@ async def main() -> None:
     )
 
     # Create student and teacher agents
-    student_agent = Agent(client=client,
+    student_agent = Agent(
+        client=client,
         name="StudentAgent",
         instructions=STUDENT_INSTRUCTIONS,
     )
 
-    teacher_agent = Agent(client=client,
+    teacher_agent = Agent(
+        client=client,
         name="TeacherAgent",
         instructions=TEACHER_INSTRUCTIONS,
     )

@@ -74,7 +74,8 @@ async def main():
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
-    menu_agent = Agent(client=client,
+    menu_agent = Agent(
+        client=client,
         name="MenuAgent",
         instructions="Answer questions about menu items, specials, and prices.",
         tools=[get_menu, get_specials, get_item_price],

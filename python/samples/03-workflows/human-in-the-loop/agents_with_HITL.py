@@ -171,10 +171,10 @@ async def main() -> None:
     # Create the agents
     writer_agent = Agent(
         client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ),
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         name="writer_agent",
         instructions=("You are a marketing writer."),
         tool_choice="required",
@@ -182,10 +182,10 @@ async def main() -> None:
 
     final_editor_agent = Agent(
         client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ),
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

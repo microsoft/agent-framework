@@ -40,7 +40,8 @@ def _create_writer_agent() -> Any:
     )
 
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

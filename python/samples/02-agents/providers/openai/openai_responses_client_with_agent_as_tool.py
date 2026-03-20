@@ -40,7 +40,8 @@ async def main() -> None:
     client = OpenAIResponsesClient()
 
     # Create a specialized writer agent
-    writer = Agent(client=client,
+    writer = Agent(
+        client=client,
         name="WriterAgent",
         instructions="You are a creative writer. Write short, engaging content.",
     )
@@ -54,7 +55,8 @@ async def main() -> None:
     )
 
     # Create coordinator agent with writer as a tool
-    coordinator = Agent(client=client,
+    coordinator = Agent(
+        client=client,
         name="CoordinatorAgent",
         instructions="You coordinate with specialized agents. Delegate writing tasks to the creative_writer tool.",
         tools=[writer_tool],

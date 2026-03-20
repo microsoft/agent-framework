@@ -61,15 +61,18 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    analyst_agent = Agent(client=client,
+    analyst_agent = Agent(
+        client=client,
         name="AnalystAgent",
         instructions=ANALYST_INSTRUCTIONS,
     )
-    writer_agent = Agent(client=client,
+    writer_agent = Agent(
+        client=client,
         name="WriterAgent",
         instructions=WRITER_INSTRUCTIONS,
     )
-    editor_agent = Agent(client=client,
+    editor_agent = Agent(
+        client=client,
         name="EditorAgent",
         instructions=EDITOR_INSTRUCTIONS,
     )

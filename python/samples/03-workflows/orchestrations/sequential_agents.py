@@ -43,12 +43,14 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    writer = Agent(client=client,
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = Agent(client=client,
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )

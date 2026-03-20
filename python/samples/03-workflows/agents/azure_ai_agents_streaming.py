@@ -32,14 +32,16 @@ async def main() -> None:
     )
 
     # Create two agents: a Writer and a Reviewer.
-    writer_agent = Agent(client=client,
+    writer_agent = Agent(
+        client=client,
         name="Writer",
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
     )
 
-    reviewer_agent = Agent(client=client,
+    reviewer_agent = Agent(
+        client=client,
         name="Reviewer",
         instructions=(
             "You are an excellent content reviewer. "

@@ -44,7 +44,8 @@ def create_physicist_agent() -> "Agent":
         Agent: The configured Physicist agent
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
@@ -57,7 +58,8 @@ def create_chemist_agent() -> "Agent":
         Agent: The configured Chemist agent
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

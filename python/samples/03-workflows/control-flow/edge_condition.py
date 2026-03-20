@@ -138,10 +138,10 @@ def create_spam_detector_agent() -> Agent:
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
     return Agent(
         client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ),
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool), reason (string), and email_content (string). "
@@ -157,10 +157,10 @@ def create_email_assistant_agent() -> Agent:
     # AzureCliCredential uses your current az login. This avoids embedding secrets in code.
     return Agent(
         client=FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ),
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         instructions=(
             "You are an email assistant that helps users draft professional responses to emails. "
             "Your input may be a JSON object that includes 'email_content'; base your reply on that content. "

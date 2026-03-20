@@ -42,21 +42,24 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    researcher = Agent(client=client,
+    researcher = Agent(
+        client=client,
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
         ),
         name="researcher",
     )
-    marketer = Agent(client=client,
+    marketer = Agent(
+        client=client,
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
         ),
         name="marketer",
     )
-    legal = Agent(client=client,
+    legal = Agent(
+        client=client,
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."

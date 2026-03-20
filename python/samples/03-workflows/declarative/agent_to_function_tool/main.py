@@ -206,7 +206,8 @@ async def main():
     )
 
     # Create the order analysis agent with structured output
-    order_analysis_agent = Agent(client=chat_client,
+    order_analysis_agent = Agent(
+        client=chat_client,
         name="OrderAnalysisAgent",
         instructions=ORDER_ANALYSIS_INSTRUCTIONS,
         default_options={"response_format": OrderAnalysis},

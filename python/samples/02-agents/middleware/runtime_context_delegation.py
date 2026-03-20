@@ -152,7 +152,8 @@ async def pattern_1_single_agent_with_closure() -> None:
     client = FoundryChatClient(model="gpt-4o-mini")
 
     # Create agent with both tools and shared context via middleware
-    communication_agent = Agent(client=client,
+    communication_agent = Agent(
+        client=client,
         name="communication_agent",
         instructions=(
             "You are a communication assistant that can send emails and notifications. "
@@ -297,14 +298,16 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
     client = FoundryChatClient(model="gpt-4o-mini")
 
     # Create specialized sub-agents
-    email_agent = Agent(client=client,
+    email_agent = Agent(
+        client=client,
         name="email_agent",
         instructions="You send emails using the send_email_v2 tool.",
         tools=[send_email_v2],
         middleware=[email_kwargs_tracker],
     )
 
-    sms_agent = Agent(client=client,
+    sms_agent = Agent(
+        client=client,
         name="sms_agent",
         instructions="You send SMS messages using the send_sms tool.",
         tools=[send_sms],
@@ -312,7 +315,8 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
     )
 
     # Create coordinator that delegates to sub-agents
-    coordinator = Agent(client=client,
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions=(
             "You coordinate communication tasks. "
@@ -399,7 +403,8 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     client = FoundryChatClient(model="gpt-4o-mini")
 
     # Sub-agent with validation middleware
-    protected_agent = Agent(client=client,
+    protected_agent = Agent(
+        client=client,
         name="protected_agent",
         instructions="You perform protected operations that require authentication.",
         tools=[protected_operation],
@@ -407,7 +412,8 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     )
 
     # Coordinator delegates to protected agent
-    coordinator = Agent(client=client,
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions="You coordinate protected operations. Delegate to protected_executor.",
         tools=[

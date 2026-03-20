@@ -102,8 +102,8 @@ def get_weather(
 def build_agent() -> Agent:
     """Create and return the chat agent instance with weather tool registered."""
     _client = FoundryChatClient()
-    return Agent(client=_client,
-        name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
+    return Agent(
+        client=_client, name="WeatherAgent", instructions="You are a helpful weather agent.", tools=get_weather
     )
 
 

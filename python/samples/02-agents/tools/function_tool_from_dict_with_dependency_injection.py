@@ -63,7 +63,9 @@ async def main() -> None:
 
     agent = Agent(
         client=OpenAIResponsesClient(),
-        name="FunctionToolAgent", instructions="You are a helpful assistant.", tools=tool
+        name="FunctionToolAgent",
+        instructions="You are a helpful assistant.",
+        tools=tool,
     )
     response = await agent.run("What is 5 + 3?")
     print(f"Response: {response.text}")

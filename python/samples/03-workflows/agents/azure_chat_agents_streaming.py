@@ -3,7 +3,7 @@
 import asyncio
 import os
 
-from agent_framework import AgentResponseUpdate, WorkflowBuilder
+from agent_framework import Agent, AgentResponseUpdate, WorkflowBuilder
 from agent_framework.azure import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

@@ -36,7 +36,8 @@ def create_joker_agent() -> Agent:
         Agent: The configured Joker agent
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name="Joker",
         instructions="You are good at telling jokes.",
     )

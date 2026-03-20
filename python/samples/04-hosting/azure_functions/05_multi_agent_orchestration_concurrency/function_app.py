@@ -36,12 +36,14 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 def _create_agents() -> list[Any]:
     client = FoundryChatClient(credential=AzureCliCredential())
 
-    physicist = Agent(client=client,
+    physicist = Agent(
+        client=client,
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
-    chemist = Agent(client=client,
+    chemist = Agent(
+        client=client,
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

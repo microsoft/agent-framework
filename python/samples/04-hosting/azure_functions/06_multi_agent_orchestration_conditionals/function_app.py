@@ -52,12 +52,14 @@ class EmailPayload(BaseModel):
 def _create_agents() -> list[Any]:
     client = FoundryChatClient(credential=AzureCliCredential())
 
-    spam_agent = Agent(client=client,
+    spam_agent = Agent(
+        client=client,
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = Agent(client=client,
+    email_agent = Agent(
+        client=client,
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

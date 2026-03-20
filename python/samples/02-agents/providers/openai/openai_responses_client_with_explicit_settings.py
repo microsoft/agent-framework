@@ -41,7 +41,8 @@ async def main() -> None:
         api_key=os.environ["OPENAI_API_KEY"],
     )
 
-    agent = Agent(client=_client,
+    agent = Agent(
+        client=_client,
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

@@ -5,6 +5,7 @@ from typing import Literal
 
 from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
 

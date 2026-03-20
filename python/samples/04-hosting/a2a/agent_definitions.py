@@ -56,7 +56,8 @@ Quantity: 900
 
 def create_invoice_agent(client: FoundryChatClient) -> Agent:
     """Create an invoice agent backed by the given client with query tools."""
-    return Agent(client=client,
+    return Agent(
+        client=client,
         name="InvoiceAgent",
         instructions=INVOICE_INSTRUCTIONS,
         tools=[query_invoices, query_by_transaction_id, query_by_invoice_id],
@@ -65,7 +66,8 @@ def create_invoice_agent(client: FoundryChatClient) -> Agent:
 
 def create_policy_agent(client: FoundryChatClient) -> Agent:
     """Create a policy agent backed by the given client."""
-    return Agent(client=client,
+    return Agent(
+        client=client,
         name="PolicyAgent",
         instructions=POLICY_INSTRUCTIONS,
     )
@@ -73,7 +75,8 @@ def create_policy_agent(client: FoundryChatClient) -> Agent:
 
 def create_logistics_agent(client: FoundryChatClient) -> Agent:
     """Create a logistics agent backed by the given client."""
-    return Agent(client=client,
+    return Agent(
+        client=client,
         name="LogisticsAgent",
         instructions=LOGISTICS_INSTRUCTIONS,
     )

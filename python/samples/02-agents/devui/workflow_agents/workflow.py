@@ -66,7 +66,8 @@ def is_approved(message: Any) -> bool:
 client = FoundryChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
 
 # Create Writer agent - generates content
-writer = Agent(client=client,
+writer = Agent(
+    client=client,
     name="Writer",
     instructions=(
         "You are an excellent content writer. "
@@ -76,7 +77,8 @@ writer = Agent(client=client,
 )
 
 # Create Reviewer agent - evaluates and provides structured feedback
-reviewer = Agent(client=client,
+reviewer = Agent(
+    client=client,
     name="Reviewer",
     instructions=(
         "You are an expert content reviewer. "
@@ -94,7 +96,8 @@ reviewer = Agent(client=client,
 )
 
 # Create Editor agent - improves content based on feedback
-editor = Agent(client=client,
+editor = Agent(
+    client=client,
     name="Editor",
     instructions=(
         "You are a skilled editor. "
@@ -105,7 +108,8 @@ editor = Agent(client=client,
 )
 
 # Create Publisher agent - formats content for publication
-publisher = Agent(client=client,
+publisher = Agent(
+    client=client,
     name="Publisher",
     instructions=(
         "You are a publishing agent. "
@@ -115,7 +119,8 @@ publisher = Agent(client=client,
 )
 
 # Create Summarizer agent - creates final publication report
-summarizer = Agent(client=client,
+summarizer = Agent(
+    client=client,
     name="Summarizer",
     instructions=(
         "You are a summarizer agent. "

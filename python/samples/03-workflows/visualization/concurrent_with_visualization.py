@@ -99,10 +99,10 @@ async def main() -> None:
     researcher = AgentExecutor(
         Agent(
             client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ),
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
                 " opportunities, and risks."
@@ -114,10 +114,10 @@ async def main() -> None:
     marketer = AgentExecutor(
         Agent(
             client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ),
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
                 " aligned to the prompt."
@@ -129,10 +129,10 @@ async def main() -> None:
     legal = AgentExecutor(
         Agent(
             client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ),
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
                 " based on the prompt."

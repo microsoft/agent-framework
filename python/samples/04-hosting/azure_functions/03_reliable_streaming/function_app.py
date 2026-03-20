@@ -21,7 +21,7 @@ from datetime import timedelta
 
 import azure.functions as func
 import redis.asyncio as aioredis
-from agent_framework import AgentResponseUpdate
+from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
@@ -156,7 +156,8 @@ redis_callback = RedisStreamCallback()
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

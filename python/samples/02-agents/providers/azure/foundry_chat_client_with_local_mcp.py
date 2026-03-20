@@ -41,7 +41,8 @@ async def main():
         credential=credential,
     )
 
-    agent: Agent = Agent(client=responses_client,
+    agent: Agent = Agent(
+        client=responses_client,
         name="DocsAgent",
         instructions=("You are a helpful assistant that can help with Microsoft documentation questions."),
     )

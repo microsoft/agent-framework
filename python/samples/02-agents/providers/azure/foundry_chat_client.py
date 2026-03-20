@@ -52,7 +52,8 @@ async def non_streaming_example() -> None:
         model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
-    agent = Agent(client=_client,
+    agent = Agent(
+        client=_client,
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -77,7 +78,8 @@ async def streaming_example() -> None:
         model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
-    agent = Agent(client=_client,
+    agent = Agent(
+        client=_client,
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

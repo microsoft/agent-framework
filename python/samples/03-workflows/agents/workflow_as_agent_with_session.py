@@ -50,7 +50,8 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    assistant = Agent(client=client,
+    assistant = Agent(
+        client=client,
         name="assistant",
         instructions=(
             "You are a helpful assistant. Answer questions based on the conversation "
@@ -58,7 +59,8 @@ async def main() -> None:
         ),
     )
 
-    summarizer = Agent(client=client,
+    summarizer = Agent(
+        client=client,
         name="summarizer",
         instructions=(
             "You are a summarizer. After the assistant responds, provide a brief "
@@ -135,7 +137,8 @@ async def demonstrate_session_serialization() -> None:
         credential=AzureCliCredential(),
     )
 
-    memory_assistant = Agent(client=client,
+    memory_assistant = Agent(
+        client=client,
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Remember details from our conversation.",
     )

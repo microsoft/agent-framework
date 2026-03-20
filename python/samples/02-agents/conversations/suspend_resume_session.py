@@ -28,7 +28,8 @@ async def suspend_resume_service_managed_session() -> None:
         AzureCliCredential() as credential,
         Agent(
             client=FoundryChatClient(credential=credential),
-            name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
+            name="MemoryBot",
+            instructions="You are a helpful assistant that remembers our conversation.",
         ) as agent,
     ):
         # Start a new session for the agent conversation.
@@ -62,7 +63,8 @@ async def suspend_resume_in_memory_session() -> None:
     # other chat clients can be used as well.
     agent = Agent(
         client=FoundryChatClient(),
-        name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
+        name="MemoryBot",
+        instructions="You are a helpful assistant that remembers our conversation.",
     )
 
     # Start a new session for the agent conversation.

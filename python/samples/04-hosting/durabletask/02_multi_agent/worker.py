@@ -72,7 +72,8 @@ def create_weather_agent():
         Agent: The configured Weather agent with weather tool
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=WEATHER_AGENT_NAME,
         instructions="You are a helpful weather assistant. Provide current weather information.",
         tools=[get_weather],
@@ -86,7 +87,8 @@ def create_math_agent():
         Agent: The configured Math agent with calculation tools
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=MATH_AGENT_NAME,
         instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
         tools=[calculate_tip],

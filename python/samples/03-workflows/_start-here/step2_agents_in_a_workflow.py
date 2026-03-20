@@ -38,14 +38,16 @@ async def main():
         model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
-    writer_agent = Agent(client=client,
+    writer_agent = Agent(
+        client=client,
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = Agent(client=client,
+    reviewer_agent = Agent(
+        client=client,
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."

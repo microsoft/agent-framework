@@ -4,6 +4,7 @@
 Executes file-based skill scripts as local Python subprocesses.
 This is provided for demonstration purposes only.
 """
+
 from __future__ import annotations
 
 import subprocess

@@ -24,11 +24,7 @@ MODEL_DEPLOYMENT_NAME = os.getenv(
 
 def get_credential():
     """Will use Managed Identity when running in Azure, otherwise falls back to Azure CLI Credential."""
-    return (
-        ManagedIdentityCredential()
-        if os.getenv("MSI_ENDPOINT")
-        else AzureCliCredential()
-    )
+    return ManagedIdentityCredential() if os.getenv("MSI_ENDPOINT") else AzureCliCredential()
 
 
 @asynccontextmanager
@@ -39,11 +35,13 @@ async def create_agents():
             model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
         )
-        writer = Agent(client=client,
+        writer = Agent(
+            client=client,
             name="Writer",
             instructions="You are an excellent content writer. You create new content and edit contents based on the feedback.",
         )
-        reviewer = Agent(client=client,
+        reviewer = Agent(
+            client=client,
             name="Reviewer",
             instructions="You are an excellent content reviewer. Provide actionable feedback to the writer about the provided content in the most concise manner possible.",
         )
@@ -52,7 +50,9 @@ async def create_agents():
 
 def create_workflow(writer, reviewer):
     workflow = WorkflowBuilder(start_executor=writer).add_edge(writer, reviewer).build()
-    return Agent(client=workflow,)
+    return Agent(
+        client=workflow,
+    )
 
 
 async def main() -> None:

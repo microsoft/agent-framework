@@ -37,19 +37,22 @@ client = FoundryChatClient()
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
-agent1 = Agent(client=client,
+agent1 = Agent(
+    client=client,
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
 # Agent 2: StockAdvisor - MCP tool trigger only
-agent2 = Agent(client=client,
+agent2 = Agent(
+    client=client,
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
 # Agent 3: PlantAdvisor - Both HTTP and MCP tool triggers
-agent3 = Agent(client=client,
+agent3 = Agent(
+    client=client,
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

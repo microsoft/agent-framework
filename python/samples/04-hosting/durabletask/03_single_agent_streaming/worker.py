@@ -154,7 +154,8 @@ def create_travel_agent() -> "Agent":
         Agent: The configured TravelPlanner agent with travel planning tools.
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

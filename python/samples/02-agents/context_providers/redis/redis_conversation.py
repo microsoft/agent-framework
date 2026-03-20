@@ -72,7 +72,8 @@ async def main() -> None:
     )
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "

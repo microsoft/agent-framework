@@ -65,7 +65,8 @@ def create_spam_agent() -> "Agent":
         Agent: The configured Spam Detection agent
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
@@ -78,7 +79,8 @@ def create_email_agent() -> "Agent":
         Agent: The configured Email Assistant agent
     """
     _client = FoundryChatClient(credential=AzureCliCredential())
-    return Agent(client=_client,
+    return Agent(
+        client=_client,
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

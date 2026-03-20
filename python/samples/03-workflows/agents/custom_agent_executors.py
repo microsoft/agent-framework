@@ -53,10 +53,10 @@ class Writer(Executor):
         # Create a domain specific agent using your configured FoundryChatClient.
         self.agent = Agent(
             client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ),
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -100,10 +100,10 @@ class Reviewer(Executor):
         # Create a domain specific agent that evaluates and refines content.
         self.agent = Agent(
             client=FoundryChatClient(
-            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ),
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),

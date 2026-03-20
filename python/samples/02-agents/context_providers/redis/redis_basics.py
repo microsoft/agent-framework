@@ -206,7 +206,8 @@ async def main() -> None:
     client = create_chat_client()
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
@@ -249,7 +250,8 @@ async def main() -> None:
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
     client = create_chat_client()
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "

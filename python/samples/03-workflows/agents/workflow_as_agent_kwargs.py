@@ -94,7 +94,8 @@ async def main() -> None:
     )
 
     # Create agent with tools that use kwargs
-    agent = Agent(client=client,
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "

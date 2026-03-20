@@ -7,6 +7,8 @@
 
 import argparse
 import json
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Convert a value using a multiplication factor.",
@@ -20,5 +22,7 @@ def main() -> None:
     args = parser.parse_args()
     result = round(args.value * args.factor, 4)
     print(json.dumps({"value": args.value, "factor": args.factor, "result": result}))
+
+
 if __name__ == "__main__":
     main()

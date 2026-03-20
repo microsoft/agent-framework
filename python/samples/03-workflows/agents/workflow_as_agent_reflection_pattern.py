@@ -212,12 +212,7 @@ async def main() -> None:
     )
 
     agent = Agent(
-        client=(
-            WorkflowBuilder(start_executor=worker)
-            .add_edge(worker, reviewer)
-            .add_edge(reviewer, worker)
-            .build()
-        ),
+        client=(WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build()),
     )
 
     print("Running workflow agent with user query...")

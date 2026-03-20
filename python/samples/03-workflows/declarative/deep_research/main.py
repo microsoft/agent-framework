@@ -132,38 +132,45 @@ async def main() -> None:
     )
 
     # Create agents
-    research_agent = Agent(client=client,
+    research_agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=RESEARCH_INSTRUCTIONS,
     )
 
-    planner_agent = Agent(client=client,
+    planner_agent = Agent(
+        client=client,
         name="PlannerAgent",
         instructions=PLANNER_INSTRUCTIONS,
     )
 
-    manager_agent = Agent(client=client,
+    manager_agent = Agent(
+        client=client,
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
         default_options={"response_format": ManagerResponse},
     )
 
-    summary_agent = Agent(client=client,
+    summary_agent = Agent(
+        client=client,
         name="SummaryAgent",
         instructions=SUMMARY_INSTRUCTIONS,
     )
 
-    knowledge_agent = Agent(client=client,
+    knowledge_agent = Agent(
+        client=client,
         name="KnowledgeAgent",
         instructions=KNOWLEDGE_INSTRUCTIONS,
     )
 
-    coder_agent = Agent(client=client,
+    coder_agent = Agent(
+        client=client,
         name="CoderAgent",
         instructions=CODER_INSTRUCTIONS,
     )
 
-    weather_agent = Agent(client=client,
+    weather_agent = Agent(
+        client=client,
         name="WeatherAgent",
         instructions=WEATHER_INSTRUCTIONS,
     )
