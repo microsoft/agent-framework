@@ -66,6 +66,7 @@ if TYPE_CHECKING:  # pragma: no cover
         GeneratedEmbeddings,
         Message,
         ResponseStream,
+        UsageDetails,
     )
 
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -99,6 +100,11 @@ INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] 
 )
 INNER_RESPONSE_ID_CAPTURED_FIELD: Final[str] = "response_id"
 INNER_USAGE_CAPTURED_FIELD: Final[str] = "usage"
+
+# Tracks accumulated token usage from all inner chat completion spans within an agent invoke.
+INNER_ACCUMULATED_USAGE: Final[contextvars.ContextVar[UsageDetails | None]] = contextvars.ContextVar(
+    "inner_accumulated_usage", default=None
+)
 
 
 OTEL_METRICS: Final[str] = "__otel_metrics__"
@@ -1569,6 +1575,7 @@ class AgentTelemetryLayer:
         inner_response_telemetry_captured_fields_token = INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.set(
             inner_response_telemetry_captured_fields
         )
+        inner_accumulated_usage_token = INNER_ACCUMULATED_USAGE.set({})
 
         if stream:
             try:
@@ -1590,6 +1597,7 @@ class AgentTelemetryLayer:
                     raise RuntimeError("Streaming telemetry requires a ResponseStream result.")
             except Exception:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                 raise
 
             # Create span directly without trace.use_span() context attachment.
@@ -1634,6 +1642,7 @@ class AgentTelemetryLayer:
                         not in inner_response_telemetry_captured_fields,
                         capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                     )
+                    _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                     _capture_response(span=span, attributes=response_attributes, duration=duration)
                     if (
                         OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED
@@ -1650,6 +1659,7 @@ class AgentTelemetryLayer:
                     capture_exception(span=span, exception=exception, timestamp=time_ns())
                 finally:
                     INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                    INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
                     _close_span()
 
             # Register a weak reference callback to close the span if stream is garbage collected
@@ -1694,6 +1704,7 @@ class AgentTelemetryLayer:
                             not in inner_response_telemetry_captured_fields,
                             capture_usage=INNER_USAGE_CAPTURED_FIELD not in inner_response_telemetry_captured_fields,
                         )
+                        _apply_accumulated_usage(response_attributes, inner_response_telemetry_captured_fields)
                         _capture_response(span=span, attributes=response_attributes, duration=duration)
                         if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and response.messages:
                             _capture_messages(
@@ -1705,6 +1716,7 @@ class AgentTelemetryLayer:
                     return response  # type: ignore[return-value,no-any-return]
             finally:
                 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS.reset(inner_response_telemetry_captured_fields_token)
+                INNER_ACCUMULATED_USAGE.reset(inner_accumulated_usage_token)
 
         return _run()
 
@@ -1969,6 +1981,26 @@ def _mark_inner_response_telemetry_captured(response: ChatResponse | AgentRespon
         captured_fields.add(INNER_RESPONSE_ID_CAPTURED_FIELD)
     if response.usage_details:
         captured_fields.add(INNER_USAGE_CAPTURED_FIELD)
+        accumulated = INNER_ACCUMULATED_USAGE.get()
+        if accumulated is not None:
+            from ._types import add_usage_details
+
+            INNER_ACCUMULATED_USAGE.set(add_usage_details(accumulated, response.usage_details))
+
+
+def _apply_accumulated_usage(attributes: dict[str, Any], captured_fields: set[str]) -> None:
+    """Apply accumulated usage from inner chat spans to the invoke_agent span attributes."""
+    if INNER_USAGE_CAPTURED_FIELD not in captured_fields:
+        return
+    accumulated = INNER_ACCUMULATED_USAGE.get()
+    if not accumulated:
+        return
+    input_tokens = accumulated.get("input_token_count")
+    if input_tokens:
+        attributes[OtelAttr.INPUT_TOKENS] = input_tokens
+    output_tokens = accumulated.get("output_token_count")
+    if output_tokens:
+        attributes[OtelAttr.OUTPUT_TOKENS] = output_tokens
 
 
 def _get_response_attributes(

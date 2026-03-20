@@ -2554,7 +2554,7 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
     span_exporter: InMemorySpanExporter, stream: bool
 ):
-    """Only the inner chat span should own response-id and usage telemetry."""
+    """The inner chat span owns response-id; usage is aggregated on the agent span."""
 
     class NestedTelemetryChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
         def service_url(self):
@@ -2621,8 +2621,9 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
     assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
 
     assert OtelAttr.RESPONSE_ID not in agent_span.attributes
-    assert OtelAttr.INPUT_TOKENS not in agent_span.attributes
-    assert OtelAttr.OUTPUT_TOKENS not in agent_span.attributes
+    # The agent span carries the aggregated usage from all inner chat completions
+    assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11
+    assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
 
 
 # region Test non-ASCII character handling in JSON serialization
