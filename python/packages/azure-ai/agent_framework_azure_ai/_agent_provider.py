@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from collections.abc import Callable, Sequence
 from typing import Any, Generic, cast
 
@@ -48,6 +49,10 @@ OptionsCoT = TypeVar(
 
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
+
+    .. deprecated::
+        AzureAIAgentsProvider is deprecated and will be removed in a future release.
+        Use :class:`AzureAIProjectAgentProvider` instead for the V2 (Projects/Responses) API.
 
     This provider enables creating, retrieving, and wrapping Azure AI agents as Agent
     instances. It manages the underlying AgentsClient lifecycle and provides a high-level
@@ -114,6 +119,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Raises:
             ValueError: If required parameters are missing or invalid.
         """
+        warnings.warn(
+            "AzureAIAgentsProvider is deprecated and will be removed in a future release; "
+            "use AzureAIProjectAgentProvider instead for the V2 (Projects/Responses) API.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",
