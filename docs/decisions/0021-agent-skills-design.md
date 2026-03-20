@@ -522,4 +522,69 @@ AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions
 });
 ```
 
+## Adding a Custom Skill Source
+
+The `AgentSkillsSource` abstraction is the extension point for loading skills from any origin — a database, a REST API, a package registry, or any other backend. To add a custom source, subclass `AgentSkillsSource` and implement `GetSkillsAsync`:
+
+```csharp
+public class CosmosDbSkillsSource : AgentSkillsSource
+{
+    private readonly CosmosClient _client;
+
+    public CosmosDbSkillsSource(CosmosClient client)
+    {
+        _client = client;
+    }
+
+    public override async Task<IReadOnlyList<AgentSkill>> GetSkillsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var container = _client.GetContainer("skills-db", "skills");
+        var query = container.GetItemQueryIterator<SkillDocument>("SELECT * FROM c");
+
+        var skills = new List<AgentSkill>();
+
+        while (query.HasMoreResults)
+        {
+            var response = await query.ReadNextAsync(cancellationToken);
+
+            foreach (var doc in response)
+            {
+                var frontmatter = new AgentSkillFrontmatter(doc.Name, doc.Description);
+                var resources = doc.Resources?.Select(
+                    r => new AgentCodeSkillResource(r.Content, r.Name, r.Description)).ToList();
+
+                skills.Add(new AgentCodeSkill(frontmatter, doc.Instructions)
+                    .AddResources(resources));
+            }
+        }
+
+        return skills;
+    }
+}
+```
+
+Once the custom source is defined, it integrates with the rest of the skills system like any built-in source. It can be used directly with `AgentSkillsProvider`, composed with other sources, or wrapped with decorators for caching and filtering:
+
+```csharp
+// Direct usage
+var cosmosSource = new CosmosDbSkillsSource(cosmosClient);
+var provider = new AgentSkillsProvider(cosmosSource);
+
+// Composed with other sources and wrapped with caching
+var compositeSource = new CompositeAgentSkillsSource([
+    new CachingSkillsSource(new CosmosDbSkillsSource(cosmosClient)),
+    new AgentFileSkillsSource(["./skills"]),
+]);
+var provider = new AgentSkillsProvider(compositeSource);
+
+// Or via the builder (requires registering the source type with the builder)
+var provider = new AgentSkillsProviderBuilder()
+    .AddSource(new CosmosDbSkillsSource(cosmosClient))
+    .AddFileSkills("./skills")
+    .Build();
+```
+
+The custom source returns standard `AgentSkill` instances, so skills from any backend automatically participate in the model-facing tools (`load_skill`, `read_skill_resource`, `run_skill_script`), filtering, deduplication, and caching — no additional integration work is required.
+
 ## Decision Outcome
