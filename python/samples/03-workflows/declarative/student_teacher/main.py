@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """
 Run the student-teacher (MathChat) workflow sample.
@@ -24,13 +23,13 @@ import asyncio
 import os
 from pathlib import Path
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.
 When given a problem:

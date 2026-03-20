@@ -39,11 +39,12 @@ else:
 if TYPE_CHECKING:
     from agent_framework._middleware import MiddlewareTypes
     from agent_framework._tools import FunctionTool
+    from agent_framework_openai._chat_client import OpenAIChatOptions
 
 FoundryAgentOptionsT = TypeVar(
     "FoundryAgentOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="OpenAIChatOptions",  # noqa: F821  # pyright: ignore[reportUndefinedVariable]  # type: ignore[name-defined]
+    default="OpenAIChatOptions",
     covariant=True,
 )
 

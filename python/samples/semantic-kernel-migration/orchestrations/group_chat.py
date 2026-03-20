@@ -130,8 +130,7 @@ class ChatCompletionGroupChatManager(GroupChatManager):
             chat_history,
             settings=PromptExecutionSettings(response_format=BooleanResult),
         )
-        result = BooleanResult.model_validate_json(response.content)
-        return result
+        return BooleanResult.model_validate_json(response.content)
 
     @override
     async def select_next_agent(

@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """Redis Context Provider: Basic usage and agent integration
 
@@ -22,15 +21,15 @@ Run:
 import asyncio
 import os
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.

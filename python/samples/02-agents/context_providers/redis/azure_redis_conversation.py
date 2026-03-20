@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """Azure Managed Redis History Provider with Azure AD Authentication
 
@@ -26,15 +25,14 @@ Environment Variables:
 import asyncio
 import os
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from dotenv import load_dotenv
 from redis.credentials import CredentialProvider
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
 
 
 class AzureCredentialProvider(CredentialProvider):

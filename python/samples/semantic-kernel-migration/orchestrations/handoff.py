@@ -13,7 +13,6 @@
 import asyncio
 import sys
 from collections.abc import AsyncIterable, Iterator, Sequence
-from typing import cast
 
 from agent_framework import (
     Agent,
@@ -24,7 +23,8 @@ from agent_framework.azure import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import (
@@ -75,7 +75,7 @@ class OrderReturnPlugin:
         return f"Return for order {order_id} has been processed successfully (reason: {reason})."
 
 
-def build_semantic_kernel_agents() -> tuple[list[Agent], OrchestrationHandoffs]:
+def build_semantic_kernel_agents() -> tuple[list[SKAgent], OrchestrationHandoffs]:
     credential = AzureCliCredential()
 
     triage = ChatCompletionAgent(
@@ -240,8 +240,7 @@ def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent
 def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
     for event in events:
         if event.type == "output":
-            data = cast(list[Message], event.data)
-            return data
+            return event.data
     return []
 
 

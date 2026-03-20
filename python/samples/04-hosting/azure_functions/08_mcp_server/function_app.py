@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """
 Example showing how to configure AI agents with different trigger configurations.
@@ -25,11 +24,11 @@ Required environment variables:
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
+from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp, FoundryChatClient
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Create Azure OpenAI Chat Client
 # This uses AzureCliCredential for authentication (requires 'az login')

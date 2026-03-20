@@ -1,5 +1,4 @@
 # /// script
-from agent_framework import Agent
 
 # requires-python = ">=3.10"
 # dependencies = [
@@ -14,6 +13,7 @@ from agent_framework import Agent
 
 import asyncio
 
+from agent_framework import Agent
 from dotenv import load_dotenv
 
 # Load environment variables from .env file

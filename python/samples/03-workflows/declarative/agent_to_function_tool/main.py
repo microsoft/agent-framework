@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """Agent to Function Tool sample - demonstrates chaining agent output to function tools.
 
@@ -23,10 +22,14 @@ import os
 from pathlib import Path
 from typing import Any
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
+
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Pricing data for the order calculation
 ITEM_PRICES = {

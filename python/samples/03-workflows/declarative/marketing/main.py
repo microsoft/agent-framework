@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """
 Run the marketing copy workflow sample.
@@ -17,13 +16,13 @@ import asyncio
 import os
 from pathlib import Path
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 ANALYST_INSTRUCTIONS = """You are a product analyst. Analyze the given product and identify:
 1. Key features and benefits

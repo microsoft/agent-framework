@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """Host a single Azure OpenAI-powered agent inside Azure Functions.
 
@@ -11,12 +10,11 @@ Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `FOUNDRY_MODEL` (plus `AZURE_OPEN
 
 from typing import Any
 
+from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
 
 
 # 1. Instantiate the agent with the chosen deployment and instructions.

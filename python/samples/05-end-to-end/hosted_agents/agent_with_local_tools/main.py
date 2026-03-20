@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """
 Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
@@ -12,12 +11,10 @@ import os
 from datetime import datetime
 from typing import Annotated
 
+from agent_framework import Agent
 from agent_framework.azure import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file

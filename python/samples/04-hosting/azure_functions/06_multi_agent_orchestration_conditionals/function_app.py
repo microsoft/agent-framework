@@ -1,5 +1,4 @@
 # Copyright (c) Microsoft. All rights reserved.
-from agent_framework import Agent
 
 """Route email requests through conditional orchestration with two agents.
 
@@ -18,14 +17,14 @@ from collections.abc import Generator, Mapping
 from typing import Any
 
 import azure.functions as func
+from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 logger = logging.getLogger(__name__)
 

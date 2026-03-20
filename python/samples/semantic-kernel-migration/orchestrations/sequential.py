@@ -20,7 +20,8 @@ from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from semantic_kernel.agents import Agent, ChatCompletionAgent, SequentialOrchestration
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, SequentialOrchestration
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import ChatMessageContent
@@ -36,7 +37,7 @@ PROMPT = "Write a tagline for a budget-friendly eBike."
 ######################################################################
 
 
-def build_semantic_kernel_agents() -> list[Agent]:
+def build_semantic_kernel_agents() -> list[SKAgent]:
     credential = AzureCliCredential()
 
     writer_agent = ChatCompletionAgent(
