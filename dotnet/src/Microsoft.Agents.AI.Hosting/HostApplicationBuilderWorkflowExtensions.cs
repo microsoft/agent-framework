@@ -26,7 +26,7 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// <exception cref="InvalidOperationException">
     /// Thrown when the factory delegate returns null or a workflow with a name that doesn't match the expected name.
     /// </exception>
-    public static IHostedWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate, ServiceLifetime lifetime = ServiceLifetime.Singleton)
+    public static IHostedWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate, ServiceLifetime lifetime = ServiceLifetime.Transient)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);

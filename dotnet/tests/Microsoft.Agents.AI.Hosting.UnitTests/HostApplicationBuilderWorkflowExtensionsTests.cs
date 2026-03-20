@@ -63,10 +63,10 @@ public class HostApplicationBuilderWorkflowExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that AddWorkflow registers the workflow as a keyed singleton service by default.
+    /// Verifies that AddWorkflow registers the workflow as a keyed transient service by default.
     /// </summary>
     [Fact]
-    public void AddWorkflow_RegistersKeyedSingleton()
+    public void AddWorkflow_RegistersKeyedTransient()
     {
         var builder = new HostApplicationBuilder();
         const string WorkflowName = "testWorkflow";
@@ -78,7 +78,7 @@ public class HostApplicationBuilderWorkflowExtensionsTests
                  d.ServiceType == typeof(Workflow));
 
         Assert.NotNull(descriptor);
-        Assert.Equal(ServiceLifetime.Singleton, descriptor.Lifetime);
+        Assert.Equal(ServiceLifetime.Transient, descriptor.Lifetime);
     }
 
     /// <summary>
