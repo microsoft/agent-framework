@@ -313,7 +313,7 @@ def _extract_per_evaluator(run: Any) -> dict[str, dict[str, int]]:
     if per_testing_criteria is None:
         return per_eval
     try:
-        items = cast(list[Any], per_testing_criteria) if isinstance(per_testing_criteria, list) else []
+        items = cast(list[Any], per_testing_criteria) if isinstance(per_testing_criteria, list) else []  # type: ignore[redundant-cast]
         for item in items:
             name: str = str(getattr(item, "name", None) or getattr(item, "testing_criteria", "unknown"))
             counts = _extract_result_counts(item)
