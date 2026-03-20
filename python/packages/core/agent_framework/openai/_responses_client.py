@@ -1542,7 +1542,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                     )
                 case "mcp_call":
-                    call_id = item.id
+                    call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
                     contents.append(
                         Content.from_mcp_server_tool_call(
                             call_id=call_id,
