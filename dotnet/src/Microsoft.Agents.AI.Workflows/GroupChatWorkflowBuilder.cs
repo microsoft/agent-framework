@@ -16,6 +16,8 @@ public sealed class GroupChatWorkflowBuilder
 {
     private readonly Func<IReadOnlyList<AIAgent>, GroupChatManager> _managerFactory;
     private readonly HashSet<AIAgent> _participants = new(AIAgentIDEqualityComparer.Instance);
+    private string _name = string.Empty;
+    private string _description = string.Empty;
 
     internal GroupChatWorkflowBuilder(Func<IReadOnlyList<AIAgent>, GroupChatManager> managerFactory) =>
         this._managerFactory = managerFactory;
@@ -43,6 +45,28 @@ public sealed class GroupChatWorkflowBuilder
     }
 
     /// <summary>
+    /// Sets the human-readable name for the workflow.
+    /// </summary>
+    /// <param name="name">The name of the workflow.</param>
+    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
+    public GroupChatWorkflowBuilder WithName(string name)
+    {
+        this._name = name;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the description for the workflow.
+    /// </summary>
+    /// <param name="description">The description of what the workflow does.</param>
+    /// <returns>This instance of the <see cref="GroupChatWorkflowBuilder"/>.</returns>
+    public GroupChatWorkflowBuilder WithDescription(string description)
+    {
+        this._description = description;
+        return this;
+    }
+
+    /// <summary>
     /// Builds a <see cref="Workflow"/> composed of agents that operate via group chat, with the next
     /// agent to process messages selected by the group chat manager.
     /// </summary>
@@ -60,10 +84,20 @@ public sealed class GroupChatWorkflowBuilder
         Dictionary<AIAgent, ExecutorBinding> agentMap = agents.ToDictionary(a => a, a => a.BindAsExecutor(options));
 
         Func<string, string, ValueTask<Executor>> groupChatHostFactory =
-            (id, runId) => new(new GroupChatHost(id, agents, agentMap, this._managerFactory));
+            (id, sessionId) => new(new GroupChatHost(id, agents, agentMap, this._managerFactory));
 
         ExecutorBinding host = groupChatHostFactory.BindExecutor(nameof(GroupChatHost));
         WorkflowBuilder builder = new(host);
+
+        if (!string.IsNullOrEmpty(this._name))
+        {
+            builder = builder.WithName(this._name);
+        }
+
+        if (!string.IsNullOrEmpty(this._description))
+        {
+            builder = builder.WithDescription(this._description);
+        }
 
         foreach (var participant in agentMap.Values)
         {

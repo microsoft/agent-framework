@@ -15,7 +15,11 @@ from agent_framework import (
 )
 from agent_framework.azure import AzureAIAgentClient
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Agent-Level and Run-Level MiddlewareTypes Example
@@ -47,14 +51,16 @@ Agent Middleware Execution Order:
     - Run middleware wraps only the agent for that specific run
     - Each middleware can modify the context before AND after calling next()
 
-    Note: Function and chat middleware (e.g., ``function_logging_middleware``) execute
-    during tool invocation *inside* the agent execution, not in the outer agent-middleware
-    chain shown above. They follow the same ordering principle: agent-level function/chat
-    middleware runs before run-level function/chat middleware.
+    Note: Function middleware executes during tool invocation, and chat middleware
+    executes around each model call inside the agent execution, not in the outer
+    agent-middleware chain shown above. They follow the same ordering principle:
+    agent-level function/chat middleware runs before run-level function/chat middleware.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],

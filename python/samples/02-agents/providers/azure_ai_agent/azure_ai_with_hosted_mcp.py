@@ -6,6 +6,10 @@ from typing import Any
 from agent_framework import AgentResponse, AgentSession, SupportsAgentRun
 from agent_framework.azure import AzureAIAgentClient, AzureAIAgentsProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Hosted MCP Example
@@ -15,7 +19,9 @@ servers, including user approval workflows for function call security.
 """
 
 
-async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", session: "AgentSession") -> AgentResponse:
+async def handle_approvals_with_session(
+    query: str, agent: "SupportsAgentRun", session: "AgentSession"
+) -> AgentResponse:
     """Here we let the session deal with the previous responses, and we just rerun with the approval."""
     from agent_framework import Message
 

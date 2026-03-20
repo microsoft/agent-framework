@@ -14,8 +14,12 @@ internal sealed class HandoffsStartExecutor() : ChatProtocolExecutor(ExecutorId,
 
     private static ChatProtocolExecutorOptions DefaultOptions => new()
     {
-        StringMessageChatRole = ChatRole.User
+        StringMessageChatRole = ChatRole.User,
+        AutoSendTurnToken = false
     };
+
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder) =>
+        base.ConfigureProtocol(protocolBuilder).SendsMessage<HandoffState>();
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
         => context.SendMessageAsync(new HandoffState(new(emitEvents), null, messages), cancellationToken: cancellationToken);

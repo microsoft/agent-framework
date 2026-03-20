@@ -6,7 +6,11 @@ from typing import Annotated
 
 from agent_framework import FunctionInvocationContext, function_middleware, tool
 from agent_framework.openai import OpenAIChatClient
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Runtime Context Delegation Patterns
@@ -285,9 +289,7 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
         await call_next()
 
     @function_middleware
-    async def sms_kwargs_tracker(
-        context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
-    ) -> None:
+    async def sms_kwargs_tracker(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
         sms_agent_kwargs.update(context.kwargs)
         print(f"[SMSAgent] Received runtime context: {list(context.kwargs.keys())}")
         await call_next()

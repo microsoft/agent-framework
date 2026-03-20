@@ -1,0 +1,28 @@
+{
+  "profiles": {
+    "Marketing": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Marketing.yaml\""
+    },
+    "MathChat": {
+      "commandName": "Project",
+      "commandLineArgs": "\"MathChat.yaml\""
+    },
+    "Question": {
+      "commandName": "Project",
+      "commandLineArgs": "\"Question.yaml\""
+    },
+    "Research": {
+      "commandName": "Project",
+      "commandLineArgs": "\"DeepResearch.yaml\""
+    },
+    "ResponseObject": {
+      "commandName": "Project",
+      "commandLineArgs": "\"ResponseObject.yaml\""
+    },
+    "UserInput": {
+      "commandName": "Project",
+      "commandLineArgs": "\"UserInput.yaml\""
+    }
+  }
+}

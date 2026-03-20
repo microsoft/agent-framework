@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Generic, cast
 
 from agent_framework import (
@@ -17,15 +17,14 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
-from azure.core.credentials_async import AsyncTokenCredential
 from pydantic import BaseModel
 
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
-from ._shared import AzureAISettings, from_azure_ai_agent_tools, to_azure_ai_agent_tools
+from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
@@ -93,7 +92,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         agents_client: AgentsClient | None = None,
         *,
         project_endpoint: str | None = None,
-        credential: AsyncTokenCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -106,13 +105,14 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Keyword Args:
             project_endpoint: The Azure AI Project endpoint URL.
                 Can also be set via AZURE_AI_PROJECT_ENDPOINT environment variable.
-            credential: Azure async credential for authentication.
+            credential: Azure credential for authentication. Accepts a TokenCredential,
+                AsyncTokenCredential, or a callable token provider.
                 Required if agents_client is not provided.
             env_file_path: Path to .env file for loading settings.
             env_file_encoding: Encoding of the .env file.
 
         Raises:
-            ServiceInitializationError: If required parameters are missing or invalid.
+            ValueError: If required parameters are missing or invalid.
         """
         self._settings = load_settings(
             AzureAISettings,
@@ -129,15 +129,15 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         else:
             resolved_endpoint = self._settings.get("project_endpoint")
             if not resolved_endpoint:
-                raise ServiceInitializationError(
+                raise ValueError(
                     "Azure AI project endpoint is required. Provide 'project_endpoint' parameter "
                     "or set 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
                 )
             if not credential:
-                raise ServiceInitializationError("Azure credential is required when agents_client is not provided.")
+                raise ValueError("Azure credential is required when agents_client is not provided.")
             self._agents_client = AgentsClient(
                 endpoint=resolved_endpoint,
-                credential=credential,
+                credential=credential,  # type: ignore[arg-type]
                 user_agent=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._should_close_client = True
@@ -198,7 +198,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the created agent.
 
         Raises:
-            ServiceInitializationError: If model deployment name is not available.
+            ValueError: If model deployment name is not available.
 
         Examples:
             .. code-block:: python
@@ -211,7 +211,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """
         resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Model deployment name is required. Provide 'model' parameter "
                 "or set 'AZURE_AI_MODEL_DEPLOYMENT_NAME' environment variable."
             )
@@ -238,13 +238,9 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Local MCP tools (MCPTool) are handled by Agent at runtime, not stored on the Azure agent
         normalized_tools = normalize_tools(tools)
         if normalized_tools:
-            # Only convert non-MCP tools to Azure AI format
-            non_mcp_tools: list[FunctionTool | MutableMapping[str, Any]] = []
-            for normalized_tool in normalized_tools:
-                if isinstance(normalized_tool, MCPTool):
-                    continue
-                if isinstance(normalized_tool, (FunctionTool, MutableMapping)):
-                    non_mcp_tools.append(normalized_tool)
+            # Collect all non-MCP tools for Azure AI agent creation.
+            # to_azure_ai_agent_tools handles FunctionTool, SDK Tool types (FileSearchTool, etc.), and dicts.
+            non_mcp_tools: list[Any] = [t for t in normalized_tools if not isinstance(t, MCPTool)]
             if non_mcp_tools:
                 # Pass run_options to capture tool_resources (e.g., for file search vector stores)
                 run_options: dict[str, Any] = {}
@@ -293,7 +289,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the retrieved agent.
 
         Raises:
-            ServiceInitializationError: If required function tools are not provided.
+            ValueError: If required function tools are not provided.
 
         Examples:
             .. code-block:: python
@@ -343,7 +339,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             Agent: A Agent instance configured with the agent.
 
         Raises:
-            ServiceInitializationError: If required function tools are not provided.
+            ValueError: If required function tools are not provided.
 
         Examples:
             .. code-block:: python
@@ -429,16 +425,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """
         merged: list[ToolTypes] = []
 
-        # Convert hosted tools from agent definition
-        hosted_tools = from_azure_ai_agent_tools(agent_tools)
-        for hosted_tool in hosted_tools:
-            # Skip function tool dicts - they don't have implementations
-            # Skip OpenAPI tool dicts - they're defined on the agent, not needed at runtime
-            if isinstance(hosted_tool, dict):
-                tool_type = hosted_tool.get("type")
-                if tool_type == "function" or tool_type == "openapi":
-                    continue
-            merged.append(hosted_tool)
+        # Hosted tools (file_search, code_interpreter, bing_grounding, openapi, etc.)
+        # are already defined on the server agent and will be read back by the client
+        # at run time via agent_definition.tools. We skip them here to avoid sending
+        # them again at request time (which causes API errors like unknown vector_store_ids).
 
         # Add user-provided function tools and MCP tools
         if provided_tools:
@@ -458,7 +448,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         """Validate that required function tools are provided.
 
         Raises:
-            ServiceInitializationError: If agent has function tools but user
+            ValueError: If agent has function tools but user
                 didn't provide implementations.
         """
         if not agent_tools:
@@ -492,7 +482,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         # Check for missing implementations
         missing = function_tool_names - provided_names
         if missing:
-            raise ServiceInitializationError(
+            raise ValueError(
                 f"Agent has function tools that require implementations: {missing}. "
                 "Provide these functions via the 'tools' parameter."
             )

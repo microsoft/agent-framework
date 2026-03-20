@@ -697,6 +697,26 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
 
+    def test_agent_middleware_pipeline_cache_reuses_matching_middleware(self) -> None:
+        """Test that identical agent middleware sets reuse the cached pipeline."""
+
+        @agent_middleware
+        async def first_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @agent_middleware
+        async def second_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        agent = Agent(client=MockBaseChatClient())
+
+        first_pipeline = agent._get_agent_middleware_pipeline([first_middleware])
+        second_pipeline = agent._get_agent_middleware_pipeline([first_middleware])
+        third_pipeline = agent._get_agent_middleware_pipeline([second_middleware])
+
+        assert first_pipeline is second_pipeline
+        assert third_pipeline is not first_pipeline
+
     async def test_function_middleware_can_access_and_override_custom_kwargs(
         self, chat_client_base: "MockBaseChatClient"
     ) -> None:
@@ -768,6 +788,179 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert modified_kwargs["max_tokens"] == 500
         assert modified_kwargs["new_param"] == "added_by_middleware"
         assert modified_kwargs["custom_param"] == "test_value"
+
+    async def test_run_kwargs_available_in_function_middleware(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test that kwargs passed directly to agent.run() appear in FunctionInvocationContext.kwargs,
+        including complex nested values like dicts."""
+        captured_kwargs: dict[str, Any] = {}
+
+        @function_middleware
+        async def capture_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            captured_kwargs.update(context.kwargs)
+            await call_next()
+
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
+        ]
+
+        agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
+
+        session_metadata = {"tenant": "acme-corp", "region": "us-west"}
+        await agent.run(
+            [Message(role="user", text="Get weather")],
+            user_id="user-456",
+            session_metadata=session_metadata,
+        )
+
+        assert "user_id" in captured_kwargs, f"Expected 'user_id' in kwargs: {captured_kwargs}"
+        assert captured_kwargs["user_id"] == "user-456"
+        assert captured_kwargs["session_metadata"] == {"tenant": "acme-corp", "region": "us-west"}
+
+    async def test_run_kwargs_merged_with_additional_function_arguments(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that explicit additional_function_arguments in options take precedence over run kwargs."""
+        captured_kwargs: dict[str, Any] = {}
+
+        @function_middleware
+        async def capture_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            captured_kwargs.update(context.kwargs)
+            await call_next()
+
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
+        ]
+
+        agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
+
+        await agent.run(
+            [Message(role="user", text="Get weather")],
+            # This kwarg should be overridden by additional_function_arguments
+            user_id="from-kwargs",
+            tenant_id="from-kwargs",
+            options={
+                "additional_function_arguments": {
+                    "user_id": "from-options",
+                    "extra_key": "only-in-options",
+                }
+            },
+        )
+
+        # additional_function_arguments takes precedence for overlapping keys
+        assert captured_kwargs["user_id"] == "from-options"
+        # Non-overlapping kwargs from run() still come through
+        assert captured_kwargs["tenant_id"] == "from-kwargs"
+        # Keys only in additional_function_arguments are present
+        assert captured_kwargs["extra_key"] == "only-in-options"
+
+    async def test_run_kwargs_consistent_across_multiple_tool_calls(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that kwargs are consistent across multiple tool invocations in a single run."""
+        invocation_kwargs: list[dict[str, Any]] = []
+
+        @function_middleware
+        async def capture_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            invocation_kwargs.append(dict(context.kwargs))
+            await call_next()
+
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                            ),
+                            Content.from_function_call(
+                                call_id="call_2", name="sample_tool_function", arguments='{"location": "Portland"}'
+                            ),
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
+        ]
+
+        agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
+
+        await agent.run(
+            [Message(role="user", text="Get weather for both cities")],
+            user_id="user-456",
+            request_id="req-001",
+        )
+
+        assert len(invocation_kwargs) == 2
+        for kw in invocation_kwargs:
+            assert kw["user_id"] == "user-456"
+            assert kw["request_id"] == "req-001"
+
+    async def test_run_without_kwargs_produces_empty_context_kwargs(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that when no kwargs are passed to run(), FunctionInvocationContext.kwargs is empty."""
+        captured_kwargs: dict[str, Any] = {}
+
+        @function_middleware
+        async def capture_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            captured_kwargs.update(context.kwargs)
+            await call_next()
+
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1", name="sample_tool_function", arguments='{"location": "Seattle"}'
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
+        ]
+
+        agent = Agent(client=chat_client_base, middleware=[capture_middleware], tools=[sample_tool_function])
+
+        await agent.run([Message(role="user", text="Get weather")])
+
+        # No runtime kwargs should be present
+        assert "user_id" not in captured_kwargs
 
 
 class TestMiddlewareDynamicRebuild:
@@ -1793,6 +1986,77 @@ class TestChatAgentChatMiddleware:
             "agent_middleware_before",
             "chat_middleware_before",
             "chat_middleware_after",
+            "agent_middleware_after",
+        ]
+
+    async def test_combined_middleware_with_tool_loop(self) -> None:
+        """Test Agent middleware ordering when tool calls trigger multiple chat rounds."""
+        execution_order: list[str] = []
+        chat_round = 0
+        client = MockBaseChatClient()
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_123",
+                                name="sample_tool_function",
+                                arguments='{"location": "Seattle"}',
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Final response")]),
+        ]
+
+        async def tracking_agent_middleware(
+            context: AgentContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("agent_middleware_before")
+            await call_next()
+            execution_order.append("agent_middleware_after")
+
+        async def tracking_chat_middleware(
+            context: ChatContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal chat_round
+            chat_round += 1
+            execution_order.append(f"chat_middleware_before_{chat_round}")
+            await call_next()
+            execution_order.append(f"chat_middleware_after_{chat_round}")
+
+        async def tracking_function_middleware(
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await call_next()
+            execution_order.append("function_middleware_after")
+
+        agent = Agent(
+            client=client,
+            middleware=[tracking_chat_middleware, tracking_function_middleware, tracking_agent_middleware],
+            tools=[sample_tool_function],
+        )
+
+        response = await agent.run([Message(role="user", text="test")])
+
+        assert response is not None
+        assert client.call_count == 2
+        assert response.messages[-1].text == "Final response"
+        assert execution_order == [
+            "agent_middleware_before",
+            "chat_middleware_before_1",
+            "chat_middleware_after_1",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before_2",
+            "chat_middleware_after_2",
             "agent_middleware_after",
         ]
 

@@ -31,6 +31,29 @@ from .models._discovery_models import Deployment, DeploymentConfig, DiscoveryRes
 
 logger = logging.getLogger(__name__)
 
+
+def _extract_error_details(body: object) -> tuple[str | None, str | None, str | None]:
+    """Extract typed OpenAI-style error payload fields."""
+    if not isinstance(body, dict):
+        return None, None, None
+
+    body_dict = cast(dict[str, object], body)
+    error_obj = body_dict.get("error")
+    if not isinstance(error_obj, dict):
+        return None, None, None
+
+    error_dict = cast(dict[str, object], error_obj)
+    message = error_dict.get("message")
+    error_type = error_dict.get("type")
+    code = error_dict.get("code")
+
+    return (
+        message if isinstance(message, str) else None,
+        error_type if isinstance(error_type, str) else None,
+        code if isinstance(code, str) else None,
+    )
+
+
 # Get package version
 try:
     __version__ = importlib.metadata.version("agent-framework-devui")
@@ -82,6 +105,10 @@ class DevServer:
         self._app: FastAPI | None = None
         self._pending_entities: list[Any] | None = None
         self._running_tasks: dict[str, asyncio.Task[Any]] = {}  # Track running response tasks for cancellation
+
+    def set_pending_entities(self, entities: list[Any]) -> None:
+        """Set in-memory entities to register on startup."""
+        self._pending_entities = entities
 
     def _is_dev_mode(self) -> bool:
         """Check if running in developer mode.
@@ -378,6 +405,8 @@ class DevServer:
                 # Token valid, proceed
                 return await call_next(request)
 
+            _ = auth_middleware
+
         self._register_routes(app)
         self._mount_ui(app)
 
@@ -452,7 +481,7 @@ class DevServer:
                 if entity_info.type == "workflow" and entity_obj:
                     # Entity object already loaded by load_entity() above
                     # Get workflow structure
-                    workflow_dump = None
+                    workflow_dump: dict[str, Any] | str | None = None
                     if hasattr(entity_obj, "to_dict") and callable(getattr(entity_obj, "to_dict", None)):
                         try:
                             workflow_dump = entity_obj.to_dict()  # type: ignore[attr-defined]
@@ -475,7 +504,11 @@ class DevServer:
                                 except Exception:
                                     workflow_dump = raw_dump
                                 else:
-                                    workflow_dump = parsed_dump if isinstance(parsed_dump, dict) else raw_dump
+                                    if isinstance(parsed_dump, dict):
+                                        parsed_dump_dict = cast(dict[str, Any], parsed_dump)
+                                        workflow_dump = {str(k): v for k, v in parsed_dump_dict.items()}
+                                    else:
+                                        workflow_dump = raw_dump
                             else:
                                 workflow_dump = raw_dump
                     elif hasattr(entity_obj, "__dict__"):
@@ -838,34 +871,31 @@ class DevServer:
                     except AuthenticationError as e:
                         # 401 - Invalid API key or authentication issue
                         logger.error(f"OpenAI authentication error creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "authentication_error"),
-                            code=error_data.get("code", "invalid_api_key"),
+                            message=message or str(e),
+                            type=error_type or "authentication_error",
+                            code=code or "invalid_api_key",
                         )
                         return JSONResponse(status_code=401, content=error.to_dict())
                     except PermissionDeniedError as e:
                         # 403 - Permission denied
                         logger.error(f"OpenAI permission denied creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "permission_denied"),
-                            code=error_data.get("code", "insufficient_permissions"),
+                            message=message or str(e),
+                            type=error_type or "permission_denied",
+                            code=code or "insufficient_permissions",
                         )
                         return JSONResponse(status_code=403, content=error.to_dict())
                     except APIStatusError as e:
                         # Other OpenAI API errors (rate limit, etc.)
                         logger.error(f"OpenAI API error creating conversation: {e}")
-                        error_body = e.body if hasattr(e, "body") else {}
-                        error_data = error_body.get("error", {}) if isinstance(error_body, dict) else {}
+                        message, error_type, code = _extract_error_details(e.body if hasattr(e, "body") else None)
                         error = OpenAIError.create(
-                            message=error_data.get("message", str(e)),
-                            type=error_data.get("type", "api_error"),
-                            code=error_data.get("code", "unknown_error"),
+                            message=message or str(e),
+                            type=error_type or "api_error",
+                            code=code or "unknown_error",
                         )
                         return JSONResponse(
                             status_code=e.status_code if hasattr(e, "status_code") else 500, content=error.to_dict()
@@ -902,7 +932,7 @@ class DevServer:
                 executor = await self._ensure_executor()
 
                 # Build filter criteria
-                filters = {}
+                filters: dict[str, str] = {}
                 if agent_id:
                     filters["agent_id"] = agent_id
                 if entity_id:
@@ -997,15 +1027,16 @@ class DevServer:
                     conversation_id, limit=limit, after=after, order=order
                 )
                 # Handle both Pydantic models and dicts (some stores return raw dicts)
-                serialized_items = []
+                serialized_items: list[dict[str, Any]] = []
                 for item in items:
                     if hasattr(item, "model_dump"):
                         serialized_items.append(item.model_dump())
                     elif isinstance(item, dict):
-                        serialized_items.append(item)
+                        item_dict = cast(dict[str, Any], item)
+                        serialized_items.append({str(k): v for k, v in item_dict.items()})
                     else:
                         logger.warning(f"Unexpected item type: {type(item)}, converting to dict")
-                        serialized_items.append(dict(item))
+                        serialized_items.append({str(k): v for k, v in dict(item).items()})
 
                 # Get stored traces for context inspection (DevUI extension)
                 traces = executor.conversation_store.get_traces(conversation_id)
@@ -1038,9 +1069,14 @@ class DevServer:
                 if not item:
                     raise HTTPException(status_code=404, detail="Item not found")
                 # Handle both Pydantic models and dicts
-                result: dict[str, Any] = (
-                    item.model_dump() if hasattr(item, "model_dump") else cast(dict[str, Any], item)
-                )
+                result: dict[str, Any]
+                if hasattr(item, "model_dump"):
+                    result = item.model_dump()
+                elif isinstance(item, dict):
+                    item_dict = cast(dict[str, Any], item)
+                    result = {str(k): v for k, v in item_dict.items()}
+                else:
+                    result = {"value": item}
                 return result
             except HTTPException:
                 raise
@@ -1085,16 +1121,42 @@ class DevServer:
         # Checkpoints are exposed as conversation items with type="checkpoint"
         # ============================================================================
 
+        registered_route_handlers = (
+            health_check,
+            get_meta,
+            discover_entities,
+            get_entity_info,
+            reload_entity,
+            create_deployment,
+            list_deployments,
+            get_deployment,
+            delete_deployment,
+            deploy_entity,
+            create_response,
+            cancel_response,
+            create_conversation,
+            list_conversations,
+            retrieve_conversation,
+            update_conversation,
+            delete_conversation,
+            create_conversation_items,
+            list_conversation_items,
+            retrieve_conversation_item,
+            delete_conversation_item,
+        )
+        _ = registered_route_handlers
+
     async def _stream_execution(
         self, executor: AgentFrameworkExecutor, request: AgentFrameworkRequest
     ) -> AsyncGenerator[str]:
         """Stream execution directly through executor."""
         try:
             # Collect events for final response.completed event
-            events = []
+            events: list[Any] = []
 
             # Get conversation_id for trace storage
-            conversation_id = request._get_conversation_id()
+            conversation_getter = getattr(request, "_get_conversation_id", None)
+            conversation_id = conversation_getter() if callable(conversation_getter) else None
 
             # Stream all events
             async for event in executor.execute_streaming(request):
@@ -1104,7 +1166,7 @@ class DevServer:
                 if conversation_id and hasattr(event, "type") and event.type == "response.trace.completed":
                     try:
                         trace_data = event.data if hasattr(event, "data") else None
-                        if trace_data:
+                        if trace_data and isinstance(conversation_id, str):
                             executor.conversation_store.add_trace(conversation_id, trace_data)
                     except Exception as e:
                         logger.debug(f"Failed to store trace event: {e}")
@@ -1136,8 +1198,9 @@ class DevServer:
             # We need to increment from that
             last_seq = 0
             for event in reversed(events):
-                if hasattr(event, "sequence_number") and event.sequence_number is not None:
-                    last_seq = event.sequence_number
+                sequence_number = getattr(event, "sequence_number", None)
+                if isinstance(sequence_number, int):
+                    last_seq = sequence_number
                     break
 
             completed_event = ResponseCompletedEvent(

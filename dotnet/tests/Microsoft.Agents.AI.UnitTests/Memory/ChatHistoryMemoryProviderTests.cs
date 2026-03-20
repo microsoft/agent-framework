@@ -56,7 +56,7 @@ public class ChatHistoryMemoryProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -66,11 +66,12 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }));
 
         // Assert
-        Assert.Equal("ChatHistoryMemoryProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("ChatHistoryMemoryProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new ChatHistoryMemoryProvider(
@@ -81,7 +82,8 @@ public class ChatHistoryMemoryProviderTests
             new ChatHistoryMemoryProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Fact]
@@ -452,6 +454,77 @@ public class ChatHistoryMemoryProviderTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task InvokedAsync_CombinedFilterCanBeCompiled_WhenMultipleScopeFiltersProvidedAsync()
+    {
+        // Arrange
+        // This test reproduces a bug where combining multiple scope filters
+        // (e.g. userId + sessionId) produces an expression tree with dangling
+        // ParameterExpression references that fails at compile time.
+        ChatHistoryMemoryProviderOptions providerOptions = new()
+        {
+            SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke,
+            MaxResults = 2,
+            ContextPrompt = "Here is the relevant chat history:\n"
+        };
+
+        ChatHistoryMemoryProviderScope searchScope = new()
+        {
+            ApplicationId = "app1",
+            AgentId = "agent1",
+            SessionId = "session1",
+            UserId = "user1"
+        };
+
+        System.Linq.Expressions.Expression<Func<Dictionary<string, object?>, bool>>? capturedFilter = null;
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((string query, int maxResults, VectorSearchOptions<Dictionary<string, object?>> options, CancellationToken ct) =>
+                capturedFilter = options.Filter)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        ChatHistoryMemoryProvider provider = new(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(searchScope, searchScope),
+            options: providerOptions);
+
+        ChatMessage requestMsg = new(ChatRole.User, "requesting relevant history");
+        AIContextProvider.InvokingContext invokingContext = new(s_mockAgent, new TestAgentSession(), new AIContext { Messages = new List<ChatMessage> { requestMsg } });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert - The filter must be compilable and executable without expression tree scoping errors
+        Assert.NotNull(capturedFilter);
+        Func<Dictionary<string, object?>, bool> compiledFilter = capturedFilter!.Compile();
+
+        Dictionary<string, object?> matchingRecord = new()
+        {
+            ["ApplicationId"] = "app1",
+            ["AgentId"] = "agent1",
+            ["SessionId"] = "session1",
+            ["UserId"] = "user1"
+        };
+
+        Dictionary<string, object?> nonMatchingRecord = new()
+        {
+            ["ApplicationId"] = "app1",
+            ["AgentId"] = "agent1",
+            ["SessionId"] = "other-session",
+            ["UserId"] = "user1"
+        };
+
+        Assert.True(compiledFilter(matchingRecord));
+        Assert.False(compiledFilter(nonMatchingRecord));
+    }
+
     [Theory]
     [InlineData(false, false, 2)]
     [InlineData(true, false, 2)]
@@ -687,7 +760,7 @@ public class ChatHistoryMemoryProviderTests
             _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
             options: new ChatHistoryMemoryProviderOptions
             {
-                StorageInputMessageFilter = messages => messages // No filtering - store everything
+                StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
             });
 
         var requestMessages = new List<ChatMessage>
@@ -706,6 +779,147 @@ public class ChatHistoryMemoryProviderTests
         Assert.Equal("External message", stored[0]["Content"]);
         Assert.Equal("From history", stored[1]["Content"]);
         Assert.Equal("Response", stored[2]["Content"]);
+    }
+
+    #endregion
+
+    #region MessageAIContextProvider.InvokingAsync Tests
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_SearchesAndReturnsMergedMessagesAsync()
+    {
+        // Arrange
+        var storedItems = new List<VectorSearchResult<Dictionary<string, object?>>>
+        {
+            new(
+                new Dictionary<string, object?>
+                {
+                    ["MessageId"] = "msg-1",
+                    ["Content"] = "Previous message",
+                    ["Role"] = ChatRole.User.ToString(),
+                    ["CreatedAt"] = "2023-01-01T00:00:00.0000000+00:00"
+                },
+                0.9f)
+        };
+
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(storedItems));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "What was discussed?");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert - input message + search result message, with stamping
+        Assert.Equal(2, messages.Count);
+        Assert.Equal("What was discussed?", messages[0].Text);
+        Assert.Contains("Previous message", messages[1].Text);
+        Assert.Equal(AgentRequestMessageSourceType.AIContextProvider, messages[1].GetAgentRequestMessageSourceType());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_OnDemand_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.OnDemandFunctionCalling
+            });
+
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [new ChatMessage(ChatRole.User, "Q?")]);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.InvokingAsync(context).AsTask());
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_NoResults_ReturnsOnlyInputMessagesAsync()
+    {
+        // Arrange
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var inputMsg = new ChatMessage(ChatRole.User, "Hello");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [inputMsg]);
+
+        // Act
+        var messages = (await provider.InvokingAsync(context)).ToList();
+
+        // Assert
+        Assert.Single(messages);
+        Assert.Equal("Hello", messages[0].Text);
+    }
+
+    [Fact]
+    public async Task MessageInvokingAsync_BeforeAIInvoke_DefaultFilter_ExcludesNonExternalMessagesAsync()
+    {
+        // Arrange
+        string? capturedQuery = null;
+        this._vectorStoreCollectionMock
+            .Setup(c => c.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<VectorSearchOptions<Dictionary<string, object?>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, int, VectorSearchOptions<Dictionary<string, object?>>, CancellationToken>((query, _, _, _) => capturedQuery = query)
+            .Returns(ToAsyncEnumerableAsync(new List<VectorSearchResult<Dictionary<string, object?>>>()));
+
+        var provider = new ChatHistoryMemoryProvider(
+            this._vectorStoreMock.Object,
+            TestCollectionName,
+            1,
+            _ => new ChatHistoryMemoryProvider.State(new ChatHistoryMemoryProviderScope { UserId = "UID" }),
+            options: new ChatHistoryMemoryProviderOptions
+            {
+                SearchTime = ChatHistoryMemoryProviderOptions.SearchBehavior.BeforeAIInvoke
+            });
+
+        var externalMsg = new ChatMessage(ChatRole.User, "External message");
+        var historyMsg = new ChatMessage(ChatRole.System, "From history")
+            .WithAgentRequestMessageSource(AgentRequestMessageSourceType.ChatHistory, "src");
+        var context = new MessageAIContextProvider.InvokingContext(s_mockAgent, new TestAgentSession(), [externalMsg, historyMsg]);
+
+        // Act
+        await provider.InvokingAsync(context);
+
+        // Assert - Only External message used for search query
+        Assert.Equal("External message", capturedQuery);
     }
 
     #endregion

@@ -17,7 +17,9 @@ from agent_framework.github import GitHubCopilotAgent
 from pydantic import Field
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -118,8 +120,8 @@ async def example_with_existing_session_id() -> None:
         )
 
         async with agent2:
-            # Create session with existing session ID
-            session = agent2.create_session(service_session_id=existing_session_id)
+            # Get session with existing session ID
+            session = agent2.get_session(service_session_id=existing_session_id)
 
             query2 = "What was the last city I asked about?"
             print(f"User: {query2}")

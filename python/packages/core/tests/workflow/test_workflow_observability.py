@@ -109,7 +109,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
             {
                 "id": "test-workflow-123",
                 "max_iterations": 100,
-                "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',
+                "model_dump_json": lambda self: '{"id": "test-workflow-123", "type": "mock"}',  # pyright: ignore[reportUnknownLambdaType]
             },
         )(),
     )
@@ -122,7 +122,7 @@ async def test_span_creation_and_attributes(span_exporter: InMemorySpanExporter)
         },
     ) as workflow_span:
         workflow_span.add_event(OtelAttr.WORKFLOW_STARTED)
-        sending_attributes = {
+        sending_attributes: dict[str, str | int] = {
             OtelAttr.MESSAGE_TYPE: "ResponseMessage",
             OtelAttr.MESSAGE_DESTINATION_EXECUTOR_ID: "target-789",
         }
@@ -231,7 +231,7 @@ async def test_trace_context_handling(span_exporter: InMemorySpanExporter) -> No
 
 @pytest.mark.parametrize("enable_instrumentation", [False], indirect=True)
 async def test_trace_context_disabled_when_tracing_disabled(
-    enable_instrumentation, span_exporter: InMemorySpanExporter
+    enable_instrumentation: bool, span_exporter: InMemorySpanExporter
 ) -> None:
     """Test that no trace context is added when tracing is disabled."""
     # Tracing should be disabled by default
@@ -313,7 +313,7 @@ async def test_end_to_end_workflow_tracing(span_exporter: InMemorySpanExporter) 
     span_exporter.clear()
 
     # Run workflow (this should create run spans)
-    events = []
+    events: list[Any] = []
     async for event in workflow.run("test input", stream=True):
         events.append(event)
 

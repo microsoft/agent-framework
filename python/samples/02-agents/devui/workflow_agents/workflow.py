@@ -19,7 +19,11 @@ from typing import Any
 
 from agent_framework import AgentExecutorResponse, WorkflowBuilder
 from agent_framework.azure import AzureOpenAIChatClient
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 # Define structured output for review results

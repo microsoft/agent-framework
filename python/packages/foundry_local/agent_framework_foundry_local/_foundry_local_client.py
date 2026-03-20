@@ -14,7 +14,6 @@ from agent_framework import (
     FunctionInvocationLayer,
 )
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai._chat_client import RawOpenAIChatClient
 from foundry_local import FoundryLocalManager
@@ -118,9 +117,9 @@ FoundryLocalChatOptionsT = TypeVar(
 class FoundryLocalSettings(TypedDict, total=False):
     """Foundry local model settings.
 
-    The settings are first loaded from environment variables with the prefix 'FOUNDRY_LOCAL_'.
-    If the environment variables are not found, the settings can be loaded from a .env file
-    with the encoding 'utf-8'.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'FOUNDRY_LOCAL_'.
 
     Keys:
         model_id: The name of the model deployment to use.
@@ -131,8 +130,8 @@ class FoundryLocalSettings(TypedDict, total=False):
 
 
 class FoundryLocalClient(
-    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     FunctionInvocationLayer[FoundryLocalChatOptionsT],
+    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     ChatTelemetryLayer[FoundryLocalChatOptionsT],
     RawOpenAIChatClient[FoundryLocalChatOptionsT],
     Generic[FoundryLocalChatOptionsT],
@@ -147,11 +146,11 @@ class FoundryLocalClient(
         timeout: float | None = None,
         prepare_model: bool = True,
         device: DeviceType | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str = "utf-8",
-        **kwargs: Any,
     ) -> None:
         """Initialize a FoundryLocalClient.
 
@@ -170,12 +169,11 @@ class FoundryLocalClient(
                 The device is used to select the appropriate model variant.
                 If not provided, the default device for your system will be used.
                 The values are in the foundry_local.models.DeviceType enum.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: If provided, the .env settings are read from this file path location.
             env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
-            kwargs: Additional keyword arguments, are passed to the RawOpenAIChatClient.
-                This can include middleware and additional properties.
 
         Examples:
 
@@ -236,7 +234,7 @@ class FoundryLocalClient(
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         Raises:
-            ServiceInitializationError: If the specified model ID or alias is not found.
+            ValueError: If the specified model ID or alias is not found.
                 Sometimes a model might be available but if you have specified a device
                 type that is not supported by the model, it will not be found.
 
@@ -249,21 +247,22 @@ class FoundryLocalClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        model_id_setting: str = settings["model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=settings["model_id"],
+            alias_or_model_id=model_id_setting,
             device=device,
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{settings['model_id']}:{device.value}' not found in Foundry Local."
+                f"Model with ID or alias '{model_id_setting}:{device.value}' not found in Foundry Local."
                 if device
                 else (
-                    f"Model with ID or alias '{settings['model_id']}' for your current device "
-                    "not found in Foundry Local."
+                    f"Model with ID or alias '{model_id_setting}' for your current device not found in Foundry Local."
                 )
             )
-            raise ServiceInitializationError(message)
+            raise ValueError(message)
         if prepare_model:
             manager.download_model(alias_or_model_id=model_info.id, device=device)
             manager.load_model(alias_or_model_id=model_info.id, device=device)
@@ -271,8 +270,8 @@ class FoundryLocalClient(
         super().__init__(
             model_id=model_info.id,
             client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self.manager = manager

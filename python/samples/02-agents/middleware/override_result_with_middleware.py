@@ -2,7 +2,7 @@
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, Awaitable, Callable
 from random import randint
 from typing import Annotated
 
@@ -13,13 +13,17 @@ from agent_framework import (
     ChatContext,
     ChatResponse,
     ChatResponseUpdate,
+    Content,
     Message,
     ResponseStream,
-    Role,
     tool,
 )
 from agent_framework.openai import OpenAIResponsesClient
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Result Override with MiddlewareTypes (Regular and Streaming)
@@ -39,7 +43,9 @@ it creates a custom async generator that yields the override message in chunks.
 """
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
+# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -66,22 +72,20 @@ async def weather_override_middleware(context: ChatContext, call_next: Callable[
         ]
 
         if context.stream and isinstance(context.result, ResponseStream):
-            index = {"value": 0}
 
-            def _update_hook(update: ChatResponseUpdate) -> ChatResponseUpdate:
-                for content in update.contents or []:
-                    if not content.text:
-                        continue
-                    content.text = f"Weather Advisory: [{index['value']}] {content.text}"
-                    index["value"] += 1
-                return update
+            async def _override_stream() -> AsyncIterable[ChatResponseUpdate]:
+                for i, chunk_text in enumerate(chunks):
+                    yield ChatResponseUpdate(
+                        contents=[Content.from_text(text=f"Weather Advisory: [{i}] {chunk_text}")],
+                        role="assistant",
+                    )
 
-            context.result.with_transform_hook(_update_hook)
+            context.result = ResponseStream(_override_stream())
         else:
             # For non-streaming: just replace with a new message
             current_text = context.result.text if isinstance(context.result, ChatResponse) else ""
             custom_message = f"Weather Advisory: [0] {''.join(chunks)} Original message was: {current_text}"
-            context.result = ChatResponse(messages=[Message(role=Role.ASSISTANT, text=custom_message)])
+            context.result = ChatResponse(messages=[Message(role="assistant", text=custom_message)])
 
 
 async def validate_weather_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -96,12 +100,12 @@ async def validate_weather_middleware(context: ChatContext, call_next: Callable[
     if context.stream and isinstance(context.result, ResponseStream):
 
         def _append_validation_note(response: ChatResponse) -> ChatResponse:
-            response.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
+            response.messages.append(Message(role="assistant", text=validation_note))
             return response
 
         context.result.with_finalizer(_append_validation_note)
     elif isinstance(context.result, ChatResponse):
-        context.result.messages.append(Message(role=Role.ASSISTANT, text=validation_note))
+        context.result.messages.append(Message(role="assistant", text=validation_note))
 
 
 async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -154,7 +158,7 @@ async def agent_cleanup_middleware(context: AgentContext, call_next: Callable[[]
         if not found_validation:
             raise RuntimeError("Expected validation note not found in agent response.")
 
-        cleaned_messages.append(Message(role=Role.ASSISTANT, text=" Agent: OK"))
+        cleaned_messages.append(Message(role="assistant", text=" Agent: OK"))
         response.messages = cleaned_messages
         return response
 

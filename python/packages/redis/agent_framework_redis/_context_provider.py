@@ -12,18 +12,17 @@ import json
 import sys
 from functools import reduce
 from operator import and_
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import numpy as np
 from agent_framework import Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework.exceptions import (
     AgentException,
-    ServiceInitializationError,
-    ServiceInvalidRequestError,
+    IntegrationInvalidRequestException,
 )
 from redisvl.index import AsyncSearchIndex
-from redisvl.query import HybridQuery, TextQuery
+from redisvl.query import AggregateHybridQuery, TextQuery
 from redisvl.query.filter import FilterExpression, Tag
 from redisvl.utils.token_escaper import TokenEscaper
 from redisvl.utils.vectorize import BaseVectorizer
@@ -108,9 +107,10 @@ class RedisContextProvider(BaseContextProvider):
         self._token_escaper: TokenEscaper = TokenEscaper()
         self._index_initialized: bool = False
         self._schema_dict: dict[str, Any] | None = None
-        self.redis_index = redis_index or AsyncSearchIndex.from_dict(
+        index = redis_index or AsyncSearchIndex.from_dict(  # pyright: ignore[reportUnknownMemberType]
             self.schema_dict, redis_url=self.redis_url, validate_on_load=True
         )
+        self.redis_index: Any = index
 
     # -- Hooks pattern ---------------------------------------------------------
 
@@ -129,7 +129,7 @@ class RedisContextProvider(BaseContextProvider):
         if not input_text.strip():
             return
 
-        memories = await self._redis_search(text=input_text, session_id=context.session_id)
+        memories = await self._redis_search(text=input_text)
         line_separated_memories = "\n".join(
             str(memory.get("content", "")) for memory in memories if memory.get("content")
         )
@@ -190,7 +190,7 @@ class RedisContextProvider(BaseContextProvider):
 
     def _build_filter_from_dict(self, filters: dict[str, str | None]) -> Any | None:
         """Builds a combined filter expression from simple equality tags."""
-        parts = [Tag(k) == v for k, v in filters.items() if v]
+        parts: list[FilterExpression] = [Tag(k) == v for k, v in filters.items() if v]
         return reduce(and_, parts) if parts else None
 
     def _build_schema_dict(
@@ -279,13 +279,15 @@ class RedisContextProvider(BaseContextProvider):
                     sig["fields"][name] = {"type": ftype}
             return sig
 
-        existing_index = await AsyncSearchIndex.from_existing(self.index_name, redis_url=self.redis_url)
+        existing_index: Any = await AsyncSearchIndex.from_existing(  # pyright: ignore[reportUnknownMemberType]
+            self.index_name, redis_url=self.redis_url
+        )
         existing_schema = existing_index.schema.to_dict()
         current_schema = self.schema_dict
         existing_sig = _schema_signature(existing_schema)
         current_sig = _schema_signature(current_schema)
         if existing_sig != current_sig:
-            raise ServiceInitializationError(
+            raise ValueError(
                 "Existing Redis index schema is incompatible with the current configuration.\n"
                 f"Existing (significant): {json.dumps(existing_sig, indent=2, sort_keys=True)}\n"
                 f"Current  (significant): {json.dumps(current_sig, indent=2, sort_keys=True)}\n"
@@ -313,14 +315,16 @@ class RedisContextProvider(BaseContextProvider):
             d.setdefault("thread_id", session_id)
             d.setdefault("conversation_id", session_id)
             if "content" not in d:
-                raise ServiceInvalidRequestError("add() requires a 'content' field in data")
+                raise IntegrationInvalidRequestException("add() requires a 'content' field in data")
             if self.vector_field_name:
                 d.setdefault(self.vector_field_name, None)
             prepared.append(d)
 
         if self.redis_vectorizer and self.vector_field_name:
             text_list = [d["content"] for d in prepared]
-            embeddings = await self.redis_vectorizer.aembed_many(text_list, batch_size=len(text_list))
+            embeddings = await self.redis_vectorizer.aembed_many(  # pyright: ignore[reportUnknownMemberType]
+                text_list, batch_size=len(text_list)
+            )
             for i, d in enumerate(prepared):
                 vec = np.asarray(embeddings[i], dtype=np.float32).tobytes()
                 field_name: str = self.vector_field_name
@@ -345,7 +349,7 @@ class RedisContextProvider(BaseContextProvider):
 
         q = (text or "").strip()
         if not q:
-            raise ServiceInvalidRequestError("text_search() requires non-empty text")
+            raise IntegrationInvalidRequestException("text_search() requires non-empty text")
         num_results = max(int(num_results or 10), 1)
 
         combined_filter = self._build_filter_from_dict({
@@ -366,8 +370,8 @@ class RedisContextProvider(BaseContextProvider):
 
         try:
             if self.redis_vectorizer and self.vector_field_name:
-                vector = await self.redis_vectorizer.aembed(q)
-                query = HybridQuery(
+                vector = await self.redis_vectorizer.aembed(q)  # pyright: ignore[reportUnknownMemberType]
+                query = AggregateHybridQuery(
                     text=q,
                     text_field_name="content",
                     vector=vector,
@@ -375,13 +379,12 @@ class RedisContextProvider(BaseContextProvider):
                     text_scorer=text_scorer,
                     filter_expression=combined_filter,
                     alpha=alpha,
-                    dtype=self.redis_vectorizer.dtype,
+                    dtype=self.redis_vectorizer.dtype,  # pyright: ignore[reportUnknownMemberType]
                     num_results=num_results,
                     return_fields=return_fields,
                     stopwords=None,
                 )
-                hybrid_results = await self.redis_index.query(query)
-                return cast(list[dict[str, Any]], hybrid_results)
+                return await self.redis_index.query(query)  # type: ignore[no-any-return]
             query = TextQuery(
                 text=q,
                 text_field_name="content",
@@ -391,17 +394,14 @@ class RedisContextProvider(BaseContextProvider):
                 return_fields=return_fields,
                 stopwords=None,
             )
-            text_results = await self.redis_index.query(query)
-            return cast(list[dict[str, Any]], text_results)
+            return await self.redis_index.query(query)  # type: ignore[no-any-return]
         except Exception as exc:  # pragma: no cover
-            raise ServiceInvalidRequestError(f"Redis text search failed: {exc}") from exc
+            raise IntegrationInvalidRequestException(f"Redis text search failed: {exc}") from exc
 
     def _validate_filters(self) -> None:
         """Validates that at least one filter is provided."""
         if not self.agent_id and not self.user_id and not self.application_id:
-            raise ServiceInitializationError(
-                "At least one of the filters: agent_id, user_id, or application_id is required."
-            )
+            raise ValueError("At least one of the filters: agent_id, user_id, or application_id is required.")
 
     async def search_all(self, page_size: int = 200) -> list[dict[str, Any]]:
         """Returns all documents in the index."""

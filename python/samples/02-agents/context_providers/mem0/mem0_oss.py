@@ -7,11 +7,15 @@ from agent_framework import tool
 from agent_framework.azure import AzureAIAgentClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from mem0 import AsyncMemory
 
+# Load environment variables from .env file
+load_dotenv()
 
-# NOTE: approval_mode="never_require" is for sample brevity.
-# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
+
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
+# see samples/02-agents/tools/function_tool_with_approval.py
 # and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def retrieve_company_report(company_code: str, detailed: bool) -> str:
@@ -27,6 +31,7 @@ def retrieve_company_report(company_code: str, detailed: bool) -> str:
 
 async def main() -> None:
     """Example of memory usage with local Mem0 OSS context provider."""
+
     print("=== Mem0 Context Provider Example ===")
 
     # Each record in Mem0 should be associated with agent_id or user_id or application_id or thread_id.

@@ -6,7 +6,7 @@ import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
-from typing import Any, ClassVar, Union
+from typing import Any, ClassVar, Union, cast
 
 import openai
 from openai import (
@@ -26,7 +26,6 @@ from .._serialization import SerializationMixin
 from .._settings import SecretString
 from .._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from .._tools import FunctionTool
-from ..exceptions import ServiceInitializationError
 
 logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
@@ -56,20 +55,20 @@ def _check_openai_version_for_callable_api_key() -> None:
     """Check if OpenAI version supports callable API keys.
 
     Callable API keys require OpenAI >= 1.106.0.
-    If the version is too old, raise a ServiceInitializationError with helpful message.
+    If the version is too old, raise a ValueError with helpful message.
     """
     try:
         current_version = parse(openai.__version__)
         min_required_version = parse("1.106.0")
 
         if current_version < min_required_version:
-            raise ServiceInitializationError(
+            raise ValueError(
                 f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
                 f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
                 f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=1.0.0 "
                 f"to allow newer OpenAI versions."
             )
-    except ServiceInitializationError:
+    except ValueError:
         raise  # Re-raise our own exception
     except Exception as e:
         logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
@@ -78,10 +77,9 @@ def _check_openai_version_for_callable_api_key() -> None:
 class OpenAISettings(TypedDict, total=False):
     """OpenAI environment settings.
 
-    The settings are first loaded from environment variables with the prefix 'OPENAI_'.
-    If the environment variables are not found, the settings can be loaded from a .env file with the
-    encoding 'utf-8'. If the settings are not found in the .env file, the settings are ignored;
-    however, validation will fail alerting that the settings are missing.
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    'OPENAI_'. If settings are missing after resolution, validation will fail.
 
     Keyword Args:
         api_key: OpenAI API key, see https://platform.openai.com/account/api-keys.
@@ -94,6 +92,8 @@ class OpenAISettings(TypedDict, total=False):
             Can be set via environment variable OPENAI_CHAT_MODEL_ID.
         responses_model_id: The OpenAI responses model ID to use, for example, gpt-4o or o1.
             Can be set via environment variable OPENAI_RESPONSES_MODEL_ID.
+        embedding_model_id: The OpenAI embedding model ID to use, for example, text-embedding-3-small.
+            Can be set via environment variable OPENAI_EMBEDDING_MODEL_ID.
 
     Examples:
         .. code-block:: python
@@ -117,6 +117,7 @@ class OpenAISettings(TypedDict, total=False):
     org_id: str | None
     chat_model_id: str | None
     responses_model_id: str | None
+    embedding_model_id: str | None
 
 
 class OpenAIBase(SerializationMixin):
@@ -173,7 +174,7 @@ class OpenAIBase(SerializationMixin):
         """Ensure OpenAI client is initialized."""
         await self._initialize_client()
         if self.client is None:
-            raise ServiceInitializationError("OpenAI client is not initialized")
+            raise RuntimeError("OpenAI client is not initialized")
 
         return self.client
 
@@ -248,7 +249,7 @@ class OpenAIConfigMixin(OpenAIBase):
 
         if not client:
             if not api_key:
-                raise ServiceInitializationError("Please provide an api_key")
+                raise ValueError("Please provide an api_key")
             args: dict[str, Any] = {"api_key": api_key_value, "default_headers": merged_headers}
             if org_id:
                 args["organization"] = org_id
@@ -331,8 +332,10 @@ def from_assistant_tools(
     for tool in assistant_tools:
         if hasattr(tool, "type"):
             tool_type = tool.type
-        elif isinstance(tool, dict):
-            tool_type = tool.get("type")
+        elif isinstance(tool, Mapping):
+            typed_tool = cast(Mapping[str, Any], tool)
+            tool_type_value: Any = typed_tool.get("type")
+            tool_type = tool_type_value if isinstance(tool_type_value, str) else None
         else:
             tool_type = None
 

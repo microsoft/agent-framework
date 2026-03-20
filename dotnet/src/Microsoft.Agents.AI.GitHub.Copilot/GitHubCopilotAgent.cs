@@ -346,14 +346,14 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         };
     }
 
-    private AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
+    internal AgentResponseUpdate ConvertToAgentResponseUpdate(AssistantMessageEvent assistantMessage)
     {
-        TextContent textContent = new(assistantMessage.Data?.Content ?? string.Empty)
+        AIContent content = new()
         {
             RawRepresentation = assistantMessage
         };
 
-        return new AgentResponseUpdate(ChatRole.Assistant, [textContent])
+        return new AgentResponseUpdate(ChatRole.Assistant, [content])
         {
             AgentId = this.Id,
             ResponseId = assistantMessage.Data?.MessageId,

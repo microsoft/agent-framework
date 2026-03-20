@@ -8,7 +8,11 @@ from typing import Any
 from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class UserInfo(BaseModel):

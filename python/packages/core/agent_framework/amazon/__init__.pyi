@@ -3,6 +3,9 @@
 from agent_framework_bedrock import (
     BedrockChatClient,
     BedrockChatOptions,
+    BedrockEmbeddingClient,
+    BedrockEmbeddingOptions,
+    BedrockEmbeddingSettings,
     BedrockGuardrailConfig,
     BedrockSettings,
 )
@@ -10,6 +13,9 @@ from agent_framework_bedrock import (
 __all__ = [
     "BedrockChatClient",
     "BedrockChatOptions",
+    "BedrockEmbeddingClient",
+    "BedrockEmbeddingOptions",
+    "BedrockEmbeddingSettings",
     "BedrockGuardrailConfig",
     "BedrockSettings",
 ]

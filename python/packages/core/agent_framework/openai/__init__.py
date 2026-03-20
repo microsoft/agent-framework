@@ -19,6 +19,7 @@ from ._assistants_client import (
     OpenAIAssistantsOptions,
 )
 from ._chat_client import OpenAIChatClient, OpenAIChatOptions
+from ._embedding_client import OpenAIEmbeddingClient, OpenAIEmbeddingOptions
 from ._exceptions import ContentFilterResultSeverity, OpenAIContentFilterException
 from ._responses_client import (
     OpenAIContinuationToken,
@@ -38,6 +39,8 @@ __all__ = [
     "OpenAIChatOptions",
     "OpenAIContentFilterException",
     "OpenAIContinuationToken",
+    "OpenAIEmbeddingClient",
+    "OpenAIEmbeddingOptions",
     "OpenAIResponsesClient",
     "OpenAIResponsesOptions",
     "OpenAISettings",

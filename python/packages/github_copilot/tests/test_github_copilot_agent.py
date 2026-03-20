@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+# ruff: noqa: E402
+
 import unittest.mock
 from datetime import datetime, timezone
 from typing import Any
@@ -7,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+copilot = pytest.importorskip("copilot")
+
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
@@ -14,8 +19,9 @@ from agent_framework import (
     Content,
     Message,
 )
-from agent_framework.exceptions import ServiceException
-from copilot.generated.session_events import Data, SessionEvent, SessionEventType
+from agent_framework.exceptions import AgentException
+from copilot.generated.session_events import Data, ErrorClass, Result, SessionEvent, SessionEventType
+from copilot.types import ToolInvocation, ToolResult
 
 from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
 
@@ -430,7 +436,7 @@ class TestGitHubCopilotAgentRunStreaming:
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="session error"):
+        with pytest.raises(AgentException, match="session error"):
             async for _ in agent.run("Hello", stream=True):
                 pass
 
@@ -456,6 +462,376 @@ class TestGitHubCopilotAgentRunStreaming:
 
         assert agent._started is True  # type: ignore
         mock_client.start.assert_called_once()
+
+    async def test_run_streaming_tool_execution_start(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that TOOL_EXECUTION_START events produce function_call content."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_abc123"
+        tool_event_data.tool_name = "get_weather"
+        tool_event_data.arguments = {"city": "Seattle"}
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert responses[0].role == "assistant"
+        content = responses[0].contents[0]
+        assert content.type == "function_call"
+        assert content.call_id == "call_abc123"
+        assert content.name == "get_weather"
+        assert content.arguments == {"city": "Seattle"}
+        assert content.raw_representation is tool_event_data
+
+    async def test_run_streaming_tool_execution_complete(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that TOOL_EXECUTION_COMPLETE events produce function_result content."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_abc123"
+        tool_event_data.result = Result(content="Sunny, 72°F")
+        tool_event_data.success = True
+        tool_event_data.error = None
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        assert responses[0].role == "tool"
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_abc123"
+        assert content.result == "Sunny, 72°F"
+        assert content.exception is None
+        assert content.raw_representation is tool_event_data
+
+    async def test_run_streaming_tool_execution_missing_fields(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that missing tool fields fall back to empty strings."""
+        tool_event_data = MagicMock(spec=[])  # No attributes
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_call"
+        assert content.call_id == ""
+        assert content.name == ""
+        assert content.arguments is None
+
+    async def test_run_streaming_tool_result_none(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that a tool result with None result object produces empty string."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_xyz"
+        tool_event_data.result = None
+        tool_event_data.success = True
+        tool_event_data.error = None
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_xyz"
+        assert content.result == ""
+        assert content.exception is None
+
+    async def test_run_streaming_tool_execution_failure(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that a failed tool result surfaces the error as exception."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_fail"
+        tool_event_data.result = Result(content="Error: connection timeout")
+        tool_event_data.success = False
+        tool_event_data.error = ErrorClass(message="connection timeout")
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_fail"
+        assert content.result == "Error: connection timeout"
+        assert content.exception == "connection timeout"
+
+    async def test_run_streaming_tool_execution_failure_string_error(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that a failed tool result with a string error is surfaced."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_fail2"
+        tool_event_data.result = Result(content="")
+        tool_event_data.success = False
+        tool_event_data.error = "something went wrong"
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_fail2"
+        assert content.exception == "something went wrong"
+
+    async def test_run_streaming_tool_execution_success_with_error_field(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that a successful tool result with error field does not propagate exception."""
+        tool_event_data = MagicMock()
+        tool_event_data.tool_call_id = "call_ok"
+        tool_event_data.result = Result(content="partial result")
+        tool_event_data.success = True
+        tool_event_data.error = "some warning"
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == "call_ok"
+        assert content.result == "partial result"
+        assert content.exception is None
+
+    async def test_run_streaming_tool_complete_missing_fields(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that missing fields on TOOL_EXECUTION_COMPLETE fall back to defaults."""
+        tool_event_data = MagicMock(spec=[])  # No attributes
+
+        tool_event = SessionEvent(
+            data=tool_event_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        def mock_on(handler: Any) -> Any:
+            handler(tool_event)
+            handler(session_idle_event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("Hello", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 1
+        content = responses[0].contents[0]
+        assert content.type == "function_result"
+        assert content.call_id == ""
+        assert content.result == ""
+        assert content.exception is None
+
+    async def test_run_streaming_tool_call_and_result_sequence(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test a full streaming sequence: text delta, tool call, tool result, text delta."""
+        # Tool call event
+        call_data = MagicMock()
+        call_data.tool_call_id = "call_001"
+        call_data.tool_name = "search"
+        call_data.arguments = {"query": "weather"}
+        tool_call_event = SessionEvent(
+            data=call_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_START,
+        )
+
+        # Tool result event
+        result_data = MagicMock()
+        result_data.tool_call_id = "call_001"
+        result_data.result = Result(content="72°F and sunny")
+        result_data.success = True
+        result_data.error = None
+        tool_result_event = SessionEvent(
+            data=result_data,
+            id=uuid4(),
+            timestamp=datetime.now(timezone.utc),
+            type=SessionEventType.TOOL_EXECUTION_COMPLETE,
+        )
+
+        # Final text delta
+        final_delta = create_session_event(
+            SessionEventType.ASSISTANT_MESSAGE_DELTA,
+            delta_content="The weather is sunny.",
+            message_id="msg-2",
+        )
+
+        events = [assistant_delta_event, tool_call_event, tool_result_event, final_delta, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+
+        agent = GitHubCopilotAgent(client=mock_client)
+        responses: list[AgentResponseUpdate] = []
+        async for update in agent.run("What's the weather?", stream=True):
+            responses.append(update)
+
+        assert len(responses) == 4
+        assert responses[0].role == "assistant"
+        assert responses[0].contents[0].type == "text"
+        assert responses[1].role == "assistant"
+        assert responses[1].contents[0].type == "function_call"
+        assert responses[2].role == "tool"
+        assert responses[2].contents[0].type == "function_result"
+        assert responses[3].role == "assistant"
+        assert responses[3].contents[0].type == "text"
 
 
 class TestGitHubCopilotAgentSessionManagement:
@@ -745,10 +1121,11 @@ class TestGitHubCopilotAgentToolConversion:
         config = call_args[0][0]
         copilot_tool = config["tools"][0]
 
-        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+        result = await copilot_tool.handler(ToolInvocation(arguments={"arg": "test"}))
 
-        assert result["resultType"] == "success"
-        assert result["textResultForLlm"] == "Result: test"
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "Result: test"
 
     async def test_tool_handler_returns_failure_result_on_error(
         self,
@@ -770,11 +1147,61 @@ class TestGitHubCopilotAgentToolConversion:
         config = call_args[0][0]
         copilot_tool = config["tools"][0]
 
-        result = await copilot_tool.handler({"arguments": {"arg": "test"}})
+        result = await copilot_tool.handler(ToolInvocation(arguments={"arg": "test"}))
 
-        assert result["resultType"] == "failure"
-        assert "Something went wrong" in result["textResultForLlm"]
-        assert "Something went wrong" in result["error"]
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "failure"
+        assert "Something went wrong" in result.text_result_for_llm
+        assert "Something went wrong" in result.error
+
+    async def test_tool_handler_rejects_raw_dict_invocation(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler raises TypeError when called with a raw dict instead of ToolInvocation."""
+
+        def my_tool(arg: str) -> str:
+            """A test tool."""
+            return f"Result: {arg}"
+
+        agent = GitHubCopilotAgent(client=mock_client, tools=[my_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        with pytest.raises((TypeError, AttributeError)):
+            await copilot_tool.handler({"arguments": {"arg": "test"}})
+
+    async def test_tool_handler_with_empty_arguments(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+    ) -> None:
+        """Test that tool handler handles ToolInvocation with empty arguments."""
+
+        def no_args_tool() -> str:
+            """A tool with no arguments."""
+            return "no args result"
+
+        agent = GitHubCopilotAgent(client=mock_client, tools=[no_args_tool])
+        await agent.start()
+
+        await agent._get_or_create_session(AgentSession())  # type: ignore
+
+        call_args = mock_client.create_session.call_args
+        config = call_args[0][0]
+        copilot_tool = config["tools"][0]
+
+        result = await copilot_tool.handler(ToolInvocation(arguments={}))
+
+        assert isinstance(result, ToolResult)
+        assert result.result_type == "success"
+        assert result.text_result_for_llm == "no args result"
 
     def test_copilot_tool_passthrough(
         self,
@@ -784,7 +1211,7 @@ class TestGitHubCopilotAgentToolConversion:
         from copilot.types import Tool as CopilotTool
 
         async def tool_handler(invocation: Any) -> Any:
-            return {"textResultForLlm": "result", "resultType": "success"}
+            return {"text_result_for_llm": "result", "result_type": "success"}
 
         copilot_tool = CopilotTool(
             name="direct_tool",
@@ -813,7 +1240,7 @@ class TestGitHubCopilotAgentToolConversion:
             return arg
 
         async def tool_handler(invocation: Any) -> Any:
-            return {"textResultForLlm": "result", "resultType": "success"}
+            return {"text_result_for_llm": "result", "result_type": "success"}
 
         copilot_tool = CopilotTool(
             name="direct_tool",
@@ -835,12 +1262,12 @@ class TestGitHubCopilotAgentErrorHandling:
     """Test cases for error handling."""
 
     async def test_start_raises_on_client_error(self, mock_client: MagicMock) -> None:
-        """Test that start raises ServiceException when client fails to start."""
+        """Test that start raises AgentException when client fails to start."""
         mock_client.start.side_effect = Exception("Connection failed")
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="Failed to start GitHub Copilot client"):
+        with pytest.raises(AgentException, match="Failed to start GitHub Copilot client"):
             await agent.start()
 
     async def test_run_raises_on_send_error(
@@ -848,33 +1275,33 @@ class TestGitHubCopilotAgentErrorHandling:
         mock_client: MagicMock,
         mock_session: MagicMock,
     ) -> None:
-        """Test that run raises ServiceException when send_and_wait fails."""
+        """Test that run raises AgentException when send_and_wait fails."""
         mock_session.send_and_wait.side_effect = Exception("Request timeout")
 
         agent = GitHubCopilotAgent(client=mock_client)
 
-        with pytest.raises(ServiceException, match="GitHub Copilot request failed"):
+        with pytest.raises(AgentException, match="GitHub Copilot request failed"):
             await agent.run("Hello")
 
     async def test_get_or_create_session_raises_on_create_error(
         self,
         mock_client: MagicMock,
     ) -> None:
-        """Test that _get_or_create_session raises ServiceException when create_session fails."""
+        """Test that _get_or_create_session raises AgentException when create_session fails."""
         mock_client.create_session.side_effect = Exception("Session creation failed")
 
         agent = GitHubCopilotAgent(client=mock_client)
         await agent.start()
 
-        with pytest.raises(ServiceException, match="Failed to create GitHub Copilot session"):
+        with pytest.raises(AgentException, match="Failed to create GitHub Copilot session"):
             await agent._get_or_create_session(AgentSession())  # type: ignore
 
     async def test_get_or_create_session_raises_when_client_not_initialized(self) -> None:
-        """Test that _get_or_create_session raises ServiceException when client is not initialized."""
+        """Test that _get_or_create_session raises RuntimeError when client is not initialized."""
         agent = GitHubCopilotAgent()
         # Don't call start() - client remains None
 
-        with pytest.raises(ServiceException, match="GitHub Copilot client not initialized"):
+        with pytest.raises(RuntimeError, match="GitHub Copilot client not initialized"):
             await agent._get_or_create_session(AgentSession())  # type: ignore
 
 
