@@ -47,7 +47,7 @@ def test_tool_with_optional_param():
     """Optional[int] is resolved to the actual type, not left as a string."""
 
     @tool
-    def search(query: str, limit: Optional[int] = None) -> str:
+    def search(query: str, limit: int | None = None) -> str:
         """Search for something."""
         return query
 
@@ -60,7 +60,7 @@ def test_tool_with_optional_param_and_context():
     """Optional param + FunctionInvocationContext both work under PEP 563."""
 
     @tool
-    def search(query: str, limit: Optional[int] = None, ctx: FunctionInvocationContext = None) -> str:
+    def search(query: str, limit: int | None = None, ctx: FunctionInvocationContext = None) -> str:
         """Search for something."""
         return query
 
