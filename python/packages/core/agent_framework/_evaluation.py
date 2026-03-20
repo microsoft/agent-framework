@@ -35,7 +35,7 @@ import contextlib
 import inspect
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -43,10 +43,10 @@ from typing import (
     Any,
     Literal,
     Protocol,
-    Sequence,
     TypedDict,
     Union,
     cast,
+    overload,
     runtime_checkable,
 )
 
@@ -425,7 +425,7 @@ class EvalResults:
     error: str | None = None
     per_evaluator: dict[str, dict[str, int]] = field(default_factory=lambda: dict[str, dict[str, int]]())
     items: list[EvalItemResult] = field(default_factory=lambda: list[EvalItemResult]())
-    sub_results: dict[str, "EvalResults"] = field(default_factory=lambda: dict[str, "EvalResults"]())
+    sub_results: dict[str, EvalResults] = field(default_factory=lambda: dict[str, EvalResults]())
 
     @property
     def passed(self) -> int:
@@ -1152,6 +1152,14 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
         f"{value_type_name}. Expected bool, float, dict, or CheckResult."
     )
     raise TypeError(msg)
+
+
+@overload
+def evaluator(fn: Callable[..., Any], /) -> EvalCheck: ...
+
+
+@overload
+def evaluator(*, name: str | None = None) -> Callable[[Callable[..., Any]], EvalCheck]: ...
 
 
 def evaluator(

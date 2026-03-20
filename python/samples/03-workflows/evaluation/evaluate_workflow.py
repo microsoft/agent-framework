@@ -15,7 +15,6 @@ import asyncio
 
 from agent_framework import (
     Agent,
-    AgentExecutor,
     LocalEvaluator,
     WorkflowBuilder,
     evaluate_workflow,
@@ -35,11 +34,7 @@ async def main():
     planner = Agent(model="gpt-4o-mini", instructions="You plan trips. Output a bullet-point plan.")
     executor_agent = Agent(model="gpt-4o-mini", instructions="You execute travel plans. Book the items listed.")
 
-    builder = WorkflowBuilder()
-    builder.add_executor(AgentExecutor("planner", planner))
-    builder.add_executor(AgentExecutor("booker", executor_agent))
-    builder.add_edge("planner", "booker")
-    workflow = builder.build()
+    workflow = WorkflowBuilder(start_executor=planner).add_edge(planner, executor_agent).build()
 
     # Evaluate with per-agent breakdown
     local = LocalEvaluator(is_nonempty, keyword_check("plan", "trip"))

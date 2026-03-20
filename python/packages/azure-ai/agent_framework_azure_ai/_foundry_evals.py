@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any, Sequence, cast
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework._evaluation import (
     ConversationSplit,

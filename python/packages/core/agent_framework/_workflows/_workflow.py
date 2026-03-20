@@ -347,8 +347,9 @@ class Workflow(DictConvertible):
                     self._state.clear()
                     # Reset all executors (clears cached messages, sessions, etc.)
                     for executor in self.executors.values():
-                        if hasattr(executor, "reset"):
-                            executor.reset()
+                        reset_fn = getattr(executor, "reset", None)
+                        if reset_fn is not None:
+                            reset_fn()
 
                 # Store run kwargs in State so executors can access them.
                 # Only overwrite when new kwargs are explicitly provided or state was
