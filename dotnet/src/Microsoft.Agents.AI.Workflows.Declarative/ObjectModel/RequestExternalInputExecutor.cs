@@ -12,6 +12,8 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 
+[SendsMessage(typeof(ExternalInputRequest))]
+[SendsMessage(typeof(ExternalInputResponse))]
 internal sealed class RequestExternalInputExecutor(RequestExternalInput model, ResponseAgentProvider agentProvider, WorkflowFormulaState state)
     : DeclarativeActionExecutor<RequestExternalInput>(model, state)
 {

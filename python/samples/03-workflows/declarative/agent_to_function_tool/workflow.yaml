@@ -1,0 +1,56 @@
+# Agent to Function Tool Workflow
+#
+# This workflow demonstrates chaining an agent invocation with a function tool.
+# The agent analyzes user input, and the function tool processes the agent's output.
+#
+# Flow:
+# 1. Receive user query
+# 2. Invoke an Azure agent to analyze the query and extract structured data
+# 3. Pass the agent's structured output to a function tool for processing
+# 4. Return the final result
+#
+# Example input:
+# I want to order 3 large pizzas with extra cheese for delivery to 123 Main St
+
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: agent_to_function_tool_demo
+  actions:
+
+    # Invoke the order analysis agent to extract structured order data
+    - kind: InvokeAzureAgent
+      id: analyze_order
+      agent:
+        name: OrderAnalysisAgent
+      input:
+        messages: =Workflow.Inputs.input
+      output:
+        response: Local.agentResponse
+        responseObject: Local.orderData
+
+    # Invoke a function tool to calculate order total using the agent's output
+    - kind: InvokeFunctionTool
+      id: calculate_order
+      functionName: calculate_order_total
+      arguments:
+        order_data: =Local.orderData
+      output:
+        result: Local.orderCalculation
+
+    # Invoke another function tool to format the final confirmation
+    - kind: InvokeFunctionTool
+      id: format_confirmation
+      functionName: format_order_confirmation
+      arguments:
+        order_data: =Local.orderData
+        order_calculation: =Local.orderCalculation
+      output:
+        result: Local.confirmation
+
+    # Send the final confirmation to the user
+    - kind: SendActivity
+      id: send_confirmation
+      activity:
+        text: =Local.confirmation

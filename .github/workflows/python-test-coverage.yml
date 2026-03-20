@@ -20,7 +20,7 @@ jobs:
       run:
         working-directory: python
     env:
-      UV_PYTHON: "3.10"
+      UV_PYTHON: "3.11"
     steps:
       - uses: actions/checkout@v6
       # Save the PR number to a file since the workflow_run event
@@ -32,17 +32,17 @@ jobs:
         id: python-setup
         uses: ./.github/actions/python-setup
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
       - name: Run all tests with coverage report
-        run: uv run poe all-tests-cov --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
+        run: uv run poe test -A -C --cov-report=xml:python-coverage.xml -q --junitxml=pytest.xml
       - name: Check coverage threshold
         run: python ${{ github.workspace }}/.github/workflows/python-check-coverage.py python-coverage.xml ${{ env.COVERAGE_THRESHOLD }}
       - name: Upload coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           path: |
             python/python-coverage.xml

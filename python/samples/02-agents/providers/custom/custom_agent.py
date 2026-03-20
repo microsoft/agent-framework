@@ -12,7 +12,6 @@ from agent_framework import (
     Content,
     InMemoryHistoryProvider,
     Message,
-    Role,
     normalize_messages,
 )
 
@@ -93,7 +92,7 @@ class EchoAgent(BaseAgent):
 
         if not normalized_messages:
             response_message = Message(
-                role=Role.ASSISTANT,
+                role="assistant",
                 contents=[
                     Content.from_text(text="Hello! I'm a custom echo agent. Send me a message and I'll echo it back.")
                 ],
@@ -106,11 +105,11 @@ class EchoAgent(BaseAgent):
             else:
                 echo_text = f"{self.echo_prefix}[Non-text message received]"
 
-            response_message = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=echo_text)])
+            response_message = Message(role="assistant", contents=[Content.from_text(text=echo_text)])
 
         # Store messages in session state if provided
         if session is not None:
-            stored = session.state.setdefault("memory", {}).setdefault("messages", [])
+            stored = session.state.setdefault(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).setdefault("messages", [])
             stored.extend(normalized_messages)
             stored.append(response_message)
 
@@ -145,7 +144,7 @@ class EchoAgent(BaseAgent):
 
             yield AgentResponseUpdate(
                 contents=[Content.from_text(text=chunk_text)],
-                role=Role.ASSISTANT,
+                role="assistant",
             )
 
             # Small delay to simulate streaming
@@ -153,8 +152,8 @@ class EchoAgent(BaseAgent):
 
         # Store messages in session state if provided
         if session is not None:
-            complete_response = Message(role=Role.ASSISTANT, contents=[Content.from_text(text=response_text)])
-            stored = session.state.setdefault("memory", {}).setdefault("messages", [])
+            complete_response = Message(role="assistant", contents=[Content.from_text(text=response_text)])
+            stored = session.state.setdefault(InMemoryHistoryProvider.DEFAULT_SOURCE_ID, {}).setdefault("messages", [])
             stored.extend(normalized_messages)
             stored.append(complete_response)
 

@@ -62,6 +62,7 @@ RECOMMENDATION_AGENT_NAME = "RecommendationAgent"
 
 class SentimentResult(BaseModel):
     """Result from sentiment analysis."""
+
     sentiment: str  # positive, negative, neutral
     confidence: float
     explanation: str
@@ -69,18 +70,21 @@ class SentimentResult(BaseModel):
 
 class KeywordResult(BaseModel):
     """Result from keyword extraction."""
+
     keywords: list[str]
     categories: list[str]
 
 
 class SummaryResult(BaseModel):
     """Result from summarization."""
+
     summary: str
     key_points: list[str]
 
 
 class RecommendationResult(BaseModel):
     """Result from recommendation engine."""
+
     recommendations: list[str]
     priority: str
 
@@ -88,6 +92,7 @@ class RecommendationResult(BaseModel):
 @dataclass
 class DocumentInput:
     """Input document to be processed."""
+
     document_id: str
     content: str
 
@@ -95,6 +100,7 @@ class DocumentInput:
 @dataclass
 class ProcessorResult:
     """Result from a document processor (executor)."""
+
     processor_name: str
     document_id: str
     content: str
@@ -106,6 +112,7 @@ class ProcessorResult:
 @dataclass
 class AggregatedResults:
     """Aggregated results from parallel processors."""
+
     document_id: str
     content: str
     processor_results: list[ProcessorResult]
@@ -114,6 +121,7 @@ class AggregatedResults:
 @dataclass
 class AgentAnalysis:
     """Analysis result from an agent."""
+
     agent_name: str
     result: str
 
@@ -121,6 +129,7 @@ class AgentAnalysis:
 @dataclass
 class FinalReport:
     """Final combined report."""
+
     document_id: str
     analyses: list[AgentAnalysis]
 
@@ -131,10 +140,7 @@ class FinalReport:
 
 
 @executor(id="input_router")
-async def input_router(
-    doc: str,
-    ctx: WorkflowContext[DocumentInput]
-) -> None:
+async def input_router(doc: str, ctx: WorkflowContext[DocumentInput]) -> None:
     """Route input document to parallel processors.
 
     Accepts a JSON string from the HTTP request and converts to DocumentInput.
@@ -150,10 +156,7 @@ async def input_router(
 
 
 @executor(id="word_count_processor")
-async def word_count_processor(
-    doc: DocumentInput,
-    ctx: WorkflowContext[ProcessorResult]
-) -> None:
+async def word_count_processor(doc: DocumentInput, ctx: WorkflowContext[ProcessorResult]) -> None:
     """Process document and count words - runs as an activity."""
     logger.info("[word_count_processor] Processing document: %s", doc.document_id)
 
@@ -174,10 +177,7 @@ async def word_count_processor(
 
 
 @executor(id="format_analyzer_processor")
-async def format_analyzer_processor(
-    doc: DocumentInput,
-    ctx: WorkflowContext[ProcessorResult]
-) -> None:
+async def format_analyzer_processor(doc: DocumentInput, ctx: WorkflowContext[ProcessorResult]) -> None:
     """Analyze document format - runs as an activity in parallel with word_count."""
     logger.info("[format_analyzer_processor] Processing document: %s", doc.document_id)
 
@@ -200,10 +200,7 @@ async def format_analyzer_processor(
 
 
 @executor(id="aggregator")
-async def aggregator(
-    results: list[ProcessorResult],
-    ctx: WorkflowContext[AggregatedResults]
-) -> None:
+async def aggregator(results: list[ProcessorResult], ctx: WorkflowContext[AggregatedResults]) -> None:
     """Aggregate results from parallel processors - receives fan-in input."""
     logger.info("[aggregator] Aggregating %d results", len(results))
 
@@ -221,10 +218,7 @@ async def aggregator(
 
 
 @executor(id="prepare_for_agents")
-async def prepare_for_agents(
-    aggregated: AggregatedResults,
-    ctx: WorkflowContext[str]
-) -> None:
+async def prepare_for_agents(aggregated: AggregatedResults, ctx: WorkflowContext[str]) -> None:
     """Prepare content for agent analysis - broadcasts to multiple agents."""
     logger.info("[prepare_for_agents] Preparing content for agents")
 
@@ -233,10 +227,7 @@ async def prepare_for_agents(
 
 
 @executor(id="prepare_for_mixed")
-async def prepare_for_mixed(
-    analyses: list[AgentExecutorResponse],
-    ctx: WorkflowContext[str]
-) -> None:
+async def prepare_for_mixed(analyses: list[AgentExecutorResponse], ctx: WorkflowContext[str]) -> None:
     """Prepare results for mixed agent+executor parallel processing.
 
     Combines agent analysis results into a string that can be consumed by
@@ -262,10 +253,7 @@ async def prepare_for_mixed(
 
 
 @executor(id="statistics_processor")
-async def statistics_processor(
-    analysis_text: str,
-    ctx: WorkflowContext[ProcessorResult]
-) -> None:
+async def statistics_processor(analysis_text: str, ctx: WorkflowContext[ProcessorResult]) -> None:
     """Calculate statistics from the analysis - runs in parallel with SummaryAgent."""
     logger.info("[statistics_processor] Calculating statistics")
 

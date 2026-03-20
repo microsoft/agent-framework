@@ -7,11 +7,19 @@ import json
 import logging
 from dataclasses import fields, is_dataclass
 from types import UnionType
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import Any, Union, cast, get_args, get_origin, get_type_hints
 
 from agent_framework import Message
 
 logger = logging.getLogger(__name__)
+
+
+def _string_key_dict(value: object) -> dict[str, Any] | None:
+    """Cast value to a dict."""
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, Any], value)
+
 
 # ============================================================================
 # Agent Metadata Extraction
@@ -39,18 +47,21 @@ def extract_agent_metadata(entity_object: Any) -> dict[str, Any]:
     # Try to get instructions
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
-        if isinstance(chat_opts, dict):
-            if "instructions" in chat_opts:
-                metadata["instructions"] = chat_opts.get("instructions")
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            if "instructions" in chat_opts_dict:
+                metadata["instructions"] = chat_opts_dict.get("instructions")
         elif hasattr(chat_opts, "instructions"):
             metadata["instructions"] = chat_opts.instructions
 
     # Try to get model - check both default_options and client
     if hasattr(entity_object, "default_options"):
         chat_opts = entity_object.default_options
-        if isinstance(chat_opts, dict):
-            if chat_opts.get("model_id"):
-                metadata["model"] = chat_opts.get("model_id")
+        chat_opts_dict = _string_key_dict(chat_opts)
+        if chat_opts_dict is not None:
+            model_id = chat_opts_dict.get("model_id")
+            if model_id:
+                metadata["model"] = model_id
         elif hasattr(chat_opts, "model_id") and chat_opts.model_id:
             metadata["model"] = chat_opts.model_id
     if metadata["model"] is None and hasattr(entity_object, "client") and hasattr(entity_object.client, "model_id"):
@@ -112,7 +123,7 @@ def extract_executor_message_types(executor: Any) -> list[Any]:
         try:
             handlers = executor._handlers
             if isinstance(handlers, dict):
-                message_types = list(handlers.keys())
+                message_types = list(handlers.keys())  # type: ignore[arg-type]  # pyright: ignore[reportUnknownArgumentType]
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.debug(f"Failed to read executor handlers: {exc}")
 
@@ -366,11 +377,10 @@ def extract_response_type_from_executor(executor: Any, request_type: type) -> ty
                     _, second_param_type = param_items[1] if len(param_items) > 1 else (None, None)
 
                     # Check if first param matches request_type
-                    first_matches_request = first_param_type == request_type or (
-                        hasattr(first_param_type, "__name__")
-                        and hasattr(request_type, "__name__")
-                        and first_param_type.__name__ == request_type.__name__
-                    )
+                    first_matches_request = first_param_type == request_type
+                    if not first_matches_request and isinstance(first_param_type, type):
+                        request_type_name = request_type.__name__
+                        first_matches_request = first_param_type.__name__ == request_type_name
 
                     # Verify we have a matching request type and valid response type (must be a type class)
                     if first_matches_request and second_param_type is not None and isinstance(second_param_type, type):
@@ -432,7 +442,7 @@ def generate_input_schema(input_type: type) -> dict[str, Any]:
         return generate_schema_from_dataclass(input_type)
 
     # 5. Fallback to string
-    type_name = getattr(input_type, "__name__", str(input_type))
+    type_name = input_type.__name__ if isinstance(input_type, type) else str(cast(Any, input_type))
     return {"type": "string", "description": f"Input type: {type_name}"}
 
 
@@ -466,8 +476,9 @@ def parse_input_for_type(input_data: Any, target_type: type) -> Any:
         return _parse_string_input(input_data, target_type)
 
     # Handle dict input
-    if isinstance(input_data, dict):
-        return _parse_dict_input(input_data, target_type)
+    parsed_dict = _string_key_dict(input_data)
+    if parsed_dict is not None:
+        return _parse_dict_input(parsed_dict, target_type)
 
     # Fallback: return original
     return input_data

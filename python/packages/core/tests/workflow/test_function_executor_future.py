@@ -19,10 +19,10 @@ class TestFunctionExecutorFutureAnnotations:
 
         assert isinstance(process_future, FunctionExecutor)
         assert process_future.id == "future_test"
-        assert int in process_future._handlers
+        assert int in process_future._handlers  # pyright: ignore[reportPrivateUsage]
 
         # Check spec
-        spec = process_future._handler_specs[0]
+        spec = process_future._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] is int
         assert spec["output_types"] == [int]
 
@@ -34,6 +34,6 @@ class TestFunctionExecutorFutureAnnotations:
             await ctx.send_message(["done"])
 
         assert isinstance(process_complex, FunctionExecutor)
-        spec = process_complex._handler_specs[0]
+        spec = process_complex._handler_specs[0]  # pyright: ignore[reportPrivateUsage]
         assert spec["message_type"] == dict[str, Any]
         assert spec["output_types"] == [list[str]]

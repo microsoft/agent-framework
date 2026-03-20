@@ -31,8 +31,20 @@ namespace Microsoft.Agents.AI;
 /// to the current request messages when forming the search input. This can improve search relevance by providing
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Search results retrieved from external sources are injected into the LLM context and may
+/// contain adversarial content designed to manipulate LLM behavior via indirect prompt injection. Developers should be aware that:
+/// <list type="bullet">
+/// <item><description>The search query may be constructed from user input or LLM-generated content, both of which are untrusted.
+/// Implementers of the search delegate should validate search inputs and apply appropriate access controls to search results.</description></item>
+/// <item><description>Retrieved documents are formatted and injected as messages in the AI request context. If the external data source
+/// is compromised, adversarial content could influence the LLM's responses.</description></item>
+/// <item><description>When using <see cref="TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling"/>, the AI model controls
+/// when and what to search for — the search query text is AI-generated and should be treated as untrusted input by the search implementation.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
-public sealed class TextSearchProvider : AIContextProvider
+public sealed class TextSearchProvider : MessageAIContextProvider
 {
     private const string DefaultPluginSearchFunctionName = "Search";
     private const string DefaultPluginSearchFunctionDescription = "Allows searching for additional information to help answer the user question.";
@@ -40,6 +52,7 @@ public sealed class TextSearchProvider : AIContextProvider
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
     private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
@@ -61,7 +74,7 @@ public sealed class TextSearchProvider : AIContextProvider
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<TextSearchProviderState>(
             _ => new TextSearchProviderState(),
@@ -88,10 +101,10 @@ public sealed class TextSearchProvider : AIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
-    protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
     {
         if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
         {
@@ -102,6 +115,30 @@ public sealed class TextSearchProvider : AIContextProvider
             };
         }
 
+        return new AIContext
+        {
+            Messages = await this.ProvideMessagesAsync(
+                new InvokingContext(context.Agent, context.Session, context.AIContext.Messages ?? []),
+                cancellationToken).ConfigureAwait(false)
+        };
+    }
+
+    /// <inheritdoc />
+    protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
+        // This code path is invoked using InvokingAsync on MessageAIContextProvider, which does not support tools and instructions,
+        // and OnDemandFunctionCalling requires tools.
+        if (this._searchTime != TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke)
+        {
+            throw new InvalidOperationException($"Using the {nameof(TextSearchProvider)} as a {nameof(MessageAIContextProvider)} is not supported when {nameof(TextSearchProviderOptions.SearchTime)} is set to {TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling}.");
+        }
+
+        return base.InvokingCoreAsync(context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    protected override async ValueTask<IEnumerable<ChatMessage>> ProvideMessagesAsync(InvokingContext context, CancellationToken cancellationToken = default)
+    {
         // Retrieve recent messages from the session state.
         var recentMessagesText = this._sessionState.GetOrInitializeState(context.Session).RecentMessagesText
             ?? [];
@@ -109,7 +146,7 @@ public sealed class TextSearchProvider : AIContextProvider
         // Aggregate text from memory + current request messages.
         var sbInput = new StringBuilder();
         var requestMessagesText =
-            (context.AIContext.Messages ?? [])
+            (context.RequestMessages ?? [])
             .Where(x => !string.IsNullOrWhiteSpace(x?.Text)).Select(x => x.Text);
         foreach (var messageText in recentMessagesText.Concat(requestMessagesText))
         {
@@ -135,7 +172,7 @@ public sealed class TextSearchProvider : AIContextProvider
 
             if (materialized.Count == 0)
             {
-                return new AIContext();
+                return [];
             }
 
             // Format search results
@@ -146,15 +183,12 @@ public sealed class TextSearchProvider : AIContextProvider
                 this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
             }
 
-            return new AIContext
-            {
-                Messages = [new ChatMessage(ChatRole.User, formatted)]
-            };
+            return [new ChatMessage(ChatRole.User, formatted)];
         }
         catch (Exception ex)
         {
             this._logger?.LogError(ex, "TextSearchProvider: Failed to search for data due to error");
-            return new AIContext();
+            return [];
         }
     }
 

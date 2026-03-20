@@ -289,9 +289,6 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip tests based on markers and environment availability."""
-    run_integration = os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    skip_integration = pytest.mark.skip(reason="RUN_INTEGRATION_TESTS not set to 'true'")
-
     # Check Azure OpenAI environment variables
     azure_openai_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     azure_openai_available = all(os.getenv(var) for var in azure_openai_vars)
@@ -308,8 +305,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_redis = pytest.mark.skip(reason="Redis is not available at redis://localhost:6379")
 
     for item in items:
-        if "integration_test" in item.keywords and not run_integration:
-            item.add_marker(skip_integration)
         if "requires_azure_openai" in item.keywords and not azure_openai_available:
             item.add_marker(skip_azure_openai)
         if "requires_dts" in item.keywords and not dts_available:

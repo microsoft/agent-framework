@@ -7,7 +7,23 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentStructuredOutputRunTests() : StructuredOutputRunTests<AzureAIAgentsPersistentFixture>(() => new())
 {
-    [Fact(Skip = "Fails intermittently, at build agent")]
-    public override Task RunWithResponseFormatReturnsExpectedResultAsync() =>
-    base.RunWithResponseFormatReturnsExpectedResultAsync();
+    private const string SkipReason = "Fails intermittently on the build agent/CI";
+
+    public override Task RunWithResponseFormatReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithResponseFormatReturnsExpectedResultAsync();
+    }
+
+    public override Task RunWithGenericTypeReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithGenericTypeReturnsExpectedResultAsync();
+    }
+
+    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    }
 }

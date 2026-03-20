@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
@@ -17,8 +16,7 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientCreateTests
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-    private readonly AIProjectClient _client = new(new Uri(s_config.Endpoint), new AzureCliCredential());
+    private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
@@ -34,7 +32,7 @@ public class AIProjectClientCreateTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     Name = AgentName,
@@ -43,7 +41,7 @@ public class AIProjectClientCreateTests
                 }),
             "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
                 name: AgentName,
-                creationOptions: new AgentVersionCreationOptions(new PromptAgentDefinition(s_config.DeploymentName) { Instructions = AgentInstructions }) { Description = AgentDescription }),
+                creationOptions: new AgentVersionCreationOptions(new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName)) { Instructions = AgentInstructions }) { Description = AgentDescription }),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
         };
 
@@ -101,12 +99,12 @@ public class AIProjectClientCreateTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 name: AgentName,
                 instructions: AgentInstructions,
                 tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]),
             "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 name: AgentName,
                 instructions: AgentInstructions,
                 tools: [ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreMetadata.Value.Id]).AsAITool()]),
@@ -161,13 +159,13 @@ public class AIProjectClientCreateTests
         {
             // Hosted tool path (tools supplied via ChatClientAgentOptions)
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 name: AgentName,
                 instructions: AgentInstructions,
                 tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]),
             // Foundry (definitions + resources provided directly)
             "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 name: AgentName,
                 instructions: AgentInstructions,
                 tools: [ResponseTool.CreateCodeInterpreterTool(new CodeInterpreterToolContainer(CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([uploadedCodeFile.Id]))).AsAITool()]),
@@ -204,7 +202,7 @@ public class AIProjectClientCreateTests
         ChatClientAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: s_config.DeploymentName,
+                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
                 options: new ChatClientAgentOptions()
                 {
                     Name = AgentName,

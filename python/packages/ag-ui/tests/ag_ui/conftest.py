@@ -4,6 +4,7 @@
 
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, MutableSequence, Sequence
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Generic, Literal, cast, overload
 
@@ -36,9 +37,16 @@ StreamFn = Callable[..., AsyncIterable[ChatResponseUpdate]]
 ResponseFn = Callable[..., Awaitable[ChatResponse]]
 
 
+def pytest_configure() -> None:
+    """Ensure this test directory is on sys.path so helper modules can be imported by name."""
+    test_dir = str(Path(__file__).resolve().parent)
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+
+
 class StreamingChatClientStub(
-    ChatMiddlewareLayer[OptionsCoT],
     FunctionInvocationLayer[OptionsCoT],
+    ChatMiddlewareLayer[OptionsCoT],
     ChatTelemetryLayer[OptionsCoT],
     BaseChatClient[OptionsCoT],
     Generic[OptionsCoT],
@@ -46,7 +54,7 @@ class StreamingChatClientStub(
     """Typed streaming stub that satisfies SupportsChatGetResponse."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
-        super().__init__(function_middleware=[])
+        super().__init__(middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
         self.last_session: AgentSession | None = None
@@ -90,7 +98,11 @@ class StreamingChatClientStub(
         options: OptionsCoT | ChatOptions[Any] | None = None,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-        self.last_session = kwargs.get("session")
+        client_kwargs = kwargs.get("client_kwargs")
+        if isinstance(client_kwargs, Mapping):
+            self.last_session = cast(AgentSession | None, client_kwargs.get("session"))
+        else:
+            self.last_session = None
         self.last_service_session_id = self.last_session.service_session_id if self.last_session else None
         return cast(
             Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
@@ -241,3 +253,83 @@ def stream_from_updates_fixture() -> Callable[[list[ChatResponseUpdate]], Stream
 def stub_agent() -> type[SupportsAgentRun]:
     """Return the StubAgent class for creating test instances."""
     return StubAgent  # type: ignore[return-value]
+
+
+# ── Fixtures for golden / integration tests ──
+
+
+@pytest.fixture
+def collect_events() -> Callable[..., Any]:
+    """Return an async helper that collects all events from an async generator."""
+
+    async def _collect(async_gen: AsyncIterable[Any]) -> list[Any]:
+        return [event async for event in async_gen]
+
+    return _collect
+
+
+@pytest.fixture
+def make_agent_wrapper() -> Callable[..., Any]:
+    """Factory that builds an AgentFrameworkAgent from a stream function.
+
+    Usage::
+
+        agent = make_agent_wrapper(
+            stream_fn=stream_from_updates(updates),
+            state_schema=...,
+        )
+        events = [e async for e in agent.run(payload)]
+    """
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    def _factory(
+        stream_fn: StreamFn,
+        *,
+        state_schema: Any | None = None,
+        predict_state_config: dict[str, dict[str, str]] | None = None,
+        require_confirmation: bool = True,
+    ) -> Any:
+        client = StreamingChatClientStub(stream_fn)
+        stub = StubAgent(client=client)
+        return AgentFrameworkAgent(
+            agent=stub,
+            state_schema=state_schema,
+            predict_state_config=predict_state_config,
+            require_confirmation=require_confirmation,
+        )
+
+    return _factory
+
+
+@pytest.fixture
+def make_app() -> Callable[..., Any]:
+    """Factory that builds a FastAPI app with an AG-UI endpoint.
+
+    Usage::
+
+        app = make_app(agent_or_wrapper, path="/test")
+    """
+    from fastapi import FastAPI
+
+    from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
+
+    def _factory(
+        agent: Any,
+        *,
+        path: str = "/",
+        state_schema: Any | None = None,
+        predict_state_config: dict[str, dict[str, str]] | None = None,
+        default_state: dict[str, Any] | None = None,
+    ) -> FastAPI:
+        app = FastAPI()
+        add_agent_framework_fastapi_endpoint(
+            app,
+            agent,
+            path=path,
+            state_schema=state_schema,
+            predict_state_config=predict_state_config,
+            default_state=default_state,
+        )
+        return app
+
+    return _factory

@@ -62,6 +62,27 @@ For example, to use the GAIA module:
 from agent_framework.lab.gaia import GAIA
 ```
 
+## Running Tests Locally
+
+For machine-safe local runs, prefer package-scoped commands first:
+
+```bash
+uv run --directory packages/lab poe test
+uv run --directory packages/lab pytest -q -m "not integration"
+```
+
+When you need to run lab tests from the repository root, scope the root task to the lab package:
+
+```bash
+uv run poe test -P lab
+```
+
+Lightning observability tests intentionally exercise heavier tracing paths and are marked as `resource_intensive`:
+
+```bash
+uv run --directory packages/lab pytest lightning/tests/test_lightning.py -m "resource_intensive" -q
+```
+
 ## Should I consume Lab Modules?
 
 If you are looking for stable and production-ready features, you should not use lab modules. Stick to the core framework.

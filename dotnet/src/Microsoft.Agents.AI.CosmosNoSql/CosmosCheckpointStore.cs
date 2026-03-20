@@ -95,11 +95,11 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     public string ContainerId => this._container.Id;
 
     /// <inheritdoc />
-    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null)
+    public override async ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
     {
-        if (string.IsNullOrWhiteSpace(runId))
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(runId));
+            throw new ArgumentException("Cannot be null or whitespace", nameof(sessionId));
         }
 
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
@@ -110,28 +110,28 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
 #pragma warning restore CA1513
 
         var checkpointId = Guid.NewGuid().ToString("N");
-        var checkpointInfo = new CheckpointInfo(runId, checkpointId);
+        var checkpointInfo = new CheckpointInfo(sessionId, checkpointId);
 
         var document = new CosmosCheckpointDocument
         {
-            Id = $"{runId}_{checkpointId}",
-            RunId = runId,
+            Id = $"{sessionId}_{checkpointId}",
+            SessionId = sessionId,
             CheckpointId = checkpointId,
             Value = JToken.Parse(value.GetRawText()),
             ParentCheckpointId = parent?.CheckpointId,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
         };
 
-        await this._container.CreateItemAsync(document, new PartitionKey(runId)).ConfigureAwait(false);
+        await this._container.CreateItemAsync(document, new PartitionKey(sessionId)).ConfigureAwait(false);
         return checkpointInfo;
     }
 
     /// <inheritdoc />
-    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string runId, CheckpointInfo key)
+    public override async ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key)
     {
-        if (string.IsNullOrWhiteSpace(runId))
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(runId));
+            throw new ArgumentException("Cannot be null or whitespace", nameof(sessionId));
         }
 
         if (key is null)
@@ -146,26 +146,26 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         }
 #pragma warning restore CA1513
 
-        var id = $"{runId}_{key.CheckpointId}";
+        var id = $"{sessionId}_{key.CheckpointId}";
 
         try
         {
-            var response = await this._container.ReadItemAsync<CosmosCheckpointDocument>(id, new PartitionKey(runId)).ConfigureAwait(false);
+            var response = await this._container.ReadItemAsync<CosmosCheckpointDocument>(id, new PartitionKey(sessionId)).ConfigureAwait(false);
             using var document = JsonDocument.Parse(response.Resource.Value.ToString());
             return document.RootElement.Clone();
         }
         catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            throw new InvalidOperationException($"Checkpoint with ID '{key.CheckpointId}' for run '{runId}' not found.");
+            throw new InvalidOperationException($"Checkpoint with ID '{key.CheckpointId}' for session '{sessionId}' not found.");
         }
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+    public override async ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
     {
-        if (string.IsNullOrWhiteSpace(runId))
+        if (string.IsNullOrWhiteSpace(sessionId))
         {
-            throw new ArgumentException("Cannot be null or whitespace", nameof(runId));
+            throw new ArgumentException("Cannot be null or whitespace", nameof(sessionId));
         }
 
 #pragma warning disable CA1513 // Use ObjectDisposedException.ThrowIf - not available on all target frameworks
@@ -176,10 +176,10 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
 #pragma warning restore CA1513
 
         QueryDefinition query = withParent == null
-            ? new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId ORDER BY c.timestamp ASC")
-                .WithParameter("@runId", runId)
-            : new QueryDefinition("SELECT c.runId, c.checkpointId FROM c WHERE c.runId = @runId AND c.parentCheckpointId = @parentCheckpointId ORDER BY c.timestamp ASC")
-                .WithParameter("@runId", runId)
+            ? new QueryDefinition("SELECT c.sessionId, c.checkpointId FROM c WHERE c.sessionId = @sessionId ORDER BY c.timestamp ASC")
+                .WithParameter("@sessionId", sessionId)
+            : new QueryDefinition("SELECT c.sessionId, c.checkpointId FROM c WHERE c.sessionId = @sessionId AND c.parentCheckpointId = @parentCheckpointId ORDER BY c.timestamp ASC")
+                .WithParameter("@sessionId", sessionId)
                 .WithParameter("@parentCheckpointId", withParent.CheckpointId);
 
         var iterator = this._container.GetItemQueryIterator<CheckpointQueryResult>(query);
@@ -188,7 +188,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         while (iterator.HasMoreResults)
         {
             var response = await iterator.ReadNextAsync().ConfigureAwait(false);
-            checkpoints.AddRange(response.Select(r => new CheckpointInfo(r.RunId, r.CheckpointId)));
+            checkpoints.AddRange(response.Select(r => new CheckpointInfo(r.SessionId, r.CheckpointId)));
         }
 
         return checkpoints;
@@ -223,8 +223,8 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
         [JsonProperty("id")]
         public string Id { get; set; } = string.Empty;
 
-        [JsonProperty("runId")]
-        public string RunId { get; set; } = string.Empty;
+        [JsonProperty("sessionId")]
+        public string SessionId { get; set; } = string.Empty;
 
         [JsonProperty("checkpointId")]
         public string CheckpointId { get; set; } = string.Empty;
@@ -245,7 +245,7 @@ public class CosmosCheckpointStore<T> : JsonCheckpointStore, IDisposable
     [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated by Cosmos DB query deserialization")]
     private sealed class CheckpointQueryResult
     {
-        public string RunId { get; set; } = string.Empty;
+        public string SessionId { get; set; } = string.Empty;
         public string CheckpointId { get; set; } = string.Empty;
     }
 }

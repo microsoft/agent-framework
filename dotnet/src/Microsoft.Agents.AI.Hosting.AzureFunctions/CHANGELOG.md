@@ -1,6 +1,10 @@
 # Release History
 
-## <version>
+## [Unreleased]
+
+- Added Azure Functions hosting support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
+
+## v1.0.0-preview.251219.1
 
 - Addressed incompatibility issue with `Microsoft.Azure.Functions.Worker.Extensions.DurableTask` >= 1.11.0 ([#2759](https://github.com/microsoft/agent-framework/pull/2759))
 

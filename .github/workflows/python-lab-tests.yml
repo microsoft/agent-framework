@@ -67,6 +67,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           os: ${{ runner.os }}
+          exclude-packages: ${{ matrix.python-version == '3.10' && 'agent-framework-github-copilot' || '' }}
         env:
           # Configure a constant location for the uv cache
           UV_CACHE_DIR: /tmp/.uv-cache
@@ -74,6 +75,9 @@ jobs:
       # Lab specific tests
       - name: Run lab tests
         run: cd packages/lab && uv run poe test
+
+      - name: Run resource-intensive lab tests
+        run: cd packages/lab && uv run pytest -m "resource_intensive and not integration" --junitxml=test-results-resource-intensive.xml
 
       - name: Run lab lint
         run: cd packages/lab && uv run poe lint

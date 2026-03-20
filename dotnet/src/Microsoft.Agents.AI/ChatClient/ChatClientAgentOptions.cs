@@ -60,6 +60,36 @@ public sealed class ChatClientAgentOptions
     public bool UseProvidedChatClientAsIs { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether to set the <see cref="ChatClientAgent.ChatHistoryProvider"/> to <see langword="null"/>
+    /// if the underlying AI service indicates that it manages chat history (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <remarks>
+    /// Note that even if this setting is set to <see langword="false"/>, the <see cref="ChatHistoryProvider"/> will still not be used if the underlying AI service indicates that it manages chat history.
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ClearOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether to log a warning if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool WarnOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether an exception is thrown if the underlying AI service indicates that it manages chat history
+    /// (for example, by returning a conversation id in the response), but a <see cref="ChatHistoryProvider"/> is configured for the agent.
+    /// </summary>
+    /// <value>
+    /// Default is <see langword="true"/>.
+    /// </value>
+    public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -71,5 +101,9 @@ public sealed class ChatClientAgentOptions
             ChatOptions = this.ChatOptions?.Clone(),
             ChatHistoryProvider = this.ChatHistoryProvider,
             AIContextProviders = this.AIContextProviders is null ? null : new List<AIContextProvider>(this.AIContextProviders),
+            UseProvidedChatClientAsIs = this.UseProvidedChatClientAsIs,
+            ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
+            WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
+            ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
         };
 }

@@ -22,7 +22,7 @@ from agent_framework import (
 )
 from agent_framework._serialization import SerializationMixin
 from agent_framework._settings import load_settings
-from agent_framework.exceptions import ServiceInitializationError, ServiceInvalidRequestError
+from agent_framework.exceptions import ChatClientInvalidRequestException
 from azure.ai.agents.models import (
     AgentsNamedToolChoice,
     AgentsNamedToolChoiceType,
@@ -50,11 +50,8 @@ from pydantic import BaseModel, Field
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests."
-    if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-    else "Integration tests are disabled.",
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
+    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests.",
 )
 
 
@@ -68,7 +65,7 @@ def create_test_azure_ai_chat_client(
 ) -> AzureAIAgentClient:
     """Helper function to create AzureAIAgentClient instances for testing, bypassing normal validation."""
     if azure_ai_settings is None:
-        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_", env_file_path="test.env")
+        azure_ai_settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_")
 
     # Create client instance directly
     client = object.__new__(AzureAIAgentClient)
@@ -90,6 +87,8 @@ def create_test_azure_ai_chat_client(
     client.middleware = None
     client.chat_middleware = []
     client.function_middleware = []
+    client._cached_chat_middleware_pipeline = None
+    client._cached_function_middleware_pipeline = None
     client.otel_provider_name = "azure.ai"
     client.function_invocation_configuration = {
         "enabled": True,
@@ -154,6 +153,10 @@ def test_azure_ai_chat_client_init_auto_create_client(
     chat_client.agent_name = None
     chat_client.additional_properties = {}
     chat_client.middleware = None
+    chat_client.chat_middleware = []
+    chat_client.function_middleware = []
+    chat_client._cached_chat_middleware_pipeline = None
+    chat_client._cached_function_middleware_pipeline = None
 
     assert chat_client.agents_client is mock_agents_client
     assert chat_client.agent_id is None
@@ -165,7 +168,7 @@ def test_azure_ai_chat_client_init_missing_project_endpoint() -> None:
     with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError, match="project endpoint is required"):
+        with pytest.raises(ValueError, match="project endpoint is required"):
             AzureAIAgentClient(
                 agents_client=None,
                 agent_id=None,
@@ -181,7 +184,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
     with patch("agent_framework_azure_ai._chat_client.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": "https://test.com", "model_deployment_name": None}
 
-        with pytest.raises(ServiceInitializationError, match="model deployment name is required"):
+        with pytest.raises(ValueError, match="model deployment name is required"):
             AzureAIAgentClient(
                 agents_client=None,
                 agent_id=None,  # No existing agent
@@ -193,9 +196,7 @@ def test_azure_ai_chat_client_init_missing_model_deployment_for_agent_creation()
 
 def test_azure_ai_chat_client_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIAgentClient.__init__ when credential is missing and no agents_client provided."""
-    with pytest.raises(
-        ServiceInitializationError, match="Azure credential is required when agents_client is not provided"
-    ):
+    with pytest.raises(ValueError, match="Azure credential is required when agents_client is not provided"):
         AzureAIAgentClient(
             agents_client=None,
             agent_id="existing-agent",
@@ -325,7 +326,7 @@ async def test_azure_ai_chat_client_get_agent_id_or_create_missing_model(
     """Test _get_agent_id_or_create when model_deployment_name is missing."""
     client = create_test_azure_ai_chat_client(mock_agents_client)
 
-    with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
+    with pytest.raises(ValueError, match="Model deployment name is required"):
         await client._get_agent_id_or_create()  # type: ignore
 
 
@@ -512,6 +513,48 @@ async def test_azure_ai_chat_client_prepare_options_merges_instructions_from_mes
     # Both instruction sources should be present
     assert "marketing" in instructions_text.lower()
     assert "concise" in instructions_text.lower()
+
+
+def test_as_agent_uses_client_agent_name_as_default(mock_agents_client: MagicMock) -> None:
+    """Test that as_agent() defaults Agent.name to client.agent_name when name is not provided."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_name="my_agent")
+    client.agent_description = "my description"
+
+    agent = client.as_agent(instructions="You are helpful.")
+
+    assert agent.name == "my_agent"
+    assert agent.description == "my description"
+
+
+def test_as_agent_explicit_name_overrides_client_agent_name(mock_agents_client: MagicMock) -> None:
+    """Test that an explicit name passed to as_agent() takes precedence over client.agent_name."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="explicit_name", description="explicit description", instructions="You are helpful.")
+
+    assert agent.name == "explicit_name"
+    assert agent.description == "explicit description"
+
+
+def test_as_agent_no_name_anywhere(mock_agents_client: MagicMock) -> None:
+    """Test that Agent.name is None when neither as_agent name nor client.agent_name is provided."""
+    client = create_test_azure_ai_chat_client(mock_agents_client)
+
+    agent = client.as_agent(instructions="You are helpful.")
+
+    assert agent.name is None
+
+
+def test_as_agent_empty_string_preserves_explicit_value(mock_agents_client: MagicMock) -> None:
+    """Test that empty-string name/description are preserved and do not fall back to client defaults."""
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_name="client_name")
+    client.agent_description = "client description"
+
+    agent = client.as_agent(name="", description="", instructions="You are helpful.")
+
+    assert agent.name == ""
+    assert agent.description == ""
 
 
 async def test_azure_ai_chat_client_inner_get_response(mock_agents_client: MagicMock) -> None:
@@ -860,6 +903,110 @@ async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_file_search_with_
     assert run_options["tool_resources"] == {"file_search": {"vector_store_ids": ["vs-123"]}}
 
 
+async def test_azure_ai_chat_client_prepare_tools_for_azure_ai_code_interpreter_with_file_ids(
+    mock_agents_client: MagicMock,
+) -> None:
+    """Test _prepare_tools_for_azure_ai with CodeInterpreterTool with file_ids from get_code_interpreter_tool()."""
+
+    client = create_test_azure_ai_chat_client(mock_agents_client, agent_id="test-agent")
+
+    code_interpreter_tool = client.get_code_interpreter_tool(file_ids=["file-123", "file-456"])
+
+    run_options: dict[str, Any] = {}
+    result = await client._prepare_tools_for_azure_ai([code_interpreter_tool], run_options)  # type: ignore
+
+    assert len(result) == 1
+    assert result[0] == {"type": "code_interpreter"}
+    assert "tool_resources" in run_options
+    assert "code_interpreter" in run_options["tool_resources"]
+    assert sorted(run_options["tool_resources"]["code_interpreter"]["file_ids"]) == ["file-123", "file-456"]
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_basic() -> None:
+    """Test get_code_interpreter_tool returns CodeInterpreterTool without files."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool()
+    assert isinstance(tool, CodeInterpreterTool)
+    assert len(tool.file_ids) == 0
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_file_ids() -> None:
+    """Test get_code_interpreter_tool forwards file_ids to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc", "file-def"])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-abc" in tool.file_ids
+    assert "file-def" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_data_sources() -> None:
+    """Test get_code_interpreter_tool forwards data_sources to the SDK."""
+    from azure.ai.agents.models import CodeInterpreterTool, VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(data_sources=[ds])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "test-asset-id" in tool.data_sources
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_mutually_exclusive() -> None:
+    """Test get_code_interpreter_tool raises ValueError when both file_ids and data_sources are provided."""
+    from azure.ai.agents.models import VectorStoreDataSource
+
+    ds = VectorStoreDataSource(asset_identifier="test-asset-id", asset_type="id_asset")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc"], data_sources=[ds])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_content() -> None:
+    """Test get_code_interpreter_tool accepts Content.from_hosted_file in file_ids."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-content-123")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-content-123" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_with_mixed_file_ids() -> None:
+    """Test get_code_interpreter_tool accepts a mix of strings and Content objects."""
+    from agent_framework import Content
+    from azure.ai.agents.models import CodeInterpreterTool
+
+    content = Content.from_hosted_file("file-from-content")
+    tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-plain", content])
+    assert isinstance(tool, CodeInterpreterTool)
+    assert "file-plain" in tool.file_ids
+    assert "file-from-content" in tool.file_ids
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_unsupported_type() -> None:
+    """Test get_code_interpreter_tool raises ValueError for unsupported Content types."""
+    from agent_framework import Content
+
+    content = Content.from_hosted_vector_store("vs-123")
+    with pytest.raises(ValueError, match="Unsupported Content type"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_content_missing_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError when Content.file_id is None."""
+    from agent_framework import Content
+
+    content = Content(type="hosted_file")
+    with pytest.raises(ValueError, match="missing a file_id"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[content])
+
+
+async def test_azure_ai_chat_client_get_code_interpreter_tool_empty_string_file_id() -> None:
+    """Test get_code_interpreter_tool raises ValueError for empty string file_ids."""
+    with pytest.raises(ValueError, match="must not contain empty strings"):
+        AzureAIAgentClient.get_code_interpreter_tool(file_ids=[""])
+
+
 async def test_azure_ai_chat_client_create_agent_stream_submit_tool_approvals(
     mock_agents_client: MagicMock,
 ) -> None:
@@ -1067,8 +1214,8 @@ async def test_azure_ai_chat_client_convert_required_action_multiple_results(
     assert len(tool_outputs) == 1
     assert tool_outputs[0].tool_call_id == "call_456"
 
-    # Result is pre-parsed string (already JSON)
-    assert tool_outputs[0].output == pre_parsed
+    # Result is the text content extracted from items
+    assert tool_outputs[0].output == function_result.result
 
 
 async def test_azure_ai_chat_client_convert_required_action_approval_response(
@@ -1381,6 +1528,7 @@ def get_weather(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response() -> None:
     """Test Azure AI Chat Client response."""
@@ -1406,6 +1554,7 @@ async def test_azure_ai_chat_client_get_response() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_get_response_tools() -> None:
     """Test Azure AI Chat Client response with tools."""
@@ -1427,6 +1576,7 @@ async def test_azure_ai_chat_client_get_response_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming() -> None:
     """Test Azure AI Chat Client streaming response."""
@@ -1458,6 +1608,7 @@ async def test_azure_ai_chat_client_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_streaming_tools() -> None:
     """Test Azure AI Chat Client streaming response with tools."""
@@ -1485,6 +1636,7 @@ async def test_azure_ai_chat_client_streaming_tools() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run() -> None:
     """Test Agent basic run functionality with AzureAIAgentClient."""
@@ -1502,6 +1654,7 @@ async def test_azure_ai_chat_client_agent_basic_run() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
     """Test Agent basic streaming functionality with AzureAIAgentClient."""
@@ -1522,6 +1675,7 @@ async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
     """Test Agent session persistence across runs with AzureAIAgentClient."""
@@ -1548,6 +1702,7 @@ async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
     """Test Agent existing thread ID functionality with AzureAIAgentClient."""
@@ -1586,6 +1741,7 @@ async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_code_interpreter():
     """Test Agent with code interpreter through AzureAIAgentClient."""
@@ -1606,6 +1762,7 @@ async def test_azure_ai_chat_client_agent_code_interpreter():
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_file_search():
     """Test Agent with file search through AzureAIAgentClient."""
@@ -1653,6 +1810,7 @@ async def test_azure_ai_chat_client_agent_file_search():
             await client.close()
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure AI Agent using Microsoft Learn MCP."""
@@ -1688,6 +1846,7 @@ async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
@@ -1713,6 +1872,7 @@ async def test_azure_ai_chat_client_agent_level_tool_persistence():
         assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
     """Test ChatOptions parameter coverage at run level."""
@@ -1737,6 +1897,7 @@ async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
         assert len(response.text) > 0
 
 
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
     """Test ChatOptions parameter coverage agent level."""
@@ -2011,7 +2172,7 @@ async def test_azure_ai_chat_client_prepare_options_with_invalid_response_format
     # Invalid response_format (not BaseModel or Mapping)
     chat_options: ChatOptions = {"response_format": "invalid_format"}  # type: ignore[typeddict-item]
 
-    with pytest.raises(ServiceInvalidRequestError, match="response_format must be a Pydantic BaseModel"):
+    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic BaseModel"):
         await client._prepare_options([], chat_options)  # type: ignore
 
 

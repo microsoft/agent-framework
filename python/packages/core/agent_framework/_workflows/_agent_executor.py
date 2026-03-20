@@ -144,10 +144,10 @@ class AgentExecutor(Executor):
         immediately run the agent to produce a new response.
         """
         # Replace cache with full conversation if available, else fall back to agent_response messages.
-        if prior.full_conversation is not None:
-            self._cache = list(prior.full_conversation)
-        else:
-            self._cache = list(prior.agent_response.messages)
+        source_messages = (
+            prior.full_conversation if prior.full_conversation is not None else prior.agent_response.messages
+        )
+        self._cache = list(source_messages)
         await self._run_agent_and_emit(ctx)
 
     @handler
@@ -311,7 +311,7 @@ class AgentExecutor(Executor):
         # Snapshot current conversation as cache + latest agent outputs.
         # Do not append to prior snapshots: callers may provide full-history messages
         # in request.messages, and extending would duplicate prior turns.
-        self._full_conversation = list(self._cache) + (list(response.messages) if response else [])
+        self._full_conversation = [*self._cache, *(list(response.messages) if response else [])]
 
         if response is None:
             # Agent did not complete (e.g., waiting for user input); do not emit response
@@ -360,7 +360,7 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {})
+        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}))
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
@@ -415,6 +415,10 @@ class AgentExecutor(Executor):
 
         return response
 
+    # Parameters that are explicitly passed to agent.run() by AgentExecutor
+    # and must not appear in **run_kwargs to avoid TypeError from duplicate values.
+    _RESERVED_RUN_PARAMS: frozenset[str] = frozenset({"session", "stream", "messages"})
+
     @staticmethod
     def _prepare_agent_run_args(raw_run_kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Prepare kwargs and options for agent.run(), avoiding duplicate option passing.
@@ -423,17 +427,32 @@ class AgentExecutor(Executor):
         `options.additional_function_arguments`. If workflow kwargs include an
         `options` key, merge it into the final options object and remove it from
         kwargs before spreading `**run_kwargs`.
+
+        Reserved parameters (session, stream, messages) that are explicitly
+        managed by AgentExecutor are stripped from run_kwargs to prevent
+        ``TypeError: got multiple values for keyword argument`` collisions.
         """
         run_kwargs = dict(raw_run_kwargs)
+
+        # Strip reserved params that AgentExecutor passes explicitly to agent.run().
+        for key in AgentExecutor._RESERVED_RUN_PARAMS:
+            if key in run_kwargs:
+                logger.warning(
+                    "Workflow kwarg '%s' is reserved by AgentExecutor and will be ignored. "
+                    "Remove it from workflow.run() kwargs to silence this warning.",
+                    key,
+                )
+                run_kwargs.pop(key)
+
         options_from_workflow = run_kwargs.pop("options", None)
         workflow_additional_args = run_kwargs.pop("additional_function_arguments", None)
 
         options: dict[str, Any] = {}
         if options_from_workflow is not None:
             if isinstance(options_from_workflow, Mapping):
-                for key, value in options_from_workflow.items():
-                    if isinstance(key, str):
-                        options[key] = value
+                options_from_workflow_map = cast(Mapping[str, Any], options_from_workflow)
+                for key, value in options_from_workflow_map.items():
+                    options[key] = value
             else:
                 logger.warning(
                     "Ignoring non-mapping workflow 'options' kwarg of type %s for AgentExecutor %s.",
@@ -442,16 +461,17 @@ class AgentExecutor(Executor):
                 )
 
         existing_additional_args = options.get("additional_function_arguments")
+        additional_args: dict[str, Any]
         if isinstance(existing_additional_args, Mapping):
-            additional_args = {key: value for key, value in existing_additional_args.items() if isinstance(key, str)}
+            existing_additional_args_map = cast(Mapping[str, Any], existing_additional_args)
+            additional_args = {key: value for key, value in existing_additional_args_map.items()}
         else:
             additional_args = {}
 
         if workflow_additional_args is not None:
             if isinstance(workflow_additional_args, Mapping):
-                additional_args.update({
-                    key: value for key, value in workflow_additional_args.items() if isinstance(key, str)
-                })
+                workflow_additional_args_map = cast(Mapping[str, Any], workflow_additional_args)
+                additional_args.update({key: value for key, value in workflow_additional_args_map.items()})
             else:
                 logger.warning(
                     "Ignoring non-mapping workflow 'additional_function_arguments' kwarg of type %s for AgentExecutor %s.",  # noqa: E501

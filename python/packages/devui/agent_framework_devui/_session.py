@@ -5,13 +5,37 @@
 import logging
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, TypedDict, cast
+
+from typing_extensions import NotRequired
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for better readability
-SessionData = dict[str, Any]
-RequestRecord = dict[str, Any]
+
+class RequestRecord(TypedDict):
+    """Tracked execution request data."""
+
+    id: str
+    timestamp: datetime
+    entity_id: str
+    executor: str
+    input: Any
+    model_id: str
+    stream: bool
+    execution_time: NotRequired[float]
+    status: NotRequired[str]
+
+
+class SessionData(TypedDict):
+    """Stored session state."""
+
+    id: str
+    created_at: datetime
+    requests: list[RequestRecord]
+    context: dict[str, Any]
+    active: bool
+
+
 SessionSummary = dict[str, Any]
 
 
@@ -95,7 +119,7 @@ class SessionManager:
             "stream": True,
         }
         session["requests"].append(request_record)
-        return str(request_record["id"])
+        return request_record["id"]
 
     def update_request_record(self, session_id: str, request_id: str, updates: dict[str, Any]) -> None:
         """Update a request record in a session.
@@ -111,7 +135,8 @@ class SessionManager:
 
         for request in session["requests"]:
             if request["id"] == request_id:
-                request.update(updates)
+                request_data = cast(dict[str, Any], request)
+                request_data.update(updates)
                 break
 
     def get_session_history(self, session_id: str) -> SessionSummary | None:
@@ -138,7 +163,7 @@ class SessionManager:
                     "timestamp": req["timestamp"].isoformat(),
                     "entity_id": req["entity_id"],
                     "executor": req["executor"],
-                    "model": req["model"],
+                    "model": req["model_id"],
                     "input_length": len(str(req["input"])) if req["input"] else 0,
                     "execution_time": req.get("execution_time"),
                     "status": req.get("status", "unknown"),
@@ -153,7 +178,7 @@ class SessionManager:
         Returns:
             List of active session summaries
         """
-        active_sessions = []
+        active_sessions: list[SessionSummary] = []
 
         for session_id, session in self.sessions.items():
             if session["active"]:
@@ -178,7 +203,7 @@ class SessionManager:
         """
         cutoff_time = datetime.now().timestamp() - (max_age_hours * 3600)
 
-        sessions_to_remove = []
+        sessions_to_remove: list[str] = []
         for session_id, session in self.sessions.items():
             if session["created_at"].timestamp() < cutoff_time:
                 sessions_to_remove.append(session_id)

@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import cast
+from typing import Any, cast
 
 import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.anthropic import AnthropicClient
 from agent_framework.azure import AzureOpenAIChatClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,9 +20,19 @@ from ..agents.document_writer_agent import document_writer_agent
 from ..agents.human_in_the_loop_agent import human_in_the_loop_agent
 from ..agents.recipe_agent import recipe_agent
 from ..agents.simple_agent import simple_agent
+from ..agents.subgraphs_agent import subgraphs_agent
 from ..agents.task_steps_agent import task_steps_agent_wrapped
 from ..agents.ui_generator_agent import ui_generator_agent
 from ..agents.weather_agent import weather_agent
+
+AnthropicClient: type[Any] | None
+try:
+    import agent_framework.anthropic as _anthropic_namespace
+except ImportError:
+    # If the Anthropic client isn't installed, we can still run the server with Azure OpenAI as the default chat client
+    AnthropicClient = None
+else:
+    AnthropicClient = cast(type[Any] | None, getattr(_anthropic_namespace, "AnthropicClient", None))
 
 # Configure logging to file and console (disabled by default - set ENABLE_DEBUG_LOGGING=1 to enable)
 if os.getenv("ENABLE_DEBUG_LOGGING"):
@@ -69,7 +78,9 @@ app.add_middleware(
 # Set CHAT_CLIENT=anthropic to use Anthropic, defaults to Azure OpenAI
 client: SupportsChatGetResponse[ChatOptions] = cast(
     SupportsChatGetResponse[ChatOptions],
-    AnthropicClient() if os.getenv("CHAT_CLIENT", "").lower() == "anthropic" else AzureOpenAIChatClient(),
+    AnthropicClient()
+    if AnthropicClient is not None and os.getenv("CHAT_CLIENT", "").lower() == "anthropic"
+    else AzureOpenAIChatClient(),
 )
 
 # Agentic Chat - basic chat agent
@@ -121,6 +132,13 @@ add_agent_framework_fastapi_endpoint(
     app=app,
     agent=ui_generator_agent(client),
     path="/tool_based_generative_ui",
+)
+
+# Subgraphs - deterministic travel planner with interrupt-driven selections
+add_agent_framework_fastapi_endpoint(
+    app=app,
+    agent=subgraphs_agent(),
+    path="/subgraphs",
 )
 
 

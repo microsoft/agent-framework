@@ -12,7 +12,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -272,7 +271,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         // Arrange
         const string WorkflowInput = "Test input message";
         Workflow workflow = this.CreateWorkflow(workflowPath, WorkflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow: workflow, input: WorkflowInput);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow: workflow, input: WorkflowInput);
 
         // Act
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
@@ -330,7 +329,7 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private async Task RunWorkflowAsync<TInput>(string workflowPath, TInput workflowInput) where TInput : notnull
     {
         Workflow workflow = this.CreateWorkflow(workflowPath, workflowInput);
-        await using StreamingRun run = await InProcessExecution.StreamAsync(workflow, workflowInput);
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, workflowInput);
 
         await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
         {

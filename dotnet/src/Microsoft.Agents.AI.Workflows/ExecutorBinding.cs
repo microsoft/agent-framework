@@ -58,9 +58,9 @@ public abstract record class ExecutorBinding(string Id, Func<string, ValueTask<E
         return executor;
     }
 
-    internal async ValueTask<Executor> CreateInstanceAsync(string runId)
+    internal async ValueTask<Executor> CreateInstanceAsync(string sessionId)
         => !this.IsPlaceholder
-         ? this.CheckId(await this.FactoryAsync(runId).ConfigureAwait(false))
+         ? this.CheckId(await this.FactoryAsync(sessionId).ConfigureAwait(false))
          : throw new InvalidOperationException(
                 $"Cannot create executor with ID '{this.Id}': Binding ({this.GetType().Name}) is a placeholder.");
 

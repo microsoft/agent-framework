@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
 # Ensure local package can be imported when running as a script.
 _SAMPLES_ROOT = Path(__file__).resolve().parents[3]
@@ -54,6 +55,9 @@ Prerequisites:
 - (Optional) Review of reflection and escalation patterns, such as those in
   workflow_as_agent_reflection.py.
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @dataclass
@@ -106,7 +110,7 @@ async def main() -> None:
     # and escalation paths for human review.
     worker = Worker(
         id="worker",
-        chat_client=AzureOpenAIResponsesClient(
+        client=AzureOpenAIResponsesClient(
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
             deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
@@ -161,7 +165,7 @@ async def main() -> None:
 
         request_id = agent_request.request_id
         # Mock a human response approval for demonstration purposes.
-        human_response = ReviewResponse(request_id=request_id, feedback="Approved", approved=True)
+        human_response = ReviewResponse(request_id=request_id, feedback="", approved=True)
 
         # Create the function call result object to send back to the agent.
         human_review_function_result = Content.from_function_result(
