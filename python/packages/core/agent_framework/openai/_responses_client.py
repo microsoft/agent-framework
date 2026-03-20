@@ -1932,27 +1932,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 raw_representation=event_item,
                             )
                         )
-                        result_output = (
-                            getattr(event_item, "result", None)
-                            or getattr(event_item, "output", None)
-                            or getattr(event_item, "outputs", None)
-                        )
-                        parsed_output: list[Content] | None = None
-                        if result_output:
-                            normalized = (  # pyright: ignore[reportUnknownVariableType]
-                                result_output
-                                if isinstance(result_output, Sequence)
-                                and not isinstance(result_output, (str, bytes, MutableMapping))
-                                else [result_output]
-                            )
-                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
-                        contents.append(
-                            Content.from_mcp_server_tool_result(
-                                call_id=call_id,
-                                output=parsed_output,
-                                raw_representation=event_item,
-                            )
-                        )
+                        # Result deferred to response.mcp_call.completed
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                         call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
                         outputs: list[Content] = []
@@ -2222,6 +2202,22 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                 else:
                     logger.debug("Unparsed annotation type in streaming: %s", ann_type)
+            case "response.mcp_call.completed":
+                item = event.item
+                call_id = getattr(item, "id", None) or ""
+                output_text = getattr(item, "output", None)
+                parsed_output: list[Content] | None = (
+                    [Content.from_text(text=output_text)]
+                    if isinstance(output_text, str)
+                    else None
+                )
+                contents.append(
+                    Content.from_mcp_server_tool_result(
+                        call_id=call_id,
+                        output=parsed_output,
+                        raw_representation=event,
+                    )
+                )
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
