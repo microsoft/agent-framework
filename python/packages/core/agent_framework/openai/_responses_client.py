@@ -249,9 +249,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         you should consider which additional layers to apply. There is a defined ordering that
         you should follow:
 
-        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
-        2. **FunctionInvocationLayer** - Handles tool/function calling loop
-        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
 
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
@@ -2259,8 +2259,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
     FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
     ChatTelemetryLayer[OpenAIResponsesOptionsT],
     RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
     Generic[OpenAIResponsesOptionsT],

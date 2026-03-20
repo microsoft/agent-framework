@@ -29,7 +29,10 @@ else:
 Custom Chat Client Implementation Example
 
 This sample demonstrates implementing a custom chat client and optionally composing
-middleware, telemetry, and function invocation layers explicitly.
+middleware, telemetry, and function invocation layers explicitly. The recommended
+layer order is `FunctionInvocationLayer -> ChatMiddlewareLayer -> ChatTelemetryLayer`
+so chat middleware runs within each tool-loop iteration while telemetry records
+per-call spans without middleware latency.
 """
 
 
@@ -124,9 +127,9 @@ class EchoingChatClient(BaseChatClient[OptionsT]):
 
 
 class EchoingChatClientWithLayers(  # type: ignore[misc]
+    FunctionInvocationLayer[OptionsT],
     ChatMiddlewareLayer[OptionsT],
     ChatTelemetryLayer[OptionsT],
-    FunctionInvocationLayer[OptionsT],
     EchoingChatClient,
 ):
     """Echoing chat client that explicitly composes middleware, telemetry, and function layers."""

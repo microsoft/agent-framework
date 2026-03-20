@@ -697,6 +697,26 @@ class TestChatAgentFunctionMiddlewareWithTools:
         assert function_calls[0].name == "sample_tool_function"
         assert function_results[0].call_id == function_calls[0].call_id
 
+    def test_agent_middleware_pipeline_cache_reuses_matching_middleware(self) -> None:
+        """Test that identical agent middleware sets reuse the cached pipeline."""
+
+        @agent_middleware
+        async def first_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @agent_middleware
+        async def second_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        agent = Agent(client=MockBaseChatClient())
+
+        first_pipeline = agent._get_agent_middleware_pipeline([first_middleware])
+        second_pipeline = agent._get_agent_middleware_pipeline([first_middleware])
+        third_pipeline = agent._get_agent_middleware_pipeline([second_middleware])
+
+        assert first_pipeline is second_pipeline
+        assert third_pipeline is not first_pipeline
+
     async def test_function_middleware_can_access_and_override_custom_kwargs(
         self, chat_client_base: "MockBaseChatClient"
     ) -> None:
@@ -1966,6 +1986,77 @@ class TestChatAgentChatMiddleware:
             "agent_middleware_before",
             "chat_middleware_before",
             "chat_middleware_after",
+            "agent_middleware_after",
+        ]
+
+    async def test_combined_middleware_with_tool_loop(self) -> None:
+        """Test Agent middleware ordering when tool calls trigger multiple chat rounds."""
+        execution_order: list[str] = []
+        chat_round = 0
+        client = MockBaseChatClient()
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_123",
+                                name="sample_tool_function",
+                                arguments='{"location": "Seattle"}',
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Final response")]),
+        ]
+
+        async def tracking_agent_middleware(
+            context: AgentContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("agent_middleware_before")
+            await call_next()
+            execution_order.append("agent_middleware_after")
+
+        async def tracking_chat_middleware(
+            context: ChatContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal chat_round
+            chat_round += 1
+            execution_order.append(f"chat_middleware_before_{chat_round}")
+            await call_next()
+            execution_order.append(f"chat_middleware_after_{chat_round}")
+
+        async def tracking_function_middleware(
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await call_next()
+            execution_order.append("function_middleware_after")
+
+        agent = Agent(
+            client=client,
+            middleware=[tracking_chat_middleware, tracking_function_middleware, tracking_agent_middleware],
+            tools=[sample_tool_function],
+        )
+
+        response = await agent.run([Message(role="user", text="test")])
+
+        assert response is not None
+        assert client.call_count == 2
+        assert response.messages[-1].text == "Final response"
+        assert execution_order == [
+            "agent_middleware_before",
+            "chat_middleware_before_1",
+            "chat_middleware_after_1",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before_2",
+            "chat_middleware_after_2",
             "agent_middleware_after",
         ]
 

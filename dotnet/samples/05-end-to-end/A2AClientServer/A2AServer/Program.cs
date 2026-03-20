@@ -8,16 +8,16 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
-string agentId = string.Empty;
+string agentName = string.Empty;
 string agentType = string.Empty;
 
 for (var i = 0; i < args.Length; i++)
 {
-    if (args[i].StartsWith("--agentId", StringComparison.InvariantCultureIgnoreCase) && i + 1 < args.Length)
+    if (args[i].Equals("--agentName", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
     {
-        agentId = args[++i];
+        agentName = args[++i];
     }
-    else if (args[i].StartsWith("--agentType", StringComparison.InvariantCultureIgnoreCase) && i + 1 < args.Length)
+    else if (args[i].Equals("--agentType", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
     {
         agentType = args[++i];
     }
@@ -50,13 +50,13 @@ IList<AITool> tools =
 AIAgent hostA2AAgent;
 AgentCard hostA2AAgentCard;
 
-if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentId))
+if (!string.IsNullOrEmpty(endpoint) && !string.IsNullOrEmpty(agentName))
 {
     (hostA2AAgent, hostA2AAgentCard) = agentType.ToUpperInvariant() switch
     {
-        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId, tools),
-        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId),
-        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentId),
+        "INVOICE" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName, tools),
+        "POLICY" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName),
+        "LOGISTICS" => await HostAgentFactory.CreateFoundryHostAgentAsync(agentType, model, endpoint, agentName),
         _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
     };
 }
@@ -101,7 +101,7 @@ else if (!string.IsNullOrEmpty(apiKey))
 }
 else
 {
-    throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentId must be provided");
+    throw new ArgumentException("Either A2AServer:ApiKey or A2AServer:ConnectionString & agentName must be provided");
 }
 
 var a2aTaskManager = app.MapA2A(

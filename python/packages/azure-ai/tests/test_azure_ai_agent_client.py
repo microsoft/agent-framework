@@ -87,6 +87,8 @@ def create_test_azure_ai_chat_client(
     client.middleware = None
     client.chat_middleware = []
     client.function_middleware = []
+    client._cached_chat_middleware_pipeline = None
+    client._cached_function_middleware_pipeline = None
     client.otel_provider_name = "azure.ai"
     client.function_invocation_configuration = {
         "enabled": True,
@@ -151,6 +153,10 @@ def test_azure_ai_chat_client_init_auto_create_client(
     chat_client.agent_name = None
     chat_client.additional_properties = {}
     chat_client.middleware = None
+    chat_client.chat_middleware = []
+    chat_client.function_middleware = []
+    chat_client._cached_chat_middleware_pipeline = None
+    chat_client._cached_function_middleware_pipeline = None
 
     assert chat_client.agents_client is mock_agents_client
     assert chat_client.agent_id is None

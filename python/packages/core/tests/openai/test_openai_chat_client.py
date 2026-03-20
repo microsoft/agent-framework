@@ -462,6 +462,99 @@ def test_prepare_content_for_openai_data_content_image(
     assert result["input_audio"]["format"] == "mp3"
 
 
+def test_prepare_content_for_openai_image_url_detail(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test _prepare_content_for_openai includes the detail field in image_url when specified."""
+    client = OpenAIChatClient()
+
+    # Test image with detail set to "high"
+    image_with_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+        additional_properties={"detail": "high"},
+    )
+
+    result = client._prepare_content_for_openai(image_with_detail)  # type: ignore
+
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == "https://example.com/image.png"
+    assert result["image_url"]["detail"] == "high"
+
+    # Test image with detail set to "low"
+    image_low_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+        additional_properties={"detail": "low"},
+    )
+
+    result = client._prepare_content_for_openai(image_low_detail)  # type: ignore
+
+    assert result["image_url"]["detail"] == "low"
+
+    # Test image with detail set to "auto"
+    image_auto_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+        additional_properties={"detail": "auto"},
+    )
+
+    result = client._prepare_content_for_openai(image_auto_detail)  # type: ignore
+
+    assert result["image_url"]["detail"] == "auto"
+
+    # Test image without detail should not include it
+    image_no_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+    )
+
+    result = client._prepare_content_for_openai(image_no_detail)  # type: ignore
+
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == "https://example.com/image.png"
+    assert "detail" not in result["image_url"]
+
+    # Test image with a future/unknown string detail value should pass it through
+    image_future_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+        additional_properties={"detail": "ultra"},
+    )
+
+    result = client._prepare_content_for_openai(image_future_detail)  # type: ignore
+
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == "https://example.com/image.png"
+    assert result["image_url"]["detail"] == "ultra"
+
+    # Test image with data URI should include detail
+    image_data_uri = Content.from_uri(
+        uri="data:image/png;base64,iVBORw0KGgo",
+        media_type="image/png",
+        additional_properties={"detail": "high"},
+    )
+
+    result = client._prepare_content_for_openai(image_data_uri)  # type: ignore
+
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == "data:image/png;base64,iVBORw0KGgo"
+    assert result["image_url"]["detail"] == "high"
+
+    # Test image with non-string detail value should not include it
+    image_non_string_detail = Content.from_uri(
+        uri="https://example.com/image.png",
+        media_type="image/png",
+        additional_properties={"detail": 123},
+    )
+
+    result = client._prepare_content_for_openai(image_non_string_detail)  # type: ignore
+
+    assert result["type"] == "image_url"
+    assert result["image_url"]["url"] == "https://example.com/image.png"
+    assert "detail" not in result["image_url"]
+
+
 def test_prepare_content_for_openai_document_file_mapping(
     openai_unit_test_env: dict[str, str],
 ) -> None:

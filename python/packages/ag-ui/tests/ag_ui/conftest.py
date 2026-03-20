@@ -45,8 +45,8 @@ def pytest_configure() -> None:
 
 
 class StreamingChatClientStub(
-    ChatMiddlewareLayer[OptionsCoT],
     FunctionInvocationLayer[OptionsCoT],
+    ChatMiddlewareLayer[OptionsCoT],
     ChatTelemetryLayer[OptionsCoT],
     BaseChatClient[OptionsCoT],
     Generic[OptionsCoT],
@@ -54,7 +54,7 @@ class StreamingChatClientStub(
     """Typed streaming stub that satisfies SupportsChatGetResponse."""
 
     def __init__(self, stream_fn: StreamFn, response_fn: ResponseFn | None = None) -> None:
-        super().__init__(function_middleware=[])
+        super().__init__(middleware=[])
         self._stream_fn = stream_fn
         self._response_fn = response_fn
         self.last_session: AgentSession | None = None

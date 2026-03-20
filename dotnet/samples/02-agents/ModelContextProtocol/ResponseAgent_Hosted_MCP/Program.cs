@@ -33,8 +33,9 @@ var mcpTool = new HostedMcpServerTool(
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
+     .GetResponsesClient()
      .AsAIAgent(
+        model: deploymentName,
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",
         tools: [mcpTool]);
@@ -60,8 +61,9 @@ var mcpToolWithApproval = new HostedMcpServerTool(
 AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetResponsesClient(deploymentName)
+    .GetResponsesClient()
     .AsAIAgent(
+        model: deploymentName,
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgentWithApproval",
         tools: [mcpToolWithApproval]);
@@ -70,7 +72,7 @@ AIAgent agentWithRequiredApproval = new AzureOpenAIClient(
 // For simplicity, we are assuming here that only mcp tool approvals are pending.
 AgentSession sessionWithRequiredApproval = await agentWithRequiredApproval.CreateSessionAsync();
 AgentResponse response = await agentWithRequiredApproval.RunAsync("Please summarize the Azure AI Agent documentation related to MCP Tool calling?", sessionWithRequiredApproval);
-List<McpServerToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<McpServerToolApprovalRequestContent>().ToList();
+List<ToolApprovalRequestContent> approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
 while (approvalRequests.Count > 0)
 {
@@ -78,11 +80,12 @@ while (approvalRequests.Count > 0)
     List<ChatMessage> userInputResponses = approvalRequests
         .ConvertAll(approvalRequest =>
         {
+            McpServerToolCallContent mcpToolCall = (McpServerToolCallContent)approvalRequest.ToolCall!;
             Console.WriteLine($"""
                 The agent would like to invoke the following MCP Tool, please reply Y to approve.
-                ServerName: {approvalRequest.ToolCall.ServerName}
-                Name: {approvalRequest.ToolCall.ToolName}
-                Arguments: {string.Join(", ", approvalRequest.ToolCall.Arguments?.Select(x => $"{x.Key}: {x.Value}") ?? [])}
+                ServerName: {mcpToolCall.ServerName}
+                Name: {mcpToolCall.Name}
+                Arguments: {string.Join(", ", mcpToolCall.Arguments?.Select(x => $"{x.Key}: {x.Value}") ?? [])}
                 """);
             return new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false)]);
         });
@@ -90,7 +93,7 @@ while (approvalRequests.Count > 0)
     // Pass the user input responses back to the agent for further processing.
     response = await agentWithRequiredApproval.RunAsync(userInputResponses, sessionWithRequiredApproval);
 
-    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<McpServerToolApprovalRequestContent>().ToList();
+    approvalRequests = response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 }
 
 Console.WriteLine($"\nAgent: {response}");

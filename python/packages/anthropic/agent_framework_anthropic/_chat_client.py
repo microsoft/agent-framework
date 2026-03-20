@@ -68,6 +68,7 @@ else:
 __all__ = [
     "AnthropicChatOptions",
     "AnthropicClient",
+    "RawAnthropicClient",
     "ThinkingConfig",
 ]
 
@@ -210,14 +211,24 @@ class AnthropicSettings(TypedDict, total=False):
     chat_model_id: str | None
 
 
-class AnthropicClient(
-    ChatMiddlewareLayer[AnthropicOptionsT],
-    FunctionInvocationLayer[AnthropicOptionsT],
-    ChatTelemetryLayer[AnthropicOptionsT],
+class RawAnthropicClient(
     BaseChatClient[AnthropicOptionsT],
     Generic[AnthropicOptionsT],
 ):
-    """Anthropic Chat client with middleware, telemetry, and function invocation support."""
+    """Raw Anthropic chat client without middleware, telemetry, or function invocation support.
+
+    Warning:
+        **This class should not normally be used directly.** It does not include middleware,
+        telemetry, or function invocation support that you most likely need. If you do use it,
+        you should consider which additional layers to apply. There is a defined ordering that
+        you should follow:
+
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
+
+        Use ``AnthropicClient`` instead for a fully-featured client with all layers applied.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "anthropic"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -229,12 +240,10 @@ class AnthropicClient(
         anthropic_client: AsyncAnthropic | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
-        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize an Anthropic Agent client.
+        """Initialize a raw Anthropic client.
 
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
@@ -245,15 +254,13 @@ class AnthropicClient(
             additional_beta_flags: Additional beta flags to enable on the client.
                 Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
             additional_properties: Additional properties stored on the client instance.
-            middleware: Optional middleware to apply to the client.
-            function_invocation_configuration: Optional function invocation configuration override.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
         Examples:
             .. code-block:: python
 
-                from agent_framework.anthropic import AnthropicClient
+                from agent_framework.anthropic import RawAnthropicClient
                 from azure.identity.aio import DefaultAzureCredential
 
                 # Using environment variables
@@ -261,13 +268,13 @@ class AnthropicClient(
                 # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
 
                 # Or passing parameters directly
-                client = AnthropicClient(
+                client = RawAnthropicClient(
                     model_id="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
                 )
 
                 # Or loading from a .env file
-                client = AnthropicClient(env_file_path="path/to/.env")
+                client = RawAnthropicClient(env_file_path="path/to/.env")
 
                 # Or passing in an existing client
                 from anthropic import AsyncAnthropic
@@ -275,7 +282,7 @@ class AnthropicClient(
                 anthropic_client = AsyncAnthropic(
                     api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
                 )
-                client = AnthropicClient(
+                client = RawAnthropicClient(
                     model_id="claude-sonnet-4-5-20250929",
                     anthropic_client=anthropic_client,
                 )
@@ -289,7 +296,7 @@ class AnthropicClient(
                     my_custom_option: str
 
 
-                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                client: RawAnthropicClient[MyOptions] = RawAnthropicClient(model_id="claude-sonnet-4-5-20250929")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
@@ -320,8 +327,6 @@ class AnthropicClient(
         # Initialize parent
         super().__init__(
             additional_properties=additional_properties,
-            middleware=middleware,
-            function_invocation_configuration=function_invocation_configuration,
         )
 
         # Initialize instance variables
@@ -1376,3 +1381,95 @@ class AnthropicClient(
             The service URL for the chat client, or None if not set.
         """
         return str(self.anthropic_client.base_url)
+
+
+class AnthropicClient(
+    FunctionInvocationLayer[AnthropicOptionsT],
+    ChatMiddlewareLayer[AnthropicOptionsT],
+    ChatTelemetryLayer[AnthropicOptionsT],
+    RawAnthropicClient[AnthropicOptionsT],
+    Generic[AnthropicOptionsT],
+):
+    """Anthropic chat client with middleware, telemetry, and function invocation support."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model_id: str | None = None,
+        anthropic_client: AsyncAnthropic | None = None,
+        additional_beta_flags: list[str] | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an Anthropic client.
+
+        Keyword Args:
+            api_key: The Anthropic API key to use for authentication.
+            model_id: The ID of the model to use.
+            anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
+                This can be used to further configure the client before passing it in.
+                For instance if you need to set a different base_url for testing or private deployments.
+            additional_beta_flags: Additional beta flags to enable on the client.
+                Default flags are: "mcp-client-2025-04-04", "code-execution-2025-08-25".
+            additional_properties: Additional properties stored on the client instance.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            env_file_path: Path to environment file for loading settings.
+            env_file_encoding: Encoding of the environment file.
+
+        Examples:
+            .. code-block:: python
+
+                from agent_framework.anthropic import AnthropicClient
+
+                # Using environment variables
+                # Set ANTHROPIC_API_KEY=your_anthropic_api_key
+                # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
+
+                # Or passing parameters directly
+                client = AnthropicClient(
+                    model_id="claude-sonnet-4-5-20250929",
+                    api_key="your_anthropic_api_key",
+                )
+
+                # Or loading from a .env file
+                client = AnthropicClient(env_file_path="path/to/.env")
+
+                # Or passing in an existing client
+                from anthropic import AsyncAnthropic
+
+                anthropic_client = AsyncAnthropic(
+                    api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
+                )
+                client = AnthropicClient(
+                    model_id="claude-sonnet-4-5-20250929",
+                    anthropic_client=anthropic_client,
+                )
+
+                # Using custom ChatOptions with type safety:
+                from typing import TypedDict
+                from agent_framework.anthropic import AnthropicChatOptions
+
+
+                class MyOptions(AnthropicChatOptions, total=False):
+                    my_custom_option: str
+
+
+                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                response = await client.get_response("Hello", options={"my_custom_option": "value"})
+        """
+        super().__init__(
+            api_key=api_key,
+            model_id=model_id,
+            anthropic_client=anthropic_client,
+            additional_beta_flags=additional_beta_flags,
+            additional_properties=additional_properties,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )

@@ -11,8 +11,8 @@ var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt
 
 AIAgent agent = new OpenAIClient(
     apiKey)
-     .GetResponsesClient(model)
-     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+     .GetResponsesClient()
+     .AsAIAgent(model: model, instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
