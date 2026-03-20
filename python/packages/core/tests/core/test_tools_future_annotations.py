@@ -9,11 +9,7 @@ typing.get_type_hints() before passing them to Pydantic's create_model.
 
 from __future__ import annotations
 
-from typing import Optional
-
-import pytest
-
-from agent_framework import FunctionTool, tool
+from agent_framework import tool
 from agent_framework._middleware import FunctionInvocationContext
 
 
