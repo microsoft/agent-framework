@@ -3,17 +3,19 @@
 import sys
 from collections.abc import AsyncIterable, Awaitable, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast, overload
 
 import pytest
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
     Executor,
     Message,
+    ResponseStream,
     SupportsAgentRun,
     Workflow,
     WorkflowCheckpoint,
@@ -35,6 +37,8 @@ from agent_framework.orchestrations import (
     MagenticProgressLedgerItem,
     StandardMagenticManager,
 )
+
+from agent_framework_orchestrations._orchestration_shared import OrchestrationOutput
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -148,6 +152,24 @@ class StubAgent(BaseAgent):
         super().__init__(name=agent_name, description=f"Stub agent {agent_name}", **kwargs)
         self._reply_text = reply_text
 
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # type: ignore[override]
     def run(  # type: ignore[override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
@@ -155,7 +177,7 @@ class StubAgent(BaseAgent):
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Awaitable[AgentResponse[Any]] | AsyncIterable[AgentResponseUpdate]:
         if stream:
             return self._run_stream()
 
@@ -195,8 +217,8 @@ async def test_magentic_builder_returns_workflow_and_runs() -> None:
     async for event in workflow.run("compose summary", stream=True):
         if event.type == "output":
             msg = event.data
-            if isinstance(msg, list):
-                outputs.extend(cast(list[Message], msg))
+            if isinstance(msg, OrchestrationOutput):
+                outputs.extend(msg.messages)
         elif event.type == "magentic_orchestrator":
             orchestrator_event_count += 1
 
@@ -250,7 +272,7 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
     assert isinstance(req_event.data, MagenticPlanReviewRequest)
 
     completed = False
-    output: list[Message] | None = None
+    output: OrchestrationOutput | None = None
     async for ev in wf.run(stream=True, responses={req_event.request_id: req_event.data.approve()}):
         if ev.type == "status" and ev.state == WorkflowRunState.IDLE:
             completed = True
@@ -261,8 +283,8 @@ async def test_magentic_workflow_plan_review_approval_to_completion():
 
     assert completed
     assert output is not None
-    assert isinstance(output, list)
-    assert all(isinstance(msg, Message) for msg in output)
+    assert isinstance(output, OrchestrationOutput)
+    assert all(isinstance(msg, Message) for msg in output.messages)
 
 
 async def test_magentic_plan_review_with_revise():
@@ -337,10 +359,10 @@ async def test_magentic_orchestrator_round_limit_produces_partial_result():
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
     data = output_event.data
-    assert isinstance(data, list)
-    assert len(data) > 0  # type: ignore
-    assert data[-1].role == "assistant"  # type: ignore
-    assert all(isinstance(msg, Message) for msg in data)  # type: ignore
+    assert isinstance(data, OrchestrationOutput)
+    assert len(data.messages) > 0
+    assert data.messages[-1].role == "assistant"
+    assert all(isinstance(msg, Message) for msg in data.messages)
 
 
 async def test_magentic_checkpoint_resume_round_trip():
@@ -409,14 +431,32 @@ async def test_magentic_checkpoint_resume_round_trip():
 class StubManagerAgent(BaseAgent):
     """Stub agent for testing StandardMagenticManager."""
 
+    @overload
     def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # type: ignore[override]
+    def run(  # type: ignore[override]
         self,
         messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
         *,
         stream: bool = False,
         session: Any = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+    ) -> Awaitable[AgentResponse[Any]] | AsyncIterable[AgentResponseUpdate]:
         if stream:
             return self._run_stream()
 
@@ -426,11 +466,11 @@ class StubManagerAgent(BaseAgent):
         return _run()
 
     async def _run_stream(self) -> AsyncIterable[AgentResponseUpdate]:
-        yield AgentResponseUpdate(message_deltas=[Message("assistant", ["ok"])])
+        yield AgentResponseUpdate(contents=[Content.from_text(text="ok")])
 
 
 async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
-    mgr = StandardMagenticManager(StubManagerAgent())
+    mgr = StandardMagenticManager(StubManagerAgent())  # type: ignore[arg-type]
 
     async def fake_complete_plan(messages: list[Message], **kwargs: Any) -> Message:
         # Return a different response depending on call order length
@@ -460,7 +500,7 @@ async def test_standard_manager_plan_and_replan_via_complete_monkeypatch():
 
 
 async def test_standard_manager_progress_ledger_success_and_error():
-    mgr = StandardMagenticManager(agent=StubManagerAgent())
+    mgr = StandardMagenticManager(agent=StubManagerAgent())  # type: ignore[arg-type]
     ctx = MagenticContext(task="task", participant_descriptions={"alice": "desc"})
 
     # Success path: valid JSON
@@ -526,7 +566,25 @@ class StubThreadAgent(BaseAgent):
     def __init__(self, name: str | None = None) -> None:
         super().__init__(name=name or "agentA")
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs: Any):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -554,7 +612,25 @@ class StubAssistantsAgent(BaseAgent):
         super().__init__(name="agentA")
         self.client = StubAssistantsClient()  # type name contains 'AssistantsClient'
 
-    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs):  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # type: ignore[override]
+    def run(self, messages=None, *, stream: bool = False, session=None, **kwargs: Any):  # type: ignore[override]
         if stream:
             return self._run_stream()
 
@@ -753,11 +829,11 @@ async def test_magentic_stall_and_reset_reach_limits():
     assert idle_status is not None
     output_event = next((e for e in events if e.type == "output"), None)
     assert output_event is not None
-    assert isinstance(output_event.data, list)
-    assert all(isinstance(msg, Message) for msg in output_event.data)  # type: ignore
-    assert len(output_event.data) > 0  # type: ignore
-    assert output_event.data[-1].text is not None  # type: ignore
-    assert output_event.data[-1].text == "Workflow terminated due to reaching maximum reset count."  # type: ignore
+    assert isinstance(output_event.data, OrchestrationOutput)
+    assert all(isinstance(msg, Message) for msg in output_event.data.messages)
+    assert len(output_event.data.messages) > 0
+    assert output_event.data.messages[-1].text is not None
+    assert output_event.data.messages[-1].text == "Workflow terminated due to reaching maximum reset count."
 
 
 async def test_magentic_checkpoint_runtime_only() -> None:
@@ -1085,14 +1161,32 @@ async def test_standard_manager_propagates_session_to_agent():
     class SessionCapturingAgent(BaseAgent):
         """Agent that records the session passed to each run() call."""
 
+        @overload
         def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...  # type: ignore[override]
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...  # type: ignore[override]
+        def run(  # type: ignore[override]
             self,
             messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
             *,
             stream: bool = False,
             session: Any = None,
             **kwargs: Any,
-        ) -> Awaitable[AgentResponse] | AsyncIterable[AgentResponseUpdate]:
+        ) -> Awaitable[AgentResponse[Any]] | AsyncIterable[AgentResponseUpdate]:
             captured_sessions.append(session)
 
             async def _run() -> AgentResponse:
@@ -1101,7 +1195,7 @@ async def test_standard_manager_propagates_session_to_agent():
             return _run()
 
     agent = SessionCapturingAgent()
-    mgr = StandardMagenticManager(agent=agent)
+    mgr = StandardMagenticManager(agent=agent)  # type: ignore[arg-type]
     ctx = MagenticContext(task="task", participant_descriptions={"a": "desc"})
 
     await mgr.plan(ctx.clone())
@@ -1110,35 +1204,35 @@ async def test_standard_manager_propagates_session_to_agent():
     assert len(captured_sessions) == 2
     assert all(s is not None for s in captured_sessions), "session must be passed to agent.run()"
     assert captured_sessions[0] is captured_sessions[1], "same session instance must be reused across calls"
-    assert captured_sessions[0] is mgr._session
+    assert captured_sessions[0] is mgr._session  # type: ignore[reportPrivateUsage]
 
 
 def test_standard_manager_checkpoint_preserves_session():
     """Verify that checkpoint save/restore preserves the manager's session identity."""
     agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session_id = mgr._session.session_id
+    mgr = StandardMagenticManager(agent=agent)  # type: ignore[arg-type]
+    original_session_id = mgr._session.session_id  # type: ignore[reportPrivateUsage]
 
     state = mgr.on_checkpoint_save()
     assert "agent_session" in state
 
     # Restore into a fresh manager and verify session_id is preserved
-    mgr2 = StandardMagenticManager(agent=agent)
-    assert mgr2._session.session_id != original_session_id
+    mgr2 = StandardMagenticManager(agent=agent)  # type: ignore[arg-type]
+    assert mgr2._session.session_id != original_session_id  # type: ignore[reportPrivateUsage]
     mgr2.on_checkpoint_restore(state)
-    assert mgr2._session.session_id == original_session_id
+    assert mgr2._session.session_id == original_session_id  # type: ignore[reportPrivateUsage]
 
 
 def test_standard_manager_checkpoint_restore_empty_state():
     """Verify that restoring from a state without agent_session leaves the session intact."""
     agent = StubManagerAgent()
-    mgr = StandardMagenticManager(agent=agent)
-    original_session = mgr._session
+    mgr = StandardMagenticManager(agent=agent)  # type: ignore[arg-type]
+    original_session = mgr._session  # type: ignore[reportPrivateUsage]
     original_session_id = original_session.session_id
 
     mgr.on_checkpoint_restore({})
-    assert mgr._session is original_session
-    assert mgr._session.session_id == original_session_id
+    assert mgr._session is original_session  # type: ignore[reportPrivateUsage]
+    assert mgr._session.session_id == original_session_id  # type: ignore[reportPrivateUsage]
 
 
 # endregion

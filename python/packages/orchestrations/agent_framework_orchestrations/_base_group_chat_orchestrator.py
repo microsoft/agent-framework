@@ -20,6 +20,7 @@ from agent_framework._workflows._workflow_context import WorkflowContext
 from typing_extensions import Never
 
 from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_shared import OrchestrationOutput
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -351,7 +352,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
             result = await result
         return result
 
-    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
+    async def _check_terminate_and_yield(self, ctx: WorkflowContext[Never, OrchestrationOutput]) -> bool:
         """Check termination conditions and yield completion if met.
 
         Args:
@@ -363,7 +364,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         terminate = await self._check_termination()
         if terminate:
             self._append_messages([self._create_completion_message(self.TERMINATION_CONDITION_MET_MESSAGE)])
-            await ctx.yield_output(self._full_conversation)
+            await ctx.yield_output(OrchestrationOutput(messages=self._full_conversation))
             return True
 
         return False
@@ -490,7 +491,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
 
         return False
 
-    async def _check_round_limit_and_yield(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
+    async def _check_round_limit_and_yield(self, ctx: WorkflowContext[Never, OrchestrationOutput]) -> bool:
         """Check round limit and yield completion if reached.
 
         Args:
@@ -502,7 +503,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         reach_max_rounds = self._check_round_limit()
         if reach_max_rounds:
             self._append_messages([self._create_completion_message(self.MAX_ROUNDS_MET_MESSAGE)])
-            await ctx.yield_output(self._full_conversation)
+            await ctx.yield_output(OrchestrationOutput(messages=self._full_conversation))
             return True
 
         return False
@@ -521,7 +522,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Returns:
             Serialized state dict
         """
-        from ._orchestration_state import OrchestrationState
+        from ._orchestration_shared import OrchestrationState
 
         state = OrchestrationState(
             conversation=list(self._full_conversation),
@@ -551,7 +552,7 @@ class BaseGroupChatOrchestrator(Executor, ABC):
         Args:
             state: Serialized state dict
         """
-        from ._orchestration_state import OrchestrationState
+        from ._orchestration_shared import OrchestrationState
 
         orch_state = OrchestrationState.from_dict(state)
         self._full_conversation = list(orch_state.conversation)

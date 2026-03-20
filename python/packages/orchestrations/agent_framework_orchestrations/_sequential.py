@@ -8,7 +8,7 @@ workflow where:
 - A shared conversation context (list[Message]) is passed along the chain
 - Agents append their assistant messages to the context
 - Custom executors can transform or summarize and return a refined context
-- The workflow finishes with the final context produced by the last participant
+- The workflow finishes with an OrchestrationOutput containing the final conversation
 
 Typical wiring:
     input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) -> ... -> participantN -> _EndWithConversation
@@ -27,8 +27,8 @@ Why include the small internal adapter executors?
 - Agent response adaptation ("to-conversation:<participant>"): agents (via AgentExecutor)
   emit `AgentExecutorResponse`. The adapter converts that to a `list[Message]`
   using `full_conversation` so original prompts aren't lost when chaining.
-- Result output ("end"): yields the final conversation list and the workflow becomes idle
-  giving a consistent terminal payload shape for both agents and custom executors.
+- Result output ("end"): yields an OrchestrationOutput wrapping the final conversation
+  and the workflow becomes idle, giving a consistent terminal payload for both agents and custom executors.
 
 These adapters are first-class executors by design so they are type-checked at edges,
 observable (ExecutorInvoke/Completed events), and easily testable/reusable. Their IDs are
@@ -57,6 +57,7 @@ from agent_framework._workflows._workflow_builder import WorkflowBuilder
 from agent_framework._workflows._workflow_context import WorkflowContext
 
 from ._orchestration_request_info import AgentApprovalExecutor
+from ._orchestration_shared import OrchestrationOutput
 
 logger = logging.getLogger(__name__)
 
@@ -78,31 +79,31 @@ class _InputToConversation(Executor):
 
 
 class _EndWithConversation(Executor):
-    """Terminates the workflow by emitting the final conversation context."""
+    """Terminates the workflow by emitting an OrchestrationOutput containing the final conversation."""
 
     @handler
     async def end_with_messages(
         self,
         conversation: list[Message],
-        ctx: WorkflowContext[Any, list[Message]],
+        ctx: WorkflowContext[Any, OrchestrationOutput],
     ) -> None:
         """Handler for ending with a list of Message.
 
         This is used when the last participant is a custom executor.
         """
-        await ctx.yield_output(list(conversation))
+        await ctx.yield_output(OrchestrationOutput(messages=list(conversation)))
 
     @handler
     async def end_with_agent_executor_response(
         self,
         response: AgentExecutorResponse,
-        ctx: WorkflowContext[Any, list[Message] | None],
+        ctx: WorkflowContext[Any, OrchestrationOutput],
     ) -> None:
         """Handle case where last participant is an agent.
 
         The agent is wrapped by AgentExecutor and emits AgentExecutorResponse.
         """
-        await ctx.yield_output(response.full_conversation)
+        await ctx.yield_output(OrchestrationOutput(messages=list(response.full_conversation or [])))
 
 
 class SequentialBuilder:
@@ -113,7 +114,7 @@ class SequentialBuilder:
     - The workflow wires participants in order, passing a list[Message] down the chain
     - Agents append their assistant messages to the conversation
     - Custom executors can transform/summarize and return a list[Message]
-    - The final output is the conversation produced by the last participant
+    - The final output is an OrchestrationOutput containing the conversation from the last participant
 
     Usage:
 
@@ -252,7 +253,7 @@ class SequentialBuilder:
               route through a request info interceptor, then convert response to conversation
               via _ResponseToConversation
             - Else (custom Executor): pass conversation directly to the executor
-        - _EndWithConversation yields the final conversation and the workflow becomes idle
+        - _EndWithConversation yields an OrchestrationOutput and the workflow becomes idle
         """
         # Internal nodes
         input_conv = _InputToConversation(id="input-conversation")

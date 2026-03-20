@@ -37,6 +37,7 @@ from ._base_group_chat_orchestrator import (
     GroupChatWorkflowContextOutT,
     ParticipantRegistry,
 )
+from ._orchestration_shared import OrchestrationOutput
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
@@ -1055,7 +1056,9 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         if self._magentic_context is None:
             raise RuntimeError("Context not initialized")
         # Check limits first
-        within_limits = await self._check_within_limits_or_complete(cast(WorkflowContext[Never, list[Message]], ctx))
+        within_limits = await self._check_within_limits_or_complete(
+            cast(WorkflowContext[Never, OrchestrationOutput], ctx)
+        )
         if not within_limits:
             return
 
@@ -1090,7 +1093,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Check for task completion
         if self._progress_ledger.is_request_satisfied.answer:
             logger.info("Magentic Orchestrator: Task completed")
-            await self._prepare_final_answer(cast(WorkflowContext[Never, list[Message]], ctx))
+            await self._prepare_final_answer(cast(WorkflowContext[Never, OrchestrationOutput], ctx))
             return
 
         # Check for stalling or looping
@@ -1114,7 +1117,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
 
         if next_speaker not in self._participant_registry.participants:
             logger.warning(f"Invalid next speaker: {next_speaker}")
-            await self._prepare_final_answer(cast(WorkflowContext[Never, list[Message]], ctx))
+            await self._prepare_final_answer(cast(WorkflowContext[Never, OrchestrationOutput], ctx))
             return
 
         # Add instruction to conversation (assistant guidance)
@@ -1190,7 +1193,7 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         # Start inner loop
         await self._run_inner_loop(ctx)
 
-    async def _prepare_final_answer(self, ctx: WorkflowContext[Never, list[Message]]) -> None:
+    async def _prepare_final_answer(self, ctx: WorkflowContext[Never, OrchestrationOutput]) -> None:
         """Prepare the final answer using the manager."""
         if self._magentic_context is None:
             raise RuntimeError("Context not initialized")
@@ -1199,11 +1202,11 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
         final_answer = await self._manager.prepare_final_answer(self._magentic_context.clone(deep=True))
 
         # Emit a completed event for the workflow
-        await ctx.yield_output([final_answer])
+        await ctx.yield_output(OrchestrationOutput(messages=[*self._magentic_context.chat_history, final_answer]))
 
         self._terminated = True
 
-    async def _check_within_limits_or_complete(self, ctx: WorkflowContext[Never, list[Message]]) -> bool:
+    async def _check_within_limits_or_complete(self, ctx: WorkflowContext[Never, OrchestrationOutput]) -> bool:
         """Check if orchestrator is within operational limits.
 
         If limits are exceeded, yield a termination message and mark the workflow as terminated.
@@ -1228,14 +1231,18 @@ class MagenticOrchestrator(BaseGroupChatOrchestrator):
             logger.error(f"Magentic Orchestrator: Max {limit_type} count reached")
 
             # Yield the full conversation with an indication of termination due to limits
-            await ctx.yield_output([
-                *self._magentic_context.chat_history,
-                Message(
-                    role="assistant",
-                    text=f"Workflow terminated due to reaching maximum {limit_type} count.",
-                    author_name=MAGENTIC_MANAGER_NAME,
-                ),
-            ])
+            await ctx.yield_output(
+                OrchestrationOutput(
+                    messages=[
+                        *self._magentic_context.chat_history,
+                        Message(
+                            role="assistant",
+                            text=f"Workflow terminated due to reaching maximum {limit_type} count.",
+                            author_name=MAGENTIC_MANAGER_NAME,
+                        ),
+                    ]
+                )
+            )
             self._terminated = True
 
             return False
