@@ -19,11 +19,6 @@ The Agent Framework needs a skills system that lets agents discover and use doma
 - Skills must be filterable so consumers can include or exclude specific skills based on defined criteria
 - Multiple skill sources must be composable into a single provider
 
-## Considered Options
-
-- Single monolithic `FileAgentSkillsProvider` (current design)
-- Multi-source architecture with abstract base types and builder pattern
-
 ## Architecture
 
 ### Model-Facing Tools
