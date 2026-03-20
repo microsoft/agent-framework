@@ -1,7 +1,48 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-# This is a dynamic namespace — all symbols are lazily loaded from agent-framework-openai.
-from typing import Any
+# Type stubs for the agent_framework.openai lazy-loading namespace.
+# Install agent-framework-openai for full type support.
 
-def __getattr__(name: str) -> Any: ...  # pyright: ignore[reportIncompleteStub]
-def __dir__() -> list[str]: ...
+from agent_framework_openai import (
+    AssistantToolResources,
+    ContentFilterResultSeverity,
+    OpenAIAssistantProvider,
+    OpenAIAssistantsClient,
+    OpenAIAssistantsOptions,
+    OpenAIChatClient,
+    OpenAIChatCompletionClient,
+    OpenAIChatCompletionOptions,
+    OpenAIChatOptions,
+    OpenAIContentFilterException,
+    OpenAIContinuationToken,
+    OpenAIEmbeddingClient,
+    OpenAIEmbeddingOptions,
+    OpenAIResponsesClient,
+    OpenAIResponsesOptions,
+    OpenAISettings,
+    RawOpenAIChatClient,
+    RawOpenAIChatCompletionClient,
+    RawOpenAIResponsesClient,
+)
+
+__all__ = [
+    "AssistantToolResources",
+    "ContentFilterResultSeverity",
+    "OpenAIAssistantProvider",
+    "OpenAIAssistantsClient",
+    "OpenAIAssistantsOptions",
+    "OpenAIChatClient",
+    "OpenAIChatCompletionClient",
+    "OpenAIChatCompletionOptions",
+    "OpenAIChatOptions",
+    "OpenAIContentFilterException",
+    "OpenAIContinuationToken",
+    "OpenAIEmbeddingClient",
+    "OpenAIEmbeddingOptions",
+    "OpenAIResponsesClient",
+    "OpenAIResponsesOptions",
+    "OpenAISettings",
+    "RawOpenAIChatClient",
+    "RawOpenAIChatCompletionClient",
+    "RawOpenAIResponsesClient",
+]
