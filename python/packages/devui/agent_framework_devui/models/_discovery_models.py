@@ -2,8 +2,11 @@
 
 """Discovery API models for entity information."""
 
+from __future__ import annotations
+
 import re
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -57,7 +60,7 @@ class EntityInfo(BaseModel):
 class DiscoveryResponse(BaseModel):
     """Response model for entity discovery."""
 
-    entities: list[EntityInfo] = Field(default_factory=list)
+    entities: list[EntityInfo] = Field(default_factory=cast(Callable[..., list[EntityInfo]], list))
 
 
 # ============================================================================

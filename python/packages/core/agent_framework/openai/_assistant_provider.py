@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
 
 from openai import AsyncOpenAI
@@ -16,7 +16,6 @@ from .._agents import Agent
 from .._middleware import MiddlewareTypes
 from .._sessions import BaseContextProvider
 from .._tools import FunctionTool, ToolTypes, normalize_tools
-from ..exceptions import ServiceInitializationError
 from ._assistants_client import OpenAIAssistantsClient
 from ._shared import OpenAISettings, from_assistant_tools, to_assistant_tools
 
@@ -120,7 +119,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             env_file_encoding: Encoding of the .env file.
 
         Raises:
-            ServiceInitializationError: If no client is provided and API key is missing.
+            ValueError: If no client is provided and API key is missing.
 
         Examples:
             .. code-block:: python
@@ -150,24 +149,25 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
                 env_file_encoding=env_file_encoding,
             )
 
-            if not settings["api_key"]:
-                raise ServiceInitializationError(
+            api_key_setting = settings.get("api_key")
+            if not api_key_setting:
+                raise ValueError(
                     "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
                 )
 
             # Get API key value
-            api_key_value: str | Callable[[], str | Awaitable[str]] | None
-            if isinstance(settings["api_key"], SecretString):
-                api_key_value = settings["api_key"].get_secret_value()
+            api_key_value: str | Callable[[], str | Awaitable[str]]
+            if isinstance(api_key_setting, SecretString):
+                api_key_value = api_key_setting.get_secret_value()
             else:
-                api_key_value = settings["api_key"]
+                api_key_value = api_key_setting
 
             # Create client
             client_args: dict[str, Any] = {"api_key": api_key_value}
-            if settings["org_id"]:
-                client_args["organization"] = settings["org_id"]
-            if settings["base_url"]:
-                client_args["base_url"] = settings["base_url"]
+            if org_id_value := settings.get("org_id"):
+                client_args["organization"] = org_id_value
+            if base_url_value := settings.get("base_url"):
+                client_args["base_url"] = base_url_value
 
             self._client = AsyncOpenAI(**client_args)
 
@@ -227,7 +227,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A Agent instance wrapping the created assistant.
 
         Raises:
-            ServiceInitializationError: If assistant creation fails.
+            ValueError: If assistant creation fails.
 
         Examples:
             .. code-block:: python
@@ -251,7 +251,9 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         """
         # Normalize tools
         normalized_tools = normalize_tools(tools)
-        assistant_tools = [tool for tool in normalized_tools if isinstance(tool, (FunctionTool, MutableMapping))]
+        assistant_tools: list[FunctionTool | MutableMapping[str, Any]] = [
+            tool for tool in normalized_tools if isinstance(tool, (FunctionTool, MutableMapping))
+        ]
         api_tools = to_assistant_tools(assistant_tools) if assistant_tools else []
 
         # Extract response_format from default_options if present
@@ -286,9 +288,9 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
 
         # Create the assistant
         if not self._client:
-            raise ServiceInitializationError("OpenAI client is not initialized.")
+            raise RuntimeError("OpenAI client is not initialized.")
 
-        assistant = await self._client.beta.assistants.create(**create_params)
+        assistant = await self._client.beta.assistants.create(**create_params)  # type: ignore[reportDeprecated]
 
         # Create Agent - pass default_options which contains response_format
         return self._create_chat_agent_from_assistant(
@@ -333,7 +335,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A Agent instance wrapping the retrieved assistant.
 
         Raises:
-            ServiceInitializationError: If the assistant cannot be retrieved.
+            RuntimeError: If the assistant cannot be retrieved.
             ValueError: If required function tools are missing.
 
         Examples:
@@ -352,9 +354,9 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
         """
         # Fetch the assistant
         if not self._client:
-            raise ServiceInitializationError("OpenAI client is not initialized.")
+            raise RuntimeError("OpenAI client is not initialized.")
 
-        assistant = await self._client.beta.assistants.retrieve(assistant_id)
+        assistant = await self._client.beta.assistants.retrieve(assistant_id)  # type: ignore[reportDeprecated]
 
         # Use as_agent to wrap it
         return self.as_agent(
@@ -467,12 +469,14 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             for tool in normalized:
                 if isinstance(tool, FunctionTool):
                     provided_functions.add(tool.name)
-                elif isinstance(tool, MutableMapping) and "function" in tool:
-                    func_spec = tool.get("function", {})
-                    if isinstance(func_spec, dict):
-                        func_dict = cast(dict[str, Any], func_spec)
-                        if "name" in func_dict:
-                            provided_functions.add(str(func_dict["name"]))
+                elif isinstance(tool, Mapping):
+                    typed_tool = cast(Mapping[str, Any], tool)
+                    raw_func_spec = typed_tool.get("function")
+                    if isinstance(raw_func_spec, Mapping):
+                        typed_func_spec = cast(Mapping[str, Any], raw_func_spec)
+                        raw_name = typed_func_spec.get("name")
+                        if isinstance(raw_name, str) and raw_name:
+                            provided_functions.add(raw_name)
 
         # Check for missing functions
         missing = required_functions - provided_functions

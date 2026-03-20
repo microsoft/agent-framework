@@ -18,16 +18,28 @@ internal sealed class AIContentExternalHandler<TRequestContent, TResponseContent
     private readonly PortBinding? _portBinding;
     private ConcurrentDictionary<string, TRequestContent> _pendingRequests = new();
 
-    public AIContentExternalHandler(ref RouteBuilder routeBuilder, string portId, bool intercepted, Func<TResponseContent, IWorkflowContext, CancellationToken, ValueTask> handler)
+    public AIContentExternalHandler(ref ProtocolBuilder protocolBuilder, string portId, bool intercepted, Func<TResponseContent, IWorkflowContext, CancellationToken, ValueTask> handler)
     {
+        PortBinding? portBinding = null;
+        protocolBuilder = protocolBuilder.ConfigureRoutes(routeBuilder => ConfigureRoutes(routeBuilder, out portBinding));
+        this._portBinding = portBinding;
+
         if (intercepted)
         {
-            this._portBinding = null;
-            routeBuilder = routeBuilder.AddHandler(handler);
+            protocolBuilder = protocolBuilder.SendsMessage<TRequestContent>();
         }
-        else
+
+        void ConfigureRoutes(RouteBuilder routeBuilder, out PortBinding? portBinding)
         {
-            routeBuilder = routeBuilder.AddPortHandler<TRequestContent, TResponseContent>(portId, handler, out this._portBinding);
+            if (intercepted)
+            {
+                portBinding = null;
+                routeBuilder.AddHandler(handler);
+            }
+            else
+            {
+                routeBuilder.AddPortHandler<TRequestContent, TResponseContent>(portId, handler, out portBinding);
+            }
         }
     }
 

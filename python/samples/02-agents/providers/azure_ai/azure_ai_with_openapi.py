@@ -5,6 +5,10 @@ from pathlib import Path
 
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with OpenAPI Tool Example
@@ -20,7 +24,7 @@ Prerequisites:
 
 async def main() -> None:
     # Load the OpenAPI specification
-    resources_path = Path(__file__).parents[2] / "shared" / "resources" / "countries.json"
+    resources_path = Path(__file__).parents[3] / "shared" / "resources" / "countries.json"
 
     with open(resources_path) as f:
         openapi_countries = json.load(f)

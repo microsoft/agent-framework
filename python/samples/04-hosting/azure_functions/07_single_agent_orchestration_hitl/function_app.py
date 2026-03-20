@@ -20,7 +20,11 @@ import azure.functions as func
 from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
+
+# Load environment variables from .env file
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ app = AgentFunctionApp(agents=[_create_writer_agent()], enable_health_check=True
 
 # 3. Activities encapsulate external work for review notifications and publishing.
 @app.activity_trigger(input_name="content")
-def notify_user_for_approval(content: dict[str, str]) -> None:
+def notify_user_for_approval(content: dict) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("NOTIFICATION: Please review the following content for approval:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -73,7 +77,7 @@ def notify_user_for_approval(content: dict[str, str]) -> None:
 
 
 @app.activity_trigger(input_name="content")
-def publish_content(content: dict[str, str]) -> None:
+def publish_content(content: dict) -> None:
     model = GeneratedContent.model_validate(content)
     logger.info("PUBLISHING: Content has been published successfully:")
     logger.info("Title: %s", model.title or "(untitled)")
@@ -136,9 +140,7 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
                 )
                 return {"content": content.content}
 
-            context.set_custom_status(
-                "Content rejected by human reviewer. Incorporating feedback and regenerating..."
-            )
+            context.set_custom_status("Content rejected by human reviewer. Incorporating feedback and regenerating...")
 
             # Check if we've exhausted attempts
             if attempt >= payload.max_review_attempts:
@@ -162,15 +164,11 @@ def content_generation_hitl_orchestration(context: DurableOrchestrationContext) 
             context.set_custom_status(
                 f"Human approval timed out after {payload.approval_timeout_hours} hour(s). Treating as rejection."
             )
-            raise TimeoutError(
-                f"Human approval timed out after {payload.approval_timeout_hours} hour(s)."
-            )
+            raise TimeoutError(f"Human approval timed out after {payload.approval_timeout_hours} hour(s).")
 
     # If we exit the loop without returning, max attempts were exhausted
     context.set_custom_status("Max review attempts exhausted.")
-    raise RuntimeError(
-        f"Content could not be approved after {payload.max_review_attempts} iteration(s)."
-    )
+    raise RuntimeError(f"Content could not be approved after {payload.max_review_attempts} iteration(s).")
 
 
 # 5. HTTP endpoint that starts the human-in-the-loop orchestration.

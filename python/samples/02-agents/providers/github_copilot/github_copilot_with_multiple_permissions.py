@@ -21,18 +21,18 @@ More permissions mean more potential for unintended actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import PermissionRequest, PermissionRequestResult
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import PermissionRequestResult
 
 
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
+    print(f"\n[Permission Request: {request.kind}]")
 
-    if "command" in request:
-        print(f"  Command: {request.get('command')}")
-    if "path" in request:
-        print(f"  Path: {request.get('path')}")
+    if request.full_command_text is not None:
+        print(f"  Command: {request.full_command_text}")
+    if request.path is not None:
+        print(f"  Path: {request.path}")
 
     response = input("Approve? (y/n): ").strip().lower()
     if response in ("y", "yes"):

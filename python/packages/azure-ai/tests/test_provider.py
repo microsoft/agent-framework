@@ -6,10 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
-from agent_framework.exceptions import ServiceInitializationError
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    AgentReference,
     AgentVersionDetails,
     PromptAgentDefinition,
 )
@@ -21,14 +19,9 @@ from azure.identity.aio import AzureCliCredential
 from agent_framework_azure_ai import AzureAIProjectAgentProvider
 
 skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("RUN_INTEGRATION_TESTS", "false").lower() != "true"
-    or os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
+    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
     or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
-    reason=(
-        "No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests."
-        if os.getenv("RUN_INTEGRATION_TESTS", "false").lower() == "true"
-        else "Integration tests are disabled."
-    ),
+    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
 )
 
 
@@ -110,15 +103,13 @@ def test_provider_init_missing_endpoint() -> None:
     with patch("agent_framework_azure_ai._project_provider.load_settings") as mock_load_settings:
         mock_load_settings.return_value = {"project_endpoint": None, "model_deployment_name": "test-model"}
 
-        with pytest.raises(ServiceInitializationError, match="Azure AI project endpoint is required"):
+        with pytest.raises(ValueError, match="Azure AI project endpoint is required"):
             AzureAIProjectAgentProvider(credential=MagicMock())
 
 
 def test_provider_init_missing_credential(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAIProjectAgentProvider initialization when credential is missing."""
-    with pytest.raises(
-        ServiceInitializationError, match="Azure credential is required when project_client is not provided"
-    ):
+    with pytest.raises(ValueError, match="Azure credential is required when project_client is not provided"):
         AzureAIProjectAgentProvider(
             project_endpoint=azure_ai_unit_test_env["AZURE_AI_PROJECT_ENDPOINT"],
         )
@@ -208,7 +199,7 @@ async def test_provider_create_agent_missing_model(mock_project_client: MagicMoc
 
         provider = AzureAIProjectAgentProvider(project_client=mock_project_client)
 
-        with pytest.raises(ServiceInitializationError, match="Model deployment name is required"):
+        with pytest.raises(ValueError, match="Model deployment name is required"):
             await provider.create_agent(name="test-agent")
 
 
@@ -353,7 +344,7 @@ async def test_provider_get_agent_with_reference(mock_project_client: MagicMock)
     mock_project_client.agents = AsyncMock()
     mock_project_client.agents.get_version.return_value = mock_agent_version
 
-    agent_reference = AgentReference(name="test-agent", version="1.0")
+    agent_reference = {"name": "test-agent", "version": "1.0"}
     agent = await provider.get_agent(reference=agent_reference)
 
     assert isinstance(agent, Agent)
@@ -701,6 +692,7 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
 
 
 @pytest.mark.flaky
+@pytest.mark.integration
 @skip_if_azure_ai_integration_tests_disabled
 async def test_provider_create_and_get_agent_integration() -> None:
     """Integration test for provider create_agent and get_agent."""

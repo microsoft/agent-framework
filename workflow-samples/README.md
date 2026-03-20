@@ -10,8 +10,8 @@ Workflow workflow = DeclarativeWorkflowBuilder.Build("Marketing.yaml", options);
 ```
 
 These example workflows may be executed by the workflow
-[Samples](../dotnet/samples/GettingStarted/Workflows/Declarative)
+[Samples](../dotnet/samples/03-workflows/Declarative)
 that are present in this repository.
 
-> See the [README.md](../dotnet/samples/GettingStarted/Workflows/Declarative/README.md) 
+> See the [README.md](../dotnet/samples/03-workflows/Declarative/README.md) 
  associated with the samples for configuration details.

@@ -4,11 +4,11 @@ using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
 using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
 using Shared.Foundry;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -24,7 +24,7 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
                 AIFunctionFactory.Create(menuPlugin.GetItemPrice),
             ];
 
-        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
 
         yield return
             await aiProjectClient.CreateAgentAsync(
@@ -36,7 +36,7 @@ internal sealed class FunctionToolAgentProvider(IConfiguration configuration) : 
     private PromptAgentDefinition DefineMenuAgent(AIFunction[] functions)
     {
         PromptAgentDefinition agentDefinition =
-            new(this.GetSetting(Settings.FoundryModelMini))
+            new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
             {
                 Instructions =
                     """

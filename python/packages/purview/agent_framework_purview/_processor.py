@@ -158,7 +158,8 @@ class ScopedContentProcessor:
                 name=f"Agent Framework Message {message_id}",
                 is_truncated=False,
                 correlation_id=correlation_id,
-                sequence_number=time.time_ns(),
+                # This would be c# ticks equivalent and needs to fit inside c# long
+                sequence_number=time.time_ns() // 100 + 621355968000000000,
             )
             activity_meta = ActivityMetadata(activity=activity)
 
@@ -176,14 +177,13 @@ class ScopedContentProcessor:
             else:
                 raise ValueError("App location not provided or inferable")
 
+            app_name = self._settings.get("app_name") or "Unknown"
             protected_app = ProtectedAppMetadata(
-                name=self._settings["app_name"],
+                name=app_name,
                 version=self._settings.get("app_version", "Unknown"),
                 application_location=policy_location,
             )
-            integrated_app = IntegratedAppMetadata(
-                name=self._settings["app_name"], version=self._settings.get("app_version", "Unknown")
-            )
+            integrated_app = IntegratedAppMetadata(name=app_name, version=self._settings.get("app_version", "Unknown"))
             device_meta = DeviceMetadata(
                 operating_system_specifications=OperatingSystemSpecifications(
                     operating_system_platform="Unknown", operating_system_version="Unknown"
@@ -233,9 +233,9 @@ class ScopedContentProcessor:
         if cached_ps_resp is not None and isinstance(cached_ps_resp, ProtectionScopesResponse):
             ps_resp = cached_ps_resp
         else:
+            ttl = self._settings.get("cache_ttl_seconds")
+            ttl_seconds = ttl if ttl is not None else 14400
             try:
-                ttl = self._settings.get("cache_ttl_seconds")
-                ttl_seconds = ttl if ttl is not None else 14400
                 ps_resp = await self._client.get_protection_scopes(ps_req)
                 await self._cache.set(cache_key, ps_resp, ttl_seconds=ttl_seconds)
             except PurviewPaymentRequiredError as ex:

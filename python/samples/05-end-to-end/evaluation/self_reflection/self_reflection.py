@@ -2,6 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "pandas",
+#     "pyarrow",
 # ]
 # ///
 # Run with any PEP 723 compatible runner, e.g.:
@@ -13,12 +14,13 @@ import argparse
 import asyncio
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import openai
 import pandas as pd
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -50,11 +52,38 @@ Usage as CLI with extra options:
                               --output resources/results.jsonl \\
                               --max-reflections 3 \\
                               -n 10  # Optional: process only first 10 prompts
+
+=============== Example output ===============
+
+============================================================
+SUMMARY
+============================================================
+Total prompts processed: 31
+  ✓ Successful: 30
+  ✗ Failed: 1
+
+Groundedness Scores:
+  Average best score: 4.77/5
+  Perfect scores (5/5): 25/30 (83.3%)
+
+Improvement Analysis:
+  Average first score: 4.50/5
+  Average final score: 4.70/5
+  Average improvement: +0.20
+  Responses that improved: 4/30 (13.3%)
+
+Iteration Statistics:
+  Average best iteration: 1.17
+  Best on first try: 25/30 (83.3%)
+============================================================
+
+✓ Processing complete!
+
 """
 
 
-DEFAULT_AGENT_MODEL = "gpt-4.1"
-DEFAULT_JUDGE_MODEL = "gpt-4.1"
+DEFAULT_AGENT_MODEL = "gpt-5.2"
+DEFAULT_JUDGE_MODEL = "gpt-5.2"
 
 
 def create_openai_client():
@@ -62,6 +91,13 @@ def create_openai_client():
     credential = AzureCliCredential()
     project_client = AIProjectClient(endpoint=endpoint, credential=credential)
     return project_client.get_openai_client()
+
+
+def create_async_project_client():
+    from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
+    from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+
+    return AsyncAIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=AsyncAzureCliCredential())
 
 
 def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCreateResponse:
@@ -257,6 +293,7 @@ async def execute_query_with_self_reflection(
 
 
 async def run_self_reflection_batch(
+    project_client: AIProjectClient,
     input_file: str,
     output_file: str,
     agent_model: str = DEFAULT_AGENT_MODEL,
@@ -284,16 +321,15 @@ async def run_self_reflection_batch(
         load_dotenv(override=True)
 
     # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
-    agent = AzureOpenAIChatClient(
-        credential=AzureCliCredential(),
+    responses_client = AzureOpenAIResponsesClient(
+        project_client=project_client,
         deployment_name=agent_model,
-    ).as_agent(
-        instructions="You are a helpful agent.",
     )
 
     # Load input data
-    print(f"Loading prompts from: {input_file}")
-    df = pd.read_json(input_file, lines=True)
+    input_path = (Path(__file__).parent / input_file).resolve()
+    print(f"Loading prompts from: {input_path}")
+    df = pd.read_json(path_or_buf=input_path, lines=True, engine="pyarrow")
     print(f"Loaded {len(df)} prompts")
 
     # Apply limit if specified
@@ -332,7 +368,7 @@ async def run_self_reflection_batch(
         try:
             result = await execute_query_with_self_reflection(
                 client=client,
-                agent=agent,
+                agent=responses_client.as_agent(instructions=row["system_instruction"]),
                 eval_object=eval_object,
                 full_user_query=row["full_prompt"],
                 context=row["context_document"],
@@ -386,8 +422,9 @@ async def run_self_reflection_batch(
     # Create DataFrame and save
     results_df = pd.DataFrame(results)
 
-    print(f"\nSaving results to: {output_file}")
-    results_df.to_json(output_file, orient="records", lines=True)
+    output_path = (Path(__file__).parent / output_file).resolve()
+    print(f"\nSaving results to: {output_path}")
+    results_df.to_json(output_path, orient="records", lines=True)
 
     # Generate detailed summary
     successful_runs = results_df[results_df["error"].isna()]
@@ -482,6 +519,7 @@ async def main():
     # Run the batch processing
     try:
         await run_self_reflection_batch(
+            project_client=create_async_project_client(),
             input_file=args.input,
             output_file=args.output,
             agent_model=args.agent_model,
@@ -499,4 +537,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    exit(asyncio.run(main()))
+    asyncio.run(main())

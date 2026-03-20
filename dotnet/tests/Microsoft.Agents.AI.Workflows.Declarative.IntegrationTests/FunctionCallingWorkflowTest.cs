@@ -11,7 +11,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 using Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests;
 

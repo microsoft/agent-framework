@@ -19,9 +19,10 @@ namespace OpenAIAssistant.IntegrationTests;
 
 public class OpenAIAssistantClientExtensionsTests
 {
-    private static readonly OpenAIConfiguration s_config = TestConfiguration.LoadSection<OpenAIConfiguration>();
-    private readonly AssistantClient _assistantClient = new OpenAIClient(s_config.ApiKey).GetAssistantClient();
-    private readonly OpenAIFileClient _fileClient = new OpenAIClient(s_config.ApiKey).GetOpenAIFileClient();
+    private const string SkipCodeInterpreterReason = "OpenAI Assistant Code Interpreter intermittently fails in CI";
+
+    private readonly AssistantClient _assistantClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetAssistantClient();
+    private readonly OpenAIFileClient _fileClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetOpenAIFileClient();
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
@@ -39,7 +40,7 @@ public class OpenAIAssistantClientExtensionsTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -49,7 +50,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -59,7 +60,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: AgentInstructions,
                 tools: [weatherFunction]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
@@ -82,7 +83,7 @@ public class OpenAIAssistantClientExtensionsTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = SkipCodeInterpreterReason)]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     [InlineData("CreateWithChatClientAgentOptionsSync")]
     [InlineData("CreateWithParamsAsync")]
@@ -106,7 +107,7 @@ public class OpenAIAssistantClientExtensionsTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -116,7 +117,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -126,7 +127,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: Instructions,
                 tools: [codeInterpreterTool]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
@@ -168,7 +169,7 @@ public class OpenAIAssistantClientExtensionsTests
         string uploadedFileId = uploadResult.Value.Id;
 
         // Create a vector store backing the file search (HostedFileSearchTool requires a vector store id).
-        var vectorStoreClient = new OpenAIClient(s_config.ApiKey).GetVectorStoreClient();
+        var vectorStoreClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey)).GetVectorStoreClient();
         var vectorStoreCreate = await vectorStoreClient.CreateVectorStoreAsync(options: new VectorStoreCreationOptions()
         {
             Name = "WordCodeLookup_VectorStore",
@@ -184,7 +185,7 @@ public class OpenAIAssistantClientExtensionsTests
         var agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -194,7 +195,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithChatClientAgentOptionsSync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 options: new ChatClientAgentOptions()
                 {
                     ChatOptions = new()
@@ -204,7 +205,7 @@ public class OpenAIAssistantClientExtensionsTests
                     }
                 }),
             "CreateWithParamsAsync" => await this._assistantClient.CreateAIAgentAsync(
-                model: s_config.ChatModelId!,
+                model: TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName),
                 instructions: Instructions,
                 tools: [fileSearchTool]),
             _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")

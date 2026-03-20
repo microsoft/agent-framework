@@ -69,6 +69,9 @@ actions:
 - `InvokeAzureAgent` - Call an Azure AI agent
 - `InvokePromptAgent` - Call a local prompt agent
 
+### Tool Invocation
+- `InvokeFunctionTool` - Call a registered Python function
+
 ### Human-in-Loop
 - `Question` - Request user input
 - `WaitForInput` - Pause for external input

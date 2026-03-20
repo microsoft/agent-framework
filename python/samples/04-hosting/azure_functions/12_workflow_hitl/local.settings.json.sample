@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "DURABLE_TASK_SCHEDULER_CONNECTION_STRING": "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None",
+    "TASKHUB_NAME": "default",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AZURE_OPENAI_ENDPOINT": "<Your Azure OpenAI endpoint>",
+    "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "<Your Azure OpenAI chat deployment name>"
+  }
+}

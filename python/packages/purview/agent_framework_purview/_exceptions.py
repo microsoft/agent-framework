@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
-"""Purview specific exceptions (minimal error shaping)."""
+"""Purview specific exceptions mapped to the Integration exception hierarchy."""
 
-from agent_framework.exceptions import ServiceResponseException
+from agent_framework.exceptions import IntegrationException, IntegrationInvalidAuthException
 
 __all__ = [
     "PurviewAuthenticationError",
@@ -12,11 +12,11 @@ __all__ = [
 ]
 
 
-class PurviewServiceError(ServiceResponseException):
+class PurviewServiceError(IntegrationException):
     """Base exception for Purview errors."""
 
 
-class PurviewAuthenticationError(PurviewServiceError):
+class PurviewAuthenticationError(IntegrationInvalidAuthException):
     """Authentication / authorization failure (401/403)."""
 
 

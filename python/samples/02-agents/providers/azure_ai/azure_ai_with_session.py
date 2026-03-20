@@ -7,7 +7,11 @@ from typing import Annotated
 from agent_framework import tool
 from agent_framework.azure import AzureAIProjectAgentProvider
 from azure.identity.aio import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Azure AI Agent with Session Management Example
@@ -133,15 +137,14 @@ async def example_with_existing_session_id() -> None:
         if existing_session_id:
             print("\n--- Continuing with the same session ID in a new agent instance ---")
 
-            # Create a new agent instance from the same provider
-            second_agent = await provider.create_agent(
+            # Retrieve the same agent (reuses existing agent version on the service)
+            second_agent = await provider.get_agent(
                 name="BasicWeatherAgent",
-                instructions="You are a helpful weather agent.",
                 tools=get_weather,
             )
 
-            # Create a session with the existing ID
-            session = second_agent.create_session(service_session_id=existing_session_id)
+            # Attach the existing service session ID so conversation context is preserved
+            session = second_agent.get_session(service_session_id=existing_session_id)
 
             second_query = "What was the last city I asked about?"
             print(f"User: {second_query}")

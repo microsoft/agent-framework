@@ -1,0 +1,34 @@
+@host = http://localhost:8088
+@endpoint = {{host}}/responses
+
+### Health Check
+GET {{host}}/readiness
+
+### Simple string input - Content creation request
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": "Create a slogan for a new electric SUV that is affordable and fun to drive",
+    "stream": false
+}
+
+### Explicit input format
+POST {{endpoint}}
+Content-Type: application/json
+
+{
+    "input": [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "Write a short product description for a smart water bottle that tracks hydration"
+                }
+            ]
+        }
+    ],
+    "stream": false
+}

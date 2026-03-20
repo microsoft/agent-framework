@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_framework import AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
-from agent_framework.exceptions import ServiceInitializationError
 
 from agent_framework_redis._context_provider import RedisContextProvider
 from agent_framework_redis._history_provider import RedisHistoryProvider
@@ -108,7 +107,7 @@ class TestRedisContextProviderInit:
 class TestRedisContextProviderValidateFilters:
     def test_no_filters_raises(self, patch_index_from_dict: MagicMock):  # noqa: ARG002
         provider = RedisContextProvider(source_id="ctx")
-        with pytest.raises(ServiceInitializationError, match="(?i)at least one"):
+        with pytest.raises(ValueError, match="(?i)at least one"):
             provider._validate_filters()
 
     def test_any_single_filter_ok(self, patch_index_from_dict: MagicMock):  # noqa: ARG002
@@ -169,6 +168,26 @@ class TestRedisContextProviderBeforeRun:
 
         mock_index.query.assert_not_called()
         assert "ctx" not in ctx.context_messages
+
+    async def test_before_run_searches_without_session_id(
+        self,
+        mock_index: AsyncMock,
+        patch_index_from_dict: MagicMock,  # noqa: ARG002
+    ):
+        """Verify that before_run performs cross-session retrieval (no session_id filter)."""
+        mock_index.query = AsyncMock(return_value=[{"content": "Memory"}])
+        provider = RedisContextProvider(source_id="ctx", user_id="u1")
+        session = AgentSession(session_id="test-session")
+        ctx = SessionContext(input_messages=[Message(role="user", contents=["test query"])], session_id="s1")
+
+        with patch.object(provider, "_redis_search", wraps=provider._redis_search) as spy:
+            await provider.before_run(
+                agent=None, session=session, context=ctx, state=session.state.setdefault(provider.source_id, {})
+            )  # type: ignore[arg-type]
+
+            spy.assert_called_once()
+            # session_id should not be passed to _redis_search (cross-session retrieval)
+            assert "session_id" not in spy.call_args.kwargs
 
     async def test_empty_results_no_messages(
         self,
@@ -250,6 +269,44 @@ class TestRedisContextProviderContextManager:
         provider = RedisContextProvider(source_id="ctx", user_id="u1")
         async with provider as p:
             assert p is provider
+
+
+class TestRedisContextProviderHybridQuery:
+    """Test for AggregateHybridQuery parameter compatibility with redisvl 0.14.0."""
+
+    async def test_aggregate_hybrid_query_uses_alpha(
+        self,
+        mock_index: AsyncMock,
+        patch_index_from_dict: MagicMock,  # noqa: ARG002 - fixture modifies behavior via side effects
+    ):
+        """Ensure AggregateHybridQuery is called with alpha parameter."""
+        from redisvl.utils.vectorize import BaseVectorizer
+
+        # Create a mock vectorizer that inherits from BaseVectorizer
+        mock_vectorizer = MagicMock(spec=BaseVectorizer)
+        mock_vectorizer.dims = 128
+        mock_vectorizer.dtype = "float32"
+        mock_vectorizer.aembed = AsyncMock(return_value=[0.1] * 128)
+
+        mock_index.query = AsyncMock(return_value=[{"content": "test result"}])
+
+        provider = RedisContextProvider(
+            source_id="ctx",
+            user_id="u1",
+            redis_vectorizer=mock_vectorizer,
+            vector_field_name="embedding",
+        )
+
+        # Call _redis_search with custom alpha
+        with patch("agent_framework_redis._context_provider.AggregateHybridQuery") as mock_hybrid_query:
+            mock_hybrid_query.return_value = MagicMock()
+            await provider._redis_search(text="test query", alpha=0.5)
+
+            # Verify AggregateHybridQuery was called with alpha parameter
+            mock_hybrid_query.assert_called_once()
+            call_kwargs = mock_hybrid_query.call_args.kwargs
+            assert "alpha" in call_kwargs
+            assert call_kwargs["alpha"] == 0.5
 
 
 # ===========================================================================

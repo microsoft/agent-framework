@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from collections.abc import AsyncIterable, Awaitable, Sequence
-from typing import Annotated, Any
+from collections.abc import AsyncIterable, Awaitable
+from typing import Annotated, Any, Literal, overload
 
 import pytest
 
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
     Content,
@@ -50,14 +51,33 @@ class _KwargsCapturingAgent(BaseAgent):
         super().__init__(name=name, description="Test agent for kwargs capture")
         self.captured_kwargs = []
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         self.captured_kwargs.append(dict(kwargs))
         if stream:
 
@@ -83,15 +103,34 @@ class _OptionsAwareAgent(BaseAgent):
         self.captured_options = []
         self.captured_kwargs = []
 
+    @overload
     def run(
         self,
-        messages: str | Content | Message | Sequence[str | Content | Message] | None = None,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
         *,
         stream: bool = False,
         session: AgentSession | None = None,
         options: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         self.captured_options.append(dict(options) if options is not None else None)
         self.captured_kwargs.append(dict(kwargs))
         if stream:
@@ -189,15 +228,15 @@ async def test_sequential_run_options_does_not_conflict_with_agent_options() -> 
             break
 
     assert len(agent.captured_options) >= 1
-    captured_options = agent.captured_options[0]
+    captured_options: dict[str, Any] | None = agent.captured_options[0]
     assert captured_options is not None
     assert captured_options.get("store") is False
 
-    additional_args = captured_options.get("additional_function_arguments")
+    additional_args: Any = captured_options.get("additional_function_arguments")
     assert isinstance(additional_args, dict)
-    assert additional_args.get("source") == "workflow-options"
-    assert additional_args.get("custom_data") == custom_data
-    assert additional_args.get("user_token") == user_token
+    assert additional_args.get("source") == "workflow-options"  # pyright: ignore[reportUnknownMemberType]
+    assert additional_args.get("custom_data") == custom_data  # pyright: ignore[reportUnknownMemberType]
+    assert additional_args.get("user_token") == user_token  # pyright: ignore[reportUnknownMemberType]
 
     # "options" should be passed once via the dedicated options parameter,
     # not duplicated in **kwargs.
@@ -225,13 +264,13 @@ async def test_sequential_run_additional_function_arguments_flattened() -> None:
             break
 
     assert len(agent.captured_options) >= 1
-    captured_options = agent.captured_options[0]
+    captured_options: dict[str, Any] | None = agent.captured_options[0]
     assert captured_options is not None
 
-    additional_args = captured_options.get("additional_function_arguments")
+    additional_args: Any = captured_options.get("additional_function_arguments")
     assert isinstance(additional_args, dict)
-    assert additional_args.get("custom_data") == custom_data
-    assert additional_args.get("user_token") == user_token
+    assert additional_args.get("custom_data") == custom_data  # pyright: ignore[reportUnknownMemberType]
+    assert additional_args.get("user_token") == user_token  # pyright: ignore[reportUnknownMemberType]
     assert "additional_function_arguments" not in additional_args
 
     assert len(agent.captured_kwargs) >= 1
@@ -255,14 +294,14 @@ async def test_sequential_run_additional_function_arguments_merges_with_options(
             break
 
     assert len(agent.captured_options) >= 1
-    captured_options = agent.captured_options[0]
+    captured_options: dict[str, Any] | None = agent.captured_options[0]
     assert captured_options is not None
 
-    additional_args = captured_options.get("additional_function_arguments")
+    additional_args: Any = captured_options.get("additional_function_arguments")
     assert isinstance(additional_args, dict)
-    assert additional_args.get("source") == "workflow-options"
-    assert additional_args.get("custom_data") == {"session_id": "abc123"}
-    assert additional_args.get("user_token") == {"user_name": "alice"}
+    assert additional_args.get("source") == "workflow-options"  # pyright: ignore[reportUnknownMemberType]
+    assert additional_args.get("custom_data") == {"session_id": "abc123"}  # pyright: ignore[reportUnknownMemberType]
+    assert additional_args.get("user_token") == {"user_name": "alice"}  # pyright: ignore[reportUnknownMemberType]
     assert "additional_function_arguments" not in additional_args
 
 
@@ -446,6 +485,270 @@ async def test_kwargs_with_complex_nested_data() -> None:
     assert received.get("complex_data") == complex_data
 
 
+async def test_kwargs_preserved_on_response_continuation() -> None:
+    """Test that run kwargs are preserved when continuing a paused workflow with run(responses=...).
+
+    Regression test for #4293: kwargs were overwritten to {} on continuation calls.
+    """
+
+    class _ApprovalCapturingAgent(BaseAgent):
+        """Agent that pauses for approval on first call and captures kwargs on every call."""
+
+        captured_kwargs: list[dict[str, Any]]
+        _asked: bool
+
+        def __init__(self) -> None:
+            super().__init__(name="approval_agent", description="Test agent")
+            self.captured_kwargs = []
+            self._asked = False
+
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+        def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            self.captured_kwargs.append(dict(kwargs))
+            if not self._asked:
+                self._asked = True
+
+                async def _pause() -> AgentResponse:
+                    call = Content.from_function_call(call_id="c1", name="do_thing", arguments="{}")
+                    req = Content.from_function_approval_request(id="r1", function_call=call)
+                    return AgentResponse(messages=[Message("assistant", [req])])
+
+                return _pause()
+
+            async def _done() -> AgentResponse:
+                return AgentResponse(messages=[Message("assistant", ["done"])])
+
+            return _done()
+
+    from agent_framework import WorkflowBuilder
+
+    agent = _ApprovalCapturingAgent()
+    workflow = WorkflowBuilder(start_executor=agent, output_executors=[agent]).build()
+
+    # Initial run with kwargs — workflow should pause for approval
+    result = await workflow.run("go", custom_data={"token": "abc"})
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+
+    # Continue with responses only — no new kwargs
+    approval = request_events[0]
+    await workflow.run(responses={approval.request_id: approval.data.to_function_approval_response(True)})
+
+    # Both calls should have received the original kwargs
+    assert len(agent.captured_kwargs) == 2
+    assert agent.captured_kwargs[0].get("custom_data") == {"token": "abc"}
+    assert agent.captured_kwargs[1].get("custom_data") == {"token": "abc"}, (
+        f"kwargs should be preserved on continuation, got: {agent.captured_kwargs[1]}"
+    )
+
+
+async def test_kwargs_overridden_on_response_continuation() -> None:
+    """Test that explicitly provided kwargs override prior kwargs on continuation."""
+
+    class _ApprovalCapturingAgent(BaseAgent):
+        captured_kwargs: list[dict[str, Any]]
+        _asked: bool
+
+        def __init__(self) -> None:
+            super().__init__(name="approval_agent", description="Test agent")
+            self.captured_kwargs = []
+            self._asked = False
+
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+        def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            self.captured_kwargs.append(dict(kwargs))
+            if not self._asked:
+                self._asked = True
+
+                async def _pause() -> AgentResponse:
+                    call = Content.from_function_call(call_id="c1", name="do_thing", arguments="{}")
+                    req = Content.from_function_approval_request(id="r1", function_call=call)
+                    return AgentResponse(messages=[Message("assistant", [req])])
+
+                return _pause()
+
+            async def _done() -> AgentResponse:
+                return AgentResponse(messages=[Message("assistant", ["done"])])
+
+            return _done()
+
+    from agent_framework import WorkflowBuilder
+
+    agent = _ApprovalCapturingAgent()
+    workflow = WorkflowBuilder(start_executor=agent, output_executors=[agent]).build()
+
+    result = await workflow.run("go", custom_data={"token": "abc"})
+    request_events = result.get_request_info_events()
+    approval = request_events[0]
+
+    # Continue with responses AND new kwargs — should override
+    await workflow.run(
+        responses={approval.request_id: approval.data.to_function_approval_response(True)},
+        custom_data={"token": "xyz"},
+    )
+
+    assert len(agent.captured_kwargs) == 2
+    assert agent.captured_kwargs[0].get("custom_data") == {"token": "abc"}
+    assert agent.captured_kwargs[1].get("custom_data") == {"token": "xyz"}
+
+
+async def test_kwargs_empty_value_passed_on_continuation() -> None:
+    """Test that explicitly passing a kwarg with an empty value on continuation overrides prior kwargs.
+
+    This exercises the boundary where the caller provides kwargs (e.g., custom_data={})
+    that differ from the original run. Because the kwargs dict is non-empty (it has a key),
+    it passes the `kwargs if kwargs else None` gate and the `is not None` check, so it
+    overwrites the previously stored kwargs.
+    """
+
+    class _ApprovalCapturingAgent(BaseAgent):
+        captured_kwargs: list[dict[str, Any]]
+        _asked: bool
+
+        def __init__(self) -> None:
+            super().__init__(name="approval_agent", description="Test agent")
+            self.captured_kwargs = []
+            self._asked = False
+
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[False] = ...,
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]]: ...
+        @overload
+        def run(
+            self,
+            messages: AgentRunInputs | None = ...,
+            *,
+            stream: Literal[True],
+            session: AgentSession | None = ...,
+            **kwargs: Any,
+        ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+        def run(
+            self,
+            messages: AgentRunInputs | None = None,
+            *,
+            stream: bool = False,
+            session: AgentSession | None = None,
+            **kwargs: Any,
+        ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            self.captured_kwargs.append(dict(kwargs))
+            if not self._asked:
+                self._asked = True
+
+                async def _pause() -> AgentResponse:
+                    call = Content.from_function_call(call_id="c1", name="do_thing", arguments="{}")
+                    req = Content.from_function_approval_request(id="r1", function_call=call)
+                    return AgentResponse(messages=[Message("assistant", [req])])
+
+                return _pause()
+
+            async def _done() -> AgentResponse:
+                return AgentResponse(messages=[Message("assistant", ["done"])])
+
+            return _done()
+
+    from agent_framework import WorkflowBuilder
+
+    agent = _ApprovalCapturingAgent()
+    workflow = WorkflowBuilder(start_executor=agent, output_executors=[agent]).build()
+
+    # Initial run with non-empty kwargs
+    result = await workflow.run("go", custom_data={"token": "abc"})
+    request_events = result.get_request_info_events()
+    assert len(request_events) == 1
+
+    # Continue with custom_data={} — explicitly clearing the value.
+    # kwargs={"custom_data": {}} is truthy (has a key), so run_kwargs is set.
+    approval = request_events[0]
+    await workflow.run(
+        responses={approval.request_id: approval.data.to_function_approval_response(True)},
+        custom_data={},
+    )
+
+    assert len(agent.captured_kwargs) == 2
+    assert agent.captured_kwargs[0].get("custom_data") == {"token": "abc"}
+    # The continuation explicitly set custom_data={}, overriding the original
+    assert agent.captured_kwargs[1].get("custom_data") == {}
+
+
+async def test_kwargs_reset_context_stores_empty_dict() -> None:
+    """Test that reset_context=True with no kwargs stores an empty dict.
+
+    This exercises the `elif reset_context` branch that ensures WORKFLOW_RUN_KWARGS_KEY
+    is always populated after a fresh run, even when no kwargs are provided.
+    """
+    agent = _KwargsCapturingAgent(name="reset_ctx_test")
+
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    # Run with no kwargs and reset_context=True (the default for a fresh run)
+    async for event in workflow.run("test", stream=True):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent.captured_kwargs) >= 1
+    # The only kwarg should be the framework-injected 'options' (no user-provided kwargs)
+    received = agent.captured_kwargs[0]
+    assert "custom_data" not in received
+    assert received.get("options") is None
+
+
 async def test_kwargs_preserved_across_workflow_reruns() -> None:
     """Test that kwargs are correctly isolated between workflow runs."""
     agent = _KwargsCapturingAgent(name="rerun_test")
@@ -483,8 +786,8 @@ async def test_handoff_kwargs_flow_to_agents() -> None:
 
     workflow = (
         HandoffBuilder(termination_condition=lambda conv: len(conv) >= 4)
-        .participants([agent1, agent2])
-        .with_start_agent(agent1)
+        .participants([agent1, agent2])  # type: ignore[list-item]
+        .with_start_agent(agent1)  # type: ignore[arg-type]
         .with_autonomous_mode()
         .build()
     )

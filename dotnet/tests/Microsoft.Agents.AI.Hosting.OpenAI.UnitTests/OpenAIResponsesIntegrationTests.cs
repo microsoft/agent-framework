@@ -1201,6 +1201,75 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         Assert.Null(mockChatClient.LastChatOptions.ConversationId);
     }
 
+    /// <summary>
+    /// Verifies that conversation history is passed to the agent on subsequent requests.
+    /// This test reproduces the bug described in GitHub issue #3484.
+    /// </summary>
+    [Fact]
+    public async Task CreateResponse_WithConversation_SecondRequestIncludesPriorMessagesAsync()
+    {
+        // Arrange
+        const string AgentName = "memory-agent";
+        const string Instructions = "You are a helpful assistant.";
+        const string AgentResponse = "Nice to meet you Alice";
+
+        var mockChatClient = new TestHelpers.ConversationMemoryMockChatClient(AgentResponse);
+        this._httpClient = await this.CreateTestServerWithCustomClientAndConversationsAsync(
+            AgentName, Instructions, mockChatClient);
+
+        // Create a conversation
+        string createConvJson = System.Text.Json.JsonSerializer.Serialize(
+            new { metadata = new { agent_id = AgentName } });
+        using StringContent createConvContent = new(createConvJson, Encoding.UTF8, "application/json");
+        HttpResponseMessage createConvResponse = await this._httpClient.PostAsync(
+            new Uri("/v1/conversations", UriKind.Relative), createConvContent);
+        Assert.True(createConvResponse.IsSuccessStatusCode);
+
+        string convJson = await createConvResponse.Content.ReadAsStringAsync();
+        using var convDoc = System.Text.Json.JsonDocument.Parse(convJson);
+        string conversationId = convDoc.RootElement.GetProperty("id").GetString()!;
+
+        // Act - First message
+        await this.SendRawResponseAsync(AgentName, "My name is Alice", conversationId, stream: false);
+
+        // Act - Second message in same conversation
+        await this.SendRawResponseAsync(AgentName, "What is my name?", conversationId, stream: false);
+
+        // Assert
+        Assert.Equal(2, mockChatClient.CallHistory.Count);
+
+        // First call: should have 1 message (just the user input)
+        Assert.Single(mockChatClient.CallHistory[0]);
+        Assert.Equal(ChatRole.User, mockChatClient.CallHistory[0][0].Role);
+
+        // Second call: should have 3 messages (prior user + prior assistant + new user)
+        Assert.Equal(3, mockChatClient.CallHistory[1].Count);
+        Assert.Equal(ChatRole.User, mockChatClient.CallHistory[1][0].Role);
+        Assert.Equal(ChatRole.Assistant, mockChatClient.CallHistory[1][1].Role);
+        Assert.Equal(ChatRole.User, mockChatClient.CallHistory[1][2].Role);
+    }
+
+    private async Task<HttpResponseMessage> SendRawResponseAsync(
+        string agentName, string input, string conversationId, bool stream)
+    {
+        var requestBody = new
+        {
+            input,
+            agent = new { name = agentName },
+            conversation = conversationId,
+            stream
+        };
+        string json = System.Text.Json.JsonSerializer.Serialize(requestBody);
+        using StringContent content = new(json, Encoding.UTF8, "application/json");
+        HttpResponseMessage response = await this._httpClient!.PostAsync(
+            new Uri($"/{agentName}/v1/responses", UriKind.Relative), content);
+        Assert.True(response.IsSuccessStatusCode, $"Response failed: {response.StatusCode}");
+
+        // Consume the full response body to ensure execution completes
+        await response.Content.ReadAsStringAsync();
+        return response;
+    }
+
     private ResponsesClient CreateResponseClient(string agentName)
     {
         return new ResponsesClient(
@@ -1258,6 +1327,29 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         builder.AddOpenAIResponses();
         builder.AddOpenAIConversations();
         builder.AddAIAgent(agentName, instructions, chatClientServiceKey: "chat-client");
+
+        this._app = builder.Build();
+        AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);
+        this._app.MapOpenAIResponses(agent);
+        this._app.MapOpenAIConversations();
+
+        await this._app.StartAsync();
+
+        TestServer testServer = this._app.Services.GetRequiredService<IServer>() as TestServer
+            ?? throw new InvalidOperationException("TestServer not found");
+
+        return testServer.CreateClient();
+    }
+
+    private async Task<HttpClient> CreateTestServerWithCustomClientAndConversationsAsync(string agentName, string instructions, IChatClient chatClient)
+    {
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseTestServer();
+
+        builder.Services.AddKeyedSingleton($"chat-client-{agentName}", chatClient);
+        builder.AddAIAgent(agentName, instructions, chatClientServiceKey: $"chat-client-{agentName}");
+        builder.AddOpenAIResponses();
+        builder.AddOpenAIConversations();
 
         this._app = builder.Build();
         AIAgent agent = this._app.Services.GetRequiredKeyedService<AIAgent>(agentName);

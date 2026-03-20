@@ -26,6 +26,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
+from agent_framework.exceptions import AgentInvalidRequestException, AgentInvalidResponseException
 
 from ._declarative_base import (
     ActionComplete,
@@ -187,9 +188,9 @@ def _validate_conversation_history(messages: list[Message], agent_name: str) -> 
     tool_result_ids: set[str] = set()
 
     for i, msg in enumerate(messages):
-        if not hasattr(msg, "contents") or msg.contents is None:
+        if not (contents := getattr(msg, "contents", None)):
             continue
-        for content in msg.contents:
+        for content in contents:
             if content.type == "function_call" and content.call_id:
                 tool_call_ids.add(content.call_id)
                 logger.debug(
@@ -241,19 +242,6 @@ AGENT_REGISTRY_KEY = "_agent_registry"
 TOOL_REGISTRY_KEY = "_tool_registry"
 # Key to store external loop state for resumption
 EXTERNAL_LOOP_STATE_KEY = "_external_loop_state"
-
-
-class AgentInvocationError(Exception):
-    """Raised when an agent invocation fails.
-
-    Attributes:
-        agent_name: Name of the agent that failed
-        message: Error description
-    """
-
-    def __init__(self, agent_name: str, message: str) -> None:
-        self.agent_name = agent_name
-        super().__init__(f"Agent '{agent_name}' invocation failed: {message}")
 
 
 @dataclass
@@ -442,17 +430,27 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         agent_config = self._action_def.get("agent")
 
         if isinstance(agent_config, str):
+            if agent_config.startswith("="):
+                evaluated = state.eval_if_expression(agent_config)
+                return str(evaluated) if evaluated is not None else None
             return agent_config
 
         if isinstance(agent_config, dict):
             agent_dict = cast(dict[str, Any], agent_config)
             name = agent_dict.get("name")
             if name is not None and isinstance(name, str):
-                # Support dynamic agent name from expression (would need async eval)
+                if name.startswith("="):
+                    evaluated = state.eval_if_expression(name)
+                    return str(evaluated) if evaluated is not None else None
                 return str(name)
 
         agent_name = self._action_def.get("agentName")
-        return str(agent_name) if isinstance(agent_name, str) else None
+        if isinstance(agent_name, str):
+            if agent_name.startswith("="):
+                evaluated = state.eval_if_expression(agent_name)
+                return str(evaluated) if evaluated is not None else None
+            return agent_name
+        return None
 
     def _get_input_config(self) -> tuple[dict[str, Any], Any, str | None, int]:
         """Parse input configuration.
@@ -807,7 +805,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
             state.set("Agent.error", error_msg)
             if result_property:
                 state.set(result_property, {"error": error_msg})
-            raise AgentInvocationError(agent_name, "not found in registry")
+            raise AgentInvalidRequestException(f"Agent '{agent_name}' invocation failed: not found in registry")
 
         iteration = 0
 
@@ -824,14 +822,14 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=auto_send,
                 messages_path=messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}': {e}")
             state.set("Agent.error", str(e))
             if result_property:
                 state.set(result_property, {"error": str(e)})
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Check external loop condition
         if external_loop_when:
@@ -948,7 +946,9 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
 
         if agent is None:
             logger.error(f"InvokeAzureAgent: agent '{agent_name}' not found during loop resumption")
-            raise AgentInvocationError(agent_name, "not found during loop resumption")
+            raise AgentInvalidRequestException(
+                f"Agent '{agent_name}' invocation failed: not found during loop resumption"
+            )
 
         try:
             accumulated_response, all_messages, tool_calls = await self._invoke_agent_and_store_results(
@@ -963,12 +963,12 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
                 auto_send=loop_state.auto_send,
                 messages_path=loop_state.messages_path,
             )
-        except AgentInvocationError:
+        except (AgentInvalidRequestException, AgentInvalidResponseException):
             raise  # Re-raise our own errors
         except Exception as e:
             logger.error(f"InvokeAzureAgent: error invoking agent '{agent_name}' during loop: {e}")
             state.set("Agent.error", str(e))
-            raise AgentInvocationError(agent_name, str(e)) from e
+            raise AgentInvalidResponseException(f"Agent '{agent_name}' invocation failed: {e}") from e
 
         # Re-evaluate the condition AFTER the agent responds
         # This is critical: the agent's response may have set NeedsTicket=true or IsResolved=true
@@ -1019,75 +1019,7 @@ class InvokeAzureAgentExecutor(DeclarativeActionExecutor):
         await ctx.send_message(ActionComplete())
 
 
-class InvokeToolExecutor(DeclarativeActionExecutor):
-    """Executor that invokes a registered tool/function.
-
-    Tools are simpler than agents - they take input, perform an action,
-    and return a result synchronously (or with a simple async call).
-    """
-
-    @handler
-    async def handle_action(
-        self,
-        trigger: Any,
-        ctx: WorkflowContext[ActionComplete],
-    ) -> None:
-        """Handle the tool invocation."""
-        state = await self._ensure_state_initialized(ctx, trigger)
-
-        tool_name = self._action_def.get("tool") or self._action_def.get("toolName", "")
-        input_expr = self._action_def.get("input")
-        output_property = self._action_def.get("output", {}).get("property") or self._action_def.get("resultProperty")
-        parameters = self._action_def.get("parameters", {})
-
-        # Get tools registry
-        try:
-            tool_registry: dict[str, Any] | None = ctx.state.get(TOOL_REGISTRY_KEY)
-        except KeyError:
-            tool_registry = {}
-
-        tool: Any = tool_registry.get(tool_name) if tool_registry else None
-
-        if tool is None:
-            error_msg = f"Tool '{tool_name}' not found in registry"
-            if output_property:
-                state.set(output_property, {"error": error_msg})
-            await ctx.send_message(ActionComplete())
-            return
-
-        # Build parameters
-        params: dict[str, Any] = {}
-        for param_name, param_expression in parameters.items():
-            params[param_name] = state.eval_if_expression(param_expression)
-
-        # Add main input if specified
-        if input_expr:
-            params["input"] = state.eval_if_expression(input_expr)
-
-        try:
-            # Invoke the tool
-            if callable(tool):
-                from inspect import isawaitable
-
-                result = tool(**params)
-                if isawaitable(result):
-                    result = await result
-
-                # Store result
-                if output_property:
-                    state.set(output_property, result)
-
-        except Exception as e:
-            if output_property:
-                state.set(output_property, {"error": str(e)})
-            await ctx.send_message(ActionComplete())
-            return
-
-        await ctx.send_message(ActionComplete())
-
-
 # Mapping of agent action kinds to executor classes
 AGENT_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
     "InvokeAzureAgent": InvokeAzureAgentExecutor,
-    "InvokeTool": InvokeToolExecutor,
 }
