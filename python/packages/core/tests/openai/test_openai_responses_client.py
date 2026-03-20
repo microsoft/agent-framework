@@ -1187,7 +1187,7 @@ def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
 def test_parse_chunk_from_openai_with_mcp_call_added_defers_result() -> None:
     """Test that response.output_item.added for mcp_call emits only the call, not the result.
 
-    The result is deferred to response.mcp_call.completed.
+    The result is deferred to response.output_item.done.
     """
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
