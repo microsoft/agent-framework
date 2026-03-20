@@ -92,13 +92,14 @@ class MockA2AClient:
         context_id: str = "test-context",
         state: TaskState = TaskState.working,
         text: str | None = None,
+        role: A2ARole = A2ARole.agent,
     ) -> None:
         """Add a mock in-progress Task response (non-terminal)."""
         message = None
         if text is not None:
             message = A2AMessage(
                 message_id=str(uuid4()),
-                role=A2ARole.agent,
+                role=role,
                 parts=[Part(root=TextPart(text=text))],
             )
         status = TaskStatus(state=state, message=message)
@@ -110,6 +111,7 @@ class MockA2AClient:
         """Mock send_message method that yields responses."""
         self.call_count += 1
 
+        # All queued responses are delivered as a single streaming batch per call.
         for response in self.responses:
             yield response
         self.responses.clear()
@@ -1092,6 +1094,92 @@ async def test_streaming_working_update_without_message_is_skipped(
     """Test that working updates without status.message are still silently skipped."""
     mock_a2a_client.add_in_progress_task_response("task-n", context_id="ctx-n")
     mock_a2a_client.add_task_response("task-n", [{"id": "art-n", "content": "Result"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].contents[0].text == "Result"
+
+
+async def test_streaming_working_update_user_role_mapping(a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient) -> None:
+    """Test that A2ARole.user in status message maps to role='user'."""
+    mock_a2a_client.add_in_progress_task_response("task-u", context_id="ctx-u", text="User echo", role=A2ARole.user)
+    mock_a2a_client.add_task_response("task-u", [{"id": "art-u", "content": "Done"}])
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 2
+    assert updates[0].contents[0].text == "User echo"
+    assert updates[0].role == "user"
+
+
+async def test_background_with_status_message_yields_continuation_token(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that background=True takes precedence over status message content."""
+    mock_a2a_client.add_in_progress_task_response("task-bg", context_id="ctx-bg", text="Should be ignored")
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True, background=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].continuation_token is not None
+    assert updates[0].continuation_token["task_id"] == "task-bg"
+    assert updates[0].contents == []
+
+
+async def test_non_streaming_does_not_surface_intermediate_messages(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that run(stream=False) does not include intermediate status messages."""
+    mock_a2a_client.add_in_progress_task_response("task-ns", context_id="ctx-ns", text="Intermediate")
+    mock_a2a_client.add_task_response("task-ns", [{"id": "art-ns", "content": "Final"}])
+
+    response = await a2a_agent.run("Hello")
+
+    assert len(response.messages) == 1
+    assert response.messages[0].text == "Final"
+
+
+async def test_terminal_no_artifacts_after_working_with_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that a terminal task with no artifacts after working-state messages does not re-emit the working content."""
+    mock_a2a_client.add_in_progress_task_response("task-t", context_id="ctx-t", text="Working on it...")
+    # Terminal task with no artifacts and no history
+    status = TaskStatus(state=TaskState.completed, message=None)
+    task = Task(id="task-t", context_id="ctx-t", status=status)
+    mock_a2a_client.responses.append((task, None))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 2
+    assert updates[0].contents[0].text == "Working on it..."
+    # Terminal task with no artifacts yields an empty-contents update
+    assert updates[1].contents == []
+
+
+async def test_streaming_working_update_with_empty_parts_is_skipped(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that a working update with status.message but empty parts list is skipped."""
+    # Construct a message with an empty parts list (distinct from message=None)
+    message = A2AMessage(
+        message_id=str(uuid4()),
+        role=A2ARole.agent,
+        parts=[],
+    )
+    status = TaskStatus(state=TaskState.working, message=message)
+    task = Task(id="task-ep", context_id="ctx-ep", status=status)
+    mock_a2a_client.responses.append((task, None))
+    mock_a2a_client.add_task_response("task-ep", [{"id": "art-ep", "content": "Result"}])
 
     updates: list[AgentResponseUpdate] = []
     async for update in a2a_agent.run("Hello", stream=True):
