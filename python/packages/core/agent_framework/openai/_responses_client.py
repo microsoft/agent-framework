@@ -2205,7 +2205,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.output_item.done":
                 done_item = event.item
                 if getattr(done_item, "type", None) == "mcp_call":
-                    call_id = getattr(done_item, "id", None) or ""
+                    call_id = getattr(done_item, "id", None) or getattr(done_item, "call_id", None) or ""
                     output_text = getattr(done_item, "output", None)
                     parsed_output: list[Content] | None = (
                         [Content.from_text(text=output_text)] if isinstance(output_text, str) else None
@@ -2214,7 +2214,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         Content.from_mcp_server_tool_result(
                             call_id=call_id,
                             output=parsed_output,
-                            raw_representation=event,
+                            raw_representation=done_item,
                         )
                     )
             case _:
