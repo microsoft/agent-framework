@@ -13,11 +13,12 @@ The Agent Framework needs a skills system that lets agents discover and use doma
 
 ## Decision Drivers
 
-- Skills must be definable from multiple sources: filesystem, inline code, and reusable classes
+- Skills must be definable from multiple sources: filesystem, inline code, reusable classes, etc
 - Common abstractions are needed so the provider and builder work uniformly regardless of skill origin
 - File-based scripts must support user-defined executors, enabling custom runtimes and languages; code/class-based scripts execute in-process as C# delegates
 - Skills must be filterable so consumers can include or exclude specific skills based on defined criteria
 - Multiple skill sources must be composable into a single provider
+- It must be possible to add custom skill sources (e.g., databases, REST APIs, package registries) by implementing a common abstraction
 
 ## Architecture
 
