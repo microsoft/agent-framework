@@ -1225,12 +1225,12 @@ def test_parse_chunk_from_openai_with_mcp_call_added_defers_result() -> None:
     assert len(result_contents) == 0
 
 
-def test_parse_chunk_from_openai_with_mcp_call_completed() -> None:
-    """Test that response.mcp_call.completed emits mcp_server_tool_result with output."""
+def test_parse_chunk_from_openai_with_mcp_output_item_done() -> None:
+    """Test that response.output_item.done for mcp_call emits mcp_server_tool_result with output."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_event = MagicMock()
-    mock_event.type = "response.mcp_call.completed"
+    mock_event.type = "response.output_item.done"
 
     mock_item = MagicMock()
     mock_item.type = "mcp_call"
@@ -1252,12 +1252,12 @@ def test_parse_chunk_from_openai_with_mcp_call_completed() -> None:
     assert result_content.output[0].text == "The weather in Seattle is 72F and sunny."
 
 
-def test_parse_chunk_from_openai_with_mcp_call_completed_no_output() -> None:
-    """Test that response.mcp_call.completed with no output emits result with None output."""
+def test_parse_chunk_from_openai_with_mcp_output_item_done_no_output() -> None:
+    """Test that response.output_item.done for mcp_call with no output emits result with None output."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     mock_event = MagicMock()
-    mock_event.type = "response.mcp_call.completed"
+    mock_event.type = "response.output_item.done"
 
     mock_item = MagicMock()
     mock_item.type = "mcp_call"

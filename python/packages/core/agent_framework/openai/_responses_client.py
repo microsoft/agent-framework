@@ -1932,7 +1932,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 raw_representation=event_item,
                             )
                         )
-                        # Result deferred to response.mcp_call.completed
+                        # Result deferred to response.output_item.done
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                         call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
                         outputs: list[Content] = []
@@ -2202,22 +2202,21 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                 else:
                     logger.debug("Unparsed annotation type in streaming: %s", ann_type)
-            case "response.mcp_call.completed":
-                item = event.item
-                call_id = getattr(item, "id", None) or ""
-                output_text = getattr(item, "output", None)
-                parsed_output: list[Content] | None = (
-                    [Content.from_text(text=output_text)]
-                    if isinstance(output_text, str)
-                    else None
-                )
-                contents.append(
-                    Content.from_mcp_server_tool_result(
-                        call_id=call_id,
-                        output=parsed_output,
-                        raw_representation=event,
+            case "response.output_item.done":
+                done_item = event.item
+                if getattr(done_item, "type", None) == "mcp_call":
+                    call_id = getattr(done_item, "id", None) or ""
+                    output_text = getattr(done_item, "output", None)
+                    parsed_output: list[Content] | None = (
+                        [Content.from_text(text=output_text)] if isinstance(output_text, str) else None
                     )
-                )
+                    contents.append(
+                        Content.from_mcp_server_tool_result(
+                            call_id=call_id,
+                            output=parsed_output,
+                            raw_representation=event,
+                        )
+                    )
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
