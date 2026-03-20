@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """
 Example showing how to configure AI agents with different trigger configurations.
@@ -19,12 +20,12 @@ This sample creates three agents with different trigger configurations:
 
 Required environment variables:
 - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-- AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: Your Azure OpenAI deployment name
+- FOUNDRY_MODEL: Your Azure OpenAI deployment name
 
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -32,23 +33,23 @@ load_dotenv()
 
 # Create Azure OpenAI Chat Client
 # This uses AzureCliCredential for authentication (requires 'az login')
-client = AzureOpenAIChatClient()
+client = FoundryChatClient()
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)
-agent1 = client.as_agent(
+agent1 = Agent(client=client,
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
 # Agent 2: StockAdvisor - MCP tool trigger only
-agent2 = client.as_agent(
+agent2 = Agent(client=client,
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
 # Agent 3: PlantAdvisor - Both HTTP and MCP tool triggers
-agent3 = client.as_agent(
+agent3 = Agent(client=client,
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",

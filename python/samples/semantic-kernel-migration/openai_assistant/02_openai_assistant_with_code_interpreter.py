@@ -1,4 +1,6 @@
 # /// script
+from agent_framework import Agent
+
 # requires-python = ">=3.10"
 # dependencies = [
 #     "semantic-kernel",
@@ -50,7 +52,7 @@ async def run_agent_framework() -> None:
     code_interpreter_tool = OpenAIAssistantsClient.get_code_interpreter_tool()
 
     # AF exposes the same tool configuration via create_agent.
-    async with assistants_client.as_agent(
+    async with Agent(client=assistants_client,
         name="CodeRunner",
         instructions="Use the code interpreter when calculations are required.",
         model="gpt-4.1",

@@ -54,7 +54,7 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework agent with @tool decorator."""
-    from agent_framework import tool
+    from agent_framework import Agent, tool
     from agent_framework.openai import OpenAIChatClient
 
     # Define tool with @tool decorator (automatic schema inference)
@@ -72,8 +72,8 @@ async def run_agent_framework() -> None:
         return f"The weather in {location} is sunny and 72°F."
 
     # Create agent with tool
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.as_agent(
+    client = OpenAIChatClient(model="gpt-4.1-mini")
+    agent = Agent(client=client,
         name="assistant",
         instructions="You are a helpful assistant. Use available tools to answer questions.",
         tools=[get_weather],

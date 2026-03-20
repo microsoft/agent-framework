@@ -16,7 +16,7 @@ It uses a Azure AI Client so it needs the credential to be passed into the Agent
 Prerequisites:
 - `pip install agent-framework-azure-ai agent-framework-declarative --pre`
 - Set the following environment variables in a .env file or your environment:
-    - AZURE_AI_PROJECT_ENDPOINT
+    - FOUNDRY_PROJECT_ENDPOINT
     - AZURE_OPENAI_MODEL
 """
 
@@ -33,7 +33,7 @@ model:
   id: =Env.AZURE_OPENAI_MODEL
   connection:
     kind: remote
-    endpoint: =Env.AZURE_AI_PROJECT_ENDPOINT
+    endpoint: =Env.FOUNDRY_PROJECT_ENDPOINT
 """
     # create the agent from the yaml
     async with (

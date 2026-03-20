@@ -36,7 +36,6 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -92,6 +91,7 @@ from azure.ai.agents.models import (
 )
 from pydantic import BaseModel
 
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):

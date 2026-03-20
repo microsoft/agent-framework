@@ -47,6 +47,7 @@ members = [
     "agent-framework-lab",
     "agent-framework-mem0",
     "agent-framework-ollama",
+    "agent-framework-openai",
     "agent-framework-orchestrations",
     "agent-framework-purview",
     "agent-framework-redis",
@@ -632,6 +633,23 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "ollama", specifier = ">=0.5.3,<0.5.4" },
+]
+
+[[package]]
+name = "agent-framework-openai"
+version = "1.0.0rc5"
+source = { editable = "packages/openai" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "openai", specifier = ">=1.99.0,<3" },
+    { name = "packaging", specifier = ">=24.1,<25" },
 ]
 
 [[package]]

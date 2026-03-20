@@ -7,7 +7,7 @@ a human-in-the-loop review workflow. The orchestration pauses for external event
 (human approval/rejection) with timeout handling, and iterates based on feedback.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -20,8 +20,8 @@ from datetime import timedelta
 from typing import Any, cast
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker, FoundryChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
@@ -74,7 +74,8 @@ def create_writer_agent() -> "Agent":
         "Limit response to 300 words or less."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(credential=AzureCliCredential())
+    return Agent(client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )
@@ -298,7 +299,7 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,

@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """Chain two runs of a single agent inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to construct the writer agent hosted by Agent Framework.
+- FoundryChatClient to construct the writer agent hosted by Agent Framework.
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
 - Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
+Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`, and either
 `AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
 
 import json
@@ -16,7 +17,7 @@ from collections.abc import Generator
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -38,7 +39,8 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(credential=AzureCliCredential())
+    return Agent(client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

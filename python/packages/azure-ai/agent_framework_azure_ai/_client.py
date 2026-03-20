@@ -30,10 +30,9 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import RawOpenAIResponsesClient
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -50,6 +49,7 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
@@ -68,7 +68,7 @@ else:
 logger = logging.getLogger("agent_framework.azure")
 
 
-class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):  # type: ignore[misc]
     """Azure AI Project Agent options."""
 
     rai_config: RaiConfig
@@ -88,7 +88,7 @@ AzureAIClientOptionsT = TypeVar(
 _DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
 
 
-class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
+class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
     """Raw Azure AI client without middleware, telemetry, or function invocation layers.
 
     Warning:
@@ -215,8 +215,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             project_client = AIProjectClient(**project_client_kwargs)
             should_close_client = True
 
-        # Initialize parent
+        # Initialize parent with OpenAI client from project
         super().__init__(
+            async_client=project_client.get_openai_client(),
+            model=azure_ai_settings.get("model"),
             additional_properties=additional_properties,
         )
 
@@ -679,10 +681,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions = "".join(instructions_list)
 
         return result, instructions
-
-    async def _initialize_client(self) -> None:
-        """Initialize OpenAI client."""
-        self.client = self.project_client.get_openai_client()  # type: ignore
 
     def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
         """Update the agent name in the chat client.

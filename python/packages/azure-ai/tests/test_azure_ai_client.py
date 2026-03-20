@@ -24,7 +24,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
-from agent_framework.openai._responses_client import RawOpenAIResponsesClient
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -415,7 +415,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -452,7 +452,7 @@ async def test_prepare_options_with_application_endpoint(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -494,7 +494,7 @@ async def test_prepare_options_with_application_project_client(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -510,19 +510,6 @@ async def test_prepare_options_with_application_project_client(
         assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
     else:
         assert "extra_body" not in run_options
-
-
-async def test_initialize_client(mock_project_client: MagicMock) -> None:
-    """Test _initialize_client method."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    mock_openai_client = MagicMock()
-    mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
-
-    await client._initialize_client()
-
-    assert client.client is mock_openai_client
-    mock_project_client.get_openai_client.assert_called_once()
 
 
 def test_update_agent_name_and_description(mock_project_client: MagicMock) -> None:
@@ -827,14 +814,14 @@ async def test_runtime_tools_override_logs_warning(
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with patch(
-        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
         return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
     ):
         await client._prepare_options(messages, {})
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_two"}]},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -853,7 +840,7 @@ async def test_prepare_options_logs_warning_for_tools_with_existing_agent_versio
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -875,7 +862,7 @@ async def test_prepare_options_logs_warning_for_tools_on_application_endpoint(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
         ),
         patch.object(client, "_get_agent_reference_or_create", new_callable=AsyncMock) as mock_get_agent_reference,
@@ -1101,14 +1088,14 @@ async def test_runtime_structured_output_override_logs_warning(
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with patch(
-        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
         return_value={"model": "test-model"},
     ):
         await client._prepare_options(messages, {"response_format": ResponseFormatModel})
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -1129,7 +1116,7 @@ async def test_prepare_options_excludes_response_format(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "response_format": ResponseFormatModel,
@@ -1164,7 +1151,7 @@ async def test_prepare_options_keeps_values_for_unsupported_option_keys(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "tools": [{"type": "function", "name": "weather"}],
@@ -2031,7 +2018,7 @@ async def test_inner_get_response_enriches_non_streaming(mock_project_client: Ma
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
@@ -2054,7 +2041,7 @@ async def test_inner_get_response_no_search_output_non_streaming(mock_project_cl
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
@@ -2075,7 +2062,7 @@ def test_inner_get_response_streaming_registers_hook(mock_project_client: MagicM
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         result = client._inner_get_response(messages=[], options={}, stream=True)
 
     assert result is mock_stream
@@ -2088,7 +2075,7 @@ def test_streaming_hook_captures_search_urls(mock_project_client: MagicMock) -> 
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]
@@ -2116,7 +2103,7 @@ def test_streaming_hook_enriches_url_citation(mock_project_client: MagicMock) ->
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]

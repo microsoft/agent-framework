@@ -59,7 +59,7 @@ async def streaming_example(agent: Agent) -> None:
 async def main() -> None:
     print("=== Basic Foundry Local Client Agent Example ===")
 
-    client = FoundryLocalClient(model_id="phi-4-mini")
+    client = FoundryLocalClient(model="phi-4-mini")
     print(f"Client Model ID: {client.model_id}\n")
     print("Other available models (tool calling supported only):")
     for model in client.manager.list_catalog_models():
@@ -67,7 +67,7 @@ async def main() -> None:
             print(
                 f"- {model.alias} for {model.task} - id={model.id} - {(model.file_size_mb / 1000):.2f} GB - {model.license}"
             )
-    agent = client.as_agent(
+    agent = Agent(client=client,
         name="LocalAgent",
         instructions="You are a helpful agent.",
         tools=get_weather,

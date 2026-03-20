@@ -7,7 +7,7 @@ registered agents, demonstrating how to interact with agents from external proce
 
 Prerequisites:
 - The worker must be running with the agent registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running
 """
@@ -17,7 +17,7 @@ import logging
 import os
 
 from agent_framework.azure import DurableAIAgentClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
@@ -48,7 +48,7 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     dts_client = DurableTaskSchedulerClient(
         host_address=endpoint_url,

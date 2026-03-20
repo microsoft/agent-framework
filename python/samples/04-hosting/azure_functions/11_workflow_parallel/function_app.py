@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Executor,
     Workflow,
@@ -36,7 +37,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel
@@ -45,7 +46,7 @@ from typing_extensions import Never
 logger = logging.getLogger(__name__)
 
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 # Agent names
@@ -382,10 +383,11 @@ def _create_workflow() -> Workflow:
                                                  └──> final_report
     """
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
     # Create agents for parallel analysis
-    sentiment_agent = chat_client.as_agent(
+    sentiment_agent = Agent(
+        client=chat_client,
         name=SENTIMENT_AGENT_NAME,
         instructions=(
             "You are a sentiment analysis expert. Analyze the sentiment of the given text. "
@@ -395,7 +397,8 @@ def _create_workflow() -> Workflow:
         default_options={"response_format": SentimentResult},
     )
 
-    keyword_agent = chat_client.as_agent(
+    keyword_agent = Agent(
+        client=chat_client,
         name=KEYWORD_AGENT_NAME,
         instructions=(
             "You are a keyword extraction expert. Extract important keywords and categories "
@@ -406,7 +409,8 @@ def _create_workflow() -> Workflow:
     )
 
     # Create summary agent for Pattern 3 (mixed parallel)
-    summary_agent = chat_client.as_agent(
+    summary_agent = Agent(
+        client=chat_client,
         name=SUMMARY_AGENT_NAME,
         instructions=(
             "You are a summarization expert. Given analysis results (sentiment and keywords), "

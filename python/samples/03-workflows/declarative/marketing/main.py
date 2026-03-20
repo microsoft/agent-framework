@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """
 Run the marketing copy workflow sample.
@@ -16,7 +17,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -54,21 +55,21 @@ Return the final polished version."""
 
 async def main() -> None:
     """Run the marketing workflow with real Azure AI agents."""
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    analyst_agent = client.as_agent(
+    analyst_agent = Agent(client=client,
         name="AnalystAgent",
         instructions=ANALYST_INSTRUCTIONS,
     )
-    writer_agent = client.as_agent(
+    writer_agent = Agent(client=client,
         name="WriterAgent",
         instructions=WRITER_INSTRUCTIONS,
     )
-    editor_agent = client.as_agent(
+    editor_agent = Agent(client=client,
         name="EditorAgent",
         instructions=EDITOR_INSTRUCTIONS,
     )

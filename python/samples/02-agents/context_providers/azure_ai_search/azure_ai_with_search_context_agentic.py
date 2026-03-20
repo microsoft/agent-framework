@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
+from agent_framework.azure import AzureAISearchContextProvider, FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -31,8 +31,8 @@ Prerequisites:
 
 Environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
-   - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses DefaultAzureCredential
-   - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+   - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses AzureCliCredential
+   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
 
 For using an existing Knowledge Base (recommended):
@@ -57,7 +57,7 @@ async def main() -> None:
     # Get configuration from environment
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
-    project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
     # Agentic mode requires exactly ONE of: knowledge_base_name OR index_name
@@ -99,7 +99,7 @@ async def main() -> None:
             credential=AzureCliCredential() if not search_key else None,
             mode="agentic",
             azure_openai_resource_url=azure_openai_resource_url,
-            model_deployment_name=model_deployment,
+            model_model=model_deployment,
             # Optional: Configure retrieval behavior
             knowledge_base_output_mode="extractive_data",  # or "answer_synthesis"
             retrieval_reasoning_effort="minimal",  # or "medium", "low"
@@ -109,9 +109,9 @@ async def main() -> None:
     # Create agent with search context provider
     async with (
         search_provider,
-        AzureAIAgentClient(
+        FoundryChatClient(
             project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment,
+            model_model=model_deployment,
             credential=AzureCliCredential(),
         ) as client,
         Agent(

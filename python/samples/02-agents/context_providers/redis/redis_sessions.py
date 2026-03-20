@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """Redis Context Provider: Thread scoping examples
 
@@ -29,7 +30,7 @@ Run:
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -45,12 +46,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 
 # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
-# For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
-def create_chat_client() -> AzureOpenAIResponsesClient:
+# For chat responses, also set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL.
+def create_chat_client() -> FoundryChatClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    return FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -71,7 +72,7 @@ async def example_global_thread_scope() -> None:
         user_id="threads_demo_user",
     )
 
-    agent = client.as_agent(
+    agent = Agent(client=client,
         name="GlobalMemoryAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
@@ -128,7 +129,7 @@ async def example_per_operation_thread_scope() -> None:
         vector_distance_metric="cosine",
     )
 
-    agent = client.as_agent(
+    agent = Agent(client=client,
         name="ScopedMemoryAssistant",
         instructions="You are an assistant with thread-scoped memory.",
         context_providers=[provider],
@@ -191,7 +192,7 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    personal_agent = client.as_agent(
+    personal_agent = Agent(client=client,
         name="PersonalAssistant",
         instructions="You are a personal assistant that helps with personal tasks.",
         context_providers=[personal_provider],
@@ -210,7 +211,7 @@ async def example_multiple_agents() -> None:
         vector_distance_metric="cosine",
     )
 
-    work_agent = client.as_agent(
+    work_agent = Agent(client=client,
         name="WorkAssistant",
         instructions="You are a work assistant that helps with professional tasks.",
         context_providers=[work_provider],

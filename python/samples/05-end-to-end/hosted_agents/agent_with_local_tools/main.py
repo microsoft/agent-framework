@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """
 Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
@@ -11,7 +12,7 @@ import os
 from datetime import datetime
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.azure import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -127,12 +128,12 @@ def get_credential():
 async def main():
     """Main function to run the agent as a web server."""
     async with get_credential() as credential:
-        client = AzureOpenAIResponsesClient(
+        client = FoundryChatClient(
             project_endpoint=PROJECT_ENDPOINT,
-            deployment_name=MODEL_DEPLOYMENT_NAME,
+            model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
         )
-        agent = client.as_agent(
+        agent = Agent(client=client,
             name="SeattleHotelAgent",
             instructions="""You are a helpful travel assistant specializing in finding hotels in Seattle, Washington.
 

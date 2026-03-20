@@ -18,7 +18,6 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentVersionDetails,
@@ -30,6 +29,7 @@ from azure.ai.projects.models import (
 )
 
 from ._client import AzureAIClient, AzureAIProjectAgentOptions
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
 if sys.version_info >= (3, 13):

@@ -35,7 +35,7 @@ The sample uses the Azure Monitor OpenTelemetry exporter to send traces to Appli
 So ensure you have the `azure-monitor-opentelemetry` package installed.
 """
 
-# For loading the `AZURE_AI_PROJECT_ENDPOINT` environment variable
+# For loading the `FOUNDRY_PROJECT_ENDPOINT` environment variable
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ async def get_weather(
 async def main():
     async with (
         AzureCliCredential() as credential,
-        AIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=credential) as project_client,
+        AIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=credential) as project_client,
     ):
         # This will enable tracing and configure the application to send telemetry data to the
         # Application Insights instance attached to the Azure AI project.

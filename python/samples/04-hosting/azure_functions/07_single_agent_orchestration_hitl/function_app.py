@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """Iterate on generated content with a human-in-the-loop Durable orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient for a single writer agent that emits structured JSON.
+- FoundryChatClient for a single writer agent that emits structured JSON.
 - AgentFunctionApp with Durable orchestration, HTTP triggers, and activity triggers.
 - External events that pause the workflow until a human decision arrives or times out.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and
+Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`, and
 either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func start`."""
 
 import json
@@ -17,7 +18,7 @@ from datetime import timedelta
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -57,7 +58,8 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(credential=AzureCliCredential())
+    return Agent(client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

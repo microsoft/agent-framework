@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     Executor,
@@ -40,7 +41,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -50,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 # Environment variable names
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 # Agent names
@@ -379,10 +380,11 @@ class InputRouterExecutor(Executor):
 def _create_workflow() -> Workflow:
     """Create the content moderation workflow with HITL."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
     # Create the content analysis agent
-    content_analyzer_agent = chat_client.as_agent(
+    content_analyzer_agent = Agent(
+        client=chat_client,
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
         default_options={"response_format": ContentAnalysisResult},

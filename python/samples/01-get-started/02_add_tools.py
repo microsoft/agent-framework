@@ -1,28 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.azure import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 from pydantic import Field
-
-# Load environment variables from .env file
-load_dotenv()
 
 """
 Add Tools — Give your agent a function tool
 
 This sample shows how to define a function tool with the @tool decorator
 and wire it into an agent so the model can call it.
-
-Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT        — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
 """
 
 
@@ -40,18 +31,18 @@ def get_weather(
 
 
 async def main() -> None:
-    credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
+    client = FoundryChatClient(
+        project_endpoint="https://your-project.services.ai.azure.com",
+        model="gpt-4o",
+        credential=AzureCliCredential(),
     )
 
     # <create_agent_with_tools>
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="WeatherAgent",
         instructions="You are a helpful weather agent. Use the get_weather tool to answer questions.",
-        tools=get_weather,
+        tools=[get_weather],
     )
     # </create_agent_with_tools>
 

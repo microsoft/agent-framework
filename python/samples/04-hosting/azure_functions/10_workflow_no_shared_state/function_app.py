@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Case,
     Default,
@@ -31,7 +32,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -40,7 +41,7 @@ from typing_extensions import Never
 logger = logging.getLogger(__name__)
 
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 SPAM_AGENT_NAME = "SpamDetectionAgent"
 EMAIL_AGENT_NAME = "EmailAssistantAgent"
@@ -165,15 +166,17 @@ def is_spam_detected(message: Any) -> bool:
 def _create_workflow() -> Workflow:
     """Create the workflow definition."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
-    spam_agent = chat_client.as_agent(
+    spam_agent = Agent(
+        client=chat_client,
         name=SPAM_AGENT_NAME,
         instructions=SPAM_DETECTION_INSTRUCTIONS,
         default_options={"response_format": SpamDetectionResult},
     )
 
-    email_agent = chat_client.as_agent(
+    email_agent = Agent(
+        client=chat_client,
         name=EMAIL_AGENT_NAME,
         instructions=EMAIL_ASSISTANT_INSTRUCTIONS,
         default_options={"response_format": EmailResponse},

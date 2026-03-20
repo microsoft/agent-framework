@@ -55,13 +55,13 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework's as_tool() for hierarchical agents with streaming."""
-    from agent_framework import Content
+    from agent_framework import Agent, Content
     from agent_framework.openai import OpenAIChatClient
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create specialized writer agent
-    writer = client.as_agent(
+    writer = Agent(client=client,
         name="writer",
         instructions="You are a creative writer. Write short, engaging content.",
     )
@@ -75,7 +75,7 @@ async def run_agent_framework() -> None:
     )
 
     # Create coordinator agent with writer tool
-    coordinator = client.as_agent(
+    coordinator = Agent(client=client,
         name="coordinator",
         instructions="You coordinate with specialized agents. Delegate writing tasks to the writer agent.",
         tools=[writer_tool],

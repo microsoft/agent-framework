@@ -10,7 +10,7 @@ The orchestration branches based on spam detection results, calling different
 activity functions to handle spam or send legitimate email responses.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 

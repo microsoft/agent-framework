@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider, AzureOpenAIEmbeddingClient
+from agent_framework.azure import AzureAISearchContextProvider, AzureOpenAIEmbeddingClient, FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -26,9 +26,9 @@ Prerequisites:
 2. An Azure AI Foundry project with a model deployment
 3. Set the following environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
-   - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses DefaultAzureCredential for Entra ID
+   - AZURE_SEARCH_API_KEY: (Optional) Your search API key - if not provided, uses AzureCliCredential for Entra ID
    - AZURE_SEARCH_INDEX_NAME: Your search index name
-   - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+   - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
    - AZURE_OPENAI_EMBEDDING_MODEL_ID: (Optional) Your embedding model for hybrid search (e.g., "text-embedding-3-small")
    - AZURE_OPENAI_ENDPOINT: (Optional) Your Azure OpenAI resource URL, required if using an OpenAI embedding model for hybrid search
@@ -51,7 +51,7 @@ async def main() -> None:
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
-    project_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
     openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     embedding_model = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL_ID", "text-embedding-3-small")
@@ -60,7 +60,7 @@ async def main() -> None:
     if openai_endpoint and embedding_model:
         embedding_client = AzureOpenAIEmbeddingClient(
             endpoint=openai_endpoint,
-            deployment_name=embedding_model,
+            model=embedding_model,
             credential=credential,
         )
 
@@ -83,9 +83,9 @@ async def main() -> None:
     # Create agent with search context provider
     async with (
         search_provider,
-        AzureAIAgentClient(
+        FoundryChatClient(
             project_endpoint=project_endpoint,
-            model_deployment_name=model_deployment,
+            model_model=model_deployment,
             credential=credential,
         ) as client,
         Agent(

@@ -1,4 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """Azure Managed Redis History Provider with Azure AD Authentication
 
@@ -17,15 +18,15 @@ Requirements:
 
 Environment Variables:
   - AZURE_REDIS_HOST: Your Azure Managed Redis host (e.g., myredis.redis.cache.windows.net)
-  - AZURE_AI_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
-  - AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: Azure OpenAI Responses deployment name
+  - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
+  - FOUNDRY_MODEL: Azure OpenAI Responses deployment name
   - AZURE_USER_OBJECT_ID: Your Azure AD User Object ID for authentication
 """
 
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
@@ -81,14 +82,14 @@ async def main() -> None:
     )
 
     # 3. Create chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # 4. Create agent with Azure Redis history provider
-    agent = client.as_agent(
+    agent = Agent(client=client,
         name="AzureRedisAssistant",
         instructions="You are a helpful assistant.",
         context_providers=[history_provider],

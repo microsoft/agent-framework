@@ -25,7 +25,7 @@ async def run_semantic_kernel() -> None:
     client = OpenAIResponsesAgent.create_client()
     # SK response agents wrap OpenAI's hosted Responses API.
     agent = OpenAIResponsesAgent(
-        ai_model_id=OpenAISettings().responses_model_id,
+        ai_model=OpenAISettings().responses_model_id,
         client=client,
         instructions="Answer in one concise sentence.",
         name="Expert",

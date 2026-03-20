@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import load_settings
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from openai.types.responses import ResponseInputItemParam
 
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings
 
 if sys.version_info >= (3, 11):

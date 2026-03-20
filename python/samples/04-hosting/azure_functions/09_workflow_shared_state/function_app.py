@@ -13,7 +13,7 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- Azure OpenAI configured for AzureOpenAIChatClient with required environment variables.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Use DefaultAzureCredential and run az login before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
@@ -25,6 +25,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     Message,
@@ -33,7 +34,7 @@ from agent_framework import (
     WorkflowContext,
     executor,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.azure import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Environment variable names
 AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 EMAIL_STATE_PREFIX = "email:"
@@ -198,9 +199,10 @@ def _build_client_kwargs() -> dict[str, Any]:
 def _create_workflow() -> Workflow:
     """Create the email classification workflow with conditional routing."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
-    spam_detection_agent = chat_client.as_agent(
+    spam_detection_agent = Agent(
+        client=chat_client,
         instructions=(
             "You are a spam detection assistant that identifies spam emails. "
             "Always return JSON with fields is_spam (bool) and reason (string)."
@@ -209,7 +211,8 @@ def _create_workflow() -> Workflow:
         name="spam_detection_agent",
     )
 
-    email_assistant_agent = chat_client.as_agent(
+    email_assistant_agent = Agent(
+        client=chat_client,
         instructions=(
             "You are an email assistant that helps users draft responses to emails with professionalism. "
             "Return JSON with a single field 'response' containing the drafted reply."

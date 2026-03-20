@@ -1,13 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
+from agent_framework import Agent
 
 """Route email requests through conditional orchestration with two agents.
 
 Components used in this sample:
-- AzureOpenAIChatClient agents for spam detection and email drafting.
+- FoundryChatClient agents for spam detection and email drafting.
 - AgentFunctionApp with Durable orchestration, activity, and HTTP triggers.
 - Pydantic models that validate payloads and agent JSON responses.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`,
+Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`,
 and either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running the
 Functions host."""
 
@@ -17,7 +18,7 @@ from collections.abc import Generator, Mapping
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -49,14 +50,14 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=AzureCliCredential())
 
-    spam_agent = client.as_agent(
+    spam_agent = Agent(client=client,
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
 
-    email_agent = client.as_agent(
+    email_agent = Agent(client=client,
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )
