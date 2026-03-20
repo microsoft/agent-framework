@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 contact: bentho
 date: 2026-02-27
 deciders: bentho, markwallace-microsoft, westey-m
