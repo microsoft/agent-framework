@@ -1,39 +1,4428 @@
 {
-  "id": "synthetic-pdf-001",
-  "status": "Succeeded",
-  "analyzer_id": "prebuilt-documentSearch",
-  "api_version": "2025-05-01-preview",
-  "created_at": "2026-03-21T10:00:00Z",
+  "analyzerId": "prebuilt-documentSearch",
+  "apiVersion": "2025-11-01",
+  "createdAt": "2026-03-21T22:44:09Z",
+  "stringEncoding": "codePoint",
+  "warnings": [],
   "contents": [
     {
-      "markdown": "# CONTOSO LTD.\n\n## INVOICE\n\nInvoice Number: INV-2026-001\nDate: March 4, 2026\nVendor: Contoso Ltd., 123 Main St, Seattle WA\nCustomer: Microsoft Corporation\n\n| Item | Description | Qty | Price | Amount |\n|------|-------------|-----|-------|--------|\n| 1 | Cloud Hosting (Monthly) | 1 | $5,000.00 | $5,000.00 |\n| 2 | Premium Support | 1 | $2,000.00 | $2,000.00 |\n| 3 | Data Transfer (500GB) | 1 | $500.00 | $500.00 |\n\n**Subtotal:** $7,500.00\n**Tax (10%):** $750.00\n**Total:** $8,250.00\n\nPayment Terms: Net 30\nDue Date: April 3, 2026",
+      "path": "input1",
+      "markdown": "# Contoso Q1 2025 Financial Summary\n\nTotal revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024.\nOperating expenses were $31.2 million. Net profit was $11.5 million. The largest\nrevenue segment was Cloud Services at $19.3 million, followed by Professional\nServices at $14.8 million and Product Licensing at $8.6 million. Headcount at end of\nQ1 was 1,247 employees across 8 offices worldwide.\n\n<!-- PageBreak -->\n\n\n# Contoso Q2 2025 Financial Summary\n\nTotal revenue for Q2 2025 was $48.1 million, an increase of 22% over Q2 2024.\nOperating expenses were $33.9 million. Net profit was $14.2 million. Cloud Services\ngrew to $22.5 million, Professional Services was $15.7 million, and Product Licensing\nwas $9.9 million. The company opened a new office in Tokyo, bringing the total to 9\noffices. Headcount grew to 1,389 employees.\n\n<!-- PageBreak -->\n\n\n## Contoso Product Roadmap 2025\n\nThree major product launches are planned for 2025: (1) Contoso CloudVault - an\nenterprise document storage solution, launching August 2025, with an expected price\nof $29.99/user/month. (2) Contoso DataPulse - a real-time analytics dashboard,\nlaunching October 2025. (3) Contoso SecureLink - a zero-trust networking product,\nlaunching December 2025. Total R&D; budget for 2025 is $18.4 million.\n\n<!-- PageBreak -->\n\n\n# Contoso Employee Satisfaction Survey Results\n\nThe annual employee satisfaction survey was completed in March 2025 with a 87%\nresponse rate. Overall satisfaction score was 4.2 out of 5.0. Work-life balance scored\n3.8/5.0. Career growth opportunities scored 3.9/5.0. Compensation satisfaction\nscored 3.6/5.0. The top requested improvement was 'more flexible remote work\noptions' cited by 62% of respondents. Employee retention rate for the trailing 12\nmonths was 91%.\n\n<!-- PageBreak -->\n\n\n## Contoso Partnership Announcements\n\nContoso announced three strategic partnerships in H1 2025: (1) A joint venture with\nMeridian Technologies for AI-powered document processing, valued at $5.2 million\nover 3 years. (2) A distribution agreement with Pacific Rim Solutions covering 12\ncountries in Asia-Pacific. (3) A technology integration partnership with NovaBridge\nSystems for unified identity management. The Chief Partnership Officer, Helena\nNakagawa, stated the partnerships are expected to generate an additional $15 million\nin revenue by 2027.\n",
       "fields": {
-        "VendorName": {
+        "Summary": {
           "type": "string",
-          "valueString": "Contoso Ltd.",
-          "confidence": 0.95
-        },
-        "CustomerName": {
-          "type": "string",
-          "valueString": "Microsoft Corporation",
-          "confidence": 0.93
-        },
-        "InvoiceTotal": {
-          "type": "number",
-          "valueNumber": 8250.0,
-          "confidence": 0.91
-        },
-        "InvoiceDate": {
-          "type": "string",
-          "valueString": "2026-03-04",
-          "confidence": 0.97
-        },
-        "InvoiceId": {
-          "type": "string",
-          "valueString": "INV-2026-001",
-          "confidence": 0.99
+          "valueString": "The document provides a comprehensive overview of Contoso's key business metrics and initiatives for 2025, including financial performance for Q1 and Q2 with revenue, expenses, and profit details; a product roadmap with three major launches and R&D budget; employee satisfaction survey results highlighting scores and retention; and strategic partnership announcements expected to boost future revenue.",
+          "spans": [
+            {
+              "offset": 37,
+              "length": 77
+            },
+            {
+              "offset": 115,
+              "length": 80
+            },
+            {
+              "offset": 196,
+              "length": 77
+            },
+            {
+              "offset": 274,
+              "length": 84
+            },
+            {
+              "offset": 359,
+              "length": 50
+            },
+            {
+              "offset": 469,
+              "length": 77
+            },
+            {
+              "offset": 547,
+              "length": 83
+            },
+            {
+              "offset": 631,
+              "length": 85
+            },
+            {
+              "offset": 717,
+              "length": 83
+            },
+            {
+              "offset": 801,
+              "length": 43
+            },
+            {
+              "offset": 900,
+              "length": 78
+            },
+            {
+              "offset": 979,
+              "length": 83
+            },
+            {
+              "offset": 1063,
+              "length": 78
+            },
+            {
+              "offset": 1142,
+              "length": 81
+            },
+            {
+              "offset": 1224,
+              "length": 69
+            },
+            {
+              "offset": 1364,
+              "length": 78
+            },
+            {
+              "offset": 1443,
+              "length": 86
+            },
+            {
+              "offset": 1530,
+              "length": 78
+            },
+            {
+              "offset": 1609,
+              "length": 76
+            },
+            {
+              "offset": 1686,
+              "length": 81
+            },
+            {
+              "offset": 1768,
+              "length": 15
+            },
+            {
+              "offset": 1844,
+              "length": 83
+            },
+            {
+              "offset": 1928,
+              "length": 80
+            },
+            {
+              "offset": 2009,
+              "length": 81
+            },
+            {
+              "offset": 2091,
+              "length": 83
+            },
+            {
+              "offset": 2175,
+              "length": 78
+            },
+            {
+              "offset": 2254,
+              "length": 84
+            },
+            {
+              "offset": 2339,
+              "length": 19
+            }
+          ],
+          "confidence": 0.46,
+          "source": "D(1,1.0687,1.6754,6.9727,1.6745,6.9727,1.8735,1.0687,1.8743);D(1,1.0706,1.8977,6.9976,1.8920,6.9978,2.1016,1.0708,2.1073);D(1,1.0675,2.1220,6.9478,2.1160,6.9480,2.3177,1.0677,2.3237);D(1,1.0698,2.3448,7.2715,2.3454,7.2715,2.5540,1.0698,2.5534);D(1,1.0706,2.5692,5.0012,2.5646,5.0014,2.7738,1.0708,2.7784);D(2,1.0677,1.6741,6.9768,1.6741,6.9768,1.8746,1.0677,1.8746);D(2,1.0698,1.9004,7.2798,1.8904,7.2801,2.0975,1.0701,2.1074);D(2,1.0677,2.1182,7.3752,2.1162,7.3753,2.3266,1.0678,2.3286);D(2,1.0635,2.3470,7.2424,2.3465,7.2424,2.5557,1.0635,2.5563);D(2,1.0656,2.5670,4.4204,2.5705,4.4202,2.7804,1.0654,2.7769);D(3,1.0697,1.6754,7.1553,1.6739,7.1553,1.8807,1.0698,1.8822);D(3,1.0677,1.8974,7.3669,1.8968,7.3669,2.1079,1.0677,2.1085);D(3,1.0687,2.1150,7.0559,2.1210,7.0557,2.3254,1.0685,2.3194);D(3,1.0667,2.3436,7.2923,2.3469,7.2922,2.5595,1.0666,2.5562);D(3,1.0675,2.5656,6.3459,2.5597,6.3461,2.7747,1.0677,2.7805);D(4,1.0698,1.6796,7.2258,1.6670,7.2262,1.8750,1.0702,1.8876);D(4,1.0677,1.9008,7.3545,1.8916,7.3548,2.0929,1.0680,2.1020);D(4,1.0677,2.1160,6.8896,2.1160,6.8896,2.3226,1.0677,2.3226);D(4,1.0646,2.3480,6.9312,2.3460,6.9313,2.5525,1.0647,2.5546);D(4,1.0667,2.5651,6.9602,2.5651,6.9602,2.7810,1.0667,2.7810);D(4,1.0635,2.7915,2.3969,2.7901,2.3971,2.9816,1.0637,2.9830);D(5,1.0718,1.6716,7.2507,1.6716,7.2507,1.8839,1.0718,1.8839);D(5,1.0957,1.9252,7.1762,1.9252,7.1762,2.0904,1.0957,2.0904);D(5,1.0674,2.1191,7.0225,2.1120,7.0227,2.3213,1.0677,2.3285);D(5,1.0687,2.3403,7.1263,2.3444,7.1262,2.5612,1.0686,2.5571);D(5,1.0698,2.5663,6.9727,2.5652,6.9727,2.7781,1.0698,2.7792);D(5,1.0674,2.7880,7.4043,2.7798,7.4046,2.9961,1.0677,3.0043);D(5,1.0645,3.0105,2.5463,3.0101,2.5464,3.2179,1.0646,3.2183)"
         }
-      }
+      },
+      "kind": "document",
+      "startPageNumber": 1,
+      "endPageNumber": 5,
+      "unit": "inch",
+      "pages": [
+        {
+          "pageNumber": 1,
+          "angle": -0.0026,
+          "width": 8.5,
+          "height": 11,
+          "spans": [
+            {
+              "offset": 0,
+              "length": 431
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 2,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(1,1.0729,1.1176,2.0031,1.1148,2.0031,1.3788,1.0729,1.375)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 10,
+                "length": 2
+              },
+              "confidence": 0.935,
+              "source": "D(1,2.074,1.1146,2.3796,1.1137,2.3796,1.3803,2.074,1.3791)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 13,
+                "length": 4
+              },
+              "confidence": 0.864,
+              "source": "D(1,2.4771,1.1135,3.0396,1.1155,3.0396,1.3845,2.4771,1.3807)"
+            },
+            {
+              "content": "Financial",
+              "span": {
+                "offset": 18,
+                "length": 9
+              },
+              "confidence": 0.962,
+              "source": "D(1,3.1194,1.1157,4.0983,1.1207,4.0983,1.3922,3.1194,1.385)"
+            },
+            {
+              "content": "Summary",
+              "span": {
+                "offset": 28,
+                "length": 7
+              },
+              "confidence": 0.99,
+              "source": "D(1,4.178,1.1215,5.2544,1.1321,5.2544,1.403,4.178,1.393)"
+            },
+            {
+              "content": "Total",
+              "span": {
+                "offset": 37,
+                "length": 5
+              },
+              "confidence": 0.994,
+              "source": "D(1,1.0687,1.6761,1.4377,1.6759,1.4377,1.8701,1.0687,1.8693)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 43,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(1,1.4965,1.6759,2.0908,1.6756,2.0908,1.8717,1.4965,1.8703)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 51,
+                "length": 3
+              },
+              "confidence": 0.992,
+              "source": "D(1,2.1365,1.6756,2.339,1.6755,2.339,1.8723,2.1365,1.8718)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 55,
+                "length": 2
+              },
+              "confidence": 0.925,
+              "source": "D(1,2.3782,1.6754,2.5806,1.6753,2.5806,1.8728,2.3782,1.8724)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 58,
+                "length": 4
+              },
+              "confidence": 0.806,
+              "source": "D(1,2.6459,1.6753,3.0215,1.6751,3.0215,1.8739,2.6459,1.873)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 63,
+                "length": 3
+              },
+              "confidence": 0.987,
+              "source": "D(1,3.0639,1.6751,3.3611,1.6751,3.3611,1.8739,3.0639,1.8739)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 67,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,3.4068,1.6751,3.4884,1.6751,3.4884,1.8739,3.4068,1.8739)"
+            },
+            {
+              "content": "42.7",
+              "span": {
+                "offset": 68,
+                "length": 4
+              },
+              "confidence": 0.934,
+              "source": "D(1,3.495,1.6751,3.8248,1.6751,3.8248,1.8738,3.495,1.8739)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 73,
+                "length": 7
+              },
+              "confidence": 0.975,
+              "source": "D(1,3.877,1.6751,4.3374,1.6751,4.3374,1.8738,3.877,1.8738)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 80,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,4.3538,1.6751,4.3864,1.6751,4.3864,1.8738,4.3538,1.8738)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 82,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(1,4.4354,1.6751,4.6117,1.675,4.6117,1.8738,4.4354,1.8738)"
+            },
+            {
+              "content": "increase",
+              "span": {
+                "offset": 85,
+                "length": 8
+              },
+              "confidence": 0.993,
+              "source": "D(1,4.6738,1.675,5.2975,1.6751,5.2975,1.873,4.6738,1.8738)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 94,
+                "length": 2
+              },
+              "confidence": 0.99,
+              "source": "D(1,5.3465,1.6752,5.4967,1.6752,5.4967,1.8725,5.3465,1.8729)"
+            },
+            {
+              "content": "18",
+              "span": {
+                "offset": 97,
+                "length": 2
+              },
+              "confidence": 0.974,
+              "source": "D(1,5.5424,1.6752,5.7122,1.6753,5.7122,1.8719,5.5424,1.8724)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 99,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,5.7187,1.6753,5.8559,1.6754,5.8559,1.8716,5.7187,1.8719)"
+            },
+            {
+              "content": "over",
+              "span": {
+                "offset": 101,
+                "length": 4
+              },
+              "confidence": 0.946,
+              "source": "D(1,5.9081,1.6754,6.2445,1.6755,6.2445,1.8706,5.9081,1.8714)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 106,
+                "length": 2
+              },
+              "confidence": 0.809,
+              "source": "D(1,6.2836,1.6755,6.4828,1.6756,6.4828,1.87,6.2836,1.8705)"
+            },
+            {
+              "content": "2024",
+              "span": {
+                "offset": 109,
+                "length": 4
+              },
+              "confidence": 0.529,
+              "source": "D(1,6.5547,1.6756,6.9204,1.6758,6.9204,1.8689,6.5547,1.8698)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 113,
+                "length": 1
+              },
+              "confidence": 0.99,
+              "source": "D(1,6.9269,1.6758,6.9727,1.6758,6.9727,1.8687,6.9269,1.8688)"
+            },
+            {
+              "content": "Operating",
+              "span": {
+                "offset": 115,
+                "length": 9
+              },
+              "confidence": 0.995,
+              "source": "D(1,1.0708,1.9001,1.7943,1.8986,1.7943,2.1061,1.0708,2.1073)"
+            },
+            {
+              "content": "expenses",
+              "span": {
+                "offset": 125,
+                "length": 8
+              },
+              "confidence": 0.997,
+              "source": "D(1,1.8497,1.8985,2.5629,1.8969,2.5629,2.1047,1.8497,2.106)"
+            },
+            {
+              "content": "were",
+              "span": {
+                "offset": 134,
+                "length": 4
+              },
+              "confidence": 0.998,
+              "source": "D(1,2.6079,1.8968,2.9783,1.896,2.9783,2.104,2.6079,2.1046)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 139,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,3.0198,1.8959,3.1029,1.8958,3.1029,2.1038,3.0198,2.1039)"
+            },
+            {
+              "content": "31.2",
+              "span": {
+                "offset": 140,
+                "length": 4
+              },
+              "confidence": 0.949,
+              "source": "D(1,3.1202,1.8958,3.4353,1.8955,3.4353,2.1034,3.1202,2.1038)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 145,
+                "length": 7
+              },
+              "confidence": 0.895,
+              "source": "D(1,3.4837,1.8954,3.9546,1.895,3.9546,2.1029,3.4837,2.1034)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 152,
+                "length": 1
+              },
+              "confidence": 0.954,
+              "source": "D(1,3.9684,1.895,4.003,1.8949,4.003,2.1028,3.9684,2.1029)"
+            },
+            {
+              "content": "Net",
+              "span": {
+                "offset": 154,
+                "length": 3
+              },
+              "confidence": 0.951,
+              "source": "D(1,4.0549,1.8949,4.3146,1.8946,4.3146,2.1025,4.055,2.1028)"
+            },
+            {
+              "content": "profit",
+              "span": {
+                "offset": 158,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(1,4.3561,1.8946,4.7335,1.8942,4.7335,2.1021,4.3561,2.1025)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 165,
+                "length": 3
+              },
+              "confidence": 0.997,
+              "source": "D(1,4.7716,1.8942,5.0624,1.894,5.0624,2.1017,4.7716,2.102)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 169,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,5.1074,1.894,5.1904,1.894,5.1905,2.1017,5.1074,2.1017)"
+            },
+            {
+              "content": "11.5",
+              "span": {
+                "offset": 170,
+                "length": 4
+              },
+              "confidence": 0.945,
+              "source": "D(1,5.2147,1.894,5.5366,1.8941,5.5366,2.1016,5.2147,2.1017)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 175,
+                "length": 7
+              },
+              "confidence": 0.837,
+              "source": "D(1,5.5851,1.8941,6.0421,1.8942,6.0421,2.1014,5.5851,2.1016)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 182,
+                "length": 1
+              },
+              "confidence": 0.976,
+              "source": "D(1,6.0559,1.8942,6.0905,1.8942,6.0905,2.1014,6.0559,2.1014)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 184,
+                "length": 3
+              },
+              "confidence": 0.958,
+              "source": "D(1,6.139,1.8942,6.4298,1.8943,6.4298,2.1012,6.139,2.1013)"
+            },
+            {
+              "content": "largest",
+              "span": {
+                "offset": 188,
+                "length": 7
+              },
+              "confidence": 0.982,
+              "source": "D(1,6.4817,1.8943,6.9976,1.8944,6.9976,2.101,6.4817,2.1012)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 196,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(1,1.0677,2.1284,1.6714,2.1259,1.6714,2.3218,1.0677,2.3228)"
+            },
+            {
+              "content": "segment",
+              "span": {
+                "offset": 204,
+                "length": 7
+              },
+              "confidence": 0.996,
+              "source": "D(1,1.7207,2.1257,2.3671,2.1229,2.3671,2.3206,1.7207,2.3217)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 212,
+                "length": 3
+              },
+              "confidence": 0.998,
+              "source": "D(1,2.4032,2.1228,2.705,2.1215,2.705,2.32,2.4032,2.3206)"
+            },
+            {
+              "content": "Cloud",
+              "span": {
+                "offset": 216,
+                "length": 5
+              },
+              "confidence": 0.998,
+              "source": "D(1,2.7543,2.1213,3.1841,2.12,3.1841,2.3194,2.7543,2.32)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 222,
+                "length": 8
+              },
+              "confidence": 0.995,
+              "source": "D(1,3.2366,2.1199,3.8732,2.1192,3.8732,2.3188,3.2366,2.3193)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 231,
+                "length": 2
+              },
+              "confidence": 0.996,
+              "source": "D(1,3.9224,2.1192,4.0701,2.119,4.0701,2.3186,3.9224,2.3187)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 234,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(1,4.1062,2.119,4.1882,2.1189,4.1882,2.3185,4.1062,2.3186)"
+            },
+            {
+              "content": "19.3",
+              "span": {
+                "offset": 235,
+                "length": 4
+              },
+              "confidence": 0.866,
+              "source": "D(1,4.2079,2.1189,4.5163,2.1185,4.5163,2.3182,4.2079,2.3185)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 240,
+                "length": 7
+              },
+              "confidence": 0.878,
+              "source": "D(1,4.5721,2.1185,5.0315,2.1181,5.0315,2.3178,4.5721,2.3182)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 247,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(1,5.0413,2.1181,5.0774,2.1182,5.0774,2.3178,5.0413,2.3178)"
+            },
+            {
+              "content": "followed",
+              "span": {
+                "offset": 249,
+                "length": 8
+              },
+              "confidence": 0.989,
+              "source": "D(1,5.1266,2.1183,5.7402,2.1196,5.7402,2.3178,5.1266,2.3178)"
+            },
+            {
+              "content": "by",
+              "span": {
+                "offset": 258,
+                "length": 2
+              },
+              "confidence": 0.994,
+              "source": "D(1,5.7993,2.1197,5.9732,2.1201,5.9732,2.3178,5.7993,2.3178)"
+            },
+            {
+              "content": "Professional",
+              "span": {
+                "offset": 261,
+                "length": 12
+              },
+              "confidence": 0.979,
+              "source": "D(1,6.0192,2.1201,6.9478,2.122,6.9478,2.3177,6.0192,2.3178)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 274,
+                "length": 8
+              },
+              "confidence": 0.992,
+              "source": "D(1,1.0698,2.3468,1.7112,2.3464,1.7112,2.5504,1.0698,2.5492)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 283,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(1,1.7592,2.3464,1.9033,2.3463,1.9033,2.5507,1.7592,2.5505)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 286,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,1.9445,2.3463,2.0268,2.3462,2.0268,2.551,1.9445,2.5508)"
+            },
+            {
+              "content": "14.8",
+              "span": {
+                "offset": 287,
+                "length": 4
+              },
+              "confidence": 0.961,
+              "source": "D(1,2.0508,2.3462,2.3629,2.346,2.3629,2.5516,2.0508,2.551)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 292,
+                "length": 7
+              },
+              "confidence": 0.987,
+              "source": "D(1,2.4144,2.346,2.874,2.3457,2.874,2.5526,2.4144,2.5517)"
+            },
+            {
+              "content": "and",
+              "span": {
+                "offset": 300,
+                "length": 3
+              },
+              "confidence": 0.999,
+              "source": "D(1,2.9255,2.3457,3.193,2.3455,3.193,2.5531,2.9255,2.5527)"
+            },
+            {
+              "content": "Product",
+              "span": {
+                "offset": 304,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(1,3.2582,2.3455,3.831,2.3454,3.831,2.5533,3.2582,2.5531)"
+            },
+            {
+              "content": "Licensing",
+              "span": {
+                "offset": 312,
+                "length": 9
+              },
+              "confidence": 0.994,
+              "source": "D(1,3.8825,2.3454,4.572,2.3453,4.572,2.5536,3.8825,2.5533)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 322,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(1,4.6268,2.3453,4.7675,2.3453,4.7675,2.5537,4.6268,2.5536)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 325,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(1,4.8086,2.3453,4.8875,2.3453,4.8875,2.5537,4.8086,2.5537)"
+            },
+            {
+              "content": "8.6",
+              "span": {
+                "offset": 326,
+                "length": 3
+              },
+              "confidence": 0.961,
+              "source": "D(1,4.9012,2.3453,5.1276,2.3452,5.1276,2.5538,4.9012,2.5537)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 330,
+                "length": 7
+              },
+              "confidence": 0.914,
+              "source": "D(1,5.1791,2.3452,5.6422,2.3453,5.6422,2.5534,5.1791,2.5538)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 337,
+                "length": 1
+              },
+              "confidence": 0.987,
+              "source": "D(1,5.6559,2.3453,5.6902,2.3453,5.6902,2.5533,5.6559,2.5534)"
+            },
+            {
+              "content": "Headcount",
+              "span": {
+                "offset": 339,
+                "length": 9
+              },
+              "confidence": 0.936,
+              "source": "D(1,5.7519,2.3454,6.5546,2.3456,6.5546,2.5524,5.7519,2.5533)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 349,
+                "length": 2
+              },
+              "confidence": 0.995,
+              "source": "D(1,6.5957,2.3456,6.7432,2.3456,6.7432,2.5522,6.5957,2.5523)"
+            },
+            {
+              "content": "end",
+              "span": {
+                "offset": 352,
+                "length": 3
+              },
+              "confidence": 0.966,
+              "source": "D(1,6.781,2.3456,7.052,2.3457,7.052,2.5518,6.781,2.5521)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 356,
+                "length": 2
+              },
+              "confidence": 0.978,
+              "source": "D(1,7.0965,2.3457,7.2715,2.3458,7.2715,2.5516,7.0965,2.5518)"
+            },
+            {
+              "content": "Q1",
+              "span": {
+                "offset": 359,
+                "length": 2
+              },
+              "confidence": 0.901,
+              "source": "D(1,1.0708,2.5707,1.2721,2.5702,1.2721,2.7777,1.0708,2.7784)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 362,
+                "length": 3
+              },
+              "confidence": 0.839,
+              "source": "D(1,1.3369,2.57,1.6303,2.5692,1.6303,2.7764,1.3369,2.7774)"
+            },
+            {
+              "content": "1,247",
+              "span": {
+                "offset": 366,
+                "length": 5
+              },
+              "confidence": 0.531,
+              "source": "D(1,1.6918,2.5691,2.0978,2.568,2.0978,2.7747,1.6918,2.7762)"
+            },
+            {
+              "content": "employees",
+              "span": {
+                "offset": 372,
+                "length": 9
+              },
+              "confidence": 0.965,
+              "source": "D(1,2.1489,2.5679,2.9575,2.567,2.9575,2.7727,2.1489,2.7746)"
+            },
+            {
+              "content": "across",
+              "span": {
+                "offset": 382,
+                "length": 6
+              },
+              "confidence": 0.968,
+              "source": "D(1,3.0053,2.567,3.4864,2.5668,3.4864,2.7718,3.0053,2.7726)"
+            },
+            {
+              "content": "8",
+              "span": {
+                "offset": 389,
+                "length": 1
+              },
+              "confidence": 0.942,
+              "source": "D(1,3.541,2.5668,3.6263,2.5668,3.6263,2.7715,3.541,2.7717)"
+            },
+            {
+              "content": "offices",
+              "span": {
+                "offset": 391,
+                "length": 7
+              },
+              "confidence": 0.942,
+              "source": "D(1,3.6808,2.5668,4.1585,2.5677,4.1585,2.7714,3.6808,2.7714)"
+            },
+            {
+              "content": "worldwide",
+              "span": {
+                "offset": 399,
+                "length": 9
+              },
+              "confidence": 0.988,
+              "source": "D(1,4.2029,2.5678,4.9466,2.5692,4.9466,2.7714,4.2029,2.7714)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 408,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(1,4.95,2.5692,5.0012,2.5693,5.0012,2.7714,4.95,2.7714)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Q1 2025 Financial Summary",
+              "source": "D(1,1.073,1.1127,5.2562,1.1277,5.2544,1.403,1.0712,1.375)",
+              "span": {
+                "offset": 2,
+                "length": 33
+              }
+            },
+            {
+              "content": "Total revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024.",
+              "source": "D(1,1.0687,1.6752,6.9727,1.6749,6.9727,1.8737,1.0687,1.874)",
+              "span": {
+                "offset": 37,
+                "length": 77
+              }
+            },
+            {
+              "content": "Operating expenses were $31.2 million. Net profit was $11.5 million. The largest",
+              "source": "D(1,1.0706,1.898,6.9976,1.8933,6.9978,2.101,1.0708,2.1073)",
+              "span": {
+                "offset": 115,
+                "length": 80
+              }
+            },
+            {
+              "content": "revenue segment was Cloud Services at $19.3 million, followed by Professional",
+              "source": "D(1,1.0675,2.1214,6.9477,2.1163,6.9479,2.3177,1.0677,2.3228)",
+              "span": {
+                "offset": 196,
+                "length": 77
+              }
+            },
+            {
+              "content": "Services at $14.8 million and Product Licensing at $8.6 million. Headcount at end of",
+              "source": "D(1,1.0698,2.3452,7.2715,2.3452,7.2715,2.5539,1.0698,2.5539)",
+              "span": {
+                "offset": 274,
+                "length": 84
+              }
+            },
+            {
+              "content": "Q1 was 1,247 employees across 8 offices worldwide.",
+              "source": "D(1,1.0704,2.5696,5.0012,2.5632,5.0016,2.7714,1.0708,2.7784)",
+              "span": {
+                "offset": 359,
+                "length": 50
+              }
+            }
+          ]
+        },
+        {
+          "pageNumber": 2,
+          "angle": 0.009863882,
+          "width": 8.5,
+          "height": 11,
+          "spans": [
+            {
+              "offset": 431,
+              "length": 435
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 434,
+                "length": 7
+              },
+              "confidence": 0.994,
+              "source": "D(2,1.0739,1.11,1.9884,1.1114,1.9884,1.3786,1.0739,1.3722)"
+            },
+            {
+              "content": "Q2",
+              "span": {
+                "offset": 442,
+                "length": 2
+              },
+              "confidence": 0.962,
+              "source": "D(2,2.056,1.1116,2.3848,1.1121,2.3848,1.3814,2.056,1.3791)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 445,
+                "length": 4
+              },
+              "confidence": 0.838,
+              "source": "D(2,2.4569,1.1121,3.02,1.1145,3.02,1.3861,2.4569,1.3819)"
+            },
+            {
+              "content": "Financial",
+              "span": {
+                "offset": 450,
+                "length": 9
+              },
+              "confidence": 0.972,
+              "source": "D(2,3.1011,1.1148,4.0832,1.1195,4.0831,1.3942,3.1011,1.3867)"
+            },
+            {
+              "content": "Summary",
+              "span": {
+                "offset": 460,
+                "length": 7
+              },
+              "confidence": 0.992,
+              "source": "D(2,4.1597,1.12,5.2544,1.1274,5.2544,1.4034,4.1597,1.3948)"
+            },
+            {
+              "content": "Total",
+              "span": {
+                "offset": 469,
+                "length": 5
+              },
+              "confidence": 0.996,
+              "source": "D(2,1.0677,1.6741,1.4337,1.6743,1.4357,1.8703,1.0698,1.8693)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 475,
+                "length": 7
+              },
+              "confidence": 0.993,
+              "source": "D(2,1.4931,1.6744,2.0899,1.6747,2.0916,1.872,1.495,1.8704)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 483,
+                "length": 3
+              },
+              "confidence": 0.995,
+              "source": "D(2,2.1361,1.6748,2.3405,1.6749,2.3421,1.8727,2.1378,1.8721)"
+            },
+            {
+              "content": "Q2",
+              "span": {
+                "offset": 487,
+                "length": 2
+              },
+              "confidence": 0.942,
+              "source": "D(2,2.3801,1.6749,2.5977,1.675,2.5993,1.8733,2.3817,1.8728)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 490,
+                "length": 4
+              },
+              "confidence": 0.856,
+              "source": "D(2,2.6439,1.6751,3.0198,1.6753,3.0212,1.8744,2.6454,1.8735)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 495,
+                "length": 3
+              },
+              "confidence": 0.989,
+              "source": "D(2,3.0627,1.6753,3.3595,1.6753,3.3607,1.8745,3.064,1.8745)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 499,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(2,3.4023,1.6754,3.4848,1.6754,3.486,1.8745,3.4036,1.8745)"
+            },
+            {
+              "content": "48.1",
+              "span": {
+                "offset": 500,
+                "length": 4
+              },
+              "confidence": 0.884,
+              "source": "D(2,3.4946,1.6754,3.8112,1.6754,3.8123,1.8745,3.4959,1.8745)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 505,
+                "length": 7
+              },
+              "confidence": 0.944,
+              "source": "D(2,3.8772,1.6754,4.3355,1.6755,4.3364,1.8745,3.8782,1.8745)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 512,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,4.3487,1.6755,4.385,1.6755,4.3859,1.8745,4.3496,1.8745)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 514,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(2,4.4344,1.6755,4.6125,1.6755,4.6133,1.8745,4.4353,1.8745)"
+            },
+            {
+              "content": "increase",
+              "span": {
+                "offset": 517,
+                "length": 8
+              },
+              "confidence": 0.988,
+              "source": "D(2,4.6719,1.6755,5.2984,1.6755,5.299,1.8738,4.6727,1.8746)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 526,
+                "length": 2
+              },
+              "confidence": 0.988,
+              "source": "D(2,5.3478,1.6755,5.4995,1.6754,5.5,1.8733,5.3484,1.8737)"
+            },
+            {
+              "content": "22",
+              "span": {
+                "offset": 529,
+                "length": 2
+              },
+              "confidence": 0.959,
+              "source": "D(2,5.5292,1.6754,5.7073,1.6753,5.7077,1.8728,5.5297,1.8732)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 531,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,5.7139,1.6753,5.8524,1.6753,5.8528,1.8724,5.7143,1.8728)"
+            },
+            {
+              "content": "over",
+              "span": {
+                "offset": 533,
+                "length": 4
+              },
+              "confidence": 0.957,
+              "source": "D(2,5.9051,1.6753,6.2481,1.6752,6.2483,1.8714,5.9055,1.8723)"
+            },
+            {
+              "content": "Q2",
+              "span": {
+                "offset": 538,
+                "length": 2
+              },
+              "confidence": 0.847,
+              "source": "D(2,6.2876,1.6751,6.502,1.6751,6.5021,1.8708,6.2879,1.8713)"
+            },
+            {
+              "content": "2024",
+              "span": {
+                "offset": 541,
+                "length": 4
+              },
+              "confidence": 0.708,
+              "source": "D(2,6.5514,1.6751,6.9175,1.6749,6.9175,1.8697,6.5516,1.8707)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 545,
+                "length": 1
+              },
+              "confidence": 0.992,
+              "source": "D(2,6.9273,1.6749,6.9768,1.6749,6.9768,1.8696,6.9274,1.8697)"
+            },
+            {
+              "content": "Operating",
+              "span": {
+                "offset": 547,
+                "length": 9
+              },
+              "confidence": 0.996,
+              "source": "D(2,1.0698,1.903,1.7954,1.9009,1.7963,2.1055,1.0708,2.1074)"
+            },
+            {
+              "content": "expenses",
+              "span": {
+                "offset": 557,
+                "length": 8
+              },
+              "confidence": 0.997,
+              "source": "D(2,1.8494,1.9008,2.5615,1.8987,2.5623,2.1035,1.8503,2.1054)"
+            },
+            {
+              "content": "were",
+              "span": {
+                "offset": 566,
+                "length": 4
+              },
+              "confidence": 0.998,
+              "source": "D(2,2.6088,1.8986,2.9766,1.8975,2.9774,2.1025,2.6095,2.1034)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 571,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(2,3.0205,1.8974,3.1015,1.8972,3.1022,2.1021,3.0212,2.1023)"
+            },
+            {
+              "content": "33.9",
+              "span": {
+                "offset": 572,
+                "length": 4
+              },
+              "confidence": 0.965,
+              "source": "D(2,3.115,1.8971,3.4323,1.8966,3.4329,2.1015,3.1157,2.1021)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 577,
+                "length": 7
+              },
+              "confidence": 0.938,
+              "source": "D(2,3.4863,1.8966,3.9486,1.896,3.9492,2.1004,3.4869,2.1013)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 584,
+                "length": 1
+              },
+              "confidence": 0.972,
+              "source": "D(2,3.9655,1.8959,3.9993,1.8959,3.9998,2.1003,3.9661,2.1004)"
+            },
+            {
+              "content": "Net",
+              "span": {
+                "offset": 586,
+                "length": 3
+              },
+              "confidence": 0.977,
+              "source": "D(2,4.0533,1.8958,4.3131,1.8955,4.3136,2.0997,4.0538,2.1002)"
+            },
+            {
+              "content": "profit",
+              "span": {
+                "offset": 590,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(2,4.357,1.8954,4.7316,1.8949,4.7321,2.0989,4.3575,2.0996)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 597,
+                "length": 3
+              },
+              "confidence": 0.996,
+              "source": "D(2,4.7654,1.8949,5.0624,1.8945,5.0628,2.0982,4.7658,2.0988)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 601,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,5.113,1.8944,5.194,1.8943,5.1944,2.0979,5.1134,2.0981)"
+            },
+            {
+              "content": "14.2",
+              "span": {
+                "offset": 602,
+                "length": 4
+              },
+              "confidence": 0.923,
+              "source": "D(2,5.2143,1.8943,5.5315,1.8943,5.5318,2.0975,5.2146,2.0979)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 607,
+                "length": 7
+              },
+              "confidence": 0.787,
+              "source": "D(2,5.5788,1.8943,6.0479,1.8944,6.0481,2.0968,5.5791,2.0974)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 614,
+                "length": 1
+              },
+              "confidence": 0.981,
+              "source": "D(2,6.058,1.8944,6.0918,1.8944,6.092,2.0967,6.0582,2.0968)"
+            },
+            {
+              "content": "Cloud",
+              "span": {
+                "offset": 616,
+                "length": 5
+              },
+              "confidence": 0.925,
+              "source": "D(2,6.1424,1.8945,6.571,1.8945,6.5712,2.096,6.1426,2.0966)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 622,
+                "length": 8
+              },
+              "confidence": 0.988,
+              "source": "D(2,6.625,1.8946,7.2798,1.8947,7.2798,2.0951,6.6251,2.096)"
+            },
+            {
+              "content": "grew",
+              "span": {
+                "offset": 631,
+                "length": 4
+              },
+              "confidence": 0.989,
+              "source": "D(2,1.0677,2.1262,1.4316,2.1249,1.4335,2.3245,1.0698,2.3255)"
+            },
+            {
+              "content": "to",
+              "span": {
+                "offset": 636,
+                "length": 2
+              },
+              "confidence": 0.996,
+              "source": "D(2,1.4788,2.1247,1.6203,2.1242,1.6222,2.324,1.4807,2.3244)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 639,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(2,1.6674,2.124,1.7449,2.1237,1.7468,2.3237,1.6693,2.3239)"
+            },
+            {
+              "content": "22.5",
+              "span": {
+                "offset": 640,
+                "length": 4
+              },
+              "confidence": 0.952,
+              "source": "D(2,1.755,2.1237,2.0785,2.1225,2.0803,2.3228,1.7569,2.3237)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 645,
+                "length": 7
+              },
+              "confidence": 0.949,
+              "source": "D(2,2.1291,2.1223,2.594,2.1206,2.5956,2.3214,2.1308,2.3226)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 652,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(2,2.6008,2.1206,2.6345,2.1205,2.636,2.3213,2.6023,2.3214)"
+            },
+            {
+              "content": "Professional",
+              "span": {
+                "offset": 654,
+                "length": 12
+              },
+              "confidence": 0.993,
+              "source": "D(2,2.7019,2.1202,3.6082,2.1182,3.6095,2.3199,2.7034,2.3211)"
+            },
+            {
+              "content": "Services",
+              "span": {
+                "offset": 667,
+                "length": 8
+              },
+              "confidence": 0.994,
+              "source": "D(2,3.6655,2.1181,4.2956,2.1176,4.2966,2.32,3.6667,2.3199)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 676,
+                "length": 3
+              },
+              "confidence": 0.997,
+              "source": "D(2,4.3428,2.1175,4.6393,2.1173,4.6402,2.3201,4.3438,2.32)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 680,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,4.6831,2.1172,4.7673,2.1172,4.7682,2.3201,4.684,2.3201)"
+            },
+            {
+              "content": "15.7",
+              "span": {
+                "offset": 681,
+                "length": 4
+              },
+              "confidence": 0.847,
+              "source": "D(2,4.7875,2.1172,5.1009,2.1169,5.1016,2.3201,4.7884,2.3201)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 686,
+                "length": 7
+              },
+              "confidence": 0.937,
+              "source": "D(2,5.1514,2.1169,5.613,2.1174,5.6136,2.3212,5.1522,2.3201)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 693,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,5.6265,2.1174,5.6602,2.1175,5.6608,2.3214,5.6271,2.3213)"
+            },
+            {
+              "content": "and",
+              "span": {
+                "offset": 695,
+                "length": 3
+              },
+              "confidence": 0.996,
+              "source": "D(2,5.7175,2.1176,5.9837,2.1181,5.9841,2.3223,5.718,2.3215)"
+            },
+            {
+              "content": "Product",
+              "span": {
+                "offset": 699,
+                "length": 7
+              },
+              "confidence": 0.975,
+              "source": "D(2,6.041,2.1183,6.6171,2.1194,6.6174,2.3243,6.0414,2.3225)"
+            },
+            {
+              "content": "Licensing",
+              "span": {
+                "offset": 707,
+                "length": 9
+              },
+              "confidence": 0.953,
+              "source": "D(2,6.6643,2.1195,7.3752,2.1209,7.3752,2.3266,6.6645,2.3244)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 717,
+                "length": 3
+              },
+              "confidence": 0.996,
+              "source": "D(2,1.0635,2.3478,1.367,2.3477,1.367,2.5515,1.0635,2.5507)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 721,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,1.4152,2.3477,1.498,2.3477,1.498,2.5518,1.4152,2.5516)"
+            },
+            {
+              "content": "9.9",
+              "span": {
+                "offset": 722,
+                "length": 3
+              },
+              "confidence": 0.921,
+              "source": "D(2,1.5118,2.3477,1.7359,2.3476,1.7359,2.5524,1.5118,2.5518)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 726,
+                "length": 7
+              },
+              "confidence": 0.773,
+              "source": "D(2,1.7911,2.3476,2.2531,2.3475,2.2531,2.5537,1.7911,2.5526)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 733,
+                "length": 1
+              },
+              "confidence": 0.99,
+              "source": "D(2,2.2669,2.3475,2.3014,2.3475,2.3014,2.5538,2.2669,2.5538)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 735,
+                "length": 3
+              },
+              "confidence": 0.977,
+              "source": "D(2,2.3566,2.3475,2.6358,2.3474,2.6358,2.5547,2.3566,2.554)"
+            },
+            {
+              "content": "company",
+              "span": {
+                "offset": 739,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(2,2.6876,2.3474,3.3668,2.3472,3.3668,2.5559,2.6876,2.5548)"
+            },
+            {
+              "content": "opened",
+              "span": {
+                "offset": 747,
+                "length": 6
+              },
+              "confidence": 0.995,
+              "source": "D(2,3.4048,2.3472,3.9599,2.3471,3.9599,2.5559,3.4048,2.5559)"
+            },
+            {
+              "content": "a",
+              "span": {
+                "offset": 754,
+                "length": 1
+              },
+              "confidence": 0.991,
+              "source": "D(2,4.0151,2.3471,4.1013,2.3471,4.1013,2.5559,4.0151,2.5559)"
+            },
+            {
+              "content": "new",
+              "span": {
+                "offset": 756,
+                "length": 3
+              },
+              "confidence": 0.977,
+              "source": "D(2,4.1564,2.3471,4.4599,2.347,4.4599,2.5559,4.1564,2.5559)"
+            },
+            {
+              "content": "office",
+              "span": {
+                "offset": 760,
+                "length": 6
+              },
+              "confidence": 0.99,
+              "source": "D(2,4.5047,2.347,4.8943,2.3469,4.8943,2.5559,4.5047,2.5559)"
+            },
+            {
+              "content": "in",
+              "span": {
+                "offset": 767,
+                "length": 2
+              },
+              "confidence": 0.995,
+              "source": "D(2,4.9495,2.3469,5.0667,2.3469,5.0667,2.5559,4.9495,2.5559)"
+            },
+            {
+              "content": "Tokyo",
+              "span": {
+                "offset": 770,
+                "length": 5
+              },
+              "confidence": 0.99,
+              "source": "D(2,5.115,2.3469,5.5736,2.3468,5.5736,2.5549,5.115,2.5559)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 775,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(2,5.577,2.3468,5.615,2.3468,5.615,2.5548,5.577,2.5549)"
+            },
+            {
+              "content": "bringing",
+              "span": {
+                "offset": 777,
+                "length": 8
+              },
+              "confidence": 0.984,
+              "source": "D(2,5.6701,2.3468,6.2597,2.3467,6.2597,2.5531,5.6701,2.5546)"
+            },
+            {
+              "content": "the",
+              "span": {
+                "offset": 786,
+                "length": 3
+              },
+              "confidence": 0.983,
+              "source": "D(2,6.3046,2.3467,6.5356,2.3466,6.5356,2.5524,6.3046,2.553)"
+            },
+            {
+              "content": "total",
+              "span": {
+                "offset": 790,
+                "length": 5
+              },
+              "confidence": 0.773,
+              "source": "D(2,6.5839,2.3466,6.9045,2.3466,6.9045,2.5514,6.5839,2.5523)"
+            },
+            {
+              "content": "to",
+              "span": {
+                "offset": 796,
+                "length": 2
+              },
+              "confidence": 0.503,
+              "source": "D(2,6.9459,2.3465,7.0873,2.3465,7.0873,2.551,6.9459,2.5513)"
+            },
+            {
+              "content": "9",
+              "span": {
+                "offset": 799,
+                "length": 1
+              },
+              "confidence": 0.795,
+              "source": "D(2,7.1321,2.3465,7.2424,2.3465,7.2424,2.5506,7.1321,2.5508)"
+            },
+            {
+              "content": "offices",
+              "span": {
+                "offset": 801,
+                "length": 7
+              },
+              "confidence": 0.939,
+              "source": "D(2,1.0656,2.5693,1.5502,2.569,1.5502,2.7759,1.0656,2.7743)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 808,
+                "length": 1
+              },
+              "confidence": 0.979,
+              "source": "D(2,1.5605,2.5689,1.5949,2.5689,1.5949,2.776,1.5605,2.7759)"
+            },
+            {
+              "content": "Headcount",
+              "span": {
+                "offset": 810,
+                "length": 9
+              },
+              "confidence": 0.97,
+              "source": "D(2,1.6568,2.5689,2.4611,2.5686,2.461,2.7782,1.6568,2.7762)"
+            },
+            {
+              "content": "grew",
+              "span": {
+                "offset": 820,
+                "length": 4
+              },
+              "confidence": 0.977,
+              "source": "D(2,2.4989,2.5687,2.8632,2.5689,2.8632,2.7787,2.4989,2.7783)"
+            },
+            {
+              "content": "to",
+              "span": {
+                "offset": 825,
+                "length": 2
+              },
+              "confidence": 0.934,
+              "source": "D(2,2.901,2.569,3.0454,2.5691,3.0453,2.779,2.901,2.7788)"
+            },
+            {
+              "content": "1,389",
+              "span": {
+                "offset": 828,
+                "length": 5
+              },
+              "confidence": 0.523,
+              "source": "D(2,3.1038,2.5691,3.5059,2.5697,3.5059,2.7791,3.1038,2.779)"
+            },
+            {
+              "content": "employees",
+              "span": {
+                "offset": 834,
+                "length": 9
+              },
+              "confidence": 0.876,
+              "source": "D(2,3.5575,2.5698,4.3617,2.5716,4.3617,2.7785,3.5575,2.7791)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 843,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(2,4.3652,2.5716,4.4202,2.5717,4.4202,2.7785,4.3652,2.7785)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Q2 2025 Financial Summary",
+              "source": "D(2,1.074,1.1072,5.2562,1.1274,5.2544,1.4034,1.0736,1.3753)",
+              "span": {
+                "offset": 434,
+                "length": 33
+              }
+            },
+            {
+              "content": "Total revenue for Q2 2025 was $48.1 million, an increase of 22% over Q2 2024.",
+              "source": "D(2,1.0677,1.6741,6.9768,1.6749,6.9768,1.875,1.0677,1.8742)",
+              "span": {
+                "offset": 469,
+                "length": 77
+              }
+            },
+            {
+              "content": "Operating expenses were $33.9 million. Net profit was $14.2 million. Cloud Services",
+              "source": "D(2,1.0698,1.9012,7.2798,1.8933,7.2802,2.0951,1.0702,2.1074)",
+              "span": {
+                "offset": 547,
+                "length": 83
+              }
+            },
+            {
+              "content": "grew to $22.5 million, Professional Services was $15.7 million, and Product Licensing",
+              "source": "D(2,1.0677,2.116,7.3753,2.1171,7.3752,2.3266,1.0677,2.3255)",
+              "span": {
+                "offset": 631,
+                "length": 85
+              }
+            },
+            {
+              "content": "was $9.9 million. The company opened a new office in Tokyo, bringing the total to 9",
+              "source": "D(2,1.0635,2.3475,7.2424,2.3465,7.2425,2.5555,1.0635,2.5566)",
+              "span": {
+                "offset": 717,
+                "length": 83
+              }
+            },
+            {
+              "content": "offices. Headcount grew to 1,389 employees.",
+              "source": "D(2,1.0656,2.5677,4.4203,2.57,4.4202,2.7801,1.0655,2.7777)",
+              "span": {
+                "offset": 801,
+                "length": 43
+              }
+            }
+          ]
+        },
+        {
+          "pageNumber": 3,
+          "angle": 0.01423368,
+          "width": 8.5,
+          "height": 11,
+          "spans": [
+            {
+              "offset": 866,
+              "length": 449
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 870,
+                "length": 7
+              },
+              "confidence": 0.998,
+              "source": "D(3,1.0729,1.1137,2.0005,1.1128,2.0005,1.3876,1.0729,1.383)"
+            },
+            {
+              "content": "Product",
+              "span": {
+                "offset": 878,
+                "length": 7
+              },
+              "confidence": 0.997,
+              "source": "D(3,2.0797,1.1127,2.9467,1.1124,2.9467,1.3915,2.0797,1.388)"
+            },
+            {
+              "content": "Roadmap",
+              "span": {
+                "offset": 886,
+                "length": 7
+              },
+              "confidence": 0.992,
+              "source": "D(3,3.0213,1.1124,4.0887,1.1127,4.0887,1.3947,3.0213,1.3917)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 894,
+                "length": 4
+              },
+              "confidence": 0.993,
+              "source": "D(3,4.1586,1.1127,4.7273,1.1131,4.7273,1.3961,4.1586,1.3949)"
+            },
+            {
+              "content": "Three",
+              "span": {
+                "offset": 900,
+                "length": 5
+              },
+              "confidence": 0.991,
+              "source": "D(3,1.0698,1.6798,1.5073,1.6788,1.5073,1.8812,1.0698,1.8811)"
+            },
+            {
+              "content": "major",
+              "span": {
+                "offset": 906,
+                "length": 5
+              },
+              "confidence": 0.995,
+              "source": "D(3,1.5578,1.6787,1.9819,1.6776,1.9819,1.8814,1.5578,1.8812)"
+            },
+            {
+              "content": "product",
+              "span": {
+                "offset": 912,
+                "length": 7
+              },
+              "confidence": 0.994,
+              "source": "D(3,2.0223,1.6775,2.5777,1.6762,2.5777,1.8816,2.0223,1.8814)"
+            },
+            {
+              "content": "launches",
+              "span": {
+                "offset": 920,
+                "length": 8
+              },
+              "confidence": 0.996,
+              "source": "D(3,2.6315,1.6761,3.2879,1.6749,3.2879,1.8816,2.6315,1.8816)"
+            },
+            {
+              "content": "are",
+              "span": {
+                "offset": 929,
+                "length": 3
+              },
+              "confidence": 0.998,
+              "source": "D(3,3.335,1.6749,3.5706,1.6749,3.5706,1.8814,3.335,1.8816)"
+            },
+            {
+              "content": "planned",
+              "span": {
+                "offset": 933,
+                "length": 7
+              },
+              "confidence": 0.984,
+              "source": "D(3,3.6211,1.6749,4.2034,1.6747,4.2034,1.8809,3.6211,1.8814)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 941,
+                "length": 3
+              },
+              "confidence": 0.942,
+              "source": "D(3,4.2573,1.6747,4.4592,1.6747,4.4592,1.8807,4.2573,1.8808)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 945,
+                "length": 4
+              },
+              "confidence": 0.922,
+              "source": "D(3,4.503,1.6747,4.8698,1.6746,4.8698,1.8803,4.503,1.8806)"
+            },
+            {
+              "content": ":",
+              "span": {
+                "offset": 949,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(3,4.8766,1.6746,4.9136,1.6746,4.9136,1.8803,4.8766,1.8803)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 951,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,4.9607,1.6746,5.0179,1.6746,5.0179,1.8802,4.9607,1.8803)"
+            },
+            {
+              "content": "1",
+              "span": {
+                "offset": 952,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(3,5.028,1.6746,5.0886,1.6746,5.0886,1.8802,5.028,1.8802)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 953,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,5.1088,1.6746,5.1627,1.6747,5.1627,1.8801,5.1088,1.8802)"
+            },
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 955,
+                "length": 7
+              },
+              "confidence": 0.964,
+              "source": "D(3,5.2132,1.6748,5.8392,1.6761,5.8392,1.8787,5.2132,1.88)"
+            },
+            {
+              "content": "CloudVault",
+              "span": {
+                "offset": 963,
+                "length": 10
+              },
+              "confidence": 0.716,
+              "source": "D(3,5.883,1.6761,6.711,1.6778,6.711,1.877,5.883,1.8786)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 974,
+                "length": 1
+              },
+              "confidence": 0.922,
+              "source": "D(3,6.7413,1.6779,6.9028,1.6782,6.9028,1.8766,6.7413,1.8769)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 976,
+                "length": 2
+              },
+              "confidence": 0.728,
+              "source": "D(3,6.9533,1.6783,7.1553,1.6788,7.1553,1.8761,6.9533,1.8765)"
+            },
+            {
+              "content": "enterprise",
+              "span": {
+                "offset": 979,
+                "length": 10
+              },
+              "confidence": 0.998,
+              "source": "D(3,1.0677,1.9013,1.8028,1.9002,1.8037,2.1062,1.0687,2.1055)"
+            },
+            {
+              "content": "document",
+              "span": {
+                "offset": 990,
+                "length": 8
+              },
+              "confidence": 0.998,
+              "source": "D(3,1.8551,1.9001,2.5902,1.899,2.591,2.107,1.856,2.1063)"
+            },
+            {
+              "content": "storage",
+              "span": {
+                "offset": 999,
+                "length": 7
+              },
+              "confidence": 0.997,
+              "source": "D(3,2.6355,1.8989,3.193,1.8981,3.1937,2.1076,2.6363,2.107)"
+            },
+            {
+              "content": "solution",
+              "span": {
+                "offset": 1007,
+                "length": 8
+              },
+              "confidence": 0.997,
+              "source": "D(3,3.2418,1.898,3.8097,1.8977,3.8103,2.1077,3.2424,2.1076)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 1015,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,3.8201,1.8977,3.855,1.8977,3.8555,2.1077,3.8207,2.1077)"
+            },
+            {
+              "content": "launching",
+              "span": {
+                "offset": 1017,
+                "length": 9
+              },
+              "confidence": 0.995,
+              "source": "D(3,3.9142,1.8977,4.6215,1.8973,4.6219,2.1079,3.9148,2.1077)"
+            },
+            {
+              "content": "August",
+              "span": {
+                "offset": 1027,
+                "length": 6
+              },
+              "confidence": 0.948,
+              "source": "D(3,4.6598,1.8973,5.1859,1.897,5.1863,2.1081,4.6602,2.1079)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1034,
+                "length": 4
+              },
+              "confidence": 0.861,
+              "source": "D(3,5.2312,1.897,5.604,1.8971,5.6043,2.1079,5.2315,2.1081)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 1038,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(3,5.611,1.8971,5.6458,1.8971,5.6461,2.1079,5.6112,2.1079)"
+            },
+            {
+              "content": "with",
+              "span": {
+                "offset": 1040,
+                "length": 4
+              },
+              "confidence": 0.948,
+              "source": "D(3,5.6981,1.8971,5.9907,1.8973,5.991,2.1077,5.6983,2.1079)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 1045,
+                "length": 2
+              },
+              "confidence": 0.928,
+              "source": "D(3,6.036,1.8973,6.2172,1.8974,6.2174,2.1076,6.0362,2.1077)"
+            },
+            {
+              "content": "expected",
+              "span": {
+                "offset": 1048,
+                "length": 8
+              },
+              "confidence": 0.915,
+              "source": "D(3,6.266,1.8974,6.9384,1.8977,6.9385,2.1073,6.2661,2.1076)"
+            },
+            {
+              "content": "price",
+              "span": {
+                "offset": 1057,
+                "length": 5
+              },
+              "confidence": 0.965,
+              "source": "D(3,6.9941,1.8977,7.3669,1.8979,7.3669,2.1071,6.9942,2.1073)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 1063,
+                "length": 2
+              },
+              "confidence": 0.993,
+              "source": "D(3,1.0687,2.117,1.2238,2.117,1.2258,2.3176,1.0708,2.3173)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 1066,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,1.2575,2.117,1.3384,2.117,1.3404,2.3178,1.2595,2.3177)"
+            },
+            {
+              "content": "29.99",
+              "span": {
+                "offset": 1067,
+                "length": 5
+              },
+              "confidence": 0.973,
+              "source": "D(3,1.3485,2.117,1.7564,2.117,1.7583,2.3186,1.3505,2.3178)"
+            },
+            {
+              "content": "/",
+              "span": {
+                "offset": 1072,
+                "length": 1
+              },
+              "confidence": 0.965,
+              "source": "D(3,1.7598,2.117,1.8238,2.117,1.8256,2.3187,1.7616,2.3186)"
+            },
+            {
+              "content": "user",
+              "span": {
+                "offset": 1073,
+                "length": 4
+              },
+              "confidence": 0.982,
+              "source": "D(3,1.8171,2.117,2.1373,2.117,2.139,2.3192,1.8189,2.3187)"
+            },
+            {
+              "content": "/",
+              "span": {
+                "offset": 1077,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(3,2.1272,2.117,2.1879,2.117,2.1896,2.3193,2.1289,2.3192)"
+            },
+            {
+              "content": "month",
+              "span": {
+                "offset": 1078,
+                "length": 5
+              },
+              "confidence": 0.995,
+              "source": "D(3,2.1913,2.117,2.643,2.1171,2.6445,2.3201,2.193,2.3193)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1083,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(3,2.6565,2.1171,2.6902,2.1171,2.6917,2.3202,2.658,2.3202)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 1085,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,2.7441,2.1171,2.7981,2.1171,2.7995,2.3204,2.7456,2.3203)"
+            },
+            {
+              "content": "2",
+              "span": {
+                "offset": 1086,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(3,2.7981,2.1171,2.8857,2.1171,2.8872,2.3206,2.7995,2.3204)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 1087,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,2.8925,2.1171,2.9464,2.1171,2.9478,2.3207,2.8939,2.3206)"
+            },
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 1089,
+                "length": 7
+              },
+              "confidence": 0.992,
+              "source": "D(3,2.9936,2.1171,3.6105,2.1176,3.6117,2.3216,2.995,2.3208)"
+            },
+            {
+              "content": "DataPulse",
+              "span": {
+                "offset": 1097,
+                "length": 9
+              },
+              "confidence": 0.957,
+              "source": "D(3,3.6644,2.1177,4.4398,2.1184,4.4407,2.3226,3.6656,2.3216)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 1107,
+                "length": 1
+              },
+              "confidence": 0.894,
+              "source": "D(3,4.4566,2.1185,4.6252,2.1186,4.626,2.3229,4.4575,2.3226)"
+            },
+            {
+              "content": "a",
+              "span": {
+                "offset": 1109,
+                "length": 1
+              },
+              "confidence": 0.972,
+              "source": "D(3,4.6825,2.1187,4.7735,2.1188,4.7743,2.323,4.6833,2.3229)"
+            },
+            {
+              "content": "real",
+              "span": {
+                "offset": 1111,
+                "length": 4
+              },
+              "confidence": 0.987,
+              "source": "D(3,4.8308,2.1188,5.0904,2.1191,5.091,2.3234,4.8316,2.3231)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 1115,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(3,5.1038,2.1191,5.151,2.1192,5.1517,2.3235,5.1045,2.3234)"
+            },
+            {
+              "content": "time",
+              "span": {
+                "offset": 1116,
+                "length": 4
+              },
+              "confidence": 0.994,
+              "source": "D(3,5.151,2.1192,5.4713,2.1198,5.4718,2.3237,5.1517,2.3235)"
+            },
+            {
+              "content": "analytics",
+              "span": {
+                "offset": 1121,
+                "length": 9
+              },
+              "confidence": 0.989,
+              "source": "D(3,5.5218,2.1199,6.1691,2.1212,6.1694,2.3242,5.5224,2.3238)"
+            },
+            {
+              "content": "dashboard",
+              "span": {
+                "offset": 1131,
+                "length": 9
+              },
+              "confidence": 0.992,
+              "source": "D(3,6.2163,2.1213,6.9984,2.1228,6.9984,2.3249,6.2166,2.3243)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 1140,
+                "length": 1
+              },
+              "confidence": 0.987,
+              "source": "D(3,7.0051,2.1228,7.0557,2.1229,7.0557,2.3249,7.0051,2.3249)"
+            },
+            {
+              "content": "launching",
+              "span": {
+                "offset": 1142,
+                "length": 9
+              },
+              "confidence": 0.994,
+              "source": "D(3,1.0667,2.3448,1.7782,2.3447,1.7782,2.556,1.0667,2.5562)"
+            },
+            {
+              "content": "October",
+              "span": {
+                "offset": 1152,
+                "length": 7
+              },
+              "confidence": 0.981,
+              "source": "D(3,1.8343,2.3447,2.4338,2.3447,2.4338,2.5558,1.8343,2.556)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1160,
+                "length": 4
+              },
+              "confidence": 0.959,
+              "source": "D(3,2.4758,2.3447,2.8439,2.3447,2.8439,2.5557,2.4758,2.5558)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1164,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(3,2.8474,2.3447,2.8824,2.3447,2.8824,2.5557,2.8474,2.5557)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 1166,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,2.935,2.3447,2.9876,2.3447,2.9876,2.5557,2.935,2.5557)"
+            },
+            {
+              "content": "3",
+              "span": {
+                "offset": 1167,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(3,2.9911,2.3447,3.0752,2.3447,3.0752,2.5556,2.9911,2.5557)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 1168,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,3.0858,2.3447,3.1383,2.3447,3.1383,2.5556,3.0858,2.5556)"
+            },
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 1170,
+                "length": 7
+              },
+              "confidence": 0.987,
+              "source": "D(3,3.1874,2.3447,3.8044,2.3452,3.8044,2.5558,3.1874,2.5556)"
+            },
+            {
+              "content": "SecureLink",
+              "span": {
+                "offset": 1178,
+                "length": 10
+              },
+              "confidence": 0.976,
+              "source": "D(3,3.8569,2.3453,4.6982,2.346,4.6982,2.556,3.8569,2.5558)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 1189,
+                "length": 1
+              },
+              "confidence": 0.876,
+              "source": "D(3,4.7263,2.346,4.8945,2.3461,4.8945,2.5561,4.7263,2.556)"
+            },
+            {
+              "content": "a",
+              "span": {
+                "offset": 1191,
+                "length": 1
+              },
+              "confidence": 0.969,
+              "source": "D(3,4.9471,2.3462,5.0348,2.3463,5.0348,2.5561,4.9471,2.5561)"
+            },
+            {
+              "content": "zero",
+              "span": {
+                "offset": 1193,
+                "length": 4
+              },
+              "confidence": 0.959,
+              "source": "D(3,5.0803,2.3463,5.4028,2.3467,5.4028,2.5563,5.0803,2.5561)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 1197,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(3,5.4098,2.3467,5.4589,2.3468,5.4589,2.5563,5.4098,2.5563)"
+            },
+            {
+              "content": "trust",
+              "span": {
+                "offset": 1198,
+                "length": 5
+              },
+              "confidence": 0.966,
+              "source": "D(3,5.4659,2.3468,5.7919,2.3474,5.7919,2.5566,5.4659,2.5563)"
+            },
+            {
+              "content": "networking",
+              "span": {
+                "offset": 1204,
+                "length": 10
+              },
+              "confidence": 0.966,
+              "source": "D(3,5.8375,2.3475,6.6367,2.3488,6.6367,2.5572,5.8375,2.5566)"
+            },
+            {
+              "content": "product",
+              "span": {
+                "offset": 1215,
+                "length": 7
+              },
+              "confidence": 0.993,
+              "source": "D(3,6.6928,2.3489,7.2467,2.3499,7.2467,2.5577,6.6928,2.5572)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 1222,
+                "length": 1
+              },
+              "confidence": 0.984,
+              "source": "D(3,7.2502,2.3499,7.2922,2.3499,7.2922,2.5577,7.2502,2.5577)"
+            },
+            {
+              "content": "launching",
+              "span": {
+                "offset": 1224,
+                "length": 9
+              },
+              "confidence": 0.995,
+              "source": "D(3,1.0677,2.5709,1.7801,2.5679,1.7801,2.7786,1.0677,2.7805)"
+            },
+            {
+              "content": "December",
+              "span": {
+                "offset": 1234,
+                "length": 8
+              },
+              "confidence": 0.994,
+              "source": "D(3,1.8363,2.5677,2.6083,2.5645,2.6083,2.7764,1.8363,2.7785)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1243,
+                "length": 4
+              },
+              "confidence": 0.961,
+              "source": "D(3,2.6505,2.5643,3.019,2.5634,3.019,2.7755,2.6505,2.7763)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1247,
+                "length": 1
+              },
+              "confidence": 0.993,
+              "source": "D(3,3.026,2.5634,3.0611,2.5634,3.0611,2.7754,3.026,2.7755)"
+            },
+            {
+              "content": "Total",
+              "span": {
+                "offset": 1249,
+                "length": 5
+              },
+              "confidence": 0.972,
+              "source": "D(3,3.1137,2.5633,3.4752,2.563,3.4752,2.7749,3.1137,2.7754)"
+            },
+            {
+              "content": "R",
+              "span": {
+                "offset": 1255,
+                "length": 1
+              },
+              "confidence": 0.994,
+              "source": "D(3,3.5348,2.5629,3.6472,2.5628,3.6472,2.7746,3.5348,2.7748)"
+            },
+            {
+              "content": "&",
+              "span": {
+                "offset": 1256,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(3,3.6507,2.5628,3.7559,2.5627,3.7559,2.7745,3.6507,2.7746)"
+            },
+            {
+              "content": "D",
+              "span": {
+                "offset": 1257,
+                "length": 1
+              },
+              "confidence": 0.994,
+              "source": "D(3,3.763,2.5627,3.8718,2.5626,3.8718,2.7743,3.763,2.7745)"
+            },
+            {
+              "content": ";",
+              "span": {
+                "offset": 1258,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(3,3.8788,2.5626,3.9209,2.5626,3.9209,2.7742,3.8788,2.7743)"
+            },
+            {
+              "content": "budget",
+              "span": {
+                "offset": 1260,
+                "length": 6
+              },
+              "confidence": 0.99,
+              "source": "D(3,3.9806,2.5625,4.4894,2.5621,4.4894,2.7734,3.9806,2.7742)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 1267,
+                "length": 3
+              },
+              "confidence": 0.989,
+              "source": "D(3,4.5315,2.562,4.7316,2.5623,4.7316,2.7733,4.5315,2.7734)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1271,
+                "length": 4
+              },
+              "confidence": 0.929,
+              "source": "D(3,4.7702,2.5624,5.1492,2.5633,5.1492,2.7733,4.7702,2.7733)"
+            },
+            {
+              "content": "is",
+              "span": {
+                "offset": 1276,
+                "length": 2
+              },
+              "confidence": 0.981,
+              "source": "D(3,5.1983,2.5634,5.3071,2.5637,5.3071,2.7732,5.1983,2.7733)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 1279,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(3,5.3528,2.5638,5.43,2.564,5.43,2.7732,5.3528,2.7732)"
+            },
+            {
+              "content": "18.4",
+              "span": {
+                "offset": 1280,
+                "length": 4
+              },
+              "confidence": 0.897,
+              "source": "D(3,5.4545,2.564,5.7809,2.5648,5.7809,2.7732,5.4545,2.7732)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 1285,
+                "length": 7
+              },
+              "confidence": 0.877,
+              "source": "D(3,5.823,2.5649,6.2828,2.566,6.2828,2.7732,5.823,2.7732)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1292,
+                "length": 1
+              },
+              "confidence": 0.993,
+              "source": "D(3,6.2933,2.566,6.3459,2.5661,6.3459,2.7732,6.2933,2.7732)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Product Roadmap 2025",
+              "source": "D(3,1.0729,1.1108,4.7275,1.1131,4.7273,1.3961,1.0727,1.3938)",
+              "span": {
+                "offset": 870,
+                "length": 28
+              }
+            },
+            {
+              "content": "Three major product launches are planned for 2025: (1) Contoso CloudVault - an",
+              "source": "D(3,1.0697,1.6753,7.1553,1.6742,7.1553,1.8811,1.0698,1.8822)",
+              "span": {
+                "offset": 900,
+                "length": 78
+              }
+            },
+            {
+              "content": "enterprise document storage solution, launching August 2025, with an expected price",
+              "source": "D(3,1.0677,1.8969,7.3669,1.8969,7.3669,2.1081,1.0677,2.1081)",
+              "span": {
+                "offset": 979,
+                "length": 83
+              }
+            },
+            {
+              "content": "of $29.99/user/month. (2) Contoso DataPulse - a real-time analytics dashboard,",
+              "source": "D(3,1.0687,2.1151,7.0557,2.121,7.0557,2.3251,1.0685,2.3195)",
+              "span": {
+                "offset": 1063,
+                "length": 78
+              }
+            },
+            {
+              "content": "launching October 2025. (3) Contoso SecureLink - a zero-trust networking product,",
+              "source": "D(3,1.0667,2.3442,7.2923,2.3457,7.2922,2.5577,1.0666,2.5562)",
+              "span": {
+                "offset": 1142,
+                "length": 81
+              }
+            },
+            {
+              "content": "launching December 2025. Total R&D; budget for 2025 is $18.4 million.",
+              "source": "D(3,1.0674,2.566,6.3459,2.5587,6.3462,2.7732,1.0677,2.7805)",
+              "span": {
+                "offset": 1224,
+                "length": 69
+              }
+            }
+          ]
+        },
+        {
+          "pageNumber": 4,
+          "angle": -0.0079,
+          "width": 8.5,
+          "height": 11,
+          "spans": [
+            {
+              "offset": 1315,
+              "length": 490
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 1318,
+                "length": 7
+              },
+              "confidence": 0.997,
+              "source": "D(4,1.075,1.1109,2.0056,1.1114,2.0073,1.3983,1.077,1.3949)"
+            },
+            {
+              "content": "Employee",
+              "span": {
+                "offset": 1326,
+                "length": 8
+              },
+              "confidence": 0.997,
+              "source": "D(4,2.0768,1.1114,3.1831,1.1124,3.1844,1.4016,2.0785,1.3986)"
+            },
+            {
+              "content": "Satisfaction",
+              "span": {
+                "offset": 1335,
+                "length": 12
+              },
+              "confidence": 0.996,
+              "source": "D(4,3.2638,1.1125,4.5363,1.1143,4.537,1.4027,3.265,1.4017)"
+            },
+            {
+              "content": "Survey",
+              "span": {
+                "offset": 1348,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(4,4.6171,1.1145,5.4005,1.1163,5.4009,1.4011,4.6177,1.4027)"
+            },
+            {
+              "content": "Results",
+              "span": {
+                "offset": 1355,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(4,5.4717,1.1164,6.3169,1.1184,6.3169,1.3992,5.4721,1.4009)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 1364,
+                "length": 3
+              },
+              "confidence": 0.997,
+              "source": "D(4,1.0698,1.6796,1.3541,1.6797,1.3561,1.881,1.0718,1.8807)"
+            },
+            {
+              "content": "annual",
+              "span": {
+                "offset": 1368,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(4,1.4077,1.6798,1.8995,1.68,1.9013,1.8817,1.4096,1.8811)"
+            },
+            {
+              "content": "employee",
+              "span": {
+                "offset": 1375,
+                "length": 8
+              },
+              "confidence": 0.996,
+              "source": "D(4,1.9497,1.68,2.6724,1.6803,2.6739,1.8828,1.9515,1.8818)"
+            },
+            {
+              "content": "satisfaction",
+              "span": {
+                "offset": 1384,
+                "length": 12
+              },
+              "confidence": 0.995,
+              "source": "D(4,2.7259,1.6803,3.5489,1.6798,3.5502,1.8825,2.7274,1.8828)"
+            },
+            {
+              "content": "survey",
+              "span": {
+                "offset": 1397,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(4,3.6058,1.6798,4.101,1.679,4.102,1.8814,3.607,1.8824)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 1404,
+                "length": 3
+              },
+              "confidence": 0.996,
+              "source": "D(4,4.1378,1.6789,4.4288,1.6785,4.4298,1.8807,4.1388,1.8813)"
+            },
+            {
+              "content": "completed",
+              "span": {
+                "offset": 1408,
+                "length": 9
+              },
+              "confidence": 0.983,
+              "source": "D(4,4.479,1.6784,5.2352,1.6771,5.2358,1.8788,4.48,1.8806)"
+            },
+            {
+              "content": "in",
+              "span": {
+                "offset": 1418,
+                "length": 2
+              },
+              "confidence": 0.982,
+              "source": "D(4,5.2987,1.6769,5.4192,1.6764,5.4198,1.8778,5.2994,1.8785)"
+            },
+            {
+              "content": "March",
+              "span": {
+                "offset": 1421,
+                "length": 5
+              },
+              "confidence": 0.88,
+              "source": "D(4,5.4727,1.6762,5.9344,1.6746,5.9348,1.8751,5.4733,1.8775)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1427,
+                "length": 4
+              },
+              "confidence": 0.652,
+              "source": "D(4,5.9913,1.6744,6.356,1.6731,6.3563,1.8728,5.9917,1.8747)"
+            },
+            {
+              "content": "with",
+              "span": {
+                "offset": 1432,
+                "length": 4
+              },
+              "confidence": 0.525,
+              "source": "D(4,6.3994,1.6729,6.6972,1.6719,6.6974,1.8709,6.3997,1.8725)"
+            },
+            {
+              "content": "a",
+              "span": {
+                "offset": 1437,
+                "length": 1
+              },
+              "confidence": 0.54,
+              "source": "D(4,6.7474,1.6717,6.8344,1.6714,6.8345,1.8702,6.7476,1.8707)"
+            },
+            {
+              "content": "87",
+              "span": {
+                "offset": 1439,
+                "length": 2
+              },
+              "confidence": 0.395,
+              "source": "D(4,6.8846,1.6712,7.0719,1.6705,7.072,1.8689,6.8847,1.8699)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 1441,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(4,7.0686,1.6706,7.2258,1.67,7.2258,1.8681,7.0686,1.8689)"
+            },
+            {
+              "content": "response",
+              "span": {
+                "offset": 1443,
+                "length": 8
+              },
+              "confidence": 0.995,
+              "source": "D(4,1.0677,1.9042,1.7545,1.902,1.7554,2.1006,1.0687,2.102)"
+            },
+            {
+              "content": "rate",
+              "span": {
+                "offset": 1452,
+                "length": 4
+              },
+              "confidence": 0.969,
+              "source": "D(4,1.8073,1.9019,2.0847,1.901,2.0855,2.0999,1.8082,2.1005)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1456,
+                "length": 1
+              },
+              "confidence": 0.984,
+              "source": "D(4,2.0946,1.901,2.1276,1.9009,2.1285,2.0998,2.0954,2.0999)"
+            },
+            {
+              "content": "Overall",
+              "span": {
+                "offset": 1458,
+                "length": 7
+              },
+              "confidence": 0.98,
+              "source": "D(4,2.1804,1.9007,2.712,1.8991,2.7128,2.0986,2.1813,2.0997)"
+            },
+            {
+              "content": "satisfaction",
+              "span": {
+                "offset": 1466,
+                "length": 12
+              },
+              "confidence": 0.995,
+              "source": "D(4,2.7616,1.8989,3.587,1.8971,3.5877,2.0969,2.7623,2.0985)"
+            },
+            {
+              "content": "score",
+              "span": {
+                "offset": 1479,
+                "length": 5
+              },
+              "confidence": 0.998,
+              "source": "D(4,3.6399,1.8971,4.046,1.8966,4.0465,2.0962,3.6405,2.0968)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 1485,
+                "length": 3
+              },
+              "confidence": 0.991,
+              "source": "D(4,4.0889,1.8965,4.3795,1.8961,4.38,2.0956,4.0895,2.0961)"
+            },
+            {
+              "content": "4.2",
+              "span": {
+                "offset": 1489,
+                "length": 3
+              },
+              "confidence": 0.887,
+              "source": "D(4,4.4257,1.8961,4.6667,1.8958,4.6672,2.0951,4.4262,2.0955)"
+            },
+            {
+              "content": "out",
+              "span": {
+                "offset": 1493,
+                "length": 3
+              },
+              "confidence": 0.943,
+              "source": "D(4,4.7097,1.8957,4.9507,1.8954,4.9511,2.0946,4.7101,2.0951)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 1497,
+                "length": 2
+              },
+              "confidence": 0.958,
+              "source": "D(4,4.987,1.8954,5.1422,1.8952,5.1426,2.0943,4.9874,2.0946)"
+            },
+            {
+              "content": "5.0",
+              "span": {
+                "offset": 1500,
+                "length": 3
+              },
+              "confidence": 0.709,
+              "source": "D(4,5.1686,1.8951,5.4064,1.8951,5.4067,2.094,5.169,2.0943)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1503,
+                "length": 1
+              },
+              "confidence": 0.944,
+              "source": "D(4,5.4097,1.8951,5.4427,1.8951,5.443,2.0939,5.41,2.0939)"
+            },
+            {
+              "content": "Work",
+              "span": {
+                "offset": 1505,
+                "length": 4
+              },
+              "confidence": 0.87,
+              "source": "D(4,5.4955,1.8952,5.8984,1.8954,5.8986,2.0933,5.4958,2.0938)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 1509,
+                "length": 1
+              },
+              "confidence": 0.993,
+              "source": "D(4,5.8884,1.8954,5.9413,1.8954,5.9415,2.0933,5.8887,2.0934)"
+            },
+            {
+              "content": "life",
+              "span": {
+                "offset": 1510,
+                "length": 4
+              },
+              "confidence": 0.975,
+              "source": "D(4,5.9512,1.8954,6.1592,1.8956,6.1594,2.093,5.9514,2.0933)"
+            },
+            {
+              "content": "balance",
+              "span": {
+                "offset": 1515,
+                "length": 7
+              },
+              "confidence": 0.992,
+              "source": "D(4,6.2054,1.8956,6.7899,1.8959,6.79,2.0922,6.2056,2.093)"
+            },
+            {
+              "content": "scored",
+              "span": {
+                "offset": 1523,
+                "length": 6
+              },
+              "confidence": 0.981,
+              "source": "D(4,6.8328,1.8959,7.3545,1.8963,7.3545,2.0915,6.8329,2.0922)"
+            },
+            {
+              "content": "3.8/5.0",
+              "span": {
+                "offset": 1530,
+                "length": 7
+              },
+              "confidence": 0.84,
+              "source": "D(4,1.0677,2.1184,1.5846,2.1177,1.5855,2.3208,1.0687,2.3201)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1537,
+                "length": 1
+              },
+              "confidence": 0.958,
+              "source": "D(4,1.5914,2.1177,1.6254,2.1177,1.6263,2.3209,1.5923,2.3208)"
+            },
+            {
+              "content": "Career",
+              "span": {
+                "offset": 1539,
+                "length": 6
+              },
+              "confidence": 0.976,
+              "source": "D(4,1.6832,2.1176,2.1967,2.117,2.1975,2.3217,1.6841,2.3209)"
+            },
+            {
+              "content": "growth",
+              "span": {
+                "offset": 1546,
+                "length": 6
+              },
+              "confidence": 0.996,
+              "source": "D(4,2.2341,2.1169,2.7374,2.1163,2.7382,2.3224,2.235,2.3217)"
+            },
+            {
+              "content": "opportunities",
+              "span": {
+                "offset": 1553,
+                "length": 13
+              },
+              "confidence": 0.994,
+              "source": "D(4,2.785,2.1162,3.7372,2.116,3.7378,2.3226,2.7858,2.3225)"
+            },
+            {
+              "content": "scored",
+              "span": {
+                "offset": 1567,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(4,3.7746,2.116,4.2609,2.116,4.2614,2.3224,3.7752,2.3226)"
+            },
+            {
+              "content": "3.9/5.0",
+              "span": {
+                "offset": 1574,
+                "length": 7
+              },
+              "confidence": 0.854,
+              "source": "D(4,4.3119,2.116,4.8254,2.116,4.8258,2.3222,4.3124,2.3224)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1581,
+                "length": 1
+              },
+              "confidence": 0.953,
+              "source": "D(4,4.8322,2.116,4.8662,2.116,4.8666,2.3222,4.8326,2.3222)"
+            },
+            {
+              "content": "Compensation",
+              "span": {
+                "offset": 1583,
+                "length": 12
+              },
+              "confidence": 0.966,
+              "source": "D(4,4.9173,2.116,5.9953,2.1174,5.9954,2.32,4.9176,2.3222)"
+            },
+            {
+              "content": "satisfaction",
+              "span": {
+                "offset": 1596,
+                "length": 12
+              },
+              "confidence": 0.991,
+              "source": "D(4,6.0463,2.1175,6.8896,2.1186,6.8896,2.3182,6.0464,2.3199)"
+            },
+            {
+              "content": "scored",
+              "span": {
+                "offset": 1609,
+                "length": 6
+              },
+              "confidence": 0.987,
+              "source": "D(4,1.0646,2.348,1.5602,2.348,1.5621,2.5517,1.0667,2.551)"
+            },
+            {
+              "content": "3.6/5.0",
+              "span": {
+                "offset": 1616,
+                "length": 7
+              },
+              "confidence": 0.897,
+              "source": "D(4,1.618,2.348,2.1306,2.348,2.1323,2.5526,1.6198,2.5518)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1623,
+                "length": 1
+              },
+              "confidence": 0.971,
+              "source": "D(4,2.1374,2.348,2.1713,2.3481,2.173,2.5527,2.1391,2.5526)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 1625,
+                "length": 3
+              },
+              "confidence": 0.982,
+              "source": "D(4,2.2223,2.3481,2.5007,2.3481,2.5022,2.5532,2.2239,2.5528)"
+            },
+            {
+              "content": "top",
+              "span": {
+                "offset": 1629,
+                "length": 3
+              },
+              "confidence": 0.998,
+              "source": "D(4,2.5516,2.3481,2.7858,2.3481,2.7873,2.5537,2.5531,2.5533)"
+            },
+            {
+              "content": "requested",
+              "span": {
+                "offset": 1633,
+                "length": 9
+              },
+              "confidence": 0.996,
+              "source": "D(4,2.8368,2.3481,3.5667,2.3481,3.5679,2.5537,2.8382,2.5537)"
+            },
+            {
+              "content": "improvement",
+              "span": {
+                "offset": 1643,
+                "length": 11
+              },
+              "confidence": 0.986,
+              "source": "D(4,3.6244,2.3481,4.592,2.348,4.5928,2.553,3.6256,2.5536)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 1655,
+                "length": 3
+              },
+              "confidence": 0.992,
+              "source": "D(4,4.6293,2.348,4.9213,2.348,4.922,2.5528,4.6302,2.553)"
+            },
+            {
+              "content": "'",
+              "span": {
+                "offset": 1659,
+                "length": 1
+              },
+              "confidence": 0.93,
+              "source": "D(4,4.9756,2.348,5.0096,2.348,5.0103,2.5527,4.9763,2.5528)"
+            },
+            {
+              "content": "more",
+              "span": {
+                "offset": 1660,
+                "length": 4
+              },
+              "confidence": 0.957,
+              "source": "D(4,5.013,2.348,5.3864,2.3479,5.387,2.5516,5.0137,2.5526)"
+            },
+            {
+              "content": "flexible",
+              "span": {
+                "offset": 1665,
+                "length": 8
+              },
+              "confidence": 0.984,
+              "source": "D(4,5.4306,2.3479,5.9534,2.3478,5.9537,2.5499,5.4311,2.5514)"
+            },
+            {
+              "content": "remote",
+              "span": {
+                "offset": 1674,
+                "length": 6
+              },
+              "confidence": 0.991,
+              "source": "D(4,6.0043,2.3478,6.517,2.3477,6.5171,2.5483,6.0046,2.5498)"
+            },
+            {
+              "content": "work",
+              "span": {
+                "offset": 1681,
+                "length": 4
+              },
+              "confidence": 0.991,
+              "source": "D(4,6.5543,2.3477,6.9312,2.3477,6.9312,2.5471,6.5544,2.5482)"
+            },
+            {
+              "content": "options",
+              "span": {
+                "offset": 1686,
+                "length": 7
+              },
+              "confidence": 0.904,
+              "source": "D(4,1.0667,2.5659,1.605,2.5666,1.6069,2.7789,1.0687,2.7781)"
+            },
+            {
+              "content": "'",
+              "span": {
+                "offset": 1693,
+                "length": 1
+              },
+              "confidence": 0.934,
+              "source": "D(4,1.6156,2.5666,1.651,2.5667,1.6529,2.779,1.6175,2.779)"
+            },
+            {
+              "content": "cited",
+              "span": {
+                "offset": 1695,
+                "length": 5
+              },
+              "confidence": 0.878,
+              "source": "D(4,1.6935,2.5667,2.0371,2.5671,2.0388,2.7796,1.6954,2.7791)"
+            },
+            {
+              "content": "by",
+              "span": {
+                "offset": 1701,
+                "length": 2
+              },
+              "confidence": 0.988,
+              "source": "D(4,2.0973,2.5672,2.2744,2.5674,2.2761,2.78,2.099,2.7797)"
+            },
+            {
+              "content": "62",
+              "span": {
+                "offset": 1704,
+                "length": 2
+              },
+              "confidence": 0.983,
+              "source": "D(4,2.3134,2.5675,2.4975,2.5677,2.4991,2.7804,2.315,2.7801)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 1706,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(4,2.4975,2.5677,2.6392,2.5678,2.6407,2.7806,2.4991,2.7804)"
+            },
+            {
+              "content": "of",
+              "span": {
+                "offset": 1708,
+                "length": 2
+              },
+              "confidence": 0.996,
+              "source": "D(4,2.6994,2.5679,2.8517,2.5681,2.8532,2.7809,2.7009,2.7807)"
+            },
+            {
+              "content": "respondents",
+              "span": {
+                "offset": 1711,
+                "length": 11
+              },
+              "confidence": 0.948,
+              "source": "D(4,2.8907,2.5681,3.8009,2.5682,3.802,2.7809,2.8921,2.781)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1722,
+                "length": 1
+              },
+              "confidence": 0.95,
+              "source": "D(4,3.8045,2.5682,3.8399,2.5682,3.841,2.7809,3.8056,2.7809)"
+            },
+            {
+              "content": "Employee",
+              "span": {
+                "offset": 1724,
+                "length": 8
+              },
+              "confidence": 0.955,
+              "source": "D(4,3.8859,2.5682,4.6191,2.5681,4.6199,2.7807,3.887,2.7809)"
+            },
+            {
+              "content": "retention",
+              "span": {
+                "offset": 1733,
+                "length": 9
+              },
+              "confidence": 0.996,
+              "source": "D(4,4.6687,2.5681,5.3062,2.5676,5.3068,2.7798,4.6695,2.7806)"
+            },
+            {
+              "content": "rate",
+              "span": {
+                "offset": 1743,
+                "length": 4
+              },
+              "confidence": 0.995,
+              "source": "D(4,5.3664,2.5675,5.6533,2.5671,5.6537,2.779,5.367,2.7797)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 1748,
+                "length": 3
+              },
+              "confidence": 0.982,
+              "source": "D(4,5.6958,2.567,5.8977,2.5667,5.898,2.7785,5.6962,2.7789)"
+            },
+            {
+              "content": "the",
+              "span": {
+                "offset": 1752,
+                "length": 3
+              },
+              "confidence": 0.979,
+              "source": "D(4,5.9402,2.5666,6.1704,2.5663,6.1707,2.7779,5.9405,2.7784)"
+            },
+            {
+              "content": "trailing",
+              "span": {
+                "offset": 1756,
+                "length": 8
+              },
+              "confidence": 0.845,
+              "source": "D(4,6.2129,2.5662,6.7158,2.5655,6.7159,2.7766,6.2132,2.7778)"
+            },
+            {
+              "content": "12",
+              "span": {
+                "offset": 1765,
+                "length": 2
+              },
+              "confidence": 0.927,
+              "source": "D(4,6.7725,2.5654,6.9602,2.5651,6.9602,2.7761,6.7726,2.7765)"
+            },
+            {
+              "content": "months",
+              "span": {
+                "offset": 1768,
+                "length": 6
+              },
+              "confidence": 0.998,
+              "source": "D(4,1.0635,2.7956,1.6191,2.7922,1.6203,2.9796,1.0656,2.983)"
+            },
+            {
+              "content": "was",
+              "span": {
+                "offset": 1775,
+                "length": 3
+              },
+              "confidence": 0.997,
+              "source": "D(4,1.6623,2.792,1.9586,2.7908,1.9593,2.9785,1.6634,2.9795)"
+            },
+            {
+              "content": "91",
+              "span": {
+                "offset": 1779,
+                "length": 2
+              },
+              "confidence": 0.996,
+              "source": "D(4,2.0111,2.7907,2.1777,2.7904,2.1781,2.9785,2.0117,2.9785)"
+            },
+            {
+              "content": "%",
+              "span": {
+                "offset": 1781,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(4,2.2055,2.7904,2.3444,2.7902,2.3445,2.9784,2.2058,2.9785)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 1782,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(4,2.3444,2.7902,2.3969,2.7901,2.3969,2.9784,2.3445,2.9784)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Employee Satisfaction Survey Results",
+              "source": "D(4,1.075,1.1104,6.3171,1.1147,6.3169,1.4042,1.0747,1.3999)",
+              "span": {
+                "offset": 1318,
+                "length": 44
+              }
+            },
+            {
+              "content": "The annual employee satisfaction survey was completed in March 2025 with a 87%",
+              "source": "D(4,1.0698,1.6796,7.2258,1.67,7.2262,1.8769,1.0701,1.8866)",
+              "span": {
+                "offset": 1364,
+                "length": 78
+              }
+            },
+            {
+              "content": "response rate. Overall satisfaction score was 4.2 out of 5.0. Work-life balance scored",
+              "source": "D(4,1.0677,1.9012,7.3545,1.8933,7.3545,2.0915,1.068,2.102)",
+              "span": {
+                "offset": 1443,
+                "length": 86
+              }
+            },
+            {
+              "content": "3.8/5.0. Career growth opportunities scored 3.9/5.0. Compensation satisfaction",
+              "source": "D(4,1.0677,2.116,6.8896,2.116,6.8896,2.3228,1.0677,2.3228)",
+              "span": {
+                "offset": 1530,
+                "length": 78
+              }
+            },
+            {
+              "content": "scored 3.6/5.0. The top requested improvement was 'more flexible remote work",
+              "source": "D(4,1.0646,2.348,6.9312,2.3477,6.9312,2.5538,1.0646,2.5541)",
+              "span": {
+                "offset": 1609,
+                "length": 76
+              }
+            },
+            {
+              "content": "options' cited by 62% of respondents. Employee retention rate for the trailing 12",
+              "source": "D(4,1.0667,2.5659,6.9602,2.5651,6.9602,2.7807,1.0667,2.7815)",
+              "span": {
+                "offset": 1686,
+                "length": 81
+              }
+            },
+            {
+              "content": "months was 91%.",
+              "source": "D(4,1.0635,2.7939,2.3968,2.7893,2.3975,2.9784,1.0642,2.983)",
+              "span": {
+                "offset": 1768,
+                "length": 15
+              }
+            }
+          ]
+        },
+        {
+          "pageNumber": 5,
+          "angle": -0.0039,
+          "width": 8.5,
+          "height": 11,
+          "spans": [
+            {
+              "offset": 1805,
+              "length": 554
+            }
+          ],
+          "words": [
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 1809,
+                "length": 7
+              },
+              "confidence": 0.998,
+              "source": "D(5,1.0729,1.1147,1.9983,1.1155,1.9991,1.389,1.0739,1.3845)"
+            },
+            {
+              "content": "Partnership",
+              "span": {
+                "offset": 1817,
+                "length": 11
+              },
+              "confidence": 0.997,
+              "source": "D(5,2.0792,1.1155,3.3461,1.1179,3.3466,1.3922,2.08,1.3894)"
+            },
+            {
+              "content": "Announcements",
+              "span": {
+                "offset": 1829,
+                "length": 13
+              },
+              "confidence": 0.997,
+              "source": "D(5,3.4135,1.118,5.2419,1.1241,5.2419,1.3884,3.4139,1.3922)"
+            },
+            {
+              "content": "Contoso",
+              "span": {
+                "offset": 1844,
+                "length": 7
+              },
+              "confidence": 0.997,
+              "source": "D(5,1.0718,1.6811,1.689,1.6787,1.689,1.8833,1.0718,1.8831)"
+            },
+            {
+              "content": "announced",
+              "span": {
+                "offset": 1852,
+                "length": 9
+              },
+              "confidence": 0.997,
+              "source": "D(5,1.7408,1.6785,2.5579,1.6753,2.5579,1.8837,1.7408,1.8834)"
+            },
+            {
+              "content": "three",
+              "span": {
+                "offset": 1862,
+                "length": 5
+              },
+              "confidence": 0.998,
+              "source": "D(5,2.6062,1.6751,2.9889,1.6736,2.989,1.8839,2.6062,1.8837)"
+            },
+            {
+              "content": "strategic",
+              "span": {
+                "offset": 1868,
+                "length": 9
+              },
+              "confidence": 0.994,
+              "source": "D(5,3.0372,1.6734,3.6717,1.6727,3.6717,1.8838,3.0372,1.8839)"
+            },
+            {
+              "content": "partnerships",
+              "span": {
+                "offset": 1878,
+                "length": 12
+              },
+              "confidence": 0.987,
+              "source": "D(5,3.7199,1.6726,4.6268,1.672,4.6268,1.8835,3.7199,1.8838)"
+            },
+            {
+              "content": "in",
+              "span": {
+                "offset": 1891,
+                "length": 2
+              },
+              "confidence": 0.977,
+              "source": "D(5,4.6785,1.6719,4.7957,1.6718,4.7957,1.8834,4.6785,1.8835)"
+            },
+            {
+              "content": "H1",
+              "span": {
+                "offset": 1894,
+                "length": 2
+              },
+              "confidence": 0.57,
+              "source": "D(5,4.8612,1.6718,5.044,1.6716,5.044,1.8834,4.8612,1.8834)"
+            },
+            {
+              "content": "2025",
+              "span": {
+                "offset": 1897,
+                "length": 4
+              },
+              "confidence": 0.657,
+              "source": "D(5,5.1095,1.6716,5.4819,1.6722,5.4819,1.883,5.1095,1.8834)"
+            },
+            {
+              "content": ":",
+              "span": {
+                "offset": 1901,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(5,5.4922,1.6723,5.5267,1.6723,5.5267,1.883,5.4922,1.883)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 1903,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,5.5819,1.6725,5.637,1.6726,5.637,1.8829,5.5819,1.8829)"
+            },
+            {
+              "content": "1",
+              "span": {
+                "offset": 1904,
+                "length": 1
+              },
+              "confidence": 0.994,
+              "source": "D(5,5.6508,1.6726,5.706,1.6728,5.706,1.8828,5.6508,1.8829)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 1905,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,5.7232,1.6728,5.775,1.6729,5.775,1.8827,5.7233,1.8828)"
+            },
+            {
+              "content": "A",
+              "span": {
+                "offset": 1907,
+                "length": 1
+              },
+              "confidence": 0.961,
+              "source": "D(5,5.8163,1.673,5.937,1.6733,5.937,1.8826,5.8163,1.8827)"
+            },
+            {
+              "content": "joint",
+              "span": {
+                "offset": 1909,
+                "length": 5
+              },
+              "confidence": 0.715,
+              "source": "D(5,5.9612,1.6734,6.2956,1.6742,6.2956,1.8822,5.9612,1.8826)"
+            },
+            {
+              "content": "venture",
+              "span": {
+                "offset": 1915,
+                "length": 7
+              },
+              "confidence": 0.948,
+              "source": "D(5,6.337,1.6743,6.8921,1.6756,6.8921,1.8816,6.337,1.8822)"
+            },
+            {
+              "content": "with",
+              "span": {
+                "offset": 1923,
+                "length": 4
+              },
+              "confidence": 0.978,
+              "source": "D(5,6.9301,1.6757,7.2507,1.6764,7.2507,1.8813,6.9301,1.8816)"
+            },
+            {
+              "content": "Meridian",
+              "span": {
+                "offset": 1928,
+                "length": 8
+              },
+              "confidence": 1,
+              "source": "D(5,1.0957,1.9362,1.7108,1.9362,1.7108,2.0574,1.0957,2.0574)"
+            },
+            {
+              "content": "Technologies",
+              "span": {
+                "offset": 1937,
+                "length": 12
+              },
+              "confidence": 1,
+              "source": "D(5,1.7725,1.9362,2.7533,1.9362,2.7533,2.0904,1.7725,2.0904)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 1950,
+                "length": 3
+              },
+              "confidence": 1,
+              "source": "D(5,2.8077,1.9342,3.003,1.9342,3.003,2.0574,2.8077,2.0574)"
+            },
+            {
+              "content": "AI-powered",
+              "span": {
+                "offset": 1954,
+                "length": 10
+              },
+              "confidence": 1,
+              "source": "D(5,3.047,1.9362,3.8872,1.9362,3.8872,2.0886,3.047,2.0886)"
+            },
+            {
+              "content": "document",
+              "span": {
+                "offset": 1965,
+                "length": 8
+              },
+              "confidence": 1,
+              "source": "D(5,3.9512,1.9362,4.6762,1.9362,4.6762,2.0574,3.9512,2.0574)"
+            },
+            {
+              "content": "processing,",
+              "span": {
+                "offset": 1974,
+                "length": 11
+              },
+              "confidence": 1,
+              "source": "D(5,4.7347,1.9362,5.561,1.9362,5.561,2.0904,4.7347,2.0904)"
+            },
+            {
+              "content": "valued",
+              "span": {
+                "offset": 1986,
+                "length": 6
+              },
+              "confidence": 1,
+              "source": "D(5,5.6243,1.9362,6.1012,1.9362,6.1012,2.0574,5.6243,2.0574)"
+            },
+            {
+              "content": "at",
+              "span": {
+                "offset": 1993,
+                "length": 2
+              },
+              "confidence": 1,
+              "source": "D(5,6.1655,1.9389,6.2973,1.9389,6.2973,2.0574,6.1655,2.0574)"
+            },
+            {
+              "content": "$5.2",
+              "span": {
+                "offset": 1996,
+                "length": 4
+              },
+              "confidence": 1,
+              "source": "D(5,6.3508,1.9252,6.6603,1.9252,6.6603,2.0726,6.3508,2.0726)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 2001,
+                "length": 7
+              },
+              "confidence": 1,
+              "source": "D(5,6.7265,1.9362,7.1762,1.9362,7.1762,2.0574,6.7265,2.0574)"
+            },
+            {
+              "content": "over",
+              "span": {
+                "offset": 2009,
+                "length": 4
+              },
+              "confidence": 0.806,
+              "source": "D(5,1.0677,2.1203,1.4051,2.1197,1.4051,2.3276,1.0677,2.328)"
+            },
+            {
+              "content": "3",
+              "span": {
+                "offset": 2014,
+                "length": 1
+              },
+              "confidence": 0.859,
+              "source": "D(5,1.4503,2.1196,1.5338,2.1195,1.5338,2.3275,1.4503,2.3276)"
+            },
+            {
+              "content": "years",
+              "span": {
+                "offset": 2016,
+                "length": 5
+              },
+              "confidence": 0.716,
+              "source": "D(5,1.5755,2.1194,1.9859,2.1187,1.9859,2.3271,1.5755,2.3275)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 2021,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(5,1.9929,2.1187,2.0277,2.1186,2.0277,2.327,1.9929,2.3271)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 2023,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,2.0868,2.1185,2.1425,2.1184,2.1425,2.3269,2.0868,2.327)"
+            },
+            {
+              "content": "2",
+              "span": {
+                "offset": 2024,
+                "length": 1
+              },
+              "confidence": 0.994,
+              "source": "D(5,2.1425,2.1184,2.2329,2.1183,2.2329,2.3268,2.1425,2.3269)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 2025,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,2.2364,2.1183,2.292,2.1182,2.292,2.3268,2.2364,2.3268)"
+            },
+            {
+              "content": "A",
+              "span": {
+                "offset": 2027,
+                "length": 1
+              },
+              "confidence": 0.995,
+              "source": "D(5,2.3338,2.1181,2.452,2.1179,2.452,2.3266,2.3338,2.3267)"
+            },
+            {
+              "content": "distribution",
+              "span": {
+                "offset": 2029,
+                "length": 12
+              },
+              "confidence": 0.979,
+              "source": "D(5,2.4903,2.1178,3.2868,2.1166,3.2868,2.3258,2.4903,2.3266)"
+            },
+            {
+              "content": "agreement",
+              "span": {
+                "offset": 2042,
+                "length": 9
+              },
+              "confidence": 0.991,
+              "source": "D(5,3.3425,2.1165,4.1425,2.1155,4.1425,2.3247,3.3425,2.3257)"
+            },
+            {
+              "content": "with",
+              "span": {
+                "offset": 2052,
+                "length": 4
+              },
+              "confidence": 0.995,
+              "source": "D(5,4.1807,2.1155,4.4833,2.1151,4.4833,2.3243,4.1807,2.3247)"
+            },
+            {
+              "content": "Pacific",
+              "span": {
+                "offset": 2057,
+                "length": 7
+              },
+              "confidence": 0.985,
+              "source": "D(5,4.539,2.115,5.0225,2.1144,5.0225,2.3237,4.539,2.3242)"
+            },
+            {
+              "content": "Rim",
+              "span": {
+                "offset": 2065,
+                "length": 3
+              },
+              "confidence": 0.992,
+              "source": "D(5,5.0746,2.1144,5.3599,2.1142,5.3599,2.3232,5.0746,2.3236)"
+            },
+            {
+              "content": "Solutions",
+              "span": {
+                "offset": 2069,
+                "length": 9
+              },
+              "confidence": 0.958,
+              "source": "D(5,5.412,2.1142,6.0903,2.1137,6.0903,2.3221,5.412,2.3231)"
+            },
+            {
+              "content": "covering",
+              "span": {
+                "offset": 2079,
+                "length": 8
+              },
+              "confidence": 0.877,
+              "source": "D(5,6.139,2.1136,6.772,2.1132,6.772,2.3211,6.139,2.322)"
+            },
+            {
+              "content": "12",
+              "span": {
+                "offset": 2088,
+                "length": 2
+              },
+              "confidence": 0.8,
+              "source": "D(5,6.8312,2.1131,7.0225,2.113,7.0225,2.3208,6.8312,2.321)"
+            },
+            {
+              "content": "countries",
+              "span": {
+                "offset": 2091,
+                "length": 9
+              },
+              "confidence": 0.994,
+              "source": "D(5,1.0687,2.3449,1.7438,2.3442,1.7438,2.5547,1.0687,2.5534)"
+            },
+            {
+              "content": "in",
+              "span": {
+                "offset": 2101,
+                "length": 2
+              },
+              "confidence": 0.997,
+              "source": "D(5,1.7973,2.3442,1.9188,2.3441,1.9188,2.5551,1.7973,2.5548)"
+            },
+            {
+              "content": "Asia",
+              "span": {
+                "offset": 2104,
+                "length": 4
+              },
+              "confidence": 0.994,
+              "source": "D(5,1.9652,2.344,2.2902,2.3437,2.2902,2.5558,1.9652,2.5552)"
+            },
+            {
+              "content": "-",
+              "span": {
+                "offset": 2108,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,2.2974,2.3436,2.3474,2.3436,2.3474,2.5559,2.2974,2.5558)"
+            },
+            {
+              "content": "Pacific",
+              "span": {
+                "offset": 2109,
+                "length": 7
+              },
+              "confidence": 0.983,
+              "source": "D(5,2.3545,2.3436,2.8438,2.3431,2.8438,2.5569,2.3545,2.556)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 2116,
+                "length": 1
+              },
+              "confidence": 0.997,
+              "source": "D(5,2.8474,2.3431,2.8831,2.343,2.8831,2.557,2.8474,2.557)"
+            },
+            {
+              "content": "(",
+              "span": {
+                "offset": 2118,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,2.9367,2.343,2.9903,2.3429,2.9903,2.5572,2.9367,2.5571)"
+            },
+            {
+              "content": "3",
+              "span": {
+                "offset": 2119,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(5,2.9938,2.3429,3.0724,2.3428,3.0724,2.5574,2.9938,2.5572)"
+            },
+            {
+              "content": ")",
+              "span": {
+                "offset": 2120,
+                "length": 1
+              },
+              "confidence": 0.999,
+              "source": "D(5,3.0867,2.3428,3.1403,2.3428,3.1403,2.5575,3.0867,2.5574)"
+            },
+            {
+              "content": "A",
+              "span": {
+                "offset": 2122,
+                "length": 1
+              },
+              "confidence": 0.973,
+              "source": "D(5,3.1831,2.3428,3.301,2.3428,3.301,2.5577,3.1831,2.5575)"
+            },
+            {
+              "content": "technology",
+              "span": {
+                "offset": 2124,
+                "length": 10
+              },
+              "confidence": 0.804,
+              "source": "D(5,3.3403,2.3428,4.1546,2.3429,4.1546,2.5587,3.3403,2.5577)"
+            },
+            {
+              "content": "integration",
+              "span": {
+                "offset": 2135,
+                "length": 11
+              },
+              "confidence": 0.984,
+              "source": "D(5,4.1975,2.3429,4.9618,2.343,4.9618,2.5597,4.1975,2.5588)"
+            },
+            {
+              "content": "partnership",
+              "span": {
+                "offset": 2147,
+                "length": 11
+              },
+              "confidence": 0.982,
+              "source": "D(5,5.019,2.343,5.8547,2.3439,5.8547,2.5602,5.019,2.5598)"
+            },
+            {
+              "content": "with",
+              "span": {
+                "offset": 2159,
+                "length": 4
+              },
+              "confidence": 0.964,
+              "source": "D(5,5.894,2.3439,6.1976,2.3443,6.1976,2.5603,5.894,2.5602)"
+            },
+            {
+              "content": "NovaBridge",
+              "span": {
+                "offset": 2164,
+                "length": 10
+              },
+              "confidence": 0.893,
+              "source": "D(5,6.2476,2.3444,7.1262,2.3454,7.1262,2.5607,6.2476,2.5603)"
+            },
+            {
+              "content": "Systems",
+              "span": {
+                "offset": 2175,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(5,1.0698,2.5676,1.7128,2.5672,1.7128,2.7781,1.0698,2.7779)"
+            },
+            {
+              "content": "for",
+              "span": {
+                "offset": 2183,
+                "length": 3
+              },
+              "confidence": 0.993,
+              "source": "D(5,1.7619,2.5671,1.9657,2.567,1.9657,2.7782,1.7619,2.7781)"
+            },
+            {
+              "content": "unified",
+              "span": {
+                "offset": 2187,
+                "length": 7
+              },
+              "confidence": 0.991,
+              "source": "D(5,2.0079,2.567,2.4752,2.5666,2.4752,2.7784,2.0079,2.7782)"
+            },
+            {
+              "content": "identity",
+              "span": {
+                "offset": 2195,
+                "length": 8
+              },
+              "confidence": 0.987,
+              "source": "D(5,2.5385,2.5666,3.076,2.5662,3.076,2.7786,2.5385,2.7784)"
+            },
+            {
+              "content": "management",
+              "span": {
+                "offset": 2204,
+                "length": 10
+              },
+              "confidence": 0.787,
+              "source": "D(5,3.1182,2.5662,4.0915,2.5659,4.0915,2.7785,3.1182,2.7786)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 2214,
+                "length": 1
+              },
+              "confidence": 0.971,
+              "source": "D(5,4.088,2.5659,4.1231,2.5659,4.1231,2.7785,4.088,2.7785)"
+            },
+            {
+              "content": "The",
+              "span": {
+                "offset": 2216,
+                "length": 3
+              },
+              "confidence": 0.765,
+              "source": "D(5,4.1723,2.5659,4.4569,2.5658,4.4569,2.7785,4.1723,2.7785)"
+            },
+            {
+              "content": "Chief",
+              "span": {
+                "offset": 2220,
+                "length": 5
+              },
+              "confidence": 0.949,
+              "source": "D(5,4.5026,2.5658,4.9102,2.5656,4.9102,2.7785,4.5026,2.7785)"
+            },
+            {
+              "content": "Partnership",
+              "span": {
+                "offset": 2226,
+                "length": 11
+              },
+              "confidence": 0.954,
+              "source": "D(5,4.9523,2.5656,5.8061,2.5656,5.8061,2.7781,4.9523,2.7785)"
+            },
+            {
+              "content": "Officer",
+              "span": {
+                "offset": 2238,
+                "length": 7
+              },
+              "confidence": 0.984,
+              "source": "D(5,5.8483,2.5656,6.3402,2.5656,6.3402,2.7778,5.8483,2.7781)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 2245,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(5,6.3367,2.5656,6.3718,2.5656,6.3718,2.7778,6.3367,2.7778)"
+            },
+            {
+              "content": "Helena",
+              "span": {
+                "offset": 2247,
+                "length": 6
+              },
+              "confidence": 0.977,
+              "source": "D(5,6.4351,2.5656,6.9727,2.5657,6.9727,2.7775,6.4351,2.7778)"
+            },
+            {
+              "content": "Nakagawa",
+              "span": {
+                "offset": 2254,
+                "length": 8
+              },
+              "confidence": 0.994,
+              "source": "D(5,1.0677,2.7896,1.8633,2.788,1.8633,3.0018,1.0677,3.0019)"
+            },
+            {
+              "content": ",",
+              "span": {
+                "offset": 2262,
+                "length": 1
+              },
+              "confidence": 0.998,
+              "source": "D(5,1.8705,2.788,1.9061,2.7879,1.9061,3.0018,1.8705,3.0018)"
+            },
+            {
+              "content": "stated",
+              "span": {
+                "offset": 2264,
+                "length": 6
+              },
+              "confidence": 0.995,
+              "source": "D(5,1.9561,2.7878,2.3949,2.7869,2.395,3.0017,1.9561,3.0018)"
+            },
+            {
+              "content": "the",
+              "span": {
+                "offset": 2271,
+                "length": 3
+              },
+              "confidence": 0.999,
+              "source": "D(5,2.4485,2.7868,2.6732,2.7864,2.6732,3.0017,2.4485,3.0017)"
+            },
+            {
+              "content": "partnerships",
+              "span": {
+                "offset": 2275,
+                "length": 12
+              },
+              "confidence": 0.994,
+              "source": "D(5,2.7303,2.7862,3.6509,2.7847,3.6509,3.001,2.7303,3.0017)"
+            },
+            {
+              "content": "are",
+              "span": {
+                "offset": 2288,
+                "length": 3
+              },
+              "confidence": 0.998,
+              "source": "D(5,3.7008,2.7847,3.9399,2.7844,3.9399,3.0006,3.7008,3.0009)"
+            },
+            {
+              "content": "expected",
+              "span": {
+                "offset": 2292,
+                "length": 8
+              },
+              "confidence": 0.967,
+              "source": "D(5,3.9862,2.7843,4.6427,2.7835,4.6427,2.9996,3.9862,3.0005)"
+            },
+            {
+              "content": "to",
+              "span": {
+                "offset": 2301,
+                "length": 2
+              },
+              "confidence": 0.992,
+              "source": "D(5,4.6963,2.7835,4.8425,2.7833,4.8425,2.9994,4.6963,2.9996)"
+            },
+            {
+              "content": "generate",
+              "span": {
+                "offset": 2304,
+                "length": 8
+              },
+              "confidence": 0.977,
+              "source": "D(5,4.8853,2.7832,5.549,2.7826,5.549,2.9981,4.8854,2.9993)"
+            },
+            {
+              "content": "an",
+              "span": {
+                "offset": 2313,
+                "length": 2
+              },
+              "confidence": 0.994,
+              "source": "D(5,5.6025,2.7826,5.7809,2.7825,5.7809,2.9975,5.6025,2.9979)"
+            },
+            {
+              "content": "additional",
+              "span": {
+                "offset": 2316,
+                "length": 10
+              },
+              "confidence": 0.839,
+              "source": "D(5,5.8344,2.7825,6.5266,2.7822,6.5266,2.9955,5.8344,2.9973)"
+            },
+            {
+              "content": "$",
+              "span": {
+                "offset": 2327,
+                "length": 1
+              },
+              "confidence": 0.996,
+              "source": "D(5,6.5801,2.7822,6.6586,2.7822,6.6586,2.9951,6.5801,2.9953)"
+            },
+            {
+              "content": "15",
+              "span": {
+                "offset": 2328,
+                "length": 2
+              },
+              "confidence": 0.587,
+              "source": "D(5,6.6871,2.7822,6.8584,2.7821,6.8584,2.9946,6.6871,2.9951)"
+            },
+            {
+              "content": "million",
+              "span": {
+                "offset": 2331,
+                "length": 7
+              },
+              "confidence": 0.6,
+              "source": "D(5,6.9084,2.7821,7.4043,2.7819,7.4043,2.9932,6.9084,2.9945)"
+            },
+            {
+              "content": "in",
+              "span": {
+                "offset": 2339,
+                "length": 2
+              },
+              "confidence": 0.998,
+              "source": "D(5,1.0646,3.0105,1.1949,3.0106,1.1949,3.217,1.0646,3.2166)"
+            },
+            {
+              "content": "revenue",
+              "span": {
+                "offset": 2342,
+                "length": 7
+              },
+              "confidence": 0.995,
+              "source": "D(5,1.2498,3.0106,1.8534,3.0108,1.8534,3.218,1.2498,3.2171)"
+            },
+            {
+              "content": "by",
+              "span": {
+                "offset": 2350,
+                "length": 2
+              },
+              "confidence": 0.992,
+              "source": "D(5,1.9015,3.0108,2.0798,3.0107,2.0798,3.218,1.9015,3.218)"
+            },
+            {
+              "content": "2027",
+              "span": {
+                "offset": 2353,
+                "length": 4
+              },
+              "confidence": 0.979,
+              "source": "D(5,2.121,3.0107,2.4948,3.0103,2.4948,3.2171,2.121,3.2179)"
+            },
+            {
+              "content": ".",
+              "span": {
+                "offset": 2357,
+                "length": 1
+              },
+              "confidence": 0.993,
+              "source": "D(5,2.5017,3.0103,2.5463,3.0103,2.5463,3.217,2.5017,3.2171)"
+            }
+          ],
+          "lines": [
+            {
+              "content": "Contoso Partnership Announcements",
+              "source": "D(5,1.0729,1.1145,5.2422,1.1185,5.2419,1.394,1.0726,1.39)",
+              "span": {
+                "offset": 1809,
+                "length": 33
+              }
+            },
+            {
+              "content": "Contoso announced three strategic partnerships in H1 2025: (1) A joint venture with",
+              "source": "D(5,1.0718,1.6728,7.2507,1.6709,7.2508,1.8827,1.0718,1.8845)",
+              "span": {
+                "offset": 1844,
+                "length": 83
+              }
+            },
+            {
+              "content": "Meridian Technologies for AI-powered document processing, valued at $5.2 million",
+              "source": "D(5,1.0957,1.9252,7.1762,1.9252,7.1762,2.0904,1.0957,2.0904)",
+              "span": {
+                "offset": 1928,
+                "length": 80
+              }
+            },
+            {
+              "content": "over 3 years. (2) A distribution agreement with Pacific Rim Solutions covering 12",
+              "source": "D(5,1.0674,2.1192,7.0225,2.112,7.0225,2.3212,1.0677,2.3284)",
+              "span": {
+                "offset": 2009,
+                "length": 81
+              }
+            },
+            {
+              "content": "countries in Asia-Pacific. (3) A technology integration partnership with NovaBridge",
+              "source": "D(5,1.0687,2.3417,7.1263,2.3438,7.1262,2.5607,1.0686,2.5582)",
+              "span": {
+                "offset": 2091,
+                "length": 83
+              }
+            },
+            {
+              "content": "Systems for unified identity management. The Chief Partnership Officer, Helena",
+              "source": "D(5,1.0697,2.5659,6.9727,2.5655,6.9727,2.7783,1.0698,2.7788)",
+              "span": {
+                "offset": 2175,
+                "length": 78
+              }
+            },
+            {
+              "content": "Nakagawa, stated the partnerships are expected to generate an additional $15 million",
+              "source": "D(5,1.0674,2.7879,7.4043,2.7801,7.4043,2.9965,1.0677,3.0043)",
+              "span": {
+                "offset": 2254,
+                "length": 84
+              }
+            },
+            {
+              "content": "in revenue by 2027.",
+              "source": "D(5,1.0645,3.0105,2.5463,3.0103,2.5463,3.218,1.0646,3.2182)",
+              "span": {
+                "offset": 2339,
+                "length": 19
+              }
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        {
+          "role": "title",
+          "content": "Contoso Q1 2025 Financial Summary",
+          "source": "D(1,1.073,1.0997,5.2562,1.1277,5.2544,1.403,1.0712,1.375)",
+          "span": {
+            "offset": 0,
+            "length": 35
+          }
+        },
+        {
+          "content": "Total revenue for Q1 2025 was $42.7 million, an increase of 18% over Q1 2024. Operating expenses were $31.2 million. Net profit was $11.5 million. The largest revenue segment was Cloud Services at $19.3 million, followed by Professional Services at $14.8 million and Product Licensing at $8.6 million. Headcount at end of Q1 was 1,247 employees across 8 offices worldwide.",
+          "source": "D(1,1.0665,1.6752,7.2703,1.6642,7.2722,2.7674,1.0685,2.7784)",
+          "span": {
+            "offset": 37,
+            "length": 372
+          }
+        },
+        {
+          "role": "sectionHeading",
+          "content": "Contoso Q2 2025 Financial Summary",
+          "source": "D(2,1.074,1.0993,5.2562,1.1274,5.2544,1.4034,1.0722,1.3753)",
+          "span": {
+            "offset": 432,
+            "length": 35
+          }
+        },
+        {
+          "content": "Total revenue for Q2 2025 was $48.1 million, an increase of 22% over Q2 2024. Operating expenses were $33.9 million. Net profit was $14.2 million. Cloud Services grew to $22.5 million, Professional Services was $15.7 million, and Product Licensing was $9.9 million. The company opened a new office in Tokyo, bringing the total to 9 offices. Headcount grew to 1,389 employees.",
+          "source": "D(2,1.0636,1.6741,7.3753,1.675,7.3752,2.7805,1.0634,2.7796)",
+          "span": {
+            "offset": 469,
+            "length": 375
+          }
+        },
+        {
+          "role": "sectionHeading",
+          "content": "Contoso Product Roadmap 2025",
+          "source": "D(3,1.0729,1.1108,4.7275,1.1131,4.7273,1.3961,1.0727,1.3938)",
+          "span": {
+            "offset": 867,
+            "length": 31
+          }
+        },
+        {
+          "content": "Three major product launches are planned for 2025: (1) Contoso CloudVault - an enterprise document storage solution, launching August 2025, with an expected price of $29.99/user/month. (2) Contoso DataPulse - a real-time analytics dashboard, launching October 2025. (3) Contoso SecureLink - a zero-trust networking product, launching December 2025. Total R&D; budget for 2025 is $18.4 million.",
+          "source": "D(3,1.0664,1.6753,7.3669,1.6742,7.3671,2.7794,1.0666,2.7805)",
+          "span": {
+            "offset": 900,
+            "length": 393
+          }
+        },
+        {
+          "role": "sectionHeading",
+          "content": "Contoso Employee Satisfaction Survey Results",
+          "source": "D(4,1.075,1.1104,6.3171,1.1147,6.3169,1.4042,1.0747,1.3999)",
+          "span": {
+            "offset": 1316,
+            "length": 46
+          }
+        },
+        {
+          "content": "The annual employee satisfaction survey was completed in March 2025 with a 87% response rate. Overall satisfaction score was 4.2 out of 5.0. Work-life balance scored 3.8/5.0. Career growth opportunities scored 3.9/5.0. Compensation satisfaction scored 3.6/5.0. The top requested improvement was 'more flexible remote work options' cited by 62% of respondents. Employee retention rate for the trailing 12 months was 91%.",
+          "source": "D(4,1.0618,1.6796,7.3541,1.6698,7.3562,2.9732,1.0638,2.983)",
+          "span": {
+            "offset": 1364,
+            "length": 419
+          }
+        },
+        {
+          "role": "sectionHeading",
+          "content": "Contoso Partnership Announcements",
+          "source": "D(5,1.0729,1.1145,5.2422,1.1185,5.2419,1.394,1.0726,1.39)",
+          "span": {
+            "offset": 1806,
+            "length": 36
+          }
+        },
+        {
+          "content": "Contoso announced three strategic partnerships in H1 2025: (1) A joint venture with Meridian Technologies for AI-powered document processing, valued at $5.2 million over 3 years. (2) A distribution agreement with Pacific Rim Solutions covering 12 countries in Asia-Pacific. (3) A technology integration partnership with NovaBridge Systems for unified identity management. The Chief Partnership Officer, Helena Nakagawa, stated the partnerships are expected to generate an additional $15 million in revenue by 2027.",
+          "source": "D(5,1.0641,1.6728,7.404,1.6709,7.4044,3.2165,1.0646,3.2184)",
+          "span": {
+            "offset": 1844,
+            "length": 514
+          }
+        }
+      ],
+      "sections": [
+        {
+          "span": {
+            "offset": 0,
+            "length": 2358
+          },
+          "elements": [
+            "/sections/1",
+            "/sections/2",
+            "/sections/4"
+          ]
+        },
+        {
+          "span": {
+            "offset": 0,
+            "length": 409
+          },
+          "elements": [
+            "/paragraphs/0",
+            "/paragraphs/1"
+          ]
+        },
+        {
+          "span": {
+            "offset": 432,
+            "length": 861
+          },
+          "elements": [
+            "/paragraphs/2",
+            "/paragraphs/3",
+            "/sections/3"
+          ]
+        },
+        {
+          "span": {
+            "offset": 867,
+            "length": 426
+          },
+          "elements": [
+            "/paragraphs/4",
+            "/paragraphs/5"
+          ]
+        },
+        {
+          "span": {
+            "offset": 1316,
+            "length": 1042
+          },
+          "elements": [
+            "/paragraphs/6",
+            "/paragraphs/7",
+            "/sections/5"
+          ]
+        },
+        {
+          "span": {
+            "offset": 1806,
+            "length": 552
+          },
+          "elements": [
+            "/paragraphs/8",
+            "/paragraphs/9"
+          ]
+        }
+      ],
+      "analyzerId": "prebuilt-documentSearch",
+      "mimeType": "application/pdf"
     }
   ]
 }

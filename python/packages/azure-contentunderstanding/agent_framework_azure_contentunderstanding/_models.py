@@ -44,9 +44,15 @@ class ContentLimits:
     """
 
     max_pages: int = 20
+    """Maximum pages for PDF/TIFF/image documents. Not yet enforced — file size is checked instead."""
+
     max_file_size_mb: int = 10
+
     max_audio_duration_s: int = 300
+    """Maximum audio duration in seconds. Not yet enforced — file size is checked instead."""
+
     max_video_duration_s: int = 120
+    """Maximum video duration in seconds. Not yet enforced — file size is checked instead."""
 
 
 class DocumentEntry(TypedDict):

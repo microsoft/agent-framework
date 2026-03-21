@@ -8,8 +8,10 @@ Azure Content Understanding (CU) integration for the [Microsoft Agent Framework]
 ## Installation
 
 ```bash
-pip install agent-framework-azure-contentunderstanding
+pip install --pre agent-framework-azure-contentunderstanding
 ```
+
+> **Note:** This package is in preview. The `--pre` flag is required to install pre-release versions.
 
 ## Quick Start
 
