@@ -1,0 +1,24 @@
+{
+  "id": "synthetic-image-001",
+  "status": "Succeeded",
+  "analyzer_id": "prebuilt-documentSearch",
+  "api_version": "2025-05-01-preview",
+  "created_at": "2026-03-21T10:20:00Z",
+  "contents": [
+    {
+      "markdown": "# Quarterly Report Summary\n\nContoso Ltd. - Q1 2026\n\nRevenue: $12.5M\nOperating Income: $3.2M\nNet Income: $2.8M\n\nKey Highlights:\n- Cloud services revenue grew 25% YoY\n- Customer acquisition cost decreased by 15%\n- New enterprise contracts signed: 42",
+      "fields": {
+        "Revenue": {
+          "type": "number",
+          "valueNumber": 12500000.0,
+          "confidence": 0.88
+        },
+        "NetIncome": {
+          "type": "number",
+          "valueNumber": 2800000.0,
+          "confidence": 0.85
+        }
+      }
+    }
+  ]
+}

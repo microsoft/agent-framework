@@ -1,0 +1,39 @@
+{
+  "id": "synthetic-pdf-001",
+  "status": "Succeeded",
+  "analyzer_id": "prebuilt-documentSearch",
+  "api_version": "2025-05-01-preview",
+  "created_at": "2026-03-21T10:00:00Z",
+  "contents": [
+    {
+      "markdown": "# CONTOSO LTD.\n\n## INVOICE\n\nInvoice Number: INV-2026-001\nDate: March 4, 2026\nVendor: Contoso Ltd., 123 Main St, Seattle WA\nCustomer: Microsoft Corporation\n\n| Item | Description | Qty | Price | Amount |\n|------|-------------|-----|-------|--------|\n| 1 | Cloud Hosting (Monthly) | 1 | $5,000.00 | $5,000.00 |\n| 2 | Premium Support | 1 | $2,000.00 | $2,000.00 |\n| 3 | Data Transfer (500GB) | 1 | $500.00 | $500.00 |\n\n**Subtotal:** $7,500.00\n**Tax (10%):** $750.00\n**Total:** $8,250.00\n\nPayment Terms: Net 30\nDue Date: April 3, 2026",
+      "fields": {
+        "VendorName": {
+          "type": "string",
+          "valueString": "Contoso Ltd.",
+          "confidence": 0.95
+        },
+        "CustomerName": {
+          "type": "string",
+          "valueString": "Microsoft Corporation",
+          "confidence": 0.93
+        },
+        "InvoiceTotal": {
+          "type": "number",
+          "valueNumber": 8250.0,
+          "confidence": 0.91
+        },
+        "InvoiceDate": {
+          "type": "string",
+          "valueString": "2026-03-04",
+          "confidence": 0.97
+        },
+        "InvoiceId": {
+          "type": "string",
+          "valueString": "INV-2026-001",
+          "confidence": 0.99
+        }
+      }
+    }
+  ]
+}

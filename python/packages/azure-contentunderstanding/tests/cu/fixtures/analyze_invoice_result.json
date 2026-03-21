@@ -1,0 +1,59 @@
+{
+  "id": "synthetic-invoice-001",
+  "status": "Succeeded",
+  "analyzer_id": "prebuilt-invoice",
+  "api_version": "2025-05-01-preview",
+  "created_at": "2026-03-21T10:10:00Z",
+  "contents": [
+    {
+      "markdown": "# Invoice\n\nAlpine Industries\n456 Mountain Road\nDenver, CO 80201\n\nBill To:\nMicrosoft Corporation\n1 Microsoft Way\nRedmond, WA 98052\n\nInvoice Number: AI-2026-0042\nInvoice Date: March 15, 2026\nDue Date: April 14, 2026\n\n| Item | Description | Qty | Unit Price | Amount |\n|------|-------------|-----|-----------|--------|\n| 1 | Industrial Widget A | 100 | $25.00 | $2,500.00 |\n| 2 | Industrial Widget B | 50 | $45.00 | $2,250.00 |\n| 3 | Installation Service | 1 | $1,000.00 | $1,000.00 |\n\nSubtotal: $5,750.00\nTax (8.5%): $488.75\nTotal: $6,238.75\n\nPayment Terms: Net 30",
+      "fields": {
+        "VendorName": {
+          "type": "string",
+          "valueString": "Alpine Industries",
+          "confidence": 0.96
+        },
+        "VendorAddress": {
+          "type": "string",
+          "valueString": "456 Mountain Road, Denver, CO 80201",
+          "confidence": 0.89
+        },
+        "CustomerName": {
+          "type": "string",
+          "valueString": "Microsoft Corporation",
+          "confidence": 0.94
+        },
+        "InvoiceId": {
+          "type": "string",
+          "valueString": "AI-2026-0042",
+          "confidence": 0.98
+        },
+        "InvoiceDate": {
+          "type": "date",
+          "valueString": "2026-03-15",
+          "confidence": 0.97
+        },
+        "DueDate": {
+          "type": "date",
+          "valueString": "2026-04-14",
+          "confidence": 0.95
+        },
+        "SubTotal": {
+          "type": "number",
+          "valueNumber": 5750.0,
+          "confidence": 0.92
+        },
+        "TotalTax": {
+          "type": "number",
+          "valueNumber": 488.75,
+          "confidence": 0.90
+        },
+        "InvoiceTotal": {
+          "type": "number",
+          "valueNumber": 6238.75,
+          "confidence": 0.93
+        }
+      }
+    }
+  ]
+}
