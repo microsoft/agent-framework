@@ -266,7 +266,7 @@ class FoundryLocalClient(
             manager.load_model(alias_or_model_id=model_info.id, device=device)
 
         super().__init__(
-            model_id=model_info.id,
+            model=model_info.id,
             async_client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
             additional_properties=additional_properties,
             middleware=middleware,
