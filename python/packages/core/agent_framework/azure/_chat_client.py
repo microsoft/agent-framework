@@ -8,9 +8,6 @@ import sys
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
 
-from openai.lib.azure import AsyncAzureOpenAI
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -23,8 +20,7 @@ from agent_framework import (
     FunctionInvocationLayer,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai import OpenAIChatOptions
-from agent_framework.openai._chat_client import RawOpenAIChatClient
+from agent_framework.openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 
 from .._settings import load_settings
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
@@ -48,6 +44,10 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from openai.lib.azure import AsyncAzureOpenAI
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+
     from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -152,8 +152,8 @@ AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAICha
 
 class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     FunctionInvocationLayer[AzureOpenAIChatOptionsT],
+    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     ChatTelemetryLayer[AzureOpenAIChatOptionsT],
     RawOpenAIChatClient[AzureOpenAIChatOptionsT],
     Generic[AzureOpenAIChatOptionsT],
@@ -172,12 +172,12 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
 
@@ -205,13 +205,13 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
             middleware: Optional sequence of middleware to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation behavior.
-            kwargs: Other keyword parameters.
 
         Examples:
             .. code-block:: python
@@ -283,10 +283,10 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             credential=credential,
             default_headers=default_headers,
             client=async_client,
+            additional_properties=additional_properties,
             instruction_role=instruction_role,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
     @override
@@ -297,7 +297,9 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
-        message = choice.message if isinstance(choice, Choice) else choice.delta
+        message = getattr(choice, "message", None)
+        if message is None:
+            message = getattr(choice, "delta", None)
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
         if message is None:  # type: ignore
             return None

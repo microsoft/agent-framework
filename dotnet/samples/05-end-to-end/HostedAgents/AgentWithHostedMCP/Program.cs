@@ -4,6 +4,9 @@
 // In this case the OpenAI responses service will invoke any MCP tools as required. MCP tools are not invoked by the Agent Framework.
 // The sample demonstrates how to use MCP tools with auto approval by setting ApprovalMode to NeverRequire.
 
+#pragma warning disable MEAI001 // HostedMcpServerTool, HostedMcpServerToolApprovalMode are experimental
+#pragma warning disable OPENAI001 // GetResponsesClient is experimental
+
 using Azure.AI.AgentServer.AgentFramework.Extensions;
 using Azure.AI.OpenAI;
 using Azure.Identity;
@@ -28,7 +31,8 @@ AITool mcpTool = new HostedMcpServerTool(serverName: "microsoft_learn", serverAd
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-    .GetResponsesClient(deploymentName)
+    .GetResponsesClient()
+    .AsIChatClient(deploymentName)
     .AsAIAgent(
         instructions: "You answer questions by searching the Microsoft Learn content only.",
         name: "MicrosoftLearnAgent",

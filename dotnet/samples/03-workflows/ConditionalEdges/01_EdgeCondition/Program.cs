@@ -228,6 +228,7 @@ internal sealed class EmailAssistantExecutor : Executor<DetectionResult, EmailRe
 /// <summary>
 /// Executor that sends emails.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailExecutor")
 {
     /// <summary>
@@ -240,6 +241,7 @@ internal sealed class SendEmailExecutor() : Executor<EmailResponse>("SendEmailEx
 /// <summary>
 /// Executor that handles spam messages.
 /// </summary>
+[YieldsOutput(typeof(string))]
 internal sealed class HandleSpamExecutor() : Executor<DetectionResult>("HandleSpamExecutor")
 {
     /// <summary>

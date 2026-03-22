@@ -4,22 +4,22 @@ Redis-based storage for agent threads and context.
 
 ## Main Classes
 
-- **`RedisChatMessageStore`** - Persistent message store using Redis
-- **`RedisProvider`** - Context provider with Redis backing
+- **`RedisHistoryProvider`** - Persistent chat history provider using Redis
+- **`RedisContextProvider`** - Context provider with Redis-backed retrieval
 
 ## Usage
 
 ```python
-from agent_framework.redis import RedisChatMessageStore
+from agent_framework.redis import RedisContextProvider, RedisHistoryProvider
 
-store = RedisChatMessageStore(redis_url="redis://localhost:6379")
-agent = Agent(..., chat_message_store_factory=lambda: store)
+context_provider = RedisContextProvider(redis_url="redis://localhost:6379")
+history_provider = RedisHistoryProvider(redis_url="redis://localhost:6379")
 ```
 
 ## Import Path
 
 ```python
-from agent_framework.redis import RedisChatMessageStore, RedisProvider
+from agent_framework.redis import RedisContextProvider, RedisHistoryProvider
 # or directly:
-from agent_framework_redis import RedisChatMessageStore
+from agent_framework_redis import RedisContextProvider, RedisHistoryProvider
 ```

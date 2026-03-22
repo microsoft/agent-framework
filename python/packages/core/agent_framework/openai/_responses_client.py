@@ -16,7 +16,16 @@ from collections.abc import (
 )
 from datetime import datetime, timezone
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, NoReturn, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    NoReturn,
+    TypedDict,
+    cast,
+)
 
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses import FunctionShellTool
@@ -240,9 +249,9 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         you should consider which additional layers to apply. There is a defined ordering that
         you should follow:
 
-        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
-        2. **FunctionInvocationLayer** - Handles tool/function calling loop
-        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
 
         Use ``OpenAIResponsesClient`` instead for a fully-featured client with all layers applied.
     """
@@ -309,23 +318,33 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         )
                         async for chunk in stream_response:
                             yield self._parse_chunk_from_openai(
-                                chunk, options=validated_options, function_call_ids=function_call_ids
+                                chunk,
+                                options=validated_options,
+                                function_call_ids=function_call_ids,
                             )
                     except Exception as ex:
                         self._handle_request_error(ex)
                 else:
-                    client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+                    (
+                        client,
+                        run_options,
+                        validated_options,
+                    ) = await self._prepare_request(messages, options, **kwargs)
                     try:
                         if "text_format" in run_options:
                             async with client.responses.stream(**run_options) as response:
                                 async for chunk in response:
                                     yield self._parse_chunk_from_openai(
-                                        chunk, options=validated_options, function_call_ids=function_call_ids
+                                        chunk,
+                                        options=validated_options,
+                                        function_call_ids=function_call_ids,
                                     )
                         else:
                             async for chunk in await client.responses.create(stream=True, **run_options):
                                 yield self._parse_chunk_from_openai(
-                                    chunk, options=validated_options, function_call_ids=function_call_ids
+                                    chunk,
+                                    options=validated_options,
+                                    function_call_ids=function_call_ids,
                                 )
                     except Exception as ex:
                         self._handle_request_error(ex)
@@ -439,7 +458,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
     # region Prep methods
 
     def _prepare_tools_for_openai(
-        self, tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None
+        self,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None,
     ) -> list[Any]:
         """Prepare tools for the OpenAI Responses API.
 
@@ -645,7 +665,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         if output_format:
             tool["output_format"] = output_format
         if model:
-            tool["model"] = model
+            tool["model"] = model  # type: ignore
         if quality:
             tool["quality"] = quality
         if partial_images is not None:
@@ -1012,24 +1032,27 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
         Returns:
             The prepared chat messages for a request.
         """
-        call_id_to_id: dict[str, str] = {}
-        for message in chat_messages:
-            for content in message.contents:
-                if (
-                    content.type == "function_call"
-                    and content.additional_properties
-                    and "fc_id" in content.additional_properties
-                    and content.additional_properties["fc_id"]
-                ):
-                    call_id_to_id[content.call_id] = content.additional_properties["fc_id"]  # type: ignore[attr-defined, index]
-        list_of_list = [self._prepare_message_for_openai(message, call_id_to_id) for message in chat_messages]
+        list_of_list = [self._prepare_message_for_openai(message) for message in chat_messages]
         # Flatten the list of lists into a single list
         return list(chain.from_iterable(list_of_list))
+
+    @staticmethod
+    def _message_replays_provider_context(message: Message) -> bool:
+        """Return whether the message came from provider-attributed replay context.
+
+        Responses ``fc_id`` values are response-scoped and only valid while replaying
+        the same live tool loop. Once a message comes back through a context provider
+        (for example, loaded session history), that message is historical input and
+        must not reuse the original response-scoped ``fc_id``.
+        """
+        additional_properties = getattr(message, "additional_properties", None)
+        if not additional_properties:
+            return False
+        return "_attribution" in additional_properties
 
     def _prepare_message_for_openai(
         self,
         message: Message,
-        call_id_to_id: dict[str, str],
     ) -> list[dict[str, Any]]:
         """Prepare a chat message for the OpenAI Responses API format."""
         all_messages: list[dict[str, Any]] = []
@@ -1047,39 +1070,41 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 case "text_reasoning":
                     if not has_function_call:
                         continue  # reasoning not followed by a function_call is invalid in input
-                    reasoning = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
+                    reasoning = self._prepare_content_for_openai(message.role, content, message=message)
                     if reasoning:
                         all_messages.append(reasoning)
                 case "function_result":
                     new_args: dict[str, Any] = {}
-                    new_args.update(self._prepare_content_for_openai(message.role, content, call_id_to_id))  # type: ignore[arg-type]
+                    new_args.update(self._prepare_content_for_openai(message.role, content, message=message))
                     if new_args:
                         all_messages.append(new_args)
                 case "function_call":
-                    function_call = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore[arg-type]
+                    function_call = self._prepare_content_for_openai(message.role, content, message=message)
                     if function_call:
-                        all_messages.append(function_call)  # type: ignore
+                        all_messages.append(function_call)
                 case "function_approval_response" | "function_approval_request":
-                    prepared = self._prepare_content_for_openai(Role(message.role), content, call_id_to_id)
+                    prepared = self._prepare_content_for_openai(message.role, content, message=message)
                     if prepared:
-                        all_messages.append(prepared)  # type: ignore
+                        all_messages.append(prepared)
                 case _:
-                    prepared_content = self._prepare_content_for_openai(message.role, content, call_id_to_id)  # type: ignore
+                    prepared_content = self._prepare_content_for_openai(message.role, content, message=message)
                     if prepared_content:
                         if "content" not in args:
                             args["content"] = []
-                        args["content"].append(prepared_content)  # type: ignore
+                        args["content"].append(prepared_content)  # type: ignore[reportUnknownMemberType]
         if "content" in args or "tool_calls" in args:
             all_messages.append(args)
         return all_messages
 
     def _prepare_content_for_openai(
         self,
-        role: Role,
+        role: Role | str,
         content: Content,
-        call_id_to_id: dict[str, str],
+        *,
+        message: Message | None = None,
     ) -> dict[str, Any]:
         """Prepare content for the OpenAI Responses API format."""
+        role = Role(role)
         match content.type:
             case "text":
                 if role == "assistant":
@@ -1154,8 +1179,15 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 if not content.call_id:
                     logger.warning(f"FunctionCallContent missing call_id for function '{content.name}'")
                     return {}
-                # Use fc_id from additional_properties if available, otherwise fallback to call_id
-                fc_id = call_id_to_id.get(content.call_id, content.call_id)
+                fc_id = content.call_id
+                if (
+                    message is not None
+                    and not self._message_replays_provider_context(message)
+                    and content.additional_properties
+                ):
+                    live_fc_id = content.additional_properties.get("fc_id")
+                    if isinstance(live_fc_id, str) and live_fc_id:
+                        fc_id = live_fc_id
                 # OpenAI Responses API requires IDs to start with `fc_`
                 if not fc_id.startswith("fc_"):
                     fc_id = f"fc_{fc_id}"
@@ -1194,10 +1226,22 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         "output": self._to_local_shell_output_payload(content),
                     }
                 # call_id for the result needs to be the same as the call_id for the function call
+                output: str | list[dict[str, Any]] = content.result or ""
+                if content.items and any(item.type in ("data", "uri") for item in content.items):
+                    output_parts: list[dict[str, Any]] = []
+                    for item in content.items:
+                        if item.type == "text":
+                            output_parts.append({"type": "input_text", "text": item.text or ""})
+                        else:
+                            part = self._prepare_content_for_openai("user", item)
+                            if part:
+                                output_parts.append(part)
+                    if output_parts:
+                        output = output_parts
                 return {
                     "call_id": content.call_id,
                     "type": "function_call_output",
-                    "output": content.result if content.result is not None else "",
+                    "output": output,
                 }
             case "function_approval_request":
                 return {
@@ -1825,7 +1869,10 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
             case "response.created":
                 response_id = event.response.id
                 conversation_id = self._get_conversation_id(event.response, options.get("store"))
-                if event.response.status and event.response.status in ("in_progress", "queued"):
+                if event.response.status and event.response.status in (
+                    "in_progress",
+                    "queued",
+                ):
                     continuation_token = OpenAIContinuationToken(response_id=event.response.id)
             case "response.in_progress":
                 response_id = event.response.id
@@ -2003,7 +2050,11 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 Content.from_shell_tool_call(
                                     call_id=local_call_id,
                                     commands=[local_command] if local_command else [],
-                                    timeout_ms=getattr(getattr(event_item, "action", None), "timeout_ms", None),
+                                    timeout_ms=getattr(
+                                        getattr(event_item, "action", None),
+                                        "timeout_ms",
+                                        None,
+                                    ),
                                     status=getattr(event_item, "status", None),
                                     raw_representation=event_item,
                                 )
@@ -2208,8 +2259,8 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
 
 class OpenAIResponsesClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
     FunctionInvocationLayer[OpenAIResponsesOptionsT],
+    ChatMiddlewareLayer[OpenAIResponsesOptionsT],
     ChatTelemetryLayer[OpenAIResponsesOptionsT],
     RawOpenAIResponsesClient[OpenAIResponsesOptionsT],
     Generic[OpenAIResponsesOptionsT],

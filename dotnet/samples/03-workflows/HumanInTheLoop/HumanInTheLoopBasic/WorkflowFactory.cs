@@ -38,6 +38,8 @@ internal enum NumberSignal
 /// <summary>
 /// Executor that judges the guess and provides feedback.
 /// </summary>
+[SendsMessage(typeof(NumberSignal))]
+[YieldsOutput(typeof(string))]
 internal sealed class JudgeExecutor() : Executor<int>("Judge")
 {
     private readonly int _targetNumber;

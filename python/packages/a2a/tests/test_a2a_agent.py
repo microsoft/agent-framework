@@ -23,11 +23,14 @@ from a2a.types import Role as A2ARole
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
+    AgentSession,
+    BaseContextProvider,
     Content,
     Message,
+    SessionContext,
 )
 from agent_framework.a2a import A2AAgent
-from pytest import fixture, raises
+from pytest import fixture, mark, raises
 
 from agent_framework_a2a import A2AContinuationToken
 from agent_framework_a2a._agent import _get_uri_data  # type: ignore
@@ -143,6 +146,54 @@ def test_a2a_agent_initialization_with_client(mock_a2a_client: MockA2AClient) ->
     assert agent.id == "test-agent-123"
     assert agent.description == "A test agent"
     assert agent.client == mock_a2a_client
+
+
+def test_a2a_agent_defaults_name_description_from_agent_card(mock_a2a_client: MockA2AClient) -> None:
+    """Test A2AAgent defaults name and description from agent_card when not explicitly provided."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(agent_card=mock_card, client=mock_a2a_client, http_client=None)
+
+    assert agent.name == "Card Agent Name"
+    assert agent.description == "Card agent description"
+
+
+def test_a2a_agent_explicit_name_description_overrides_agent_card(mock_a2a_client: MockA2AClient) -> None:
+    """Test that explicit name/description take precedence over agent_card values."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(
+        name="Explicit Name",
+        description="Explicit description",
+        agent_card=mock_card,
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    assert agent.name == "Explicit Name"
+    assert agent.description == "Explicit description"
+
+
+def test_a2a_agent_empty_string_name_description_not_overridden(mock_a2a_client: MockA2AClient) -> None:
+    """Test that explicitly provided empty strings are not overridden by agent_card values."""
+    mock_card = MagicMock(spec=AgentCard)
+    mock_card.name = "Card Agent Name"
+    mock_card.description = "Card agent description"
+
+    agent = A2AAgent(
+        name="",
+        description="",
+        agent_card=mock_card,
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    assert agent.name == ""
+    assert agent.description == ""
 
 
 def test_a2a_agent_initialization_without_client_raises_error() -> None:
@@ -459,6 +510,23 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     assert result.parts[3].root.kind == "text"  # JSON text remains as text (no parsing)
 
 
+def test_prepare_message_for_a2a_forwards_context_id() -> None:
+    """Test conversion of Message preserves context_id without duplicating it in metadata."""
+
+    agent = A2AAgent(client=MagicMock(), _http_client=None)
+
+    message = Message(
+        role="user",
+        contents=[Content.from_text(text="Continue the task")],
+        additional_properties={"context_id": "ctx-123", "trace_id": "trace-456"},
+    )
+
+    result = agent._prepare_message_for_a2a(message)
+
+    assert result.context_id == "ctx-123"
+    assert result.metadata == {"trace_id": "trace-456"}
+
+
 def test_parse_contents_from_a2a_with_data_part() -> None:
     """Test conversion of A2A DataPart."""
 
@@ -561,6 +629,8 @@ def test_transport_negotiation_both_fail() -> None:
     # Create a mock agent card
     mock_agent_card = MagicMock(spec=AgentCard)
     mock_agent_card.url = "http://test-agent.example.com"
+    mock_agent_card.name = "Test Agent"
+    mock_agent_card.description = "A test agent"
 
     # Mock the factory to simulate both primary and fallback failures
     mock_factory = MagicMock()
@@ -781,6 +851,191 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
     assert response.continuation_token is None
     assert len(response.messages) == 1
     assert response.messages[0].text == "Poll result"
+
+
+# endregion
+
+
+# region Context Provider Tests
+
+
+class TrackingContextProvider(BaseContextProvider):
+    """A context provider that records when before_run and after_run are called."""
+
+    def __init__(self) -> None:
+        super().__init__(source_id="tracking-provider")
+        self.before_run_called = False
+        self.after_run_called = False
+        self.before_run_context: SessionContext | None = None
+        self.after_run_context: SessionContext | None = None
+
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        self.before_run_called = True
+        self.before_run_context = context
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: SessionContext,
+        state: dict[str, Any],
+    ) -> None:
+        self.after_run_called = True
+        self.after_run_context = context
+
+
+async def test_run_invokes_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that context providers are invoked during non-streaming run."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Hello from A2A")
+    session = agent.create_session()
+
+    response = await agent.run("Hello", session=session)
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+    assert response.text == "Hello from A2A"
+
+
+async def test_run_streaming_invokes_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that context providers are invoked during streaming run."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Streamed response")
+    session = agent.create_session()
+
+    stream = agent.run("Hello", stream=True, session=session)
+    updates = []
+    async for update in stream:
+        updates.append(update)
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+    assert len(updates) == 1
+    assert updates[0].text == "Streamed response"
+
+
+async def test_context_providers_receive_response(mock_a2a_client: MockA2AClient) -> None:
+    """Test that after_run providers can access the response via session context."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Response text")
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    assert provider.after_run_context is not None
+    assert provider.after_run_context.response is not None
+    assert provider.after_run_context.response.text == "Response text"
+
+
+async def test_context_providers_receive_input_messages(mock_a2a_client: MockA2AClient) -> None:
+    """Test that before_run providers can access input messages via session context."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Reply")
+    session = agent.create_session()
+
+    await agent.run("Hello world", session=session)
+
+    assert provider.before_run_context is not None
+    assert len(provider.before_run_context.input_messages) > 0
+    assert provider.before_run_context.input_messages[-1].text == "Hello world"
+
+
+async def test_run_without_context_providers(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run works normally when no context providers are configured."""
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Hello")
+
+    response = await agent.run("Hello")
+
+    assert response.text == "Hello"
+
+
+async def test_run_creates_session_for_providers_when_none_provided(mock_a2a_client: MockA2AClient) -> None:
+    """Test that a session is auto-created when context providers are configured but no session is passed."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Hello")
+
+    await agent.run("Hello")
+
+    assert provider.before_run_called
+    assert provider.after_run_called
+
+
+@mark.parametrize("messages", [None, []])
+async def test_run_raises_when_no_messages_and_no_continuation_token(
+    mock_a2a_client: MockA2AClient, messages: list[str] | None
+) -> None:
+    """Test that run() raises ValueError when messages is None/empty and no continuation_token is provided."""
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    with raises(ValueError, match="At least one message is required"):
+        await agent.run(messages)
+
+
+async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() does not raise when messages is None but a continuation_token is provided."""
+    task = Task(
+        id="task-cont",
+        context_id="ctx-cont",
+        status=TaskStatus(state=TaskState.completed, message=None),
+    )
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    token = A2AContinuationToken(task_id="task-cont", context_id="ctx-cont")
+    response = await agent.run(None, continuation_token=token)
+    assert response is not None
 
 
 # endregion

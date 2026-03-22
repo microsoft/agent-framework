@@ -9,7 +9,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -189,7 +190,7 @@ public static partial class AzureAIProjectChatClientExtensions
         ThrowIfInvalidAgentName(options.Name);
 
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(aiProjectClient, options.Name, cancellationToken).ConfigureAwait(false);
-        var agentVersion = agentRecord.Versions.Latest;
+        var agentVersion = agentRecord.GetLatestVersion();
 
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: !options.UseProvidedChatClientAsIs);
 
@@ -361,7 +362,7 @@ public static partial class AzureAIProjectChatClientExtensions
     {
         ClientResult protocolResponse = await aiProjectClient.Agents.GetAgentAsync(agentName, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
-        AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
+        AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
         return result ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
     }
 
@@ -370,11 +371,11 @@ public static partial class AzureAIProjectChatClientExtensions
     /// </summary>
     private static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
     {
-        BinaryData serializedOptions = ModelReaderWriter.Write(creationOptions, s_modelWriterOptionsWire, AzureAIProjectsContext.Default);
+        BinaryData serializedOptions = ModelReaderWriter.Write(creationOptions, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
         BinaryContent content = BinaryContent.Create(serializedOptions);
         ClientResult protocolResponse = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, content, foundryFeatures: null, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
-        AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
+        AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
         return result ?? throw new InvalidOperationException($"Failed to create agent version for agent '{agentName}'.");
     }
 
@@ -485,7 +486,7 @@ public static partial class AzureAIProjectChatClientExtensions
         => AsChatClientAgent(
             AIProjectClient,
             agentRecord,
-            CreateChatClientAgentOptions(agentRecord.Versions.Latest, new ChatOptions() { Tools = tools }, requireInvocableTools),
+            CreateChatClientAgentOptions(agentRecord.GetLatestVersion(), new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             services);
 

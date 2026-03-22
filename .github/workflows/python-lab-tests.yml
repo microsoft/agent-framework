@@ -76,6 +76,9 @@ jobs:
       - name: Run lab tests
         run: cd packages/lab && uv run poe test
 
+      - name: Run resource-intensive lab tests
+        run: cd packages/lab && uv run pytest -m "resource_intensive and not integration" --junitxml=test-results-resource-intensive.xml
+
       - name: Run lab lint
         run: cd packages/lab && uv run poe lint
 

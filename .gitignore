@@ -205,6 +205,9 @@ WARP.md
 **/memory-bank/
 **/projectBrief.md
 **/tmpclaude*
+# Dependency-bound validation reports
+python/scripts/dependency-*-results.json
+python/scripts/dependencies/dependency-*-results.json
 
 # Azurite storage emulator files
 */__azurite_db_blob__.json*
