@@ -74,6 +74,7 @@ from .._types import (
     UsageDetails,
     detect_media_type_from_base64,
     prepend_instructions_to_messages,
+    normalize_function_call_arguments,
     validate_tool_mode,
 )
 from ..exceptions import (
@@ -1192,12 +1193,17 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                 if not fc_id.startswith("fc_"):
                     fc_id = f"fc_{fc_id}"
 
+                args = (
+                    json.dumps(content.arguments)
+                    if isinstance(content.arguments, Mapping)
+                    else (content.arguments or "")
+                )
                 function_call_obj = {
                     "call_id": content.call_id,
                     "id": fc_id,
                     "type": "function_call",
                     "name": content.name,
-                    "arguments": content.arguments,
+                    "arguments": args,
                 }
                 if status := content.additional_properties.get("status"):
                     function_call_obj["status"] = status
@@ -1244,10 +1250,12 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                     "output": output,
                 }
             case "function_approval_request":
+                fc_args = content.function_call.arguments  # type: ignore[union-attr]
+                fc_args_str = json.dumps(fc_args) if isinstance(fc_args, Mapping) else (fc_args or "")
                 return {
                     "type": "mcp_approval_request",
                     "id": content.id,  # type: ignore[union-attr]
-                    "arguments": content.function_call.arguments,  # type: ignore[union-attr]
+                    "arguments": fc_args_str,
                     "name": content.function_call.name,  # type: ignore[union-attr]
                     "server_label": content.function_call.additional_properties.get("server_label")  # type: ignore[union-attr]
                     if content.function_call.additional_properties  # type: ignore[union-attr]
@@ -1523,7 +1531,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                         Content.from_function_call(
                             call_id=item.call_id,
                             name=item.name,
-                            arguments=item.arguments,
+                            arguments=normalize_function_call_arguments(item.arguments),
                             additional_properties={"fc_id": item.id, "status": item.status},
                             raw_representation=item,
                         )
@@ -1535,7 +1543,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                             function_call=Content.from_function_call(
                                 call_id=item.id,
                                 name=item.name,
-                                arguments=item.arguments,
+                                arguments=normalize_function_call_arguments(item.arguments),
                                 additional_properties={"server_label": item.server_label},
                                 raw_representation=item,
                             ),
@@ -1915,7 +1923,7 @@ class RawOpenAIResponsesClient(  # type: ignore[misc]
                                 function_call=Content.from_function_call(
                                     call_id=event_item.id,
                                     name=event_item.name,
-                                    arguments=event_item.arguments,
+                                    arguments=normalize_function_call_arguments(event_item.arguments),
                                     additional_properties={"server_label": event_item.server_label},
                                     raw_representation=event_item,
                                 ),

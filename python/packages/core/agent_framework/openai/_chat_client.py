@@ -49,6 +49,7 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
+    normalize_function_call_arguments,
 )
 from ..exceptions import (
     ChatClientException,
@@ -556,7 +557,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     fcc = Content.from_function_call(
                         call_id=tool.id if tool.id else "",
                         name=tool.function.name if tool.function.name else "",
-                        arguments=tool.function.arguments if tool.function.arguments else "",
+                        arguments=normalize_function_call_arguments(
+                            tool.function.arguments if tool.function.arguments else ""
+                        ),
                         raw_representation=tool.function,
                     )
                     resp.append(fcc)

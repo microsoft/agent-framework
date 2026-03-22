@@ -1511,6 +1511,31 @@ class Content:
         return self.arguments  # type: ignore[return-value]
 
 
+def normalize_function_call_arguments(
+    arguments: str | Mapping[str, Any] | None,
+) -> Mapping[str, Any] | str | None:
+    """Normalize function-call arguments to a mapping when the payload is a JSON object.
+
+    OpenAI chat and responses parsers return function-call arguments as raw JSON
+    strings, while Anthropic already returns parsed dicts.  Eagerly normalizing
+    to a dict avoids a second ``json.loads`` in ``parse_arguments`` that would
+    re-interpret ``\\uXXXX`` escape sequences as Unicode characters — the root
+    cause of escape-corruption bugs when editing source files that contain
+    Python/JS-style ``\\u`` escapes.
+    """
+    if arguments is None or isinstance(arguments, Mapping):
+        return arguments
+    if not isinstance(arguments, str) or not arguments.strip():
+        return arguments
+    try:
+        parsed = json.loads(arguments)
+        if isinstance(parsed, dict):
+            return parsed
+        return arguments
+    except (json.JSONDecodeError, TypeError):
+        return arguments
+
+
 def _combine_additional_props(
     self_additional_properties: dict[str, Any], other_additional_properties: dict[str, Any]
 ) -> dict[str, Any]:

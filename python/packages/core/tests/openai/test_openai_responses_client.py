@@ -1037,7 +1037,7 @@ def test_response_content_creation_with_function_call() -> None:
     function_call = response.messages[0].contents[0]
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
-    assert function_call.arguments == '{"location": "Seattle"}'
+    assert function_call.arguments == {"location": "Seattle"}
 
 
 def test_prepare_content_for_opentool_approval_response() -> None:
@@ -3581,7 +3581,7 @@ def test_parse_response_from_openai_function_call_includes_status() -> None:
     assert function_call.type == "function_call"
     assert function_call.call_id == "call_123"
     assert function_call.name == "get_weather"
-    assert function_call.arguments == '{"location": "Seattle"}'
+    assert function_call.arguments == {"location": "Seattle"}
     # Verify status is included in additional_properties
     assert function_call.additional_properties is not None
     assert function_call.additional_properties.get("status") == "completed"

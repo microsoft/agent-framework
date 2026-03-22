@@ -141,6 +141,7 @@ from ._types import (
     detect_media_type_from_base64,
     map_chat_to_agent_update,
     merge_chat_options,
+    normalize_function_call_arguments,
     normalize_messages,
     normalize_tools,
     prepend_instructions_to_messages,
