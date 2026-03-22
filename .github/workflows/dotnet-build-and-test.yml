@@ -281,7 +281,7 @@ jobs:
       # Generate test reports and check coverage
       - name: Generate test reports
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.3
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.4
         with:
           reports: "./TestResults/Coverage/**/*.cobertura.xml"
           targetdir: "./TestResults/Reports"
