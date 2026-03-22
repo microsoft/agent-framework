@@ -9,8 +9,6 @@ typing.get_type_hints() before passing them to Pydantic's create_model.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel
 
 from agent_framework import tool
@@ -101,9 +99,7 @@ def test_tool_with_unresolvable_forward_ref():
     # the forward reference, exercising the except-branch fallback.
     ns: dict = {}
     exec(
-        "def greet(name: str = 'world') -> str:\n"
-        "    '''Greet someone.'''\n"
-        "    return f'Hello {name}'\n",
+        "def greet(name: str = 'world') -> str:\n    '''Greet someone.'''\n    return f'Hello {name}'\n",
         ns,
     )
     func = ns["greet"]
