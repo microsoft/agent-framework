@@ -25,15 +25,15 @@ public class ResponsesAgentExtensionCreateTests
     public async Task AsAIAgent_WithModelAndInstructions_CreatesChatClientAgentAndRunsAsync()
     {
         // Arrange
-        const string agentName = "ResponsesAgentExtensionSimple";
-        const string agentDescription = "Integration test agent created from AIProjectClient.AsAIAgent(model, instructions).";
-        const string verificationToken = "integration-extension-ok";
+        const string AgentName = "ResponsesAgentExtensionSimple";
+        const string AgentDescription = "Integration test agent created from AIProjectClient.AsAIAgent(model, instructions).";
+        const string VerificationToken = "integration-extension-ok";
 
         ChatClientAgent agent = this._client.AsAIAgent(
             model: Model,
-            instructions: $"You are a helpful assistant. When asked for verification, reply with exactly '{verificationToken}'.",
-            name: agentName,
-            description: agentDescription);
+            instructions: $"You are a helpful assistant. When asked for verification, reply with exactly '{VerificationToken}'.",
+            name: AgentName,
+            description: AgentDescription);
 
         AgentSession session = await agent.CreateSessionAsync();
 
@@ -44,11 +44,11 @@ public class ResponsesAgentExtensionCreateTests
 
             // Assert
             Assert.NotNull(agent);
-            Assert.Equal(agentName, agent.Name);
-            Assert.Equal(agentDescription, agent.Description);
+            Assert.Equal(AgentName, agent.Name);
+            Assert.Equal(AgentDescription, agent.Description);
             Assert.Same(this._client, agent.GetService<AIProjectClient>());
             Assert.NotNull(agent.GetService<IChatClient>());
-            Assert.Contains(verificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(VerificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -60,7 +60,7 @@ public class ResponsesAgentExtensionCreateTests
     public async Task AsAIAgent_WithOptions_CreatesChatClientAgentAndRunsAsync()
     {
         // Arrange
-        const string verificationToken = "integration-options-ok";
+        const string VerificationToken = "integration-options-ok";
         ChatClientAgentOptions options = new()
         {
             Name = "ResponsesAgentExtensionOptions",
@@ -68,13 +68,13 @@ public class ResponsesAgentExtensionCreateTests
             ChatOptions = new ChatOptions
             {
                 ModelId = Model,
-                Instructions = $"You are a helpful assistant. When asked for verification, reply with exactly '{verificationToken}'.",
+                Instructions = $"You are a helpful assistant. When asked for verification, reply with exactly '{VerificationToken}'.",
             },
         };
 
         ChatClientAgent agent = this._client.AsAIAgent(options);
         string conversationId = (await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync()).Value.Id;
-        ChatClientAgentSession session = (ChatClientAgentSession)await ChatClientAgent.CreateSessionAsync(conversationId);
+        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync(conversationId);
 
         try
         {
@@ -86,7 +86,7 @@ public class ResponsesAgentExtensionCreateTests
             Assert.Equal(options.Name, agent.Name);
             Assert.Equal(options.Description, agent.Description);
             Assert.Same(this._client, agent.GetService<AIProjectClient>());
-            Assert.Contains(verificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(VerificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

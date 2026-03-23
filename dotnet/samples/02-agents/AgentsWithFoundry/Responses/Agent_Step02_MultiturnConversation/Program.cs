@@ -22,7 +22,7 @@ ProjectConversation conversation = await aiProjectClient
     .GetProjectConversationsClient()
     .CreateProjectConversationAsync();
 
-AgentSession session = await ChatClientAgent.CreateSessionAsync(conversation.Id);
+AgentSession session = await agent.CreateSessionAsync(conversation.Id);
 
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));

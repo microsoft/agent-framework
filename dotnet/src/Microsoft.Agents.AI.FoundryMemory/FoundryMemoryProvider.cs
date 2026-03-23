@@ -87,10 +87,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
-        session =>
-        {
-            return stateInitializer(session) ?? throw new InvalidOperationException("State initializer must return a non-null state.");
-        };
+        session => stateInitializer(session) ?? throw new InvalidOperationException("State initializer must return a non-null state.");
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)

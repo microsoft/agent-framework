@@ -26,7 +26,7 @@ ProjectConversation conversation = await aiProjectClient
     .GetProjectOpenAIClient()
     .GetProjectConversationsClient()
     .CreateProjectConversationAsync();
-ChatClientAgentSession session = (ChatClientAgentSession)await ChatClientAgent.CreateSessionAsync(conversation.Id);
+ChatClientAgentSession session = (ChatClientAgentSession)await jokerAgent.CreateSessionAsync(conversation.Id);
 
 Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", session));
 Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));
