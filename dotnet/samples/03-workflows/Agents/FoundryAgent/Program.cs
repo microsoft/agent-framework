@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
@@ -74,9 +75,13 @@ public static class Program
         AIProjectClient aiProjectClient,
         string model)
     {
-        return await aiProjectClient.CreateAIAgentAsync(
-            name: $"{targetLanguage} Translator",
-            model: model,
-            instructions: $"You are a translation assistant that translates the provided text to {targetLanguage}.");
+        AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+            $"{targetLanguage} Translator",
+            new AgentVersionCreationOptions(
+                new PromptAgentDefinition(model: model)
+                {
+                    Instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.",
+                }));
+        return aiProjectClient.AsAIAgent(agentVersion);
     }
 }

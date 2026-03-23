@@ -5,6 +5,7 @@
 // The sample first shows how to use MCP tools with auto approval, and then how to set up a tool that requires approval before it can be invoked and how to approve such a tool.
 
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -32,17 +33,14 @@ var mcpTool = new HostedMcpServerTool(
 };
 
 // Create a server side agent with the mcp tool, and expose it as an AIAgent.
-AIAgent agent = await aiProjectClient.CreateAIAgentAsync(
-    model: model,
-    options: new()
-    {
-        Name = "MicrosoftLearnAgent",
-        ChatOptions = new()
+AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "MicrosoftLearnAgent",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(model: model)
         {
             Instructions = "You answer questions by searching the Microsoft Learn content only.",
-            Tools = [mcpTool]
-        },
-    });
+        }));
+AIAgent agent = aiProjectClient.AsAIAgent(agentVersion, tools: [mcpTool]);
 
 // You can then invoke the agent like any other AIAgent.
 AgentSession session = await agent.CreateSessionAsync();
@@ -65,17 +63,14 @@ var mcpToolWithApproval = new HostedMcpServerTool(
 };
 
 // Create an agent with the MCP tool that requires approval.
-AIAgent agentWithRequiredApproval = await aiProjectClient.CreateAIAgentAsync(
-    model: model,
-    options: new()
-    {
-        Name = "MicrosoftLearnAgentWithApproval",
-        ChatOptions = new()
+AgentVersion agentVersionWithApproval = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "MicrosoftLearnAgentWithApproval",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(model: model)
         {
             Instructions = "You answer questions by searching the Microsoft Learn content only.",
-            Tools = [mcpToolWithApproval]
-        },
-    });
+        }));
+AIAgent agentWithRequiredApproval = aiProjectClient.AsAIAgent(agentVersionWithApproval, tools: [mcpToolWithApproval]);
 
 // You can then invoke the agent like any other AIAgent.
 // For simplicity, we are assuming here that only mcp tool approvals are pending.
