@@ -233,24 +233,11 @@ class GeminiChatClient(
         stream: bool = False,
         **kwargs: Any,
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
-        model_id = options.get("model_id") or self.model_id
-        if not model_id:
-            raise ValueError(
-                "Gemini model_id is required. Set via model_id parameter or GEMINI_CHAT_MODEL_ID environment variable."
-            )
-
-        system_instruction, contents = self._prepare_gemini_messages(messages)
-
-        if call_instructions := options.get("instructions"):
-            system_instruction = (
-                f"{call_instructions}\n{system_instruction}" if system_instruction else call_instructions
-            )
-
-        config = self._prepare_config(options, system_instruction)
-
         if stream:
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                validated = await self._validate_options(options)
+                model_id, contents, config = self._prepare_request(messages, validated)
                 async for chunk in await self._genai_client.aio.models.generate_content_stream(
                     model=model_id,
                     contents=contents,  # type: ignore[arg-type]
@@ -258,13 +245,49 @@ class GeminiChatClient(
                 ):
                     yield self._process_chunk(chunk)
 
-            return self._build_response_stream(_stream())
+            return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         async def _get_response() -> ChatResponse:
+            validated = await self._validate_options(options)
+            model_id, contents, config = self._prepare_request(messages, validated)
             raw = await self._genai_client.aio.models.generate_content(model=model_id, contents=contents, config=config)  # type: ignore[arg-type]
-            return self._process_generate_response(raw)
+            return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
         return _get_response()
+
+    def _prepare_request(
+        self,
+        messages: Sequence[Message],
+        options: Mapping[str, Any],
+    ) -> tuple[str, list[types.Content], types.GenerateContentConfig]:
+        """Resolve the model ID, convert messages to Gemini contents, and build the generation config.
+
+        Call this after awaiting ``_validate_options`` so that tools and other options are
+        fully normalized before the request is assembled.
+
+        Args:
+            messages: The conversation history as framework Message objects.
+            options: Validated and normalized chat options.
+
+        Returns:
+            A tuple of the resolved model ID, the Gemini contents list, and the generation config.
+
+        Raises:
+            ValueError: If no model ID is set on the options or the client instance.
+        """
+        model_id = options.get("model_id") or self.model_id
+        if not model_id:
+            raise ValueError(
+                "Gemini model_id is required. Set via model_id parameter or GEMINI_CHAT_MODEL_ID environment variable."
+            )
+
+        system_instruction, contents = self._prepare_gemini_messages(messages)
+        if call_instructions := options.get("instructions"):
+            system_instruction = (
+                f"{call_instructions}\n{system_instruction}" if system_instruction else call_instructions
+            )
+
+        return model_id, contents, self._prepare_config(options, system_instruction)
 
     # region Message preparation
 
@@ -541,11 +564,19 @@ class GeminiChatClient(
 
     # region Response parsing
 
-    def _process_generate_response(self, response: types.GenerateContentResponse) -> ChatResponse:
+    def _process_generate_response(
+        self,
+        response: types.GenerateContentResponse,
+        *,
+        response_format: type[BaseModel] | None = None,
+    ) -> ChatResponse:
         """Convert a Gemini generate_content response to a framework ChatResponse.
 
         Args:
             response: The raw ``GenerateContentResponse`` from the Gemini API.
+            response_format: Optional Pydantic model type for structured output parsing.
+                When provided, the response text is parsed into the given model and
+                made available via ``ChatResponse.value``.
 
         Returns:
             A ``ChatResponse`` with parsed messages, usage details, finish reason, and model ID.
@@ -561,6 +592,7 @@ class GeminiChatClient(
             finish_reason=self._map_finish_reason(
                 candidate.finish_reason.name if candidate and candidate.finish_reason else None
             ),
+            response_format=response_format,
             raw_representation=response,
         )
 

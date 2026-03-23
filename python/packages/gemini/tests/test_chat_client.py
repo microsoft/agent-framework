@@ -543,16 +543,39 @@ async def test_thinking_config_level() -> None:
 
 
 async def test_response_format_sets_json_mime_type() -> None:
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="{}")]))
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-        options={"response_format": "json"},
+        options={"response_format": Reply},
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
+
+
+async def test_response_format_populates_value_on_chat_response() -> None:
+    """When response_format is a Pydantic model, ChatResponse.value must be parsed from the response text."""
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text='{"text": "hello"}')]))
+
+    response = await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"response_format": Reply},
+    )
+
+    assert response.value == Reply(text="hello")
 
 
 async def test_response_schema_added_to_config() -> None:
@@ -562,12 +585,39 @@ async def test_response_schema_added_to_config() -> None:
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-        options={"response_format": "json", "response_schema": schema},
+        options={"response_schema": schema},
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
     assert config.response_schema == schema
+
+
+async def test_streaming_response_format_passed_to_build_response_stream() -> None:
+    """Verifies that response_format is forwarded to _build_response_stream when streaming
+    so that structured output parsing works correctly on the final assembled response."""
+    from unittest.mock import patch
+
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    client, mock = _make_gemini_client()
+    chunks = [_make_response([_make_part(text='{"text": "hello"}')], finish_reason="STOP")]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    with patch.object(client, "_build_response_stream", wraps=client._build_response_stream) as spy:
+        stream = client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+            options={"response_format": Reply},
+            stream=True,
+        )
+        async for _ in stream:
+            pass
+
+    _, kwargs = spy.call_args
+    assert kwargs.get("response_format") is Reply
 
 
 # tool calling

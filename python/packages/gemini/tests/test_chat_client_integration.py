@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
 from agent_framework import Content, FunctionTool, Message
+from pydantic import BaseModel
 
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
 
@@ -132,27 +132,21 @@ async def test_integration_code_execution() -> None:
 @pytest.mark.integration
 @skip_if_no_api_key
 async def test_integration_structured_output() -> None:
-    """Structured output with a response schema returns valid JSON matching the schema."""
-    options: GeminiChatOptions = {
-        "response_format": "json",
-        "response_schema": {
-            "type": "object",
-            "properties": {"answer": {"type": "string"}},
-            "required": ["answer"],
-        },
-    }
+    """Structured output with a Pydantic response_format returns a parsed value via response.value."""
+
+    class Answer(BaseModel):
+        answer: str
+
     client = GeminiChatClient(model_id=_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is the capital of Germany?")])],
-        options=options,
+        options={"response_format": Answer},
     )
 
-    assert response.messages
-    text = response.messages[0].text
-    assert text
-    parsed = json.loads(text)
-    assert "answer" in parsed
+    assert response.value is not None
+    assert isinstance(response.value, Answer)
+    assert response.value.answer
 
 
 @pytest.mark.flaky
