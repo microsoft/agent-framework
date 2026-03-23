@@ -1,19 +1,4 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/04_magentic_one.py
-
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen MagenticOneGroupChat vs Agent Framework MagenticBuilder.
-
-Demonstrates orchestrated multi-agent workflows with a central coordinator
-managing specialized agents for complex tasks.
-"""
 
 import asyncio
 import json
@@ -26,6 +11,12 @@ from agent_framework import (
 )
 from agent_framework.orchestrations import MagenticProgressLedger
 from dotenv import load_dotenv
+
+"""AutoGen MagenticOneGroupChat vs Agent Framework MagenticBuilder.
+
+Demonstrates orchestrated multi-agent workflows with a central coordinator
+managing specialized agents for complex tasks.
+"""
 
 # Load environment variables from .env file
 load_dotenv()
