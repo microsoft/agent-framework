@@ -14,9 +14,9 @@ from openai import AsyncAzureOpenAI
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with Code Interpreter and Files Example
+Foundry Chat Client with Code Interpreter and Files Example
 
-This sample demonstrates using get_code_interpreter_tool() with Azure OpenAI Responses
+This sample demonstrates using get_code_interpreter_tool() with Responses on Foundry
 for Python code execution and data analysis with uploaded files.
 """
 
@@ -24,7 +24,7 @@ for Python code execution and data analysis with uploaded files.
 
 
 async def create_sample_file_and_upload(openai_client: AsyncAzureOpenAI) -> tuple[str, str]:
-    """Create a sample CSV file and upload it to Azure OpenAI."""
+    """Create a sample CSV file and upload it for Foundry code interpreter use."""
     csv_data = """name,department,salary,years_experience
 Alice Johnson,Engineering,95000,5
 Bob Smith,Sales,75000,3
@@ -39,8 +39,8 @@ Frank Wilson,Engineering,88000,6
         temp_file.write(csv_data)
         temp_file_path = temp_file.name
 
-    # Upload file to Azure OpenAI
-    print("Uploading file to Azure OpenAI...")
+    # Upload file for the code interpreter tool
+    print("Uploading file for code interpreter...")
     with open(temp_file_path, "rb") as file:
         uploaded_file = await openai_client.files.create(
             file=file,
@@ -63,9 +63,9 @@ async def cleanup_files(openai_client: AsyncAzureOpenAI, temp_file_path: str, fi
 
 
 async def main() -> None:
-    print("=== Azure OpenAI Code Interpreter with File Upload ===")
+    print("=== Foundry Chat Client with Code Interpreter and File Upload ===")
 
-    # Initialize Azure OpenAI client for file operations
+    # Initialize the underlying OpenAI client for file operations
     credential = AzureCliCredential()
 
     async def get_token():
@@ -79,7 +79,7 @@ async def main() -> None:
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
-    # Create agent using Azure OpenAI Responses client
+    # Create agent using FoundryChatClient
     client = FoundryChatClient(credential=credential)
 
     # Create code interpreter tool with file access

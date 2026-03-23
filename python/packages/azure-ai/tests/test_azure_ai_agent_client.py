@@ -102,6 +102,15 @@ def create_test_azure_ai_chat_client(
     return client
 
 
+def test_init_emits_updated_deprecation_warning(mock_agents_client: MagicMock) -> None:
+    """Test that construction emits the updated class deprecation warning."""
+    with pytest.deprecated_call(match="V1 Agents Service API and has no direct replacement"):
+        AzureAIAgentClient(
+            agents_client=mock_agents_client,
+            agent_id="test-agent",
+        )
+
+
 def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
     """Test AzureAISettings initialization."""
     settings = load_settings(AzureAISettings, env_prefix="AZURE_AI_")

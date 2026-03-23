@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 
 from agent_framework._middleware import ChatMiddlewareLayer
@@ -40,12 +40,15 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from agent_framework import Agent, BaseContextProvider
     from agent_framework._middleware import (
         ChatMiddleware,
         ChatMiddlewareCallable,
         FunctionMiddleware,
         FunctionMiddlewareCallable,
+        MiddlewareTypes,
     )
+    from agent_framework._tools import ToolTypes
 
 
 class FoundryAgentSettings(TypedDict, total=False):
@@ -184,6 +187,47 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         if self.agent_version:
             ref["version"] = self.agent_version
         return ref
+
+    @override
+    def as_agent(
+        self,
+        *,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        context_providers: Sequence[BaseContextProvider] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        **kwargs: Any,
+    ) -> Agent[FoundryAgentOptionsT]:
+        """Create a FoundryAgent that reuses this client's Foundry configuration."""
+        from ._foundry_agent import FoundryAgent
+
+        function_tools = cast(
+            FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None,
+            tools,
+        )
+
+        return cast(
+            "Agent[FoundryAgentOptionsT]",
+            FoundryAgent(
+                project_client=self.project_client,
+                agent_name=self.agent_name,
+                agent_version=self.agent_version,
+                tools=function_tools,
+                context_providers=context_providers,
+                middleware=middleware,
+                client_type=cast(type[RawFoundryAgentChatClient], self.__class__),
+                id=id,
+                name=self.agent_name if name is None else name,
+                description=description,
+                instructions=instructions,
+                default_options=default_options,
+                **kwargs,
+            ),
+        )
 
     @override
     async def _prepare_options(

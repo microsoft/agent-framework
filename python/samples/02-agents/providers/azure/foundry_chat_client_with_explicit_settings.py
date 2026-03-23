@@ -15,10 +15,10 @@ from pydantic import Field
 load_dotenv()
 
 """
-Azure OpenAI Chat Client with Explicit Settings Example
+Foundry Chat Client with Explicit Settings Example
 
-This sample demonstrates creating Azure OpenAI Chat Client with explicit configuration
-settings rather than relying on environment variable defaults.
+This sample demonstrates creating FoundryChatClient with explicit project endpoint and
+model settings rather than relying on environment variable defaults.
 """
 
 
@@ -35,13 +35,13 @@ def get_weather(
 
 
 async def main() -> None:
-    print("=== Azure Chat Client with Explicit Settings ===")
+    print("=== Foundry Chat Client with Explicit Settings ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     _client = FoundryChatClient(
         model=os.environ["FOUNDRY_MODEL"],
-        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         credential=AzureCliCredential(),
     )
     agent = Agent(

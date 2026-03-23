@@ -15,9 +15,9 @@ from pydantic import Field
 load_dotenv()
 
 """
-Azure OpenAI Chat Client with Function Tools Example
+Foundry Chat Client with Function Tools Example
 
-This sample demonstrates function tool integration with Azure OpenAI Chat Client,
+This sample demonstrates function tool integration with FoundryChatClient,
 showing both agent-level and query-level tool configuration patterns.
 """
 
@@ -132,7 +132,7 @@ async def mixed_tools_example() -> None:
 
 
 async def main() -> None:
-    print("=== Azure Chat Client Agent with Function Tools Examples ===\n")
+    print("=== Foundry Chat Client with Function Tools Examples ===\n")
 
     await tools_on_agent_level()
     await tools_on_run_level()

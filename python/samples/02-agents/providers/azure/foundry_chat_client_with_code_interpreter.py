@@ -13,16 +13,16 @@ from openai.types.responses.response_code_interpreter_tool_call import ResponseC
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with Code Interpreter Example
+Foundry Chat Client with Code Interpreter Example
 
-This sample demonstrates using get_code_interpreter_tool() with Azure OpenAI Responses
+This sample demonstrates using get_code_interpreter_tool() with FoundryChatClient
 for Python code execution and mathematical problem solving.
 """
 
 
 async def main() -> None:
-    """Example showing how to use the code interpreter tool with Azure OpenAI Responses."""
-    print("=== Azure OpenAI Responses Agent with Code Interpreter Example ===")
+    """Example showing how to use the code interpreter tool with FoundryChatClient."""
+    print("=== Foundry Chat Client with Code Interpreter Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.

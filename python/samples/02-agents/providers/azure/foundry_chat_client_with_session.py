@@ -14,9 +14,9 @@ from pydantic import Field
 load_dotenv()
 
 """
-Azure OpenAI Chat Client with Session Management Example
+Foundry Chat Client with Session Management Example
 
-This sample demonstrates session management with Azure OpenAI Chat Client, comparing
+This sample demonstrates session management with FoundryChatClient, comparing
 automatic session creation with explicit session management for persistent context.
 """
 
@@ -96,7 +96,7 @@ async def example_with_session_persistence() -> None:
 
 
 async def example_with_existing_session_messages() -> None:
-    """Example showing how to work with existing session messages for Azure."""
+    """Example showing how to work with existing session messages for Foundry-backed agents."""
     print("=== Existing Session Messages Example ===")
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
@@ -150,7 +150,7 @@ async def example_with_existing_session_messages() -> None:
 
 
 async def main() -> None:
-    print("=== Azure Chat Client Agent Session Management Examples ===\n")
+    print("=== Foundry Chat Client Session Management Examples ===\n")
 
     await example_with_automatic_session_creation()
     await example_with_session_persistence()

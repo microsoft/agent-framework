@@ -28,14 +28,15 @@ from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
 
-from ._client import AzureAIClient, AzureAIProjectAgentOptions
+from ._client import AzureAIClient, AzureAIProjectAgentOptions  # pyright: ignore[reportDeprecated]
 from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
@@ -55,11 +56,12 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated("AzureAIProjectAgentProvider is deprecated. Use FoundryAgent instead.")
 class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
-    """Provider for Azure AI Agent Service (Responses API).
+    """Deprecated provider for Azure AI Agent Service (Responses API).
 
-    This provider allows you to create, retrieve, and manage Azure AI agents
-    using the AIProjectClient from the Azure AI Projects SDK.
+    This provider is deprecated. Use ``FoundryAgent`` instead to connect to
+    pre-configured agents in Foundry.
 
     Examples:
         Using with explicit AIProjectClient:
@@ -384,7 +386,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a Agent.")
 
-        client = AzureAIClient(
+        client = AzureAIClient(  # pyright: ignore[reportDeprecated]
             project_client=self._project_client,
             agent_name=details.name,
             agent_version=details.version,

@@ -12,9 +12,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with local Model Context Protocol (MCP) Example
+Foundry Chat Client with Local Model Context Protocol (MCP) Example
 
-This sample demonstrates integration of Azure OpenAI Responses Client with local Model Context Protocol (MCP)
+This sample demonstrates integration of FoundryChatClient with local Model Context Protocol (MCP)
 servers.
 """
 
@@ -24,19 +24,18 @@ servers.
 MCP_NAME = os.environ.get("MCP_NAME", "Microsoft Learn MCP")  # example name
 MCP_URL = os.environ.get("MCP_URL", "https://learn.microsoft.com/api/mcp")  # example endpoint
 
-# Environment variables for Azure OpenAI Responses authentication
-# AZURE_OPENAI_ENDPOINT="<your-azure openai-endpoint>"
+# Environment variables for FoundryChatClient authentication
+# FOUNDRY_PROJECT_ENDPOINT="<your-foundry-project-endpoint>"
 # FOUNDRY_MODEL="<your-deployment-name>"
-# AZURE_OPENAI_API_VERSION="<your-api-version>"  # e.g. "2025-03-01-preview"
 
 
 async def main():
-    """Example showing local MCP tools for a Azure OpenAI Responses Agent."""
+    """Example showing local MCP tools for a Foundry Chat Client agent."""
     # AuthN: use Azure CLI
     credential = AzureCliCredential()
 
-    # Build an agent backed by Azure OpenAI Responses
-    # (endpoint/deployment/api_version can also come from env vars above)
+    # Build an agent backed by FoundryChatClient
+    # (project endpoint and model can also come from env vars above)
     responses_client = FoundryChatClient(
         credential=credential,
     )

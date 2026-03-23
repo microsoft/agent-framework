@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.azure import RawFoundryAgentChatClient
+from agent_framework.azure import FoundryAgent, RawFoundryAgentChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -24,8 +24,6 @@ Environment variables:
 
 async def main() -> None:
     # Option 1: Default — full middleware on both agent and client
-    from agent_framework.azure import FoundryAgent
-
     agent = FoundryAgent(
         project_endpoint="https://your-project.services.ai.azure.com",
         agent_name="my-agent",
@@ -47,6 +45,7 @@ async def main() -> None:
     print(f"Raw client: {result}\n")
 
     # Option 3: Composition — use Agent(client=...) directly
+    # this will not run the checks that the `FoundryAgent` does on things like tools.
     client = RawFoundryAgentChatClient(
         project_endpoint="https://your-project.services.ai.azure.com",
         agent_name="my-agent",

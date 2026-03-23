@@ -12,10 +12,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with Hosted MCP Example
+Foundry Chat Client with Hosted MCP Example
 
 This sample demonstrates integrating hosted Model Context Protocol (MCP) tools with
-Azure OpenAI Responses Client, including user approval workflows for function call security.
+FoundryChatClient, including user approval workflows for function call security.
 """
 
 if TYPE_CHECKING:
@@ -253,7 +253,7 @@ async def run_hosted_mcp_with_session_streaming() -> None:
 
 
 async def main() -> None:
-    print("=== OpenAI Responses Client Agent with Hosted Mcp Tools Examples ===\n")
+    print("=== Foundry Chat Client with Hosted MCP Examples ===\n")
 
     await run_hosted_mcp_without_approval()
     await run_hosted_mcp_without_session_and_specific_approval()

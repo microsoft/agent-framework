@@ -12,14 +12,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with File Search Example
+Foundry Chat Client with File Search Example
 
-This sample demonstrates using get_file_search_tool() with Azure OpenAI Responses Client
+This sample demonstrates using get_file_search_tool() with FoundryChatClient
 for direct document-based question answering and information retrieval.
 
 Prerequisites:
 - Set environment variables:
-  - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint URL
+  - FOUNDRY_PROJECT_ENDPOINT: Your Foundry project endpoint URL
   - FOUNDRY_MODEL: Your Responses API deployment name
 - Authenticate via 'az login' for AzureCliCredential
 """
@@ -52,9 +52,9 @@ async def delete_vector_store(client: FoundryChatClient, file_id: str, vector_st
 
 
 async def main() -> None:
-    print("=== Azure OpenAI Responses Client with File Search Example ===\n")
+    print("=== Foundry Chat Client with File Search Example ===\n")
 
-    # Initialize Responses client
+    # Initialize the Foundry chat client
     # Make sure you're logged in via 'az login' before running this sample
     client = FoundryChatClient(credential=AzureCliCredential())
 

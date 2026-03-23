@@ -16,17 +16,17 @@ This folder contains examples demonstrating different ways to use Azure AI Found
 
 | File | Description |
 |------|-------------|
-| [`foundry_chat_client.py`](foundry_chat_client.py) | Azure OpenAI Responses Client with Foundry Project Example |
-| [`foundry_chat_client_basic.py`](foundry_chat_client_basic.py) | Azure OpenAI Chat Client Basic Example |
-| [`foundry_chat_client_code_interpreter_files.py`](foundry_chat_client_code_interpreter_files.py) | Azure OpenAI Responses Client with Code Interpreter and Files Example |
-| [`foundry_chat_client_image_analysis.py`](foundry_chat_client_image_analysis.py) |  |
-| [`foundry_chat_client_with_code_interpreter.py`](foundry_chat_client_with_code_interpreter.py) | """ |
-| [`foundry_chat_client_with_explicit_settings.py`](foundry_chat_client_with_explicit_settings.py) | Azure OpenAI Chat Client with Explicit Settings Example |
-| [`foundry_chat_client_with_file_search.py`](foundry_chat_client_with_file_search.py) | Azure OpenAI Responses Client with File Search Example |
-| [`foundry_chat_client_with_function_tools.py`](foundry_chat_client_with_function_tools.py) | Azure OpenAI Chat Client with Function Tools Example |
-| [`foundry_chat_client_with_hosted_mcp.py`](foundry_chat_client_with_hosted_mcp.py) |  |
-| [`foundry_chat_client_with_local_mcp.py`](foundry_chat_client_with_local_mcp.py) |  |
-| [`foundry_chat_client_with_session.py`](foundry_chat_client_with_session.py) | Azure OpenAI Chat Client with Session Management Example |
+| [`foundry_chat_client.py`](foundry_chat_client.py) | Foundry Chat Client with Project Endpoint Example |
+| [`foundry_chat_client_basic.py`](foundry_chat_client_basic.py) | Foundry Chat Client Basic Example |
+| [`foundry_chat_client_code_interpreter_files.py`](foundry_chat_client_code_interpreter_files.py) | Foundry Chat Client with Code Interpreter and Files Example |
+| [`foundry_chat_client_image_analysis.py`](foundry_chat_client_image_analysis.py) | Foundry Chat Client with Image Analysis Example |
+| [`foundry_chat_client_with_code_interpreter.py`](foundry_chat_client_with_code_interpreter.py) | Foundry Chat Client with Code Interpreter Example |
+| [`foundry_chat_client_with_explicit_settings.py`](foundry_chat_client_with_explicit_settings.py) | Foundry Chat Client with Explicit Settings Example |
+| [`foundry_chat_client_with_file_search.py`](foundry_chat_client_with_file_search.py) | Foundry Chat Client with File Search Example |
+| [`foundry_chat_client_with_function_tools.py`](foundry_chat_client_with_function_tools.py) | Foundry Chat Client with Function Tools Example |
+| [`foundry_chat_client_with_hosted_mcp.py`](foundry_chat_client_with_hosted_mcp.py) | Foundry Chat Client with Hosted MCP Example |
+| [`foundry_chat_client_with_local_mcp.py`](foundry_chat_client_with_local_mcp.py) | Foundry Chat Client with Local MCP Example |
+| [`foundry_chat_client_with_session.py`](foundry_chat_client_with_session.py) | Foundry Chat Client with Session Management Example |
 
 ## OpenAI ChatCompletionClient with Azure OpenAI Samples
 

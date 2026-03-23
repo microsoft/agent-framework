@@ -69,6 +69,36 @@ class TestRawFoundryAgentChatClient:
         assert ref == {"name": "hosted-agent", "type": "agent_reference"}
         assert "version" not in ref
 
+    def test_as_agent_returns_foundry_agent_and_preserves_client_type(self) -> None:
+        """Test that as_agent() wraps the client in FoundryAgent using the same client class."""
+        from agent_framework_azure_ai._foundry_agent import FoundryAgent
+        from agent_framework_azure_ai._foundry_agent_client import RawFoundryAgentChatClient
+
+        class CustomClient(RawFoundryAgentChatClient):
+            pass
+
+        mock_project = MagicMock()
+        mock_project.get_openai_client.return_value = MagicMock()
+
+        client = CustomClient(
+            project_client=mock_project,
+            agent_name="test-agent",
+            agent_version="1.0",
+        )
+
+        agent = client.as_agent(instructions="You are helpful.")
+
+        assert isinstance(agent, FoundryAgent)
+        assert agent.name == "test-agent"
+        assert isinstance(agent.client, CustomClient)
+        assert agent.client.project_client is mock_project
+        assert agent.client.agent_name == "test-agent"
+        assert agent.client.agent_version == "1.0"
+
+        named_agent = client.as_agent(name="display-name", instructions="You are helpful.")
+        assert named_agent.name == "display-name"
+        assert named_agent.client.agent_name == "test-agent"
+
     async def test_prepare_options_validates_tools(self) -> None:
         """Test that _prepare_options rejects non-FunctionTool objects."""
         from agent_framework import Message

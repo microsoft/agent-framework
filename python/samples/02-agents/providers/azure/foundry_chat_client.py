@@ -15,10 +15,10 @@ from pydantic import Field
 load_dotenv()
 
 """
-Azure OpenAI Responses Client with Foundry Project Example
+Foundry Chat Client with Project Endpoint Example
 
-This sample demonstrates how to create an FoundryChatClient using an
-Azure AI Foundry project endpoint. Instead of providing an Azure OpenAI endpoint
+This sample demonstrates how to create a FoundryChatClient using a
+Foundry project endpoint. Instead of providing a service endpoint
 directly, you provide a Foundry project endpoint and the client is created via
 the Azure AI Foundry project SDK.
 
@@ -95,7 +95,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Azure OpenAI Responses Client with Foundry Project Example ===")
+    print("=== Foundry Chat Client with Project Endpoint Example ===")
 
     await non_streaming_example()
     await streaming_example()
@@ -107,7 +107,7 @@ if __name__ == "__main__":
 
 """
 Sample output:
-=== Azure OpenAI Responses Client with Foundry Project Example ===
+=== Foundry Chat Client with Project Endpoint Example ===
 === Non-streaming Response Example ===
 User: What's the weather like in Seattle?
 Result: The weather in Seattle is cloudy with a high of 18°C.

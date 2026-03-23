@@ -54,8 +54,9 @@ from ._shared import AzureAISettings, create_text_format_config, resolve_file_id
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -88,8 +89,13 @@ AzureAIClientOptionsT = TypeVar(
 _DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
 
 
+@deprecated(
+    "RawAzureAIClient is deprecated. "
+    "Use RawFoundryAgentChatClient for low-level Foundry agent client customization, "
+    "or FoundryAgent for the recommended production API."
+)
 class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
-    """Raw Azure AI client without middleware, telemetry, or function invocation layers.
+    """Deprecated raw Azure AI client without middleware, telemetry, or function invocation layers.
 
     Warning:
         **This class should not normally be used directly.** It does not include middleware,
@@ -101,7 +107,8 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
         3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
 
-        Use ``AzureAIClient`` instead for a fully-featured client with all layers applied.
+        Use ``RawFoundryAgentChatClient`` for low-level Foundry agent customization, or
+        ``FoundryAgent`` for the recommended production API.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -840,7 +847,7 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         if not stream:
 
             async def _enrich_response() -> ChatResponse:
-                response = await super(RawAzureAIClient, self)._inner_get_response(
+                response = await super(RawAzureAIClient, self)._inner_get_response(  # pyright: ignore[reportDeprecated]
                     messages=messages, options=options, stream=False, **kwargs
                 )
                 get_urls = self._extract_azure_search_urls(response.raw_representation.output)  # type: ignore[union-attr]
@@ -1180,8 +1187,8 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
-        For creating and managing persistent agents on the server, use
-        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+        For working with pre-configured persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.FoundryAgent` instead.
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
@@ -1211,21 +1218,23 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         )
 
 
+@deprecated("AzureAIClient is deprecated. Use FoundryAgent instead.")
 class AzureAIClient(
     FunctionInvocationLayer[AzureAIClientOptionsT],
     ChatMiddlewareLayer[AzureAIClientOptionsT],
     ChatTelemetryLayer[AzureAIClientOptionsT],
-    RawAzureAIClient[AzureAIClientOptionsT],
+    RawAzureAIClient[AzureAIClientOptionsT],  # pyright: ignore[reportDeprecated]
     Generic[AzureAIClientOptionsT],
 ):
-    """Azure AI client with middleware, telemetry, and function invocation support.
+    """Deprecated Azure AI client with middleware, telemetry, and function invocation support.
 
-    This is the recommended client for most use cases. It includes:
+    This class is deprecated. Use ``FoundryAgent`` instead for connecting to
+    pre-configured agents in Foundry. It includes:
     - Chat middleware support for request/response interception
     - OpenTelemetry-based telemetry for observability
     - Automatic function/tool invocation handling
 
-    For a minimal implementation without these features, use :class:`RawAzureAIClient`.
+    For a minimal implementation without these features, use :class:`RawFoundryAgentChatClient`.
     """
 
     def __init__(

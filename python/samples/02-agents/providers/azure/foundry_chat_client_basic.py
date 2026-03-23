@@ -14,10 +14,13 @@ from pydantic import Field
 load_dotenv()
 
 """
-Azure OpenAI Chat Client Basic Example
+Foundry Chat Client Basic Example
 
-This sample demonstrates basic usage of OpenAIChatClient for structured
+This sample demonstrates basic usage of FoundryChatClient for structured
 response generation, showing both streaming and non-streaming responses.
+
+This uses a deployed model in Foundry, with the Responses API endpoint of Foundry.
+The client has full support for tools, response formats, etc.
 """
 
 
@@ -73,7 +76,7 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Basic Azure OpenAI Chat Client Agent Example ===")
+    print("=== Foundry Chat Client Basic Example ===")
 
     await non_streaming_example()
     await streaming_example()

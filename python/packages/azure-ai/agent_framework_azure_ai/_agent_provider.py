@@ -23,7 +23,7 @@ from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from pydantic import BaseModel
 
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
 from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
@@ -426,7 +426,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
-        client = AzureAIAgentClient(
+        client = AzureAIAgentClient(  # pyright: ignore[reportDeprecated]
             agents_client=self._agents_client,
             agent_id=agent.id,
             agent_name=agent.name,

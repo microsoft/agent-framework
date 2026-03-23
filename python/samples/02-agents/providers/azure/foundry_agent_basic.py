@@ -6,7 +6,7 @@ from agent_framework.azure import FoundryAgent
 from azure.identity import AzureCliCredential
 
 """
-Foundry Agent — Connect to a pre-configured agent in Azure AI Foundry
+Foundry Agent — Connect to a pre-configured agent in Microsoft Foundry
 
 This sample shows the simplest way to connect to an existing PromptAgent
 in Azure AI Foundry and run it. The agent's instructions, model, and hosted

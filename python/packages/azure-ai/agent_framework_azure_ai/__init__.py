@@ -3,8 +3,8 @@
 import importlib.metadata
 
 from ._agent_provider import AzureAIAgentsProvider
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
-from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
+from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient  # pyright: ignore[reportDeprecated]
 from ._deprecated_azure_openai import (
     AzureOpenAIAssistantsClient,  # pyright: ignore[reportDeprecated]
     AzureOpenAIAssistantsOptions,
@@ -28,7 +28,7 @@ from ._foundry_agent import FoundryAgent, RawFoundryAgent
 from ._foundry_agent_client import RawFoundryAgentChatClient
 from ._foundry_chat_client import FoundryChatClient, RawFoundryChatClient
 from ._foundry_memory_provider import FoundryMemoryProvider
-from ._project_provider import AzureAIProjectAgentProvider
+from ._project_provider import AzureAIProjectAgentProvider  # pyright: ignore[reportDeprecated]
 from ._shared import AzureAISettings
 
 try:

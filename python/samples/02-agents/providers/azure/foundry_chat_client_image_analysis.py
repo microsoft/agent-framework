@@ -11,17 +11,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 """
-Azure OpenAI Chat Client with Image Analysis Example
+Foundry Chat Client with Image Analysis Example
 
-This sample demonstrates using Azure OpenAI Responses for image analysis and vision tasks,
+This sample demonstrates using FoundryChatClient for image analysis and vision tasks,
 showing multi-modal messages combining text and image content.
 """
 
 
 async def main():
-    print("=== Azure Responses Agent with Image Analysis ===")
+    print("=== Foundry Chat Client with Image Analysis ===")
 
-    # 1. Create an Azure Responses agent with vision capabilities
+    # 1. Create a Foundry-backed agent with vision capabilities
     agent = Agent(
         client=FoundryChatClient(credential=AzureCliCredential()),
         name="VisionAgent",
