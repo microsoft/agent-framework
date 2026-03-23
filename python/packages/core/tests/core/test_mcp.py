@@ -14,6 +14,8 @@ from pydantic import AnyUrl, BaseModel
 
 from agent_framework import (
     Content,
+    FunctionInvocationContext,
+    FunctionMiddleware,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPWebsocketTool,
@@ -30,6 +32,7 @@ from agent_framework._mcp import (
     _prepare_message_for_mcp,
     logger,
 )
+from agent_framework._middleware import FunctionMiddlewarePipeline
 from agent_framework.exceptions import ToolException, ToolExecutionException
 
 # Integration test skip condition
@@ -50,6 +53,81 @@ def test_normalize_mcp_name():
     assert _normalize_mcp_name("name/with\\slashes") == "name-with-slashes"
 
 
+def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
+    assert MCPStdioTool(name="stdio", command="python", tool_name_prefix="stdio").tool_name_prefix == "stdio"
+    assert (
+        MCPStreamableHTTPTool(
+            name="http",
+            url="https://example.com/mcp",
+            tool_name_prefix="http",
+        ).tool_name_prefix
+        == "http"
+    )
+    assert (
+        MCPWebsocketTool(
+            name="ws",
+            url="wss://example.com/mcp",
+            tool_name_prefix="ws",
+        ).tool_name_prefix
+        == "ws"
+    )
+
+
+async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration():
+    """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
+    tool = MCPTool(
+        name="docs",
+        tool_name_prefix="docs",
+        allowed_tools=["search_docs"],
+        approval_mode={"always_require_approval": ["search_docs"]},
+    )
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    page = Mock()
+    page.tools = [
+        types.Tool(
+            name="search_docs",
+            description="Search docs",
+            inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert [function.name for function in tool._functions] == ["docs_search_docs"]
+    assert [function.name for function in tool.functions] == ["docs_search_docs"]
+    assert tool.functions[0].approval_mode == "always_require"
+
+
+async def test_load_prompts_with_tool_name_prefix() -> None:
+    """Prefixed MCP prompt names should be exposed with the configured prefix."""
+    tool = MCPTool(name="docs", tool_name_prefix="docs")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_prompts_flag = True
+
+    page = Mock()
+    page.prompts = [
+        types.Prompt(
+            name="summarize docs",
+            description="Summarize docs",
+            arguments=[types.PromptArgument(name="topic", description="Topic", required=True)],
+        ),
+    ]
+    page.nextCursor = None
+    mock_session.list_prompts = AsyncMock(return_value=page)
+
+    await tool.load_prompts()
+
+    assert [function.name for function in tool._functions] == ["docs_summarize-docs"]
+
+
 def test_mcp_prompt_message_to_ai_content():
     """Test conversion from MCP prompt message to AI content."""
     mcp_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello, world!"))
@@ -64,30 +142,31 @@ def test_mcp_prompt_message_to_ai_content():
 
 
 def test_parse_tool_result_from_mcp():
-    """Test conversion from MCP tool result to string representation."""
+    """Test conversion from MCP tool result with images preserves original order."""
     mcp_result = types.CallToolResult(
         content=[
             types.TextContent(type="text", text="Result text"),
             types.ImageContent(type="image", data="eHl6", mimeType="image/png"),
+            types.TextContent(type="text", text="After image"),
             types.ImageContent(type="image", data="YWJj", mimeType="image/webp"),
         ]
     )
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Multiple items produce a JSON array of strings
-    assert isinstance(result, str)
-    import json
-
-    parsed = json.loads(result)
-    assert len(parsed) == 3
-    assert parsed[0] == "Result text"
-    # Image items are JSON-encoded strings within the array
-    img1 = json.loads(parsed[1])
-    assert img1["type"] == "image"
-    assert img1["data"] == "eHl6"
-    img2 = json.loads(parsed[2])
-    assert img2["type"] == "image"
-    assert img2["data"] == "YWJj"
+    # Results with images return a list of Content objects in original order
+    assert isinstance(result, list)
+    assert len(result) == 4
+    # Order is preserved: text, image, text, image
+    assert result[0].type == "text"
+    assert result[0].text == "Result text"
+    assert result[1].type == "data"
+    assert result[1].media_type == "image/png"
+    assert "eHl6" in result[1].uri
+    assert result[2].type == "text"
+    assert result[2].text == "After image"
+    assert result[3].type == "data"
+    assert result[3].media_type == "image/webp"
+    assert "YWJj" in result[3].uri
 
 
 def test_parse_tool_result_from_mcp_single_text():
@@ -95,26 +174,76 @@ def test_parse_tool_result_from_mcp_single_text():
     mcp_result = types.CallToolResult(content=[types.TextContent(type="text", text="Simple result")])
     result = _parse_tool_result_from_mcp(mcp_result)
 
-    # Single text item returns just the text
-    assert result == "Simple result"
+    # Single text item returns list with one text Content
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "Simple result"
 
 
 def test_parse_tool_result_from_mcp_meta_not_in_string():
-    """Test that _meta data is not included in the string result (it's tool-level, not content-level)."""
+    """Test that _meta data is not included in the result (it's tool-level, not content-level)."""
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="Error occurred")],
         _meta={"isError": True, "errorCode": "TOOL_ERROR"},
     )
 
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == "Error occurred"
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].text == "Error occurred"
 
 
 def test_parse_tool_result_from_mcp_empty_content():
-    """Test that empty content produces empty string."""
+    """Test that empty MCP content normalizes to JSON null text content."""
     mcp_result = types.CallToolResult(content=[])
     result = _parse_tool_result_from_mcp(mcp_result)
-    assert result == ""
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "text"
+    assert result[0].text == "null"
+
+    function_result = Content.from_function_result(call_id="call_null", result=result)
+    assert function_result.result == "null"
+
+
+def test_parse_tool_result_from_mcp_audio_content():
+    """Test conversion from MCP tool result with audio returns rich content list."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.AudioContent(type="audio", data="YXVkaW8=", mimeType="audio/wav"),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "audio/wav"
+    assert "YXVkaW8=" in result[0].uri
+
+
+def test_parse_tool_result_from_mcp_blob_plain_base64():
+    """Test that plain base64 blob (without data: prefix) is wrapped into a data URI."""
+    mcp_result = types.CallToolResult(
+        content=[
+            types.EmbeddedResource(
+                type="resource",
+                resource=types.BlobResourceContents(
+                    uri=AnyUrl("file://test.bin"),
+                    mimeType="application/pdf",
+                    blob="dGVzdCBkYXRh",
+                ),
+            ),
+        ]
+    )
+    result = _parse_tool_result_from_mcp(mcp_result)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].type == "data"
+    assert result[0].media_type == "application/pdf"
+    assert "dGVzdCBkYXRh" in result[0].uri
 
 
 def test_mcp_content_types_to_ai_content_text():
@@ -766,7 +895,10 @@ async def test_mcp_tool_call_tool_with_meta_integration():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed with metadata"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].type == "text"
+        assert result[0].text == "Tool executed with metadata"
 
 
 async def test_local_mcp_server_function_execution():
@@ -805,7 +937,8 @@ async def test_local_mcp_server_function_execution():
         func = server.functions[0]
         result = await func.invoke(param="test_value")
 
-        assert result == "Tool executed successfully"
+        assert isinstance(result, list)
+        assert result[0].text == "Tool executed successfully"
 
 
 async def test_local_mcp_server_function_execution_with_nested_object():
@@ -852,7 +985,8 @@ async def test_local_mcp_server_function_execution_with_nested_object():
         # Call with nested object
         result = await func.invoke(params={"customer_id": 251})
 
-        assert result == '{"name": "John Doe", "id": 251}'
+        assert isinstance(result, list)
+        assert result[0].text == '{"name": "John Doe", "id": 251}'
 
         # Verify the session.call_tool was called with the correct nested structure
         server.session.call_tool.assert_called_once()
@@ -898,6 +1032,148 @@ async def test_local_mcp_server_function_execution_error():
             await func.invoke(param="test_value")
 
 
+async def test_mcp_tool_call_tool_raises_on_is_error():
+    """Test that call_tool raises ToolExecutionException when MCP returns isError=True."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Something went wrong")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        with pytest.raises(ToolExecutionException, match="Something went wrong"):
+            await func.invoke(param="test_value")
+
+
+async def test_mcp_tool_call_tool_succeeds_when_is_error_false():
+    """Test that call_tool returns normally when MCP returns isError=False."""
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="Success")],
+                    isError=False,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+        result = await func.invoke(param="test_value")
+        assert isinstance(result, list)
+        assert result[0].text == "Success"
+
+
+async def test_mcp_tool_is_error_propagates_through_function_middleware():
+    """Test that MCP isError=True propagates as ToolExecutionException through function middleware."""
+    error_seen_in_middleware = False
+
+    class ErrorCheckMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next):
+            nonlocal error_seen_in_middleware
+            try:
+                await call_next()
+            except ToolExecutionException:
+                error_seen_in_middleware = True
+                raise
+
+    class TestServer(MCPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="test_tool",
+                            description="Test tool",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"param": {"type": "string"}},
+                                "required": ["param"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(
+                    content=[types.TextContent(type="text", text="MCP error occurred")],
+                    isError=True,
+                )
+            )
+
+        def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
+            return None
+
+    server = TestServer(name="test_server")
+    async with server:
+        await server.load_tools()
+        func = server.functions[0]
+
+        middleware_pipeline = FunctionMiddlewarePipeline(ErrorCheckMiddleware())
+
+        middleware_context = FunctionInvocationContext(
+            function=func,
+            arguments={"param": "test_value"},
+        )
+
+        with pytest.raises(ToolExecutionException, match="MCP error occurred"):
+            await middleware_pipeline.execute(
+                middleware_context,
+                lambda ctx: func.invoke(arguments=ctx.arguments),
+            )
+
+        assert error_seen_in_middleware, "Middleware should have seen the ToolExecutionException"
+
+
 async def test_local_mcp_server_prompt_execution():
     """Test prompt execution through MCP server."""
 
@@ -936,7 +1212,8 @@ async def test_local_mcp_server_prompt_execution():
         prompt = server.functions[0]
         result = await prompt.invoke(arg="test_value")
 
-        assert result == "Test message"
+        assert isinstance(result, list)
+        assert result[0].text == "Test message"
 
 
 @pytest.mark.parametrize(
@@ -1765,6 +2042,100 @@ async def test_load_tools_with_pagination():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
 
 
+async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
+    """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
+
+    Some MCP servers (e.g. matlab-mcp-core-server) declare zero-argument tools
+    with inputSchema={"type": "object"} and no "properties" key.  OpenAI's API
+    requires "properties" to be present on object schemas, so load_tools must
+    inject an empty "properties" dict when it is missing.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    original_zero_arg_schema = {"type": "object"}
+    original_string_schema = {"type": "string"}
+    original_empty_schema: dict[str, object] = {}
+
+    page = MagicMock()
+    page.tools = [
+        types.Tool(
+            name="zero_arg_tool",
+            description="A tool with no parameters",
+            inputSchema=original_zero_arg_schema,
+        ),
+        types.Tool(
+            name="normal_tool",
+            description="A tool with parameters",
+            inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        ),
+        types.Tool(
+            name="string_schema_tool",
+            description="A tool with a non-object schema",
+            inputSchema=original_string_schema,
+        ),
+        types.Tool(
+            name="empty_schema_tool",
+            description="A tool with an empty schema",
+            inputSchema=original_empty_schema,
+        ),
+    ]
+
+    # Simulate a non-conforming MCP server that sends inputSchema=None.
+    # types.Tool requires inputSchema to be a dict, so we use a MagicMock.
+    none_schema_tool = MagicMock()
+    none_schema_tool.name = "none_schema_tool"
+    none_schema_tool.description = "A tool with None inputSchema"
+    none_schema_tool.inputSchema = None
+    page.tools.append(none_schema_tool)
+    page.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert len(tool._functions) == 5
+
+    funcs_by_name = {f.name: f for f in tool._functions}
+
+    # Zero-arg tool must have "properties" injected
+    zero_params = funcs_by_name["zero_arg_tool"].parameters()
+    assert "properties" in zero_params
+    assert zero_params["properties"] == {}
+    assert zero_params["type"] == "object"
+
+    # Normal tool must retain its existing properties
+    normal_params = funcs_by_name["normal_tool"].parameters()
+    assert "properties" in normal_params
+    assert "x" in normal_params["properties"]
+    assert normal_params["required"] == ["x"]
+
+    # Non-object schema must NOT have "properties" injected
+    string_params = funcs_by_name["string_schema_tool"].parameters()
+    assert "properties" not in string_params
+    assert string_params["type"] == "string"
+
+    # Empty schema (no "type" key) must NOT have "properties" injected
+    empty_params = funcs_by_name["empty_schema_tool"].parameters()
+    assert "properties" not in empty_params
+
+    # None inputSchema must produce an empty dict (guard against non-conforming servers)
+    none_params = funcs_by_name["none_schema_tool"].parameters()
+    assert none_params == {}
+
+    # Original inputSchema dicts must not be mutated
+    assert "properties" not in original_zero_arg_schema
+    assert "properties" not in original_string_schema
+    assert "properties" not in original_empty_schema
+
+
 async def test_load_prompts_with_pagination():
     """Test that load_prompts handles pagination correctly."""
     from unittest.mock import AsyncMock, MagicMock
@@ -2098,7 +2469,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         tool._tools_loaded = True
 
         # First call should work - connection is valid
-        mock_session.call_tool.return_value = MagicMock(content=[])
+        mock_session.call_tool.return_value = types.CallToolResult(content=[])
         result = await tool.call_tool("test_tool", arg1="value1")
         assert result is not None
 
@@ -2111,7 +2482,7 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
             call_count += 1
             if call_count == 1:
                 raise ClosedResourceError
-            return MagicMock(content=[])
+            return types.CallToolResult(content=[])
 
         mock_session.call_tool = call_tool_with_error
 
@@ -2248,67 +2619,169 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         assert "failed to reconnect" in str(exc_info.value).lower()
 
 
-async def test_mcp_tool_reconnection_handles_cross_task_cancel_scope_error():
-    """Test that reconnection gracefully handles anyio cancel scope errors.
+async def test_mcp_tool_close_cleans_up_in_original_task(caplog):
+    """Closing an MCP tool from another task should still unwind contexts in the owner task."""
+    import asyncio
 
-    This tests the fix for the bug where calling connect(reset=True) from a
-    different task than where the connection was originally established would
-    cause: RuntimeError: Attempted to exit cancel scope in a different task
-    than it was entered in
+    class TaskBoundTransportContext:
+        def __init__(self) -> None:
+            self.enter_task = None
+            self.exit_task = None
+            self.closed_cleanly = False
 
-    This happens when using multiple MCP tools with AG-UI streaming - the first
-    tool call succeeds, but when the connection closes, the second tool call
-    triggers a reconnection from within the streaming loop (a different task).
-    """
-    from contextlib import AsyncExitStack
+        async def __aenter__(self):
+            self.enter_task = asyncio.current_task()
+            return (Mock(), Mock())
 
-    from agent_framework._mcp import MCPStdioTool
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exit_task = asyncio.current_task()
+            if self.exit_task is not self.enter_task:
+                raise RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
+            self.closed_cleanly = True
+            return
 
-    # Use load_tools=False and load_prompts=False to avoid triggering them during connect()
-    tool = MCPStdioTool(
+    tool = MCPStreamableHTTPTool(
         name="test_server",
-        command="test_command",
-        args=["arg1"],
+        url="https://example.com/mcp",
         load_tools=False,
         load_prompts=False,
     )
 
-    # Mock the exit stack to raise the cross-task cancel scope error
-    mock_exit_stack = AsyncMock(spec=AsyncExitStack)
-    mock_exit_stack.aclose = AsyncMock(
-        side_effect=RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
-    )
-    tool._exit_stack = mock_exit_stack
-    tool.session = Mock()
-    tool.is_connected = True
+    transport_context = TaskBoundTransportContext()
+    mock_session = Mock()
+    mock_session._request_id = 1
+    mock_session.initialize = AsyncMock()
 
-    # Mock get_mcp_client to return a mock transport
-    mock_transport = (Mock(), Mock())
-    mock_context = AsyncMock()
-    mock_context.__aenter__ = AsyncMock(return_value=mock_transport)
-    mock_context.__aexit__ = AsyncMock()
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_context.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch.object(tool, "get_mcp_client", return_value=mock_context),
-        patch("agent_framework._mcp.ClientSession") as mock_session_class,
+        patch.object(tool, "get_mcp_client", return_value=transport_context),
+        patch("agent_framework._mcp.ClientSession", return_value=mock_session_context),
     ):
-        mock_session = Mock()
-        mock_session._request_id = 1
-        mock_session.initialize = AsyncMock()
-        mock_session.set_logging_level = AsyncMock()
-        mock_session_context = AsyncMock()
-        mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session_context.__aexit__ = AsyncMock()
-        mock_session_class.return_value = mock_session_context
+        await asyncio.create_task(tool.connect())
 
-        # This should NOT raise even though aclose() raised the cancel scope error
-        # The _safe_close_exit_stack method should catch and log the error
-        await tool.connect(reset=True)
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            await tool.close()
 
-        # Verify a new exit stack was created (the old mock was replaced)
-        assert tool._exit_stack is not mock_exit_stack
-        assert tool.session is not None
+    assert transport_context.closed_cleanly is True
+    assert transport_context.exit_task is transport_context.enter_task
+    assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+
+
+async def test_mcp_tool_connect_reset_cleans_up_in_original_task(caplog):
+    """Resetting an MCP tool from another task should unwind and reconnect on the owner task."""
+    import asyncio
+
+    class TaskBoundTransportContext:
+        def __init__(self) -> None:
+            self.enter_task = None
+            self.exit_task = None
+            self.closed_cleanly = False
+
+        async def __aenter__(self):
+            self.enter_task = asyncio.current_task()
+            return (Mock(), Mock())
+
+        async def __aexit__(self, exc_type, exc, tb):
+            self.exit_task = asyncio.current_task()
+            if self.exit_task is not self.enter_task:
+                raise RuntimeError("Attempted to exit cancel scope in a different task than it was entered in")
+            self.closed_cleanly = True
+            return
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    transport_contexts = [TaskBoundTransportContext(), TaskBoundTransportContext()]
+    sessions = []
+    session_contexts = []
+    for _ in range(2):
+        session = Mock()
+        session._request_id = 1
+        session.initialize = AsyncMock()
+        session.set_logging_level = AsyncMock()
+        sessions.append(session)
+
+        session_context = AsyncMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        session_contexts.append(session_context)
+
+    with (
+        patch.object(tool, "get_mcp_client", side_effect=transport_contexts),
+        patch("agent_framework._mcp.ClientSession", side_effect=session_contexts),
+    ):
+        await tool.connect()
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            await asyncio.create_task(tool.connect(reset=True))
+
+        assert transport_contexts[0].closed_cleanly is True
+        assert transport_contexts[0].exit_task is transport_contexts[0].enter_task
+        assert transport_contexts[1].enter_task is transport_contexts[0].enter_task
+        assert tool.session is sessions[1]
         assert tool.is_connected is True
+        assert not any("cancel scope" in record.getMessage().lower() for record in caplog.records)
+
+        await tool.close()
+
+
+async def test_mcp_tool_connect_from_lifecycle_owner_bypasses_request_lock() -> None:
+    """connect(reset=True) should bypass the request queue when already on the owner task."""
+    import asyncio
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    async def connect_from_owner_task() -> None:
+        tool._lifecycle_owner_task = asyncio.current_task()
+        try:
+            async with tool._lifecycle_request_lock:
+                await tool.connect(reset=True)
+        finally:
+            tool._lifecycle_owner_task = None
+
+    with patch.object(tool, "_connect_on_owner", AsyncMock()) as mock_connect_on_owner:
+        await asyncio.wait_for(connect_from_owner_task(), timeout=0.1)
+
+    mock_connect_on_owner.assert_awaited_once_with(reset=True)
+
+
+async def test_mcp_tool_close_from_lifecycle_owner_bypasses_request_lock() -> None:
+    """close() should bypass the request queue when already on the owner task."""
+    import asyncio
+
+    tool = MCPStreamableHTTPTool(
+        name="test_server",
+        url="https://example.com/mcp",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    async def close_from_owner_task() -> None:
+        tool._lifecycle_owner_task = asyncio.current_task()
+        try:
+            async with tool._lifecycle_request_lock:
+                await tool.close()
+        finally:
+            tool._lifecycle_owner_task = None
+
+    with patch.object(tool, "_close_on_owner", AsyncMock()) as mock_close_on_owner:
+        await asyncio.wait_for(close_from_owner_task(), timeout=0.1)
+
+    mock_close_on_owner.assert_awaited_once_with()
 
 
 async def test_mcp_tool_safe_close_reraises_other_runtime_errors():

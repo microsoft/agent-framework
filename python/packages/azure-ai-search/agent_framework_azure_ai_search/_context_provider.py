@@ -456,10 +456,10 @@ class AzureAISearchContextProvider(BaseContextProvider):
             elif self.embedding_function:
                 if isinstance(self.embedding_function, SupportsGetEmbeddings):
                     embeddings = await self.embedding_function.get_embeddings([query])  # type: ignore[reportUnknownVariableType]
-                    query_vector: list[float] = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
+                    query_vector = embeddings[0].vector  # type: ignore[reportUnknownVariableType]
                 else:
-                    query_vector = await self.embedding_function(query)
-                vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]
+                    query_vector = await self.embedding_function(query)  # type: ignore[reportUnknownVariableType]
+                vector_queries = [VectorizedQuery(vector=query_vector, k=vector_k, fields=self.vector_field_name)]  # type: ignore[reportUnknownArgumentType]
 
         search_params: dict[str, Any] = {"search_text": query, "top": self.top_k}
         if vector_queries:
@@ -632,6 +632,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
                                     image=KnowledgeBaseMessageImageContentImage(url=content.uri),
                                 )
                             )
+                        case _:
+                            pass
             elif msg.text:
                 kb_content.append(KnowledgeBaseMessageTextContent(text=msg.text))
             if kb_content:

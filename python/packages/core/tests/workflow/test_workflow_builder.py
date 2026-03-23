@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 
 import pytest
 
@@ -9,10 +10,14 @@ from agent_framework import (
     AgentExecutor,
     AgentResponse,
     AgentResponseUpdate,
+    AgentRunInputs,
     AgentSession,
     BaseAgent,
+    Case,
+    Default,
     Executor,
     Message,
+    ResponseStream,
     WorkflowBuilder,
     WorkflowContext,
     WorkflowValidationError,
@@ -21,22 +26,49 @@ from agent_framework import (
 
 
 class DummyAgent(BaseAgent):
-    def run(self, messages=None, *, stream: bool = False, session: AgentSession | None = None, **kwargs):  # type: ignore[override]
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = ...,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = ...,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         if stream:
-            return self._run_stream_impl()
+            return ResponseStream[AgentResponseUpdate, AgentResponse[Any]](self._run_stream_impl())
         return self._run_impl(messages)
 
-    async def _run_impl(self, messages=None) -> AgentResponse:
+    async def _run_impl(self, messages: AgentRunInputs | None = None) -> AgentResponse:
         norm: list[Message] = []
         if messages:
-            for m in messages:  # type: ignore[iteration-over-optional]
+            for m in messages:  # type: ignore[union-attr]
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
                     norm.append(Message(role="user", text=m))
         return AgentResponse(messages=norm)
 
-    async def _run_stream_impl(self):  # type: ignore[override]
+    async def _run_stream_impl(self) -> AsyncIterator[AgentResponseUpdate]:
         # Minimal async generator
         yield AgentResponseUpdate()
 
@@ -193,6 +225,29 @@ def test_add_edge_with_condition():
     assert "Target" in workflow.executors
 
 
+def test_switch_case_with_agents():
+    """Test add_switch_case_edge_group with Case and Default edges using agents."""
+    router = DummyAgent(id="router_agent", name="router")
+    handler = DummyAgent(id="handler", name="handler")
+    fallback = DummyAgent(id="fallback_agent", name="fallback")
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda _: True, target=handler),
+                Default(target=fallback),
+            ],
+        )
+        .build()
+    )
+
+    # All three agents should be AgentExecutor wrappers
+    agent_executors = [e for e in workflow.executors.values() if isinstance(e, AgentExecutor)]
+    assert len(agent_executors) == 3
+
+
 # region with_output_from tests
 
 
@@ -202,7 +257,7 @@ def test_with_output_from_returns_builder():
     builder = WorkflowBuilder(output_executors=[executor_a], start_executor=executor_a)
 
     # Verify builder was created with output_executors
-    assert builder._output_executors == [executor_a]
+    assert builder._output_executors == [executor_a]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_with_output_from_with_executor_instances():

@@ -10,7 +10,6 @@ using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Moq;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -474,8 +473,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval request then response
         McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerUrl);
-        McpServerToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -502,8 +501,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval request then response (rejected)
         McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerUrl);
-        McpServerToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: false);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: false);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -553,8 +552,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval with different ID
         McpServerToolCallContent toolCall = new("different_id", TestToolName, TestServerUrl);
-        McpServerToolApprovalRequestContent approvalRequest = new("different_id", toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ToolApprovalRequestContent approvalRequest = new("different_id", toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -583,8 +582,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval request then response
         McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerUrl);
-        McpServerToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -614,8 +613,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval request then response
         McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerLabel);
-        McpServerToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -644,8 +643,8 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
         // Create approval request then response
         McpServerToolCallContent toolCall = new(action.Id, TestToolName, TestServerUrl);
-        McpServerToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
-        McpServerToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        ToolApprovalRequestContent approvalRequest = new(action.Id, toolCall);
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
         ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [approvalResponse]));
 
         // Act
@@ -800,31 +799,31 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
 
                         if (returnNullOutput)
                         {
-                            result.Output = null;
+                            result.Outputs = null;
                         }
                         else if (returnEmptyOutput)
                         {
-                            result.Output = [];
+                            result.Outputs = [];
                         }
                         else if (returnJsonObject)
                         {
-                            result.Output = [new TextContent("{\"key\": \"value\", \"number\": 42}")];
+                            result.Outputs = [new TextContent("{\"key\": \"value\", \"number\": 42}")];
                         }
                         else if (returnJsonArray)
                         {
-                            result.Output = [new TextContent("[1, 2, 3, \"four\"]")];
+                            result.Outputs = [new TextContent("[1, 2, 3, \"four\"]")];
                         }
                         else if (returnInvalidJson)
                         {
-                            result.Output = [new TextContent("this is not valid json {")];
+                            result.Outputs = [new TextContent("this is not valid json {")];
                         }
                         else if (returnDataContent)
                         {
-                            result.Output = [new DataContent("data:image/png;base64,iVBORw0KGgo=", "image/png")];
+                            result.Outputs = [new DataContent("data:image/png;base64,iVBORw0KGgo=", "image/png")];
                         }
                         else if (returnMultipleContent)
                         {
-                            result.Output =
+                            result.Outputs =
                             [
                                 new TextContent("First text"),
                                 new TextContent("{\"nested\": true}"),
@@ -833,7 +832,7 @@ public sealed class InvokeMcpToolExecutorTest(ITestOutputHelper output) : Workfl
                         }
                         else
                         {
-                            result.Output = [new TextContent("Mock MCP tool result")];
+                            result.Outputs = [new TextContent("Mock MCP tool result")];
                         }
 
                         return Task.FromResult(result);

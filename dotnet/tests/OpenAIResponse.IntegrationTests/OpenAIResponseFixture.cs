@@ -17,6 +17,7 @@ namespace ResponseResult.IntegrationTests;
 public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
 {
     private ResponsesClient _openAIResponseClient = null!;
+    private string _modelName = null!;
     private ChatClientAgent _agent = null!;
 
     public AIAgent Agent => this._agent;
@@ -74,7 +75,7 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null) =>
             new(
-                this._openAIResponseClient.AsIChatClient(),
+                this._openAIResponseClient.AsIChatClient(this._modelName),
                 options: new()
                 {
                     Name = name,
@@ -94,13 +95,18 @@ public class OpenAIResponseFixture(bool store) : IChatClientAgentFixture
         // Chat Completion does not require/support deleting threads, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
+        this._modelName = TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName);
         this._openAIResponseClient = new OpenAIClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIApiKey))
-            .GetResponsesClient(TestConfiguration.GetRequiredValue(TestSettings.OpenAIChatModelName));
+            .GetResponsesClient();
 
         this._agent = await this.CreateChatClientAgentAsync();
     }
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

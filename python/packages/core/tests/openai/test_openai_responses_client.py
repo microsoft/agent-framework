@@ -4,6 +4,7 @@ import base64
 import json
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import MagicMock, patch
 
@@ -27,17 +28,28 @@ from pydantic import BaseModel
 from pytest import param
 
 from agent_framework import (
+    Agent,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionTool,
     Message,
     SupportsChatGetResponse,
     tool,
 )
-from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
+from agent_framework._sessions import (
+    AgentSession,
+    InMemoryHistoryProvider,
+    SessionContext,
+)
+from agent_framework.exceptions import (
+    ChatClientException,
+    ChatClientInvalidRequestException,
+)
 from agent_framework.openai import OpenAIResponsesClient
 from agent_framework.openai._exceptions import OpenAIContentFilterException
+from agent_framework.openai._responses_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
@@ -522,6 +534,58 @@ def test_response_content_creation_with_reasoning() -> None:
     assert response.messages[0].contents[0].text == "Reasoning step"
 
 
+def test_response_content_keeps_reasoning_and_function_calls_in_one_message() -> None:
+    """Reasoning + function calls should parse into one assistant message."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+
+    mock_reasoning_content = MagicMock()
+    mock_reasoning_content.text = "Reasoning step"
+
+    mock_reasoning_item = MagicMock()
+    mock_reasoning_item.type = "reasoning"
+    mock_reasoning_item.id = "rs_123"
+    mock_reasoning_item.content = [mock_reasoning_content]
+    mock_reasoning_item.summary = []
+
+    mock_function_call_item_1 = MagicMock()
+    mock_function_call_item_1.type = "function_call"
+    mock_function_call_item_1.id = "fc_1"
+    mock_function_call_item_1.call_id = "call_1"
+    mock_function_call_item_1.name = "tool_1"
+    mock_function_call_item_1.arguments = '{"x": 1}'
+
+    mock_function_call_item_2 = MagicMock()
+    mock_function_call_item_2.type = "function_call"
+    mock_function_call_item_2.id = "fc_2"
+    mock_function_call_item_2.call_id = "call_2"
+    mock_function_call_item_2.name = "tool_2"
+    mock_function_call_item_2.arguments = '{"y": 2}'
+
+    mock_response.output = [
+        mock_reasoning_item,
+        mock_function_call_item_1,
+        mock_function_call_item_2,
+    ]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages) == 1
+    assert response.messages[0].role == "assistant"
+    assert [content.type for content in response.messages[0].contents] == [
+        "text_reasoning",
+        "function_call",
+        "function_call",
+    ]
+
+
 def test_response_content_creation_with_code_interpreter() -> None:
     """Test _parse_response_from_openai with code interpreter outputs."""
 
@@ -562,6 +626,386 @@ def test_response_content_creation_with_code_interpreter() -> None:
     assert result_content.outputs is not None
     assert any(out.type == "text" for out in result_content.outputs)
     assert any(out.type == "uri" for out in result_content.outputs)
+
+
+def test_get_shell_tool_basic() -> None:
+    """Test get_shell_tool returns hosted shell config with default auto environment."""
+    tool = OpenAIResponsesClient.get_shell_tool()
+    assert tool.type == "shell"
+    assert tool.environment.type == "container_auto"
+
+
+def test_get_shell_tool_rejects_local_without_func() -> None:
+    """Local environment requires a local function executor."""
+    with pytest.raises(ValueError, match="Local shell requires func"):
+        OpenAIResponsesClient.get_shell_tool(environment={"type": "local"})
+
+
+def test_get_shell_tool_rejects_environment_config_with_func() -> None:
+    """Environment config is hosted-only and must not be passed with func."""
+
+    def local_exec(command: str) -> str:
+        return command
+
+    with pytest.raises(ValueError, match="environment config is not supported"):
+        OpenAIResponsesClient.get_shell_tool(
+            func=local_exec,
+            environment={"type": "container_auto"},
+        )
+
+
+def test_get_shell_tool_local_executor_maps_to_shell_tool() -> None:
+    """Test local shell FunctionTool maps to OpenAI shell tool declaration."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    assert isinstance(local_shell_tool, FunctionTool)
+    response_tools = client._prepare_tools_for_openai([local_shell_tool])
+    assert len(response_tools) == 1
+    assert response_tools[0].type == "shell"
+    assert response_tools[0].environment.type == "local"
+
+
+def test_get_shell_tool_reuses_function_tool_instance() -> None:
+    """Passing a FunctionTool should update and return the same tool instance."""
+
+    @tool(name="run_shell", approval_mode="never_require")
+    def run_shell(command: str) -> str:
+        return command
+
+    shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=run_shell,
+        description="Run local shell command",
+        approval_mode="always_require",
+    )
+
+    assert shell_tool is run_shell
+    assert shell_tool.kind == "shell"
+    assert shell_tool.description == "Run local shell command"
+    assert shell_tool.approval_mode == "always_require"
+    assert (shell_tool.additional_properties or {}).get("openai.responses.shell.environment") == {"type": "local"}
+
+
+def test_response_content_creation_with_local_shell_call_maps_to_function_call() -> None:
+    """Test local_shell_call is translated into function_call for invocation loop."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    def local_exec(command: str) -> str:
+        return command
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(func=local_exec)
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+
+    mock_response.output = [mock_local_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={"tools": [local_shell_tool]})  # type: ignore[arg-type]
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "function_call"
+    assert call_content.call_id == "local-shell-call-1"
+    assert call_content.name == local_shell_tool.name
+    assert call_content.parse_arguments() == {"command": "python --version"}
+    assert call_content.additional_properties[OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY] == "local-shell-item-1"
+
+
+@pytest.mark.asyncio
+async def test_local_shell_tool_is_invoked_in_function_loop() -> None:
+    """Test local shell call executes executor and sends local_shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.command = ["python", "--version"]
+    mock_action.timeout_ms = 30000
+
+    mock_local_shell_call = MagicMock()
+    mock_local_shell_call.type = "local_shell_call"
+    mock_local_shell_call.id = "local-shell-item-1"
+    mock_local_shell_call.call_id = "local-shell-call-1"
+    mock_local_shell_call.action = mock_action
+    mock_local_shell_call.status = "completed"
+    mock_response1.output = [mock_local_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 1
+        output_payload = json.loads(local_shell_outputs[0]["output"])
+        assert output_payload["stdout"] == "Python 3.13.0"
+
+
+@pytest.mark.asyncio
+async def test_shell_call_is_invoked_as_local_shell_function_loop() -> None:
+    """Test shell_call maps to local function invocation and returns shell_call_output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    executed_commands: list[str] = []
+
+    def local_exec(command: str) -> str:
+        executed_commands.append(command)
+        return "Python 3.13.0"
+
+    local_shell_tool = OpenAIResponsesClient.get_shell_tool(
+        func=local_exec,
+        approval_mode="never_require",
+    )
+
+    mock_response1 = MagicMock()
+    mock_response1.output_parsed = None
+    mock_response1.metadata = {}
+    mock_response1.usage = None
+    mock_response1.id = "resp-1"
+    mock_response1.model = "test-model"
+    mock_response1.created_at = 1000000000
+    mock_response1.status = "completed"
+    mock_response1.finish_reason = "tool_calls"
+    mock_response1.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["python --version"]
+    mock_action.timeout_ms = 30000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.id = "sh_test_shell_call_1"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+    mock_response1.output = [mock_shell_call]
+
+    mock_response2 = MagicMock()
+    mock_response2.output_parsed = None
+    mock_response2.metadata = {}
+    mock_response2.usage = None
+    mock_response2.id = "resp-2"
+    mock_response2.model = "test-model"
+    mock_response2.created_at = 1000000001
+    mock_response2.status = "completed"
+    mock_response2.finish_reason = "stop"
+    mock_response2.incomplete = None
+
+    mock_text_item = MagicMock()
+    mock_text_item.type = "message"
+    mock_text_content = MagicMock()
+    mock_text_content.type = "output_text"
+    mock_text_content.text = "Python 3.13.0"
+    mock_text_item.content = [mock_text_content]
+    mock_response2.output = [mock_text_item]
+
+    with patch.object(client.client.responses, "create", side_effect=[mock_response1, mock_response2]) as mock_create:
+        await client.get_response(
+            messages=[Message(role="user", text="What Python version is available?")],
+            options={"tools": [local_shell_tool]},
+        )
+
+        assert executed_commands == ["python --version"]
+        assert mock_create.call_count == 2
+        second_call_input = mock_create.call_args_list[1].kwargs["input"]
+        shell_outputs = [item for item in second_call_input if item.get("type") == "shell_call_output"]
+        assert len(shell_outputs) == 1
+        assert shell_outputs[0]["call_id"] == "shell-call-1"
+        assert isinstance(shell_outputs[0]["output"], list)
+        assert shell_outputs[0]["output"][0]["stdout"] == "Python 3.13.0"
+        local_shell_outputs = [item for item in second_call_input if item.get("type") == "local_shell_call_output"]
+        assert len(local_shell_outputs) == 0
+
+
+def test_response_content_creation_with_shell_call() -> None:
+    """Test _parse_response_from_openai with shell_call output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_action = MagicMock()
+    mock_action.commands = ["ls -la", "pwd"]
+    mock_action.timeout_ms = 60000
+    mock_action.max_output_length = 4096
+
+    mock_shell_call = MagicMock()
+    mock_shell_call.type = "shell_call"
+    mock_shell_call.call_id = "shell-call-1"
+    mock_shell_call.action = mock_action
+    mock_shell_call.status = "completed"
+
+    mock_response.output = [mock_shell_call]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    call_content = response.messages[0].contents[0]
+    assert call_content.type == "shell_tool_call"
+    assert call_content.call_id == "shell-call-1"
+    assert call_content.commands == ["ls -la", "pwd"]
+    assert call_content.timeout_ms == 60000
+    assert call_content.max_output_length == 4096
+    assert call_content.status == "completed"
+
+
+def test_response_content_creation_with_shell_call_output() -> None:
+    """Test _parse_response_from_openai with shell_call_output output."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "exit"
+    mock_outcome.exit_code = 0
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "hello world\n"
+    mock_output_entry.stderr = ""
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-1"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = 4096
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.call_id == "shell-call-1"
+    assert result_content.outputs is not None
+    assert len(result_content.outputs) == 1
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].stdout == "hello world\n"
+    assert result_content.outputs[0].exit_code == 0
+    assert result_content.outputs[0].timed_out is False
+    assert result_content.max_output_length == 4096
+
+
+def test_response_content_creation_with_shell_call_timeout() -> None:
+    """Test _parse_response_from_openai with shell_call_output that timed out."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.status = "completed"
+    mock_response.incomplete = None
+
+    mock_outcome = MagicMock()
+    mock_outcome.type = "timeout"
+
+    mock_output_entry = MagicMock()
+    mock_output_entry.stdout = "partial output"
+    mock_output_entry.stderr = None
+    mock_output_entry.outcome = mock_outcome
+
+    mock_shell_output = MagicMock()
+    mock_shell_output.type = "shell_call_output"
+    mock_shell_output.call_id = "shell-call-t"
+    mock_shell_output.output = [mock_output_entry]
+    mock_shell_output.max_output_length = None
+
+    mock_response.output = [mock_shell_output]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    result_content = response.messages[0].contents[0]
+    assert result_content.type == "shell_tool_result"
+    assert result_content.outputs is not None
+    assert result_content.outputs[0].type == "shell_command_output"
+    assert result_content.outputs[0].timed_out is True
+    assert result_content.outputs[0].exit_code is None
 
 
 def test_response_content_creation_with_function_call() -> None:
@@ -612,7 +1056,7 @@ def test_prepare_content_for_opentool_approval_response() -> None:
         function_call=function_call,
     )
 
-    result = client._prepare_content_for_openai("assistant", approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response)
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_001"
@@ -629,7 +1073,7 @@ def test_prepare_content_for_openai_error_content() -> None:
         error_details="Invalid parameter",
     )
 
-    result = client._prepare_content_for_openai("assistant", error_content, {})
+    result = client._prepare_content_for_openai("assistant", error_content)
 
     # ErrorContent should return empty dict (logged but not sent)
     assert result == {}
@@ -647,7 +1091,7 @@ def test_prepare_content_for_openai_usage_content() -> None:
         }
     )
 
-    result = client._prepare_content_for_openai("assistant", usage_content, {})
+    result = client._prepare_content_for_openai("assistant", usage_content)
 
     # UsageContent should return empty dict (logged but not sent)
     assert result == {}
@@ -661,7 +1105,7 @@ def test_prepare_content_for_openai_hosted_vector_store_content() -> None:
         vector_store_id="vs_123",
     )
 
-    result = client._prepare_content_for_openai("assistant", vector_store_content, {})
+    result = client._prepare_content_for_openai("assistant", vector_store_content)
 
     # HostedVectorStoreContent should return empty dict (logged but not sent)
     assert result == {}
@@ -673,8 +1117,8 @@ def test_prepare_content_for_openai_text_uses_role_specific_type() -> None:
 
     text_content = Content.from_text(text="hello")
 
-    user_result = client._prepare_content_for_openai("user", text_content, {})
-    assistant_result = client._prepare_content_for_openai("assistant", text_content, {})
+    user_result = client._prepare_content_for_openai("user", text_content)
+    assistant_result = client._prepare_content_for_openai("assistant", text_content)
 
     assert user_result["type"] == "input_text"
     assert assistant_result["type"] == "output_text"
@@ -796,9 +1240,8 @@ def test_prepare_message_for_openai_with_function_approval_response() -> None:
     )
 
     message = Message(role="user", contents=[approval_response])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # FunctionApprovalResponseContent is added directly, not nested in args with role
     assert len(result) == 1
@@ -829,9 +1272,8 @@ def test_prepare_message_for_openai_includes_reasoning_with_function_call() -> N
     )
 
     message = Message(role="assistant", contents=[reasoning, function_call])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Both reasoning and function_call should be present as top-level items
     types = [item["type"] for item in result]
@@ -879,7 +1321,10 @@ def test_prepare_messages_for_openai_full_conversation_with_reasoning() -> None:
                 ),
             ],
         ),
-        Message(role="assistant", contents=[Content.from_text(text="I found hotels for you")]),
+        Message(
+            role="assistant",
+            contents=[Content.from_text(text="I found hotels for you")],
+        ),
     ]
 
     result = client._prepare_messages_for_openai(messages)
@@ -914,9 +1359,8 @@ def test_prepare_message_for_openai_filters_error_content() -> None:
     )
 
     message = Message(role="assistant", contents=[error_content])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Message should be empty since ErrorContent is filtered out
     assert len(result) == 0
@@ -935,9 +1379,8 @@ def test_chat_message_with_usage_content() -> None:
     )
 
     message = Message(role="assistant", contents=[usage_content])
-    call_id_to_id: dict[str, str] = {}
 
-    result = client._prepare_message_for_openai(message, call_id_to_id)
+    result = client._prepare_message_for_openai(message)
 
     # Message should be empty since UsageContent is filtered out
     assert len(result) == 0
@@ -953,8 +1396,7 @@ def test_hosted_file_content_preparation() -> None:
         name="document.pdf",
     )
 
-    result = client._prepare_content_for_openai("user", hosted_file, {})
-
+    result = client._prepare_content_for_openai("user", hosted_file)
     assert result["type"] == "input_file"
     assert result["file_id"] == "file_abc123"
 
@@ -976,7 +1418,7 @@ def test_function_approval_response_with_mcp_tool_call() -> None:
         function_call=mcp_call,
     )
 
-    result = client._prepare_content_for_openai("assistant", approval_response, {})
+    result = client._prepare_content_for_openai("assistant", approval_response)
 
     assert result["type"] == "mcp_approval_response"
     assert result["approval_request_id"] == "approval_mcp_001"
@@ -988,10 +1430,16 @@ def test_response_format_with_conflicting_definitions() -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
     # Mock response_format and text_config that conflict
-    response_format = {"type": "json_schema", "format": {"type": "json_schema", "name": "Test", "schema": {}}}
+    response_format = {
+        "type": "json_schema",
+        "format": {"type": "json_schema", "name": "Test", "schema": {}},
+    }
     text_config = {"format": {"type": "json_object"}}
 
-    with pytest.raises(ChatClientInvalidRequestException, match="Conflicting response_format definitions"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="Conflicting response_format definitions",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=text_config)
 
 
@@ -1023,7 +1471,13 @@ def test_response_format_with_format_key() -> None:
     """Test response_format that already has a format key."""
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
 
-    response_format = {"format": {"type": "json_schema", "name": "MySchema", "schema": {"type": "object"}}}
+    response_format = {
+        "format": {
+            "type": "json_schema",
+            "name": "MySchema",
+            "schema": {"type": "object"},
+        }
+    }
 
     _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
@@ -1053,7 +1507,11 @@ def test_response_format_json_schema_with_strict() -> None:
 
     response_format = {
         "type": "json_schema",
-        "json_schema": {"name": "StrictSchema", "schema": {"type": "object"}, "strict": True},
+        "json_schema": {
+            "name": "StrictSchema",
+            "schema": {"type": "object"},
+            "strict": True,
+        },
     }
 
     _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
@@ -1087,7 +1545,10 @@ def test_response_format_json_schema_missing_schema() -> None:
 
     response_format = {"type": "json_schema", "json_schema": {"name": "NoSchema"}}
 
-    with pytest.raises(ChatClientInvalidRequestException, match="json_schema response_format requires a schema"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="json_schema response_format requires a schema",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
@@ -1107,7 +1568,10 @@ def test_response_format_invalid_type() -> None:
 
     response_format = "invalid"  # Not a Pydantic model or mapping
 
-    with pytest.raises(ChatClientInvalidRequestException, match="response_format must be a Pydantic model or mapping"):
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="response_format must be a Pydantic model or mapping",
+    ):
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)  # type: ignore
 
 
@@ -1411,6 +1875,19 @@ def test_prepare_tools_for_openai_with_image_generation_options() -> None:
     assert image_tool["output_format"] == "png"
     assert image_tool["size"] == "512x512"
     assert image_tool["quality"] == "high"
+
+
+def test_prepare_tools_for_openai_with_custom_image_generation_model() -> None:
+    """Test image generation tool conversion with a custom model string."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    tool = OpenAIResponsesClient.get_image_generation_tool(model="custom-image-model")
+
+    resp_tools = client._prepare_tools_for_openai([tool])
+    assert len(resp_tools) == 1
+    image_tool = resp_tools[0]
+    assert image_tool["type"] == "image_generation"
+    assert image_tool["model"] == "custom-image-model"
 
 
 def test_parse_chunk_from_openai_with_mcp_approval_request() -> None:
@@ -1764,7 +2241,9 @@ async def test_get_response_streaming_with_response_format() -> None:
 
         async def run_streaming():
             async for _ in client.get_response(
-                stream=True, messages=messages, options={"response_format": OutputStruct}
+                stream=True,
+                messages=messages,
+                options={"response_format": OutputStruct},
             ):
                 pass
 
@@ -1781,7 +2260,7 @@ def test_prepare_content_for_openai_image_content() -> None:
         media_type="image/jpeg",
         additional_properties={"detail": "high", "file_id": "file_123"},
     )
-    result = client._prepare_content_for_openai("user", image_content_with_detail, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_with_detail)
     assert result["type"] == "input_image"
     assert result["image_url"] == "https://example.com/image.jpg"
     assert result["detail"] == "high"
@@ -1789,7 +2268,7 @@ def test_prepare_content_for_openai_image_content() -> None:
 
     # Test image content without additional properties (defaults)
     image_content_basic = Content.from_uri(uri="https://example.com/basic.png", media_type="image/png")
-    result = client._prepare_content_for_openai("user", image_content_basic, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", image_content_basic)
     assert result["type"] == "input_image"
     assert result["detail"] == "auto"
     assert result["file_id"] is None
@@ -1801,14 +2280,14 @@ def test_prepare_content_for_openai_audio_content() -> None:
 
     # Test WAV audio content
     wav_content = Content.from_uri(uri="data:audio/wav;base64,abc123", media_type="audio/wav")
-    result = client._prepare_content_for_openai("user", wav_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", wav_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["data"] == "data:audio/wav;base64,abc123"
     assert result["input_audio"]["format"] == "wav"
 
     # Test MP3 audio content
     mp3_content = Content.from_uri(uri="data:audio/mp3;base64,def456", media_type="audio/mp3")
-    result = client._prepare_content_for_openai("user", mp3_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", mp3_content)
     assert result["type"] == "input_audio"
     assert result["input_audio"]["format"] == "mp3"
 
@@ -1819,13 +2298,52 @@ def test_prepare_content_for_openai_unsupported_content() -> None:
 
     # Test unsupported audio format
     unsupported_audio = Content.from_uri(uri="data:audio/ogg;base64,ghi789", media_type="audio/ogg")
-    result = client._prepare_content_for_openai("user", unsupported_audio, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", unsupported_audio)
     assert result == {}
 
     # Test non-media content
     text_uri_content = Content.from_uri(uri="https://example.com/document.txt", media_type="text/plain")
-    result = client._prepare_content_for_openai("user", text_uri_content, {})  # type: ignore
+    result = client._prepare_content_for_openai("user", text_uri_content)
     assert result == {}
+
+
+def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
+    """Test _prepare_content_for_openai with function_result containing rich items."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    image_content = Content.from_data(data=b"image_bytes", media_type="image/png")
+    content = Content.from_function_result(
+        call_id="call_rich",
+        result=[Content.from_text("Result text"), image_content],
+    )
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_rich"
+    # Output should be a list with text and image parts
+    output = result["output"]
+    assert isinstance(output, list)
+    assert len(output) == 2
+    assert output[0]["type"] == "input_text"
+    assert output[0]["text"] == "Result text"
+    assert output[1]["type"] == "input_image"
+
+
+def test_prepare_content_for_openai_function_result_without_items() -> None:
+    """Test _prepare_content_for_openai with plain string function_result."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_plain",
+        result="Simple result",
+    )
+
+    result = client._prepare_content_for_openai("user", content)
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_plain"
+    assert result["output"] == "Simple result"
 
 
 def test_parse_chunk_from_openai_code_interpreter() -> None:
@@ -1845,7 +2363,7 @@ def test_parse_chunk_from_openai_code_interpreter() -> None:
     mock_item_image.code = None
     mock_event_image.item = mock_item_image
 
-    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_image, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_result"
     assert result.contents[0].outputs
@@ -1868,7 +2386,7 @@ def test_parse_chunk_from_openai_code_interpreter_delta() -> None:
     mock_delta_event.call_id = None  # Ensure fallback to item_id
     mock_delta_event.id = None
 
-    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_delta_event, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_call"
     assert result.contents[0].call_id == "ci_123"
@@ -1897,7 +2415,7 @@ def test_parse_chunk_from_openai_code_interpreter_done() -> None:
     mock_done_event.call_id = None  # Ensure fallback to item_id
     mock_done_event.id = None
 
-    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_done_event, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "code_interpreter_tool_call"
     assert result.contents[0].call_id == "ci_456"
@@ -1926,7 +2444,7 @@ def test_parse_chunk_from_openai_reasoning() -> None:
     mock_item_reasoning.summary = ["Problem analysis summary"]
     mock_event_reasoning.item = mock_item_reasoning
 
-    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)  # type: ignore
+    result = client._parse_chunk_from_openai(mock_event_reasoning, chat_options, function_call_ids)
     assert len(result.contents) == 1
     assert result.contents[0].type == "text_reasoning"
     assert result.contents[0].text == "Analyzing the problem step by step..."
@@ -1948,7 +2466,7 @@ def test_prepare_content_for_openai_text_reasoning_comprehensive() -> None:
             "encrypted_content": "secure_data_456",
         },
     )
-    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning, {})  # type: ignore
+    result = client._prepare_content_for_openai("assistant", comprehensive_reasoning)
     assert result["type"] == "reasoning"
     assert result["id"] == "rs_comprehensive"
     assert result["summary"][0]["text"] == "Comprehensive reasoning summary"
@@ -2344,7 +2862,10 @@ async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> N
 
         await client.get_response(
             messages=[Message(role="user", text="Tell me a joke")],
-            options={"instructions": "Reply in uppercase.", "conversation_id": "resp_123"},
+            options={
+                "instructions": "Reply in uppercase.",
+                "conversation_id": "resp_123",
+            },
         )
 
         second_input_messages = mock_create.call_args.kwargs["input"]
@@ -2354,7 +2875,9 @@ async def test_instructions_sent_first_turn_then_skipped_for_continuation() -> N
 
 
 @pytest.mark.parametrize("conversation_id", ["resp_456", "conv_abc123"])
-async def test_instructions_not_repeated_for_continuation_ids(conversation_id: str) -> None:
+async def test_instructions_not_repeated_for_continuation_ids(
+    conversation_id: str,
+) -> None:
     client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
     mock_response = _create_mock_responses_text_response(response_id="resp_456")
 
@@ -2455,7 +2978,12 @@ def test_with_callable_api_key() -> None:
                             "temperature_c": {"type": "number"},
                             "advisory": {"type": "string"},
                         },
-                        "required": ["location", "conditions", "temperature_c", "advisory"],
+                        "required": [
+                            "location",
+                            "conditions",
+                            "temperature_c",
+                            "advisory",
+                        ],
                         "additionalProperties": False,
                     },
                 },
@@ -2580,7 +3108,12 @@ async def test_integration_web_search() -> None:
             user_location={"country": "US", "city": "Seattle"},
         )
         content = {
-            "messages": [Message(role="user", text="What is the current weather? Do not ask for my current location.")],
+            "messages": [
+                Message(
+                    role="user",
+                    text="What is the current weather? Do not ask for my current location.",
+                )
+            ],
             "options": {
                 "tool_choice": "auto",
                 "tools": [web_search_tool_with_location],
@@ -2671,7 +3204,89 @@ async def test_integration_streaming_file_search() -> None:
     assert "75" in full_message
 
 
-# region Background Response / ContinuationToken Tests
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_tool_rich_content_image() -> None:
+    """Integration test: a tool returns an image and the model describes it."""
+    image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
+    image_bytes = image_path.read_bytes()
+
+    @tool(approval_mode="never_require")
+    def get_test_image() -> Content:
+        """Return a test image for analysis."""
+        return Content.from_data(data=image_bytes, media_type="image/jpeg")
+
+    client = OpenAIResponsesClient()
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    for streaming in [False, True]:
+        messages = [
+            Message(
+                role="user",
+                text="Call the get_test_image tool and describe what you see.",
+            )
+        ]
+        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+
+        if streaming:
+            response = await client.get_response(messages=messages, stream=True, options=options).get_final_response()
+        else:
+            response = await client.get_response(messages=messages, options=options)
+
+        assert response is not None
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
+        assert len(response.text) > 0
+        # sample_image.jpg contains a photo of a house; the model should mention it.
+        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+
+
+@pytest.mark.timeout(300)
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_integration_agent_replays_local_tool_history_without_stale_fc_id() -> None:
+    """Integration test: persisted local Responses tool history can be replayed on a later turn."""
+    hotel_code = "HOTEL-PERSIST-4672"
+
+    @tool(name="search_hotels", approval_mode="never_require")
+    async def search_hotels(city: Annotated[str, "The city to search for hotels in"]) -> str:
+        return f"The only hotel option in {city} is {hotel_code}."
+
+    client = OpenAIResponsesClient()
+    client.function_invocation_configuration["max_iterations"] = 2
+
+    agent = Agent(
+        client=client,
+        tools=[search_hotels],
+        default_options={"store": False},
+    )
+    session = agent.create_session()
+
+    first_response = await agent.run(
+        "Call the search_hotels tool for Paris and answer with the hotel code you found.",
+        session=session,
+        options={"tool_choice": {"mode": "required", "required_function_name": "search_hotels"}},
+    )
+    assert first_response.text is not None
+    assert hotel_code in first_response.text
+
+    shared_messages = session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID]["messages"]
+    shared_function_call = next(
+        content for message in shared_messages for content in message.contents if content.type == "function_call"
+    )
+    assert shared_function_call.additional_properties is not None
+    assert isinstance(shared_function_call.additional_properties.get("fc_id"), str)
+    assert shared_function_call.additional_properties["fc_id"]
+
+    second_response = await agent.run(
+        "What hotel code did you already find for Paris? Answer with the exact code only.",
+        session=session,
+        options={"tool_choice": "none"},
+    )
+    assert second_response.text is not None
+    assert hotel_code in second_response.text
 
 
 def test_continuation_token_json_serializable() -> None:
@@ -2926,6 +3541,236 @@ async def test_prepare_options_excludes_continuation_token() -> None:
     assert "continuation_token" not in run_options
     assert "background" in run_options
     assert run_options["background"] is True
+
+
+# endregion
+
+
+# region Function Call Fidelity Tests
+
+
+def test_parse_response_from_openai_function_call_includes_status() -> None:
+    """Test _parse_response_from_openai includes status in function call additional_properties."""
+    from openai.types.responses import ResponseFunctionToolCall
+
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    # Create a real ResponseFunctionToolCall object
+    mock_function_call_item = ResponseFunctionToolCall(
+        type="function_call",
+        call_id="call_123",
+        name="get_weather",
+        arguments='{"location": "Seattle"}',
+        id="fc_456",
+        status="completed",
+    )
+
+    mock_response = MagicMock()
+    mock_response.output_parsed = None
+    mock_response.metadata = {}
+    mock_response.usage = None
+    mock_response.id = "test-id"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.output = [mock_function_call_item]
+
+    response = client._parse_response_from_openai(mock_response, options={})  # type: ignore
+
+    assert len(response.messages[0].contents) == 1
+    function_call = response.messages[0].contents[0]
+    assert function_call.type == "function_call"
+    assert function_call.call_id == "call_123"
+    assert function_call.name == "get_weather"
+    assert function_call.arguments == '{"location": "Seattle"}'
+    # Verify status is included in additional_properties
+    assert function_call.additional_properties is not None
+    assert function_call.additional_properties.get("status") == "completed"
+    assert function_call.additional_properties.get("fc_id") == "fc_456"
+    # Verify raw_representation is preserved
+    assert function_call.raw_representation is mock_function_call_item
+
+
+async def test_prepare_messages_for_openai_does_not_replay_fc_id_when_loaded_from_history() -> None:
+    """Loaded history must not replay provider-ephemeral Responses function call IDs."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    provider = InMemoryHistoryProvider()
+
+    session = AgentSession(session_id="thread-1")
+    session.state[provider.source_id] = {
+        "messages": [
+            Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="search_hotels",
+                        arguments='{"city": "Paris"}',
+                        additional_properties={"fc_id": "fc_provider123", "status": "completed"},
+                    ),
+                ],
+            ),
+            Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id="call_1",
+                        result="Found 3 hotels in Paris",
+                    ),
+                ],
+            ),
+        ]
+    }
+
+    next_turn_input = Message(role="user", contents=[Content.from_text(text="Book the cheapest one")])
+
+    live_result = client._prepare_messages_for_openai([*session.state[provider.source_id]["messages"], next_turn_input])
+    live_function_call = next(item for item in live_result if item.get("type") == "function_call")
+    assert live_function_call["id"] == "fc_provider123"
+
+    context = SessionContext(session_id=session.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=session,
+        context=context,
+        state=session.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    loaded_result = client._prepare_messages_for_openai(
+        context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    loaded_function_call = next(item for item in loaded_result if item.get("type") == "function_call")
+    assert loaded_function_call["id"] == "fc_call_1"
+
+    stored_function_call = session.state[provider.source_id]["messages"][0].contents[0]
+    assert stored_function_call.additional_properties is not None
+    assert stored_function_call.additional_properties.get("fc_id") == "fc_provider123"
+
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    restored_context = SessionContext(session_id=restored.session_id, input_messages=[next_turn_input])
+    await provider.before_run(
+        agent=None,
+        session=restored,
+        context=restored_context,
+        state=restored.state.setdefault(provider.source_id, {}),
+    )  # type: ignore[arg-type]
+
+    restored_result = client._prepare_messages_for_openai(
+        restored_context.get_messages(sources={provider.source_id}, include_input=True)
+    )
+    restored_function_call = next(item for item in restored_result if item.get("type") == "function_call")
+    assert restored_function_call["id"] == "fc_call_1"
+
+
+def test_prepare_messages_for_openai_keeps_live_fc_id_separate_from_replayed_history() -> None:
+    """Replayed history must not borrow a live Responses function call ID with the same call_id."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    history_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "Paris"}',
+                additional_properties={"fc_id": "fc_history123"},
+            )
+        ],
+        additional_properties={"_attribution": {"source_id": "history", "source_type": "InMemoryHistoryProvider"}},
+    )
+    live_message = Message(
+        role="assistant",
+        contents=[
+            Content.from_function_call(
+                call_id="call_1",
+                name="search_hotels",
+                arguments='{"city": "London"}',
+                additional_properties={"fc_id": "fc_live123"},
+            )
+        ],
+    )
+
+    result = client._prepare_messages_for_openai([history_message, live_message])
+
+    function_calls = [item for item in result if item.get("type") == "function_call"]
+    assert [item["id"] for item in function_calls] == ["fc_call_1", "fc_live123"]
+
+
+def test_prepare_messages_for_openai_filters_empty_fc_id() -> None:
+    """Test _prepare_messages_for_openai correctly filters empty fc_id values from call_id_to_id mapping."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(role="user", contents=[Content.from_text(text="check hotels")]),
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with empty fc_id - should NOT be added to call_id_to_id
+                Content.from_function_call(
+                    call_id="call_empty",
+                    name="search_hotels",
+                    arguments='{"city": "Paris"}',
+                    additional_properties={"fc_id": ""},  # Empty string
+                ),
+            ],
+        ),
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with valid fc_id - SHOULD be added to call_id_to_id
+                Content.from_function_call(
+                    call_id="call_valid",
+                    name="search_flights",
+                    arguments='{"from": "NYC"}',
+                    additional_properties={"fc_id": "fc_valid123"},
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    # Find the function_call items in the result
+    fc_items = [item for item in result if item.get("type") == "function_call"]
+    assert len(fc_items) == 2
+
+    # The empty fc_id should result in an auto-generated id (starts with fc_)
+    empty_fc_item = next(item for item in fc_items if item.get("call_id") == "call_empty")
+    assert empty_fc_item["id"].startswith("fc_")
+    assert empty_fc_item["id"] != ""
+
+    # The valid fc_id should be preserved
+    valid_fc_item = next(item for item in fc_items if item.get("call_id") == "call_valid")
+    assert valid_fc_item["id"] == "fc_valid123"
+
+
+def test_prepare_messages_for_openai_filters_none_fc_id() -> None:
+    """Test _prepare_messages_for_openai correctly filters None fc_id values."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                # Function call with None fc_id value
+                Content.from_function_call(
+                    call_id="call_none",
+                    name="get_info",
+                    arguments="{}",
+                    additional_properties={"fc_id": None},  # None value
+                ),
+            ],
+        ),
+    ]
+
+    result = client._prepare_messages_for_openai(messages)
+
+    # Find the function_call item
+    fc_items = [item for item in result if item.get("type") == "function_call"]
+    assert len(fc_items) == 1
+
+    # The None fc_id should result in an auto-generated id
+    fc_item = fc_items[0]
+    assert fc_item["id"].startswith("fc_")
 
 
 # endregion

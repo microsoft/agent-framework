@@ -43,7 +43,7 @@ async def main() -> None:
                 options=MemoryStoreDefaultOptions(user_profile_enabled=True, chat_summary_enabled=True),
             )
 
-            memory_store = await project_client.memory_stores.create(
+            memory_store = await project_client.beta.memory_stores.create(
                 name=memory_store_name,
                 description="Memory store for Agent Framework conversations",
                 definition=memory_store_definition,
@@ -57,7 +57,7 @@ async def main() -> None:
                 instructions="""You are a helpful assistant that remembers past conversations.
                 Use the memory search tool to recall relevant information from previous interactions.""",
                 tools={
-                    "type": "memory_search",
+                    "type": "memory_search_preview",
                     "memory_store_name": memory_store.name,
                     "scope": "user_123",
                     "update_delay": 1,  # Wait 1 second before updating memories (use higher value in production)
@@ -84,7 +84,7 @@ async def main() -> None:
 
         # Clean up - delete the memory store
         async with AIProjectClient(endpoint=endpoint, credential=credential) as project_client:
-            await project_client.memory_stores.delete(memory_store_name)
+            await project_client.beta.memory_stores.delete(memory_store_name)
             print("Memory store deleted")
 
 

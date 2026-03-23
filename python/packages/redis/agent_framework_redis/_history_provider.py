@@ -107,30 +107,45 @@ class RedisHistoryProvider(BaseHistoryProvider):
         """Get the Redis key for a given session's messages."""
         return f"{self.key_prefix}:{session_id or 'default'}"
 
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
+    async def get_messages(
+        self,
+        session_id: str | None,
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Message]:
         """Retrieve stored messages for this session from Redis.
 
         Args:
             session_id: The session ID to retrieve messages for.
+            state: Optional session state. Unused for Redis-backed history.
             **kwargs: Additional arguments (unused).
 
         Returns:
             List of stored Message objects in chronological order.
         """
         key = self._redis_key(session_id)
-        redis_messages = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
+        redis_messages: list[str] = await self._redis_client.lrange(key, 0, -1)  # type: ignore[misc]
         messages: list[Message] = []
         if redis_messages:
-            for serialized in redis_messages:
-                messages.append(Message.from_dict(self._deserialize_json(serialized)))
+            for serialized in redis_messages:  # type: ignore[union-attr]
+                messages.append(Message.from_dict(self._deserialize_json(serialized)))  # type: ignore[union-attr]
         return messages
 
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages for this session to Redis.
 
         Args:
             session_id: The session ID to store messages for.
             messages: The messages to persist.
+            state: Optional session state. Unused for Redis-backed history.
             **kwargs: Additional arguments (unused).
         """
         if not messages:

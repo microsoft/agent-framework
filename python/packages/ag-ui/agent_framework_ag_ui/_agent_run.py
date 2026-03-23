@@ -21,6 +21,7 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 from agent_framework import (
@@ -369,12 +370,47 @@ def _handle_step_based_approval(messages: list[Any]) -> list[BaseEvent]:
     return events
 
 
+def _make_approval_tool_result_events(resolved_approval_results: list[Content]) -> list[ToolCallResultEvent]:
+    """Build TOOL_CALL_RESULT events for tools executed during approval resolution."""
+    events: list[ToolCallResultEvent] = []
+    for resolved in resolved_approval_results:
+        if resolved.call_id:
+            raw = resolved.result if resolved.result is not None else ""
+            result_str = raw if isinstance(raw, str) else json.dumps(make_json_safe(raw))
+            events.append(
+                ToolCallResultEvent(
+                    message_id=generate_event_id(),
+                    tool_call_id=resolved.call_id,
+                    content=result_str,
+                    role="tool",
+                )
+            )
+    return events
+
+
+def _evict_oldest_approvals(registry: dict[str, str], max_size: int = 10_000) -> None:
+    """Evict the oldest entries from the pending-approvals registry (LRU).
+
+    Only effective when *registry* is an ``OrderedDict``;  plain dicts are
+    left untouched because insertion-order eviction is unreliable for them.
+    """
+    if len(registry) <= max_size:
+        return
+    try:
+        while len(registry) > max_size:
+            registry.popitem(last=False)  # type: ignore[call-arg]
+    except (TypeError, KeyError):
+        pass
+
+
 async def _resolve_approval_responses(
     messages: list[Any],
     tools: list[Any],
     agent: SupportsAgentRun,
     run_kwargs: dict[str, Any],
-) -> None:
+    pending_approvals: dict[str, str] | None = None,
+    thread_id: str = "",
+) -> list[Content]:
     """Execute approved function calls and replace approval content with results.
 
     This modifies the messages list in place, replacing function_approval_response
@@ -385,13 +421,77 @@ async def _resolve_approval_responses(
         tools: List of available tools
         agent: The agent instance (to get client and config)
         run_kwargs: Kwargs for tool execution
+        pending_approvals: Server-side registry of pending approval requests.
+            Keys are ``{thread_id}:{request_id}``, values are function names.
+            When provided, every approval response is validated against this
+            registry to prevent bypass, function name spoofing, and replay.
+        thread_id: The conversation thread ID used to scope registry keys.
+
+    Returns:
+        List of approved function_result Content objects only (empty if no
+        approvals).  Rejection results are written into the message history
+        but are *not* included in the return value because they should not
+        be emitted as TOOL_CALL_RESULT events.
     """
     fcc_todo = _collect_approval_responses(messages)
     if not fcc_todo:
-        return
+        return []
 
     approved_responses = [resp for resp in fcc_todo.values() if resp.approved]
     rejected_responses = [resp for resp in fcc_todo.values() if not resp.approved]
+
+    # Validate every approval response (approved AND rejected) against the
+    # pending approvals registry.  Invalid responses are stripped from messages
+    # entirely — not converted to rejection results, which would inject
+    # attacker-controlled content into the LLM conversation.
+    if pending_approvals is not None and (approved_responses or rejected_responses):
+        validated: list[Any] = []
+        validated_rejected: list[Any] = []
+        invalid_ids: set[str] = set()
+        for resp in approved_responses + rejected_responses:
+            resp_id = resp.id or ""
+            resp_name = resp.function_call.name if resp.function_call else None
+            registry_key = f"{thread_id}:{resp_id}"
+
+            if registry_key not in pending_approvals:
+                logger.warning(
+                    "Rejected approval response id=%s: no matching pending approval request",
+                    resp_id,
+                )
+                invalid_ids.add(resp_id)
+                continue
+
+            pending_name = pending_approvals[registry_key]
+            if resp_name != pending_name:
+                logger.warning(
+                    "Rejected approval response id=%s: function name mismatch (response=%s, pending=%s)",
+                    resp_id,
+                    resp_name,
+                    pending_name,
+                )
+                invalid_ids.add(resp_id)
+                continue
+
+            # Valid — consume entry to prevent replay
+            del pending_approvals[registry_key]
+            if resp.approved:
+                validated.append(resp)
+            else:
+                validated_rejected.append(resp)
+
+        # Strip invalid approval responses from messages and fcc_todo so
+        # _replace_approval_contents_with_results never sees them.
+        if invalid_ids:
+            for inv_id in invalid_ids:
+                fcc_todo.pop(inv_id, None)
+            for msg in messages:
+                msg.contents = [
+                    c for c in msg.contents if not (c.type == "function_approval_response" and c.id in invalid_ids)
+                ]
+
+        approved_responses = validated
+        rejected_responses = validated_rejected
+
     approved_function_results: list[Any] = []
 
     # Execute approved tool calls
@@ -418,37 +518,31 @@ async def _resolve_approval_responses(
             logger.exception("Failed to execute approved tool calls; injecting error results: %s", e)
             approved_function_results = []
 
-    # Build normalized results for approved responses
-    normalized_results: list[Content] = []
+    # Build results for approved responses (used for TOOL_CALL_RESULT event emission)
+    approved_results: list[Content] = []
     for idx, approval in enumerate(approved_responses):
         if (
             idx < len(approved_function_results)
             and getattr(approved_function_results[idx], "type", None) == "function_result"
         ):
-            normalized_results.append(approved_function_results[idx])
+            approved_results.append(approved_function_results[idx])
             continue
         # Get call_id from function_call if present, otherwise use approval.id
         func_call = approval.function_call
         call_id = (func_call.call_id if func_call else None) or approval.id or ""
-        normalized_results.append(
+        approved_results.append(
             Content.from_function_result(call_id=call_id, result="Error: Tool call invocation failed.")
         )
 
-    # Build rejection results
-    for rejection in rejected_responses:
-        func_call = rejection.function_call
-        call_id = (func_call.call_id if func_call else None) or rejection.id or ""
-        normalized_results.append(
-            Content.from_function_result(call_id=call_id, result="Error: Tool call invocation was rejected by user.")
-        )
-
-    _replace_approval_contents_with_results(messages, fcc_todo, normalized_results)  # type: ignore
+    _replace_approval_contents_with_results(messages, fcc_todo, approved_results)  # type: ignore
 
     # Post-process: Convert user messages with function_result content to proper tool messages.
     # After _replace_approval_contents_with_results, approved tool calls have their results
     # placed in user messages. OpenAI requires tool results to be in role="tool" messages.
     # This transformation ensures the message history is valid for the LLM provider.
     _convert_approval_results_to_tool_messages(messages)
+
+    return approved_results
 
 
 def _convert_approval_results_to_tool_messages(messages: list[Message]) -> None:
@@ -597,6 +691,7 @@ async def run_agent_stream(
     input_data: dict[str, Any],
     agent: SupportsAgentRun,
     config: AgentConfig,
+    pending_approvals: dict[str, str] | None = None,
 ) -> AsyncGenerator[BaseEvent]:
     """Run agent and yield AG-UI events.
 
@@ -607,6 +702,10 @@ async def run_agent_stream(
         input_data: AG-UI request data with messages, state, tools, etc.
         agent: The Agent Framework agent to run
         config: Agent configuration
+        pending_approvals: Optional server-side registry of pending approval
+            requests.  Keys are ``{thread_id}:{request_id}``, values are
+            function names.  When provided, approval responses are validated
+            against this registry to prevent bypass, spoofing, and replay.
 
     Yields:
         AG-UI events
@@ -707,7 +806,9 @@ async def run_agent_stream(
     # Resolve approval responses (execute approved tools, replace approvals with results)
     # This must happen before running the agent so it sees the tool results
     tools_for_execution = tools if tools is not None else server_tools
-    await _resolve_approval_responses(messages, tools_for_execution, agent, run_kwargs)
+    resolved_approval_results = await _resolve_approval_responses(
+        messages, tools_for_execution, agent, run_kwargs, pending_approvals, thread_id
+    )
 
     # Defense-in-depth: replace approval payloads in snapshot with actual tool results
     # so CopilotKit does not re-send stale approval content on subsequent turns.
@@ -771,6 +872,9 @@ async def run_agent_stream(
                 yield StateSnapshotEvent(snapshot=flow.current_state)
             run_started_emitted = True
 
+            for event in _make_approval_tool_result_events(resolved_approval_results):
+                yield event
+
         # Feature #4: Detect tool-only messages (no text content)
         # Emit TextMessageStartEvent to create message context for tool calls
         if not flow.message_id and _has_only_tool_calls(update.contents):
@@ -782,6 +886,20 @@ async def run_agent_stream(
         for content in update.contents:
             content_type = getattr(content, "type", None)
             logger.debug(f"Processing content type={content_type}, message_id={flow.message_id}")
+
+            # Register pending approval requests so we can validate responses later
+            if content_type == "function_approval_request" and pending_approvals is not None:
+                if content.id and content.function_call and content.function_call.name:
+                    pending_approvals[f"{thread_id}:{content.id}"] = content.function_call.name
+                    # Evict oldest entries if the registry exceeds a safe bound (LRU)
+                    _evict_oldest_approvals(pending_approvals, max_size=10_000)
+                else:
+                    logger.warning(
+                        "Approval request not registered: missing id=%s, function_call=%s, or function name",
+                        getattr(content, "id", None),
+                        getattr(content, "function_call", None),
+                    )
+
             for event in _emit_content(
                 content,
                 flow,
@@ -811,7 +929,8 @@ async def run_agent_stream(
         if state_schema and flow.current_state:
             yield StateSnapshotEvent(snapshot=flow.current_state)
 
-    # Process structured output if response_format is set
+        for event in _make_approval_tool_result_events(resolved_approval_results):
+            yield event
     if response_format is not None and all_updates:
         from agent_framework import AgentResponse
         from pydantic import BaseModel
@@ -921,7 +1040,7 @@ async def run_agent_stream(
                         flow.tool_calls_by_id[confirm_id] = confirm_entry
                         flow.tool_calls_ended.add(confirm_id)  # Mark as ended since we emit End event
                         flow.waiting_for_approval = True
-                        flow.interrupts = [
+                        flow.interrupts.append(
                             {
                                 "id": str(confirm_id),
                                 "value": {
@@ -933,7 +1052,7 @@ async def run_agent_stream(
                                     },
                                 },
                             }
-                        ]
+                        )
 
     # Close any open message
     if flow.message_id:

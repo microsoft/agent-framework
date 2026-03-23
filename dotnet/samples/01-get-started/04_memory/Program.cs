@@ -89,10 +89,10 @@ namespace SampleApp
     internal sealed class UserInfoMemory : AIContextProvider
     {
         private readonly ProviderSessionState<UserInfo> _sessionState;
+        private IReadOnlyList<string>? _stateKeys;
         private readonly IChatClient _chatClient;
 
         public UserInfoMemory(IChatClient chatClient, Func<AgentSession?, UserInfo>? stateInitializer = null)
-            : base(null, null)
         {
             this._sessionState = new ProviderSessionState<UserInfo>(
                 stateInitializer ?? (_ => new UserInfo()),
@@ -100,7 +100,7 @@ namespace SampleApp
             this._chatClient = chatClient;
         }
 
-        public override string StateKey => this._sessionState.StateKey;
+        public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
         public UserInfo GetUserInfo(AgentSession session)
             => this._sessionState.GetOrInitializeState(session);

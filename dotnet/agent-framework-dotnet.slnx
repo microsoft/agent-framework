@@ -56,9 +56,29 @@
     <Project Path="samples/02-agents/Agents/Agent_Step15_DeepResearch/Agent_Step15_DeepResearch.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step16_Declarative/Agent_Step16_Declarative.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step17_AdditionalAIContext/Agent_Step17_AdditionalAIContext.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Agent_Step18_CompactionPipeline.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/" />
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/ConsoleApps/">
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/03_ConditionalEdges/03_ConditionalEdges.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/04_WorkflowAndAgents/04_WorkflowAndAgents.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/05_WorkflowEvents/05_WorkflowEvents.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/06_WorkflowSharedState/06_WorkflowSharedState.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/07_SubWorkflows/07_SubWorkflows.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/ConsoleApps/08_WorkflowHITL/08_WorkflowHITL.csproj" />
+  </Folder>
+  <Folder Name="/Samples/04-hosting/DurableWorkflows/AzureFunctions/">
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
+  </Folder>
+  <Folder Name="/Samples/GettingStarted/">
+    <File Path="samples/GettingStarted/README.md" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/">
     <File Path="samples/02-agents/AGUI/README.md" />
@@ -103,6 +123,7 @@
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step01_ChatHistoryMemory/AgentWithMemory_Step01_ChatHistoryMemory.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step02_MemoryUsingMem0/AgentWithMemory_Step02_MemoryUsingMem0.csproj" />
     <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step04_MemoryUsingFoundry/AgentWithMemory_Step04_MemoryUsingFoundry.csproj" />
+    <Project Path="samples/02-agents/AgentWithMemory/AgentWithMemory_Step05_BoundedChatHistory/AgentWithMemory_Step05_BoundedChatHistory.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AgentWithOpenAI/">
     <File Path="samples/02-agents/AgentWithOpenAI/README.md" />
@@ -284,8 +305,13 @@
   </Folder>
   <Folder Name="/Samples/05-end-to-end/HostedAgents/">
     <Project Path="samples/05-end-to-end/HostedAgents/AgentsInWorkflows/AgentsInWorkflows.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentThreadAndHITL/AgentThreadAndHITL.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithLocalTools/AgentWithLocalTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTools/AgentWithTools.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/FoundryMultiAgent/FoundryMultiAgent.csproj" />
+    <Project Path="samples/05-end-to-end/HostedAgents/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>
   <Folder Name="/Samples/05-end-to-end/AspNetAgentAuthorization/">
     <File Path="samples/05-end-to-end/AspNetAgentAuthorization/docker-compose.yml" />
@@ -311,7 +337,6 @@
   </Folder>
   <Folder Name="/Solution Items/.github/workflows/">
     <File Path="../.github/workflows/dotnet-build-and-test.yml" />
-    <File Path="../.github/workflows/dotnet-check-coverage.ps1" />
     <File Path="../.github/workflows/dotnet-format.yml" />
   </Folder>
   <Folder Name="/Solution Items/demos/">
@@ -347,6 +372,10 @@
     <File Path="eng/MSBuild/LegacySupport.props" />
     <File Path="eng/MSBuild/Shared.props" />
     <File Path="eng/MSBuild/Shared.targets" />
+  </Folder>
+  <Folder Name="/Solution Items/eng/scripts/">
+    <File Path="eng/scripts/dotnet-check-coverage.ps1" />
+    <File Path="eng/scripts/New-FilteredSolution.ps1" />
   </Folder>
   <Folder Name="/Solution Items/nuget/">
     <File Path="nuget/icon.png" />
@@ -412,6 +441,10 @@
     <File Path="src/Shared/IntegrationTests/Mem0Configuration.cs" />
     <File Path="src/Shared/IntegrationTests/OpenAIConfiguration.cs" />
     <File Path="src/Shared/IntegrationTests/README.md" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/IntegrationTestsAzureCredentials/">
+    <File Path="src/Shared/IntegrationTestsAzureCredentials/README.md" />
+    <File Path="src/Shared/IntegrationTestsAzureCredentials/TestAzureCliCredentials.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Samples/">
     <File Path="src/Shared/Samples/BaseSample.cs" />
