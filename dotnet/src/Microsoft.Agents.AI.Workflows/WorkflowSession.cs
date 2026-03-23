@@ -225,16 +225,16 @@ internal sealed class WorkflowSession : AgentSession
                 if (contentId != null
                     && this.TryGetPendingRequest(contentId) is ExternalRequest pendingRequest)
                 {
-                    if (!run.TryGetResponsePortExecutorId(pendingRequest.PortInfo.PortId, out string? responseExecutorId))
+                    // For intercepted/complex topologies the port may not be registered in the EdgeMap.
+                    // Treat unknown port as non-start-executor (conservative): TurnToken will still be sent.
+                    if (run.TryGetResponsePortExecutorId(pendingRequest.PortInfo.PortId, out string? responseExecutorId))
                     {
-                        throw new InvalidOperationException(
-                            $"Matched pending request '{pendingRequest.RequestId}' refers to unknown response port '{pendingRequest.PortInfo.PortId}'.");
+                        hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                     }
 
                     AIContent normalizedResponseContent = NormalizeResponseContentForDelivery(content, pendingRequest);
                     externalResponses.Add((pendingRequest.CreateResponse(normalizedResponseContent), pendingRequest.RequestId));
                     (matchedContentIds ??= new(StringComparer.Ordinal)).Add(contentId);
-                    hasMatchedResponseForStartExecutor |= string.Equals(responseExecutorId, this._workflow.StartExecutorId, StringComparison.Ordinal);
                 }
                 else
                 {
@@ -340,9 +340,14 @@ internal sealed class WorkflowSession : AgentSession
 #pragma warning restore CA2007
 
             ResumeDispatchInfo dispatchInfo = resumeResult.DispatchInfo;
+
+            // Send a TurnToken to the start executor unless the only activity is an external
+            // response directed at the start executor itself (which self-emits a TurnToken via
+            // ContinueTurnAsync). Non-start executors (e.g., RequestInfoExecutor) do not emit
+            // TurnTokens after processing responses, so the session must always provide one.
             bool shouldSendTurnToken =
                 !dispatchInfo.HasMatchedExternalResponses
-                || (dispatchInfo.HasRegularMessages && !dispatchInfo.HasMatchedResponseForStartExecutor);
+                || !dispatchInfo.HasMatchedResponseForStartExecutor;
             if (shouldSendTurnToken)
             {
                 await run.TrySendMessageAsync(new TurnToken(emitEvents: true)).ConfigureAwait(false);

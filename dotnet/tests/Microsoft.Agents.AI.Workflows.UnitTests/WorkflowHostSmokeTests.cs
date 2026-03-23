@@ -150,6 +150,62 @@ internal sealed class KickoffOnStartExecutor : ChatProtocolExecutor
     }
 }
 
+/// <summary>
+/// A start executor that always emits a response update on every turn,
+/// useful for verifying that a TurnToken was delivered by the session.
+/// On the first turn (user messages present), it kicks off a downstream executor.
+/// </summary>
+internal sealed class TurnTrackingStartExecutor : ChatProtocolExecutor
+{
+    private static readonly ChatProtocolExecutorOptions s_options = new()
+    {
+        AutoSendTurnToken = false,
+    };
+
+    private readonly string _downstreamExecutorId;
+    private readonly string _activatedMarker;
+    private int _activationCount;
+
+    /// <summary>Gets the number of times this executor has been activated (i.e., <see cref="TakeTurnAsync"/> called).</summary>
+    public int ActivationCount => this._activationCount;
+
+    public TurnTrackingStartExecutor(string id, string downstreamExecutorId, string activatedMarker)
+        : base(id, s_options)
+    {
+        this._downstreamExecutorId = downstreamExecutorId;
+        this._activatedMarker = activatedMarker;
+    }
+
+    protected override async ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref this._activationCount);
+
+        // On the first turn, forward user messages and a TurnToken to the downstream executor.
+        if (messages.Any(m => m.Role == ChatRole.User))
+        {
+            await context.SendMessageAsync(
+                messages,
+                this._downstreamExecutorId,
+                cancellationToken).ConfigureAwait(false);
+            await context.SendMessageAsync(
+                new TurnToken(emitEvents),
+                this._downstreamExecutorId,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        // Always emit a marker to prove this executor was activated.
+        AgentResponseUpdate update = new(ChatRole.Assistant, [new TextContent(this._activatedMarker)])
+        {
+            CreatedAt = DateTimeOffset.UtcNow,
+            MessageId = Guid.NewGuid().ToString("N"),
+            ResponseId = Guid.NewGuid().ToString("N"),
+            Role = ChatRole.Assistant,
+        };
+
+        await context.AddEventAsync(new AgentResponseUpdateEvent(this.Id, update), cancellationToken).ConfigureAwait(false);
+    }
+}
+
 public class WorkflowHostSmokeTests
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
@@ -615,5 +671,65 @@ public class WorkflowHostSmokeTests
 
         functionCallCount.Should().Be(1, "an unmatched response should be treated as regular input and still drive a TurnToken continuation without workflow errors");
         secondCallUpdates.SelectMany(u => u.Contents.OfType<ErrorContent>()).Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Tests that when a resume contains only an external response directed at a non-start executor
+    /// (no regular messages), the start executor still receives a TurnToken and is activated.
+    /// This is a regression test for the case where the TurnToken was previously skipped because
+    /// <c>HasRegularMessages</c> was <see langword="false"/>, leaving the start executor dormant.
+    /// </summary>
+    [Fact]
+    public async Task Test_AsAgent_ResponseOnlyToNonStartExecutor_StartExecutorIsStillActivatedAsync()
+    {
+        // Arrange
+        const string StartExecutorId = "start-executor";
+        const string ActivatedMarker = "start-executor-activated";
+        const string CallId = "response-only-call-id";
+        const string FunctionName = "responseOnlyFunction";
+
+        RequestEmittingAgent requestAgent = new(new FunctionCallContent(CallId, FunctionName), completeOnResponse: true);
+        ExecutorBinding requestBinding = requestAgent.BindAsExecutor(
+            new AIAgentHostOptions { InterceptUnterminatedFunctionCalls = false, EmitAgentUpdateEvents = true });
+
+        TurnTrackingStartExecutor startExecutor = new(StartExecutorId, requestBinding.Id, ActivatedMarker);
+        ExecutorBinding startBinding = startExecutor.BindExecutor();
+
+        Workflow workflow = new WorkflowBuilder(startBinding)
+            .AddEdge<List<ChatMessage>>(startBinding, requestBinding, messages =>
+                messages?.Any(m => m.Contents.OfType<TextContent>().Any()) == true)
+            .AddEdge<TurnToken>(startBinding, requestBinding, _ => true)
+            .Build();
+        AIAgent agent = workflow.AsAIAgent("WorkflowAgent");
+
+        // Act 1: First call triggers the downstream FunctionCallContent request
+        AgentSession session = await agent.CreateSessionAsync();
+        List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.User, "Start"),
+            session).ToListAsync();
+
+        FunctionCallContent emittedRequest = firstCallUpdates
+            .Where(u => u.RawRepresentation is RequestInfoEvent)
+            .SelectMany(u => u.Contents.OfType<FunctionCallContent>())
+            .Single();
+
+        // Act 2: Resume with ONLY the external response (no regular messages)
+        List<AgentResponseUpdate> secondCallUpdates = await agent.RunStreamingAsync(
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent(emittedRequest.CallId, "tool output")]),
+            session).ToListAsync();
+
+        // Assert: Both the downstream and start executor should have been activated
+        List<string> textContents = [.. secondCallUpdates
+            .SelectMany(u => u.Contents.OfType<TextContent>())
+            .Select(c => c.Text)];
+
+        textContents.Should().Contain("Request processed",
+            "the downstream executor should process the external response");
+        textContents.Should().Contain(ActivatedMarker,
+            "the start executor should receive a TurnToken and be activated even when resume contains only an external response");
+        secondCallUpdates
+            .SelectMany(u => u.Contents.OfType<ErrorContent>())
+            .Should()
+            .BeEmpty();
     }
 }
