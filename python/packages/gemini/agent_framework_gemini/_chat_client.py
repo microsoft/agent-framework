@@ -158,8 +158,8 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 
 
 class GeminiChatClient(
-    FunctionInvocationLayer[GeminiChatOptionsT],
     ChatMiddlewareLayer[GeminiChatOptionsT],
+    FunctionInvocationLayer[GeminiChatOptionsT],
     ChatTelemetryLayer[GeminiChatOptionsT],
     BaseChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
