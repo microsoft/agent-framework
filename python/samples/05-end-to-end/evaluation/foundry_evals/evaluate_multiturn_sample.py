@@ -30,28 +30,45 @@ load_dotenv()
 CONVERSATION: list[Message] = [
     # Turn 1: user asks about weather → agent calls tool → responds
     Message("user", ["What's the weather in Seattle?"]),
-    Message("assistant", [
-        Content.from_function_call("c1", "get_weather", arguments={"location": "seattle"}),
-    ]),
-    Message("tool", [
-        Content.from_function_result("c1", result="62°F, cloudy with a chance of rain"),
-    ]),
+    Message(
+        "assistant",
+        [
+            Content.from_function_call("c1", "get_weather", arguments={"location": "seattle"}),
+        ],
+    ),
+    Message(
+        "tool",
+        [
+            Content.from_function_result("c1", result="62°F, cloudy with a chance of rain"),
+        ],
+    ),
     Message("assistant", ["Seattle is 62°F, cloudy with a chance of rain."]),
     # Turn 2: user asks about Paris → agent calls tool → responds
     Message("user", ["And Paris?"]),
-    Message("assistant", [
-        Content.from_function_call("c2", "get_weather", arguments={"location": "paris"}),
-    ]),
-    Message("tool", [
-        Content.from_function_result("c2", result="68°F, partly sunny"),
-    ]),
+    Message(
+        "assistant",
+        [
+            Content.from_function_call("c2", "get_weather", arguments={"location": "paris"}),
+        ],
+    ),
+    Message(
+        "tool",
+        [
+            Content.from_function_result("c2", result="68°F, partly sunny"),
+        ],
+    ),
     Message("assistant", ["Paris is 68°F, partly sunny."]),
     # Turn 3: user asks for comparison → agent synthesizes without tool
     Message("user", ["Can you compare them?"]),
-    Message("assistant", [
-        "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
-        "at 68°F and partly sunny. Paris is the better choice for outdoor activities.",
-    ]),
+    Message(
+        "assistant",
+        [
+            (
+                "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
+                "at 68°F and partly sunny. Paris is the better choice for outdoor activities."
+            ),
+        ],
+    ),
 ]
 
 TOOLS = [
