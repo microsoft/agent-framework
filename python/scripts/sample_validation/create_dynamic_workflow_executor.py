@@ -55,8 +55,11 @@ class BatchCompletion:
 
 AgentInstruction = (
     "You are validating exactly one Python sample.\n"
-    "Analyze the sample code and execute it. Based on the execution result, determine if it "
-    "runs successfully, fails, or is missing setup. Feel free to install any required dependencies.\n"
+    "Analyze the sample code and execute it as it is. Based on the execution result, determine "
+    "if it runs successfully, fails, or is missing_setup. Use `missing_setup` if the sample reports "
+    "missing required environment variables. The environment you're given should contain the necessary "
+    "variables. Don't create new environment variables nor modify the sample code.\n"
+    "Feel free to install any required dependencies if needed.\n"
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
     "based on your analysis of the code. You do not need to consult human on what to respond.\n"
     "Return ONLY valid JSON with this schema:\n"
