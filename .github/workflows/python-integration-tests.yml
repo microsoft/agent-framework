@@ -81,7 +81,7 @@ jobs:
       - name: Test with pytest (OpenAI integration)
         run: >
           uv run pytest --import-mode=importlib
-          packages/core/tests/openai
+          packages/openai/tests
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -121,7 +121,7 @@ jobs:
       - name: Test with pytest (Azure OpenAI integration)
         run: >
           uv run pytest --import-mode=importlib
-          packages/core/tests/azure
+          packages/azure-ai/tests/azure_openai
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
