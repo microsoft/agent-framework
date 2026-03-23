@@ -66,9 +66,11 @@ ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
 class ThinkingConfig(TypedDict, total=False):
     """Extended thinking configuration for Gemini models.
 
-    Use ``thinking_budget`` for Gemini 2.5 models (integer token count: 0 disables
-    thinking, -1 enables a dynamic budget). Use ``thinking_level`` for Gemini 3.x
-    models (one of ``'minimal'``, ``'low'``, ``'medium'``, ``'high'``).
+    Attributes:
+        thinking_budget: Token budget for Gemini 2.5 models. Set to 0 to disable
+            thinking or -1 to enable a dynamic budget.
+        thinking_level: Thinking level for Gemini 3.x models. One of
+            ``'minimal'``, ``'low'``, ``'medium'``, or ``'high'``.
     """
 
     thinking_budget: int
@@ -164,7 +166,7 @@ class GeminiChatClient(
     BaseChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
 ):
-    """Async chat client for the Google Gemini API with middleware, telemetry, and function invocation."""
+    """Async chat client for the Google Gemini API with middleware, function invocation and telemetry."""
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "gcp.gemini"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
