@@ -71,6 +71,7 @@ class RunResult:
     status: RunStatus
     output: str
     error: str
+    fix: str
 
 
 @dataclass
@@ -152,6 +153,7 @@ class Report:
                     "status": r.status.value,
                     "output": r.output,
                     "error": r.error,
+                    "fix": r.fix,
                 }
                 for r in self.results
             ],
