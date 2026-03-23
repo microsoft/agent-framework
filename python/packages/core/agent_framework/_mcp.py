@@ -491,6 +491,7 @@ class MCPTool:
         self.is_connected: bool = False
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
+        self._pending_reload_tasks: set[asyncio.Task[None]] = set()
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
@@ -804,11 +805,36 @@ class MCPTool:
         if isinstance(message, types.ServerNotification):
             match message.root.method:
                 case "notifications/tools/list_changed":
-                    await self.load_tools()
+                    self._schedule_reload(self.load_tools())
                 case "notifications/prompts/list_changed":
-                    await self.load_prompts()
+                    self._schedule_reload(self.load_prompts())
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
+
+    def _schedule_reload(self, coro: Any) -> None:
+        """Schedule a reload coroutine as a background task.
+
+        Reloads (load_tools / load_prompts) triggered by MCP server
+        notifications must NOT be awaited inside the message handler because
+        the handler runs on the MCP SDK's single-threaded receive loop.
+        Awaiting a session request (e.g. ``list_tools``) from within that loop
+        deadlocks: the receive loop cannot read the response while it is
+        blocked waiting for the handler to return.
+
+        Instead we fire the reload as an independent ``asyncio.Task`` and keep
+        a strong reference in ``_pending_reload_tasks`` so it is not garbage-
+        collected before completion.
+        """
+
+        async def _safe_reload() -> None:
+            try:
+                await coro
+            except Exception as exc:
+                logger.warning("Background MCP reload failed: %s", exc, exc_info=exc)
+
+        task = asyncio.create_task(_safe_reload(), name=f"mcp-reload:{self.name}")
+        self._pending_reload_tasks.add(task)
+        task.add_done_callback(self._pending_reload_tasks.discard)
 
     def _determine_approval_mode(
         self,

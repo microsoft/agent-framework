@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore[reportPrivateUsage]
+import asyncio
 import logging
 import os
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
@@ -1478,7 +1479,7 @@ async def test_mcp_connection_reset_integration():
 
 async def test_mcp_tool_message_handler_notification():
     """Test that message_handler correctly processes tools/list_changed and prompts/list_changed
-    notifications."""
+    notifications by scheduling reloads as background tasks."""
     tool = MCPStdioTool(name="test_tool", command="python")
 
     # Mock the load_tools and load_prompts methods
@@ -1492,6 +1493,8 @@ async def test_mcp_tool_message_handler_notification():
 
     result = await tool.message_handler(tools_notification)
     assert result is None
+    # The reload is scheduled as a background task; let it run.
+    await asyncio.sleep(0)
     tool.load_tools.assert_called_once()
 
     # Reset mock
@@ -1504,6 +1507,7 @@ async def test_mcp_tool_message_handler_notification():
 
     result = await tool.message_handler(prompts_notification)
     assert result is None
+    await asyncio.sleep(0)
     tool.load_prompts.assert_called_once()
 
     # Test unhandled notification
@@ -1525,6 +1529,61 @@ async def test_mcp_tool_message_handler_error():
     # The message handler should log the error and return None
     result = await tool.message_handler(test_exception)
     assert result is None
+
+
+async def test_mcp_tool_message_handler_does_not_block_receive_loop():
+    """Test that message_handler does not deadlock the MCP receive loop.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4828.
+    When the MCP server sends a ``notifications/tools/list_changed``
+    notification, the handler must NOT await ``load_tools()`` synchronously
+    because that would block the single-threaded MCP receive loop, preventing
+    it from delivering the ``list_tools`` response — a classic deadlock.
+    """
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    # Use an event to make load_tools block until we release it.
+    # This simulates load_tools waiting for a session response that the
+    # receive loop would need to deliver.
+    release = asyncio.Event()
+
+    async def slow_load_tools():
+        await release.wait()
+
+    tool.load_tools = slow_load_tools  # type: ignore[assignment]
+
+    tools_notification = Mock(spec=types.ServerNotification)
+    tools_notification.root = Mock()
+    tools_notification.root.method = "notifications/tools/list_changed"
+
+    # message_handler must return immediately even though load_tools blocks.
+    await tool.message_handler(tools_notification)
+
+    # If the handler had awaited load_tools synchronously, we would never
+    # reach this line (deadlock). Verify the reload task is pending.
+    assert len(tool._pending_reload_tasks) == 1
+
+    # Unblock the reload so the background task finishes cleanly.
+    release.set()
+    await asyncio.sleep(0)
+    # Give the done-callback a chance to fire.
+    await asyncio.sleep(0)
+    assert len(tool._pending_reload_tasks) == 0
+
+
+async def test_mcp_tool_message_handler_reload_failure_is_logged():
+    """Background reload errors are logged, not raised into the receive loop."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+    tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))
+
+    tools_notification = Mock(spec=types.ServerNotification)
+    tools_notification.root = Mock()
+    tools_notification.root.method = "notifications/tools/list_changed"
+
+    await tool.message_handler(tools_notification)
+    # Let the background task run — it should not propagate the exception.
+    await asyncio.sleep(0)
+    tool.load_tools.assert_called_once()
 
 
 async def test_mcp_tool_sampling_callback_no_client():
