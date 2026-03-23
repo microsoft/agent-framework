@@ -17,7 +17,7 @@
 # Bootstrap manually with:
 #   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
 #     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
-# Run with: uv run --python 3.12 samples/02-agents/tools/code_mode_tool.py
+# Run with: uv run --python 3.12 samples/02-agents/tools/codeact_tool.py
 #
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -50,7 +50,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-"""This sample demonstrates a direct-tool Hyperlight code-mode prototype.
+"""This sample demonstrates a direct-tool Hyperlight CodeAct prototype.
 
 The sample creates an `Agent(client=AzureOpenAIResponsesClient(...), ...)` with a
 primary `execute_code` tool plus schema-visible tools. It also supports
@@ -86,8 +86,10 @@ def collect_tools(*tool_groups: Any) -> list[FunctionTool]:
 
     for tool_group in tool_groups:
         normalized_group: Sequence[Any]
-        if isinstance(tool_group, Sequence) and not isinstance(tool_group, (str, bytes, bytearray)) and all(
-            isinstance(tool_obj, FunctionTool) for tool_obj in tool_group
+        if (
+            isinstance(tool_group, Sequence)
+            and not isinstance(tool_group, (str, bytes, bytearray))
+            and all(isinstance(tool_obj, FunctionTool) for tool_obj in tool_group)
         ):
             normalized_group = tool_group
         else:
@@ -107,23 +109,21 @@ def collect_tools(*tool_groups: Any) -> list[FunctionTool]:
     return tools
 
 
-def build_code_mode_instructions(
+def build_codeact_instructions(
     *,
     tools: Sequence[FunctionTool],
     tools_visible_to_model: bool,
 ) -> str:
-    """Build dynamic code-mode instructions for the discovered tools."""
+    """Build dynamic CodeAct instructions for the discovered tools."""
 
     if tools:
-        callback_lines = "\n\n".join(
-            [
-                f"- `{tool_obj.name}`\n"
-                f"  Description: {str(tool_obj.description or '').strip() or 'No description provided.'}\n"
-                "  Parameters:\n"
-                f"{indent(json.dumps(tool_obj.parameters(), indent=2, sort_keys=True), '    ')}"
-                for tool_obj in tools
-            ]
-        )
+        callback_lines = "\n\n".join([
+            f"- `{tool_obj.name}`\n"
+            f"  Description: {str(tool_obj.description or '').strip() or 'No description provided.'}\n"
+            "  Parameters:\n"
+            f"{indent(json.dumps(tool_obj.parameters(), indent=2, sort_keys=True), '    ')}"
+            for tool_obj in tools
+        ])
     else:
         callback_lines = "- No tools are currently registered inside the sandbox."
 
@@ -171,7 +171,7 @@ def _create_wasm_sandbox(*, module_ref: str) -> Sandbox:
     return Sandbox(backend="wasm", module=module_ref)
 
 
-class CodeModeSandboxManager:
+class CodeActSandboxManager:
     """Manage the provisional Hyperlight sandbox lifecycle for this sample."""
 
     def __init__(self, *, module_ref: str | None = None) -> None:
@@ -275,10 +275,10 @@ def fetch_data(
 
 
 async def main() -> None:
-    """Run the direct-tool code-mode sample."""
+    """Run the direct-tool CodeAct sample."""
 
     runtime_tools: list[Any] = []
-    sandbox_manager = CodeModeSandboxManager()
+    sandbox_manager = CodeActSandboxManager()
 
     @tool(name="execute_code", approval_mode="never_require")
     async def execute_code(
@@ -300,7 +300,7 @@ async def main() -> None:
             deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
-        name="HyperlightCodeModeToolAgent",
+        name="HyperlightCodeActToolAgent",
         instructions="Temporary instructions replaced before the run.",
         tools=[execute_code, compute, fetch_data],
     )
@@ -308,13 +308,13 @@ async def main() -> None:
     tools = collect_tools(agent.default_options.get("tools", []), runtime_tools)
     sandbox_manager.set_tools(tools)
     sandbox_manager.initialize()
-    agent.default_options["instructions"] = build_code_mode_instructions(
+    agent.default_options["instructions"] = build_codeact_instructions(
         tools=tools,
         tools_visible_to_model=True,
     )
 
     print("=" * 60)
-    print("Direct tool sample")
+    print("CodeAct direct tool sample")
     print("=" * 60)
     print(f"runtime_tool_count={len(runtime_tools)}")
     print(f"User: {DEFAULT_PROMPT}")
@@ -327,7 +327,7 @@ Sample output (shape only):
 
 Sandbox initialized and snapshotted (...)
 ============================================================
-Direct tool sample
+CodeAct direct tool sample
 ============================================================
 runtime_tool_count=0
 User: Fetch all users, find admins, multiply 6*7, and print the users, admins,

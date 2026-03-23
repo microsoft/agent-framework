@@ -17,7 +17,7 @@
 # Bootstrap manually with:
 #   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
 #     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
-# Run with: uv run --python 3.12 samples/02-agents/tools/code_mode_context_provider.py
+# Run with: uv run --python 3.12 samples/02-agents/tools/codeact_context_provider.py
 #
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -27,12 +27,21 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Sequence
-from pathlib import Path
+from collections.abc import Awaitable, Callable, Sequence
 from textwrap import indent
 from typing import Annotated, Any, Literal
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, Content, FunctionTool, SessionContext, tool
+from agent_framework import (
+    Agent,
+    AgentSession,
+    BaseContextProvider,
+    Content,
+    FunctionInvocationContext,
+    FunctionTool,
+    SessionContext,
+    function_middleware,
+    tool,
+)
 from agent_framework._tools import normalize_tools
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
@@ -49,17 +58,41 @@ except ModuleNotFoundError as exc:
 
 load_dotenv()
 
+# ANSI color helpers for distinguishing output sources.
+_CYAN = "\033[36m"
+_YELLOW = "\033[33m"
+_GREEN = "\033[32m"
+_DIM = "\033[2m"
+_RESET = "\033[0m"
+
+
+class _ColoredFormatter(logging.Formatter):
+    """Dim logger output so it doesn't compete with middleware and main prints."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        msg = super().format(record)
+        return f"{_DIM}{msg}{_RESET}"
+
+
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger().handlers[0].setFormatter(
+    _ColoredFormatter("[%(asctime)s] %(levelname)s: %(message)s"),
+)
 logger = logging.getLogger(__name__)
 
 
-"""This sample demonstrates a ContextProvider-driven Hyperlight code-mode prototype.
+"""This sample demonstrates a ContextProvider-driven Hyperlight CodeAct prototype.
 
-The provider owns sandbox lifecycle, discovers tools from the agent,
-and injects dynamic instructions plus a single `execute_code` tool at run time.
+The provider owns sandbox lifecycle and the tools registered within it.
+Tools are passed directly to the provider — not the agent — so the model
+only sees the single ``execute_code`` tool.
 
-Tools passed to `agent.run(..., tools=...)` are available in
-`context.options["tools"]`, so the provider can merge them into the sandbox and,
-when configured, remove them from the model-facing run options too.
+A logging function middleware is registered on the agent to show every tool
+invocation (name, arguments, timing, and result) in the console output.
+
+Per-run tools passed to ``agent.run(..., tools=...)`` are also captured by the
+provider, registered with the sandbox, and removed from the model-facing tool
+list.
 """
 
 
@@ -116,12 +149,12 @@ def _tool_signature(tools: Sequence[FunctionTool]) -> tuple[tuple[str, int], ...
     return tuple((tool_obj.name, id(tool_obj)) for tool_obj in tools)
 
 
-def _build_code_mode_instructions(
+def _build_codeact_instructions(
     *,
     tools: Sequence[FunctionTool],
     tools_visible_to_model: bool,
 ) -> str:
-    """Build dynamic code-mode instructions for the discovered tools."""
+    """Build dynamic CodeAct instructions for the discovered tools."""
 
     if tools:
         tools_descriptions = "\n\n".join([
@@ -145,12 +178,13 @@ def _build_code_mode_instructions(
 
     return f"""You have one primary tool: execute_code.
 
-It runs Python in an isolated Hyperlight Wasm sandbox. You do NOT have direct
+It runs Python in an isolated sandbox. You do NOT have direct
 access to data. The ONLY way to fetch data or perform computations is by
 writing Python code via execute_code that calls `call_tool()` inside the
 sandbox.
 
 `call_tool` is a built-in global inside the sandbox. No import is needed.
+You can chain multiple call_tool(...) calls in the same code block, and you can also use regular Python code to post-process tool results, define variables, or control flow with conditionals and loops.
 
 {visibility_note}
 
@@ -160,88 +194,33 @@ Available sandbox tools:
 Correct usage:
 result = call_tool("tool_name", keyword=value)
 
-You can combine multiple call_tool(...) calls with regular Python code in the
-same execute_code block, including loops, conditionals, variables, and
-post-processing of tool results.
-
 Wrong usage:
 call_tool("tool_name", {{"keyword": "value"}})
 
 Do NOT hardcode data that should come from call_tool(...).
 Prefer one execute_code call per request when possible.
-Always include the complete stdout from execute_code in your final answer.
 """
 
 
-def _create_wasm_sandbox(*, module_path: Path) -> Any:
-    """Create the provisional Hyperlight Wasm sandbox instance."""
+class CodeActContextProvider(BaseContextProvider):
+    """Inject a CodeAct surface using provider-owned tools.
 
-    try:
-        from hyperlight_sandbox import Sandbox
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "This prototype expects an upstream `hyperlight_sandbox.Sandbox` "
-            "implementation. Install the provisional Hyperlight package once it "
-            "is available, or update this sample to match the final import path."
-        ) from exc
-    if not module_path.exists():
-        raise RuntimeError(
-            "Hyperlight Wasm module not found.\n"
-            f"  module: {module_path} (MISSING)\n"
-            "Build the provisional python-sandbox AOT module first, or set "
-            "HYPERLIGHT_MODULE to the correct path."
-        )
+    Tools passed to the provider are registered with the sandbox and made
+    available to the model exclusively through ``execute_code``.  They are
+    never added to the model-facing tool list — only ``execute_code`` is.
 
-    return Sandbox(backend="wasm", module_path=str(module_path))
+    Per-run tools passed to ``agent.run(..., tools=...)`` are captured from
+    ``context.options["tools"]``, registered with the sandbox for the
+    duration of the run, and removed from the model-facing run options.
+    """
 
-
-@tool(approval_mode="never_require")
-def compute(
-    operation: Annotated[str, "Math operation: add, subtract, multiply, or divide."],
-    a: Annotated[float, "First numeric operand."],
-    b: Annotated[float, "Second numeric operand."],
-) -> float:
-    """Perform a math operation used by sandbox code."""
-
-    operations = {
-        "add": a + b,
-        "subtract": a - b,
-        "multiply": a * b,
-        "divide": a / b if b else float("inf"),
-    }
-    return operations.get(operation, 0.0)
-
-
-@tool(approval_mode="never_require")
-def fetch_data(
-    table: Annotated[str, "Name of the simulated table to query."],
-) -> list[dict[str, Any]]:
-    """Fetch simulated records from a named table."""
-
-    return {
-        "users": [
-            {"id": 1, "name": "Alice", "role": "admin"},
-            {"id": 2, "name": "Bob", "role": "user"},
-            {"id": 3, "name": "Charlie", "role": "admin"},
-        ],
-        "products": [
-            {"id": 101, "name": "Widget", "price": 9.99},
-            {"id": 102, "name": "Gadget", "price": 19.99},
-        ],
-    }.get(table, [])
-
-
-class CodeModeContextProvider(BaseContextProvider):
-    """Inject a code-mode surface using agent-configured tools."""
-
-    DEFAULT_SOURCE_ID = "code_mode_provider"
+    DEFAULT_SOURCE_ID = "codeact_provider"
 
     def __init__(
         self,
         source_id: str = DEFAULT_SOURCE_ID,
         *,
         tools: Sequence[FunctionTool] | None = None,
-        remove_tools_from_agent: bool = True,
         approval_mode: Literal["always_require", "never_require"] | None = None,
     ) -> None:
         """Initialize the provider.
@@ -250,13 +229,10 @@ class CodeModeContextProvider(BaseContextProvider):
             source_id: Unique provider source identifier.
 
         Keyword Args:
-            tools: Additional sandbox-managed tools owned by the provider.
+            tools: Sandbox-managed tools owned by the provider.
                 These are available through ``call_tool(...)`` inside
                 ``execute_code`` and are never surfaced to the model as
                 separate tools.
-            remove_tools_from_agent: When True, remove the
-                tools from the model-facing tool list after the provider
-                captures them, including tools passed at run time.
             approval_mode: Base approval mode for the provider-managed
                 `execute_code` tool. The effective mode is upgraded to the
                 strictest mode required by the managed tools for each run.
@@ -265,9 +241,7 @@ class CodeModeContextProvider(BaseContextProvider):
 
         super().__init__(source_id)
         self._provider_tools = collect_tools(tools)
-        self._remove_tools_from_agent = remove_tools_from_agent
         self._approval_mode = approval_mode
-        self._agent_tools: list[FunctionTool] | None = None
         self._managed_tools: list[FunctionTool] = []
         self._base_signature: tuple[tuple[str, int], ...] = ()
         self._runtime_signature: tuple[tuple[str, int], ...] = ()
@@ -375,18 +349,18 @@ class CodeModeContextProvider(BaseContextProvider):
             logger.debug("execute_code completed.")
             contents: list[Content] = []
             if result.stdout:
-                contents.append(Content.from_text(result.stdout))
+                contents.append(Content.from_text(result.stdout.strip()))
             if result.stderr:
                 contents.append(
                     Content.from_text(
-                        f"stderr:\n{result.stderr}",
+                        f"stderr:\n{result.stderr.strip()}",
                         additional_properties={"stream": "stderr"},
                     )
                 )
             return contents or [Content.from_text("Code executed successfully without output.")]
 
         logger.debug("execute_code failed.")
-        error_details = result.stderr or "Unknown sandbox error"
+        error_details = result.stderr.strip() if result.stderr else "Unknown sandbox error"
         return [
             Content.from_text(f"Execution error:\n{error_details}"),
             Content.from_error(message="Execution error", error_details=error_details),
@@ -400,21 +374,12 @@ class CodeModeContextProvider(BaseContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:  # noqa: ARG002
-        """Inject code-mode instructions and the execute_code tool before each run."""
+        """Inject CodeAct instructions and the execute_code tool before each run."""
 
-        if self._agent_tools is None and isinstance(agent, Agent):
-            self._agent_tools = collect_tools(agent.default_options.get("tools", []))
-
-            if self._remove_tools_from_agent:
-                agent.default_options["tools"] = [
-                    tool_obj
-                    for tool_obj in agent.default_options.get("tools", [])
-                    if getattr(tool_obj, "name", None) == "execute_code"
-                ]
-
-        runtime_tools = collect_tools(context.options.get("tools"))
+        # Capture and remove per-run tools so they are only available in the sandbox.
+        runtime_tools = collect_tools(context.options.pop("tools", None))
         self._initialize_sandbox(
-            base_tools=collect_tools(self._provider_tools, self._agent_tools or []),
+            base_tools=self._provider_tools,
             runtime_tools=runtime_tools,
         )
         self._execute_code_tool.approval_mode = _resolve_execute_code_approval_mode(
@@ -422,72 +387,171 @@ class CodeModeContextProvider(BaseContextProvider):
             tools=self._managed_tools,
         )
 
-        if self._remove_tools_from_agent:
-            context.options.pop("tools")
-
         context.extend_instructions(
             self.source_id,
-            _build_code_mode_instructions(
+            _build_codeact_instructions(
                 tools=self._managed_tools,
-                tools_visible_to_model=not self._remove_tools_from_agent,
+                tools_visible_to_model=False,
             ),
         )
         context.extend_tools(self.source_id, [self._execute_code_tool])
 
 
-async def main() -> None:
-    """Run the provider-managed code-mode sample."""
+# 1. Define a logging function middleware to observe tool invocations.
+@function_middleware
+async def log_function_calls(
+    context: FunctionInvocationContext,
+    call_next: Callable[[], Awaitable[None]],
+) -> None:
+    """Log every tool call with readable code output and timing."""
+    import time
 
+    func_name = context.function.name
+    args = context.arguments if isinstance(context.arguments, dict) else {}
+
+    # For execute_code, print the generated code as a readable block.
+    if func_name == "execute_code" and "code" in args:
+        print(f"\n{_YELLOW}{'─' * 60}")
+        print("▶ execute_code")
+        print(f"{'─' * 60}{_RESET}")
+        print(args["code"])
+        print(f"{_YELLOW}{'─' * 60}{_RESET}")
+    else:
+        print(f"\n{_YELLOW}▶ {func_name}({', '.join(f'{k}={v!r}' for k, v in args.items())}){_RESET}")
+
+    start = time.perf_counter()
+    await call_next()
+    elapsed = time.perf_counter() - start
+
+    # Show the result concisely — full stdout for execute_code, repr for others.
+    result = context.result
+    if func_name == "execute_code" and isinstance(result, list):
+        for item in result:
+            text = getattr(item, "text", None)
+            if text:
+                print(f"{_GREEN}stdout:\n{text}{_RESET}")
+    else:
+        print(f"{_YELLOW}◀ {func_name} → {result!r}{_RESET}")
+
+    print(f"{_DIM}  ({elapsed:.4f}s){_RESET}")
+
+
+@tool(approval_mode="never_require")
+def compute(
+    operation: Annotated[Literal['add', 'subtract', 'multiply', 'divide'], "Math operation: add, subtract, multiply, or divide."],
+    a: Annotated[float, "First numeric operand."],
+    b: Annotated[float, "Second numeric operand."],
+) -> float:
+    """Perform a math operation, use this function instead of raw code, because it is safer."""
+
+    logger.warning("compute called with operation=%r, a=%r, b=%r", operation, a, b)
+
+    operations = {
+        "add": a + b,
+        "subtract": a - b,
+        "multiply": a * b,
+        "divide": a / b if b else float("inf"),
+    }
+    return operations.get(operation, 0.0)
+
+
+@tool(approval_mode="never_require")
+async def fetch_data(
+    table: Annotated[str, "Name of the simulated table to query."],
+) -> list[dict[str, Any]]:
+    """Fetch records from a named table.
+
+    There are two tables, with the columns shown below:
+    - users: id, name, role
+    - products: id, name, price
+    """
+
+    logger.warning("fetch_data called with table=%r", table)
+
+    await asyncio.sleep(0.5)  # Simulate some latency
+
+    return {
+        "users": [
+            {"id": 1, "name": "Alice", "role": "admin"},
+            {"id": 2, "name": "Bob", "role": "user"},
+            {"id": 3, "name": "Charlie", "role": "admin"},
+        ],
+        "products": [
+            {"id": 101, "name": "Widget", "price": 9.99},
+            {"id": 102, "name": "Gadget", "price": 19.99},
+        ],
+    }.get(table, [])
+
+
+async def main() -> None:
+    """Run the provider-managed CodeAct sample."""
+
+    # Tools are passed to the provider (not the agent) so they are only
+    # available inside the sandbox via call_tool(...) and never appear as
+    # separate model-facing tools.
     agent = Agent(
         client=AzureOpenAIResponsesClient(
             project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
             deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
-        name="HyperlightCodeModeProviderAgent",
+        name="HyperlightCodeActProviderAgent",
         instructions="You are a helpful assistant.",
-        tools=[compute, fetch_data],
-        context_providers=[CodeModeContextProvider(approval_mode="never_require")],
+        context_providers=[
+            CodeActContextProvider(tools=[compute, fetch_data], approval_mode="never_require"),
+        ],
+        middleware=[log_function_calls],
     )
 
-    print("=" * 60)
-    print("ContextProvider sample")
-    print("=" * 60)
+    print(f"{_CYAN}{'=' * 60}")
+    print("CodeAct ContextProvider sample")
+    print(f"{'=' * 60}{_RESET}")
     query = (
-        "Fetch all users, find admins, multiply 6*7, and print the users, admins, "
-        "and multiplication result. Use one execute_code call."
+        "Fetch all users, find admins, multiply 7*(3*2), and print the users, admins, "
+        "and multiplication result. Use the execute_code call, and try to do as much as possible inside the sandbox with call_tool(...) instead of in raw code outside."
     )
-    print(f"User: {query}")
+    print(f"{_CYAN}User: {query}{_RESET}")
     result = await agent.run(query)
-    print(f"Agent: {result.text}")
+    print(f"{_CYAN}Agent: {result.text}{_RESET}")
 
 
 """
 Sample output (shape only):
 
-Sandbox initialized and snapshotted (...)
 ============================================================
-ContextProvider sample
+CodeAct ContextProvider sample
 ============================================================
-remove_tools_from_agent=True
-approval_mode=never_require
-User: Fetch all users, find admins, multiply 6*7, and print the users, admins,
-and multiplication result. Use one execute_code call.
+User: Fetch all users, find admins, multiply 6*7, ...
+
+────────────────────────────────────────────────────────────
+▶ execute_code
+────────────────────────────────────────────────────────────
+users = call_tool("fetch_data", table="users")
+admins = [u for u in users if u["role"] == "admin"]
+result = call_tool("compute", operation="multiply", a=6, b=7)
+print("Users:", users)
+print("Admins:", admins)
+print("6 * 7 =", result)
+────────────────────────────────────────────────────────────
+stdout:
+Users: [...]
+Admins: [...]
+6 * 7 = 42.0
+  (0.0452s)
 Agent: ...
 
 Notes:
-- Pass tools to `CodeModeContextProvider(tools=[...])` to register sandbox-only
-  tools that are available through `call_tool(...)` but never exposed to the
-  model as separate tools.
-- `remove_tools_from_agent` defaults to `True`, so the provider hides both
-  agent-configured and per-run tools from the model-facing tool list unless
-  you opt out.
-- Set `approval_mode` on `CodeModeContextProvider(...)` to control the approval
+- Tools are passed to `CodeActContextProvider(tools=[...])`, NOT to the agent.
+  This ensures they are only available inside the sandbox via `call_tool(...)`.
+  The model only sees the `execute_code` tool.
+- The logging middleware prints the model-generated code as a readable block
+  and shows its stdout, so you can trace exactly what the agent does.
+- Set `approval_mode` on `CodeActContextProvider(...)` to control the approval
   behavior of the provider-managed `execute_code` tool.
 - Pass tools to `agent.run(..., tools=runtime_tools)` to expose them as per-run
-  tools. The provider reads them from `context.options["tools"]`, registers
-  them with the sandbox, and clears them from the run options when removal is
-  enabled.
+  sandbox tools. The provider captures them from `context.options["tools"]`,
+  registers them with the sandbox, and removes them from the model-facing run
+  options.
 - This sample prioritizes the intended API shape over confirmed Hyperlight
   runtime integration.
 """
