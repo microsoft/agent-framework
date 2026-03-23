@@ -418,6 +418,51 @@ public class AIAgentBuilderTests
         Assert.IsType<AnonymousDelegatingAIAgent>(result);
     }
 
+    /// <summary>
+    /// Verify that Use with both delegates allows both to access AgentRunContext.
+    /// </summary>
+    [Fact]
+    public async Task Use_WithBothDelegates_AllowsDelegateToAccessAgentRunContextAsync()
+    {
+        // Arrange
+        var mockAgent = new Mock<AIAgent>();
+        var mockSession = new Mock<AgentSession>();
+        var builder = new AIAgentBuilder(mockAgent.Object);
+
+        AIAgent? builtAgent = null;
+
+        bool nonStreamingMiddlewareExecuted = false;
+        bool streamingMiddlwareExecuted = true;
+
+        builtAgent = builder.Use(
+            (_, _, _, _, _) =>
+            {
+                Assert.NotNull(AIAgent.CurrentRunContext);
+                Assert.Same(builtAgent, AIAgent.CurrentRunContext.Agent);
+                Assert.Same(mockSession.Object, AIAgent.CurrentRunContext.Session);
+                nonStreamingMiddlewareExecuted = true;
+                return Task.FromResult(new AgentResponse());
+            },
+            (_, _, _, _, _) =>
+            {
+                Assert.NotNull(AIAgent.CurrentRunContext);
+                Assert.Same(builtAgent, AIAgent.CurrentRunContext.Agent);
+                Assert.Same(mockSession.Object, AIAgent.CurrentRunContext.Session);
+                streamingMiddlwareExecuted = true;
+                return AsyncEnumerable.Empty<AgentResponseUpdate>();
+            }).Build();
+
+        // Act
+        await builtAgent.RunAsync("Input message", mockSession.Object);
+        await foreach (var update in builtAgent.RunStreamingAsync("Input message", mockSession.Object))
+        {
+        }
+
+        // Assert
+        Assert.True(nonStreamingMiddlewareExecuted);
+        Assert.True(streamingMiddlwareExecuted);
+    }
+
     #endregion
 
     /// <summary>

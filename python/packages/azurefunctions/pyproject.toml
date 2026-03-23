@@ -4,7 +4,7 @@ description = "Azure Functions integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260130"
+version = "1.0.0b260319"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -22,10 +22,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core",
+    "agent-framework-core>=1.0.0rc5",
     "agent-framework-durabletask",
-    "azure-functions",
-    "azure-functions-durable",
+    "azure-functions>=1.24.0,<2",
+    "azure-functions-durable>=1.3.1,<2",
 ]
 
 [dependency-groups]
@@ -41,15 +41,17 @@ environments = [
 
 [tool.uv-dynamic-versioning]
 fallback-version = "0.0.0"
+
 [tool.pytest.ini_options]
 testpaths = 'tests'
+pythonpath = ["tests/integration_tests"]
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning:pydantic.*"
 ]
-timeout = 120
+timeout = 300
 markers = [
     "integration: marks tests as integration tests (require running function app)",
     "orchestration: marks tests that use orchestrations (require Azurite)",
@@ -65,6 +67,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_azurefunctions"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -87,9 +90,14 @@ exclude_dirs = ["tests"]
 [tool.poe]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azurefunctions"
-test = "pytest --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azurefunctions"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_azurefunctions --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

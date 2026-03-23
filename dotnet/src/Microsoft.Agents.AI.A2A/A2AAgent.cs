@@ -54,7 +54,7 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    public sealed override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default)
+    protected sealed override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
         => new(new A2AAgentSession());
 
     /// <summary>
@@ -62,12 +62,34 @@ public sealed class A2AAgent : AIAgent
     /// </summary>
     /// <param name="contextId">The context id to continue.</param>
     /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
-    public ValueTask<AgentSession> GetNewSessionAsync(string contextId)
-        => new(new A2AAgentSession() { ContextId = contextId });
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId)
+        => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId) });
+
+    /// <summary>
+    /// Get a new <see cref="AgentSession"/> instance using an existing context id and task id, to resume that conversation from a specific task.
+    /// </summary>
+    /// <param name="contextId">The context id to continue.</param>
+    /// <param name="taskId">The task id to resume from.</param>
+    /// <returns>A value task representing the asynchronous operation. The task result contains a new <see cref="AgentSession"/> instance.</returns>
+    public ValueTask<AgentSession> CreateSessionAsync(string contextId, string taskId)
+        => new(new A2AAgentSession() { ContextId = Throw.IfNullOrWhitespace(contextId), TaskId = Throw.IfNullOrWhitespace(taskId) });
 
     /// <inheritdoc/>
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => new(new A2AAgentSession(serializedSession, jsonSerializerOptions));
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        _ = Throw.IfNull(session);
+
+        if (session is not A2AAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(A2AAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(typedSession.Serialize(jsonSerializerOptions));
+    }
+
+    /// <inheritdoc/>
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => new(A2AAgentSession.Deserialize(serializedState, jsonSerializerOptions));
 
     /// <inheritdoc/>
     protected override async Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -105,6 +127,7 @@ public sealed class A2AAgent : AIAgent
             {
                 AgentId = this.Id,
                 ResponseId = message.MessageId,
+                FinishReason = ChatFinishReason.Stop,
                 RawRepresentation = message,
                 Messages = [message.ToChatMessage()],
                 AdditionalProperties = message.Metadata?.ToAdditionalProperties(),
@@ -119,6 +142,7 @@ public sealed class A2AAgent : AIAgent
             {
                 AgentId = this.Id,
                 ResponseId = agentTask.Id,
+                FinishReason = MapTaskStateToFinishReason(agentTask.Status.State),
                 RawRepresentation = agentTask,
                 Messages = agentTask.ToChatMessages() ?? [],
                 ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
@@ -230,11 +254,11 @@ public sealed class A2AAgent : AIAgent
             throw new InvalidOperationException("A session must be provided when AllowBackgroundResponses is enabled.");
         }
 
-        session ??= await this.GetNewSessionAsync(cancellationToken).ConfigureAwait(false);
+        session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
         if (session is not A2AAgentSession typedSession)
         {
-            throw new InvalidOperationException($"The provided session type {session.GetType()} is not compatible with the agent. Only A2A agent created sessions are supported.");
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(A2AAgentSession)}' can be used by this agent.");
         }
 
         return typedSession;
@@ -306,6 +330,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = message.MessageId,
+            FinishReason = ChatFinishReason.Stop,
             RawRepresentation = message,
             Role = ChatRole.Assistant,
             MessageId = message.MessageId,
@@ -320,6 +345,7 @@ public sealed class A2AAgent : AIAgent
         {
             AgentId = this.Id,
             ResponseId = task.Id,
+            FinishReason = MapTaskStateToFinishReason(task.Status.State),
             RawRepresentation = task,
             Role = ChatRole.Assistant,
             Contents = task.ToAIContents(),
@@ -343,7 +369,16 @@ public sealed class A2AAgent : AIAgent
             responseUpdate.Contents = artifactUpdateEvent.Artifact.ToAIContents();
             responseUpdate.RawRepresentation = artifactUpdateEvent;
         }
+        else if (taskUpdateEvent is TaskStatusUpdateEvent statusUpdateEvent)
+        {
+            responseUpdate.FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State);
+        }
 
         return responseUpdate;
+    }
+
+    private static ChatFinishReason? MapTaskStateToFinishReason(TaskState state)
+    {
+        return state == TaskState.Completed ? ChatFinishReason.Stop : null;
     }
 }

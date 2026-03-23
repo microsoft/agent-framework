@@ -1340,7 +1340,7 @@ function TraceTreeNode({ node, depth = 0 }: { node: TraceNode; depth?: number })
 
         {/* Operation badge */}
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getOperationColor(operationName)}`}>
-          {operationName.replace("ChatAgent.", "").replace("invoke_agent ", "")}
+          {operationName.replace("Agent.", "").replace("invoke_agent ", "")}
         </span>
 
         {/* Duration */}

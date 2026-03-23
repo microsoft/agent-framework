@@ -8,14 +8,16 @@ with durable agents via gRPC.
 
 from __future__ import annotations
 
-from agent_framework import AgentResponse, get_logger
+import logging
+
+from agent_framework import AgentResponse
 from durabletask.client import TaskHubGrpcClient
 
 from ._constants import DEFAULT_MAX_POLL_RETRIES, DEFAULT_POLL_INTERVAL_SECONDS
 from ._executors import ClientAgentExecutor
 from ._shim import DurableAgentProvider, DurableAIAgent
 
-logger = get_logger("agent_framework.durabletask.client")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAIAgentClient(DurableAgentProvider[AgentResponse]):

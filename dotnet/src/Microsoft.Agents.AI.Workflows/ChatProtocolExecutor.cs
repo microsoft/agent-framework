@@ -67,19 +67,26 @@ public abstract class ChatProtocolExecutor : StatefulExecutor<List<ChatMessage>>
     protected bool AutoSendTurnToken => this._options.AutoSendTurnToken;
 
     /// <inheritdoc/>
-    protected override RouteBuilder ConfigureRoutes(RouteBuilder routeBuilder)
+    protected override ProtocolBuilder ConfigureProtocol(ProtocolBuilder protocolBuilder)
     {
-        if (this.SupportsStringMessage)
-        {
-            routeBuilder = routeBuilder.AddHandler<string>(
-                (message, context) => this.AddMessageAsync(new(this.StringMessageChatRole.Value, message), context));
-        }
+        return protocolBuilder.ConfigureRoutes(ConfigureRoutes)
+                              .SendsMessage<List<ChatMessage>>()
+                              .SendsMessage<TurnToken>();
 
-        return routeBuilder.AddHandler<ChatMessage>(this.AddMessageAsync)
-                           .AddHandler<IEnumerable<ChatMessage>>(this.AddMessagesAsync)
-                           .AddHandler<ChatMessage[]>(this.AddMessagesAsync)
-                           .AddHandler<List<ChatMessage>>(this.AddMessagesAsync)
-                           .AddHandler<TurnToken>(this.TakeTurnAsync);
+        void ConfigureRoutes(RouteBuilder routeBuilder)
+        {
+            if (this.SupportsStringMessage)
+            {
+                routeBuilder = routeBuilder.AddHandler<string>(
+                    (message, context) => this.AddMessageAsync(new(this.StringMessageChatRole.Value, message), context));
+            }
+
+            routeBuilder.AddHandler<ChatMessage>(this.AddMessageAsync)
+                        .AddHandler<IEnumerable<ChatMessage>>(this.AddMessagesAsync)
+                        .AddHandler<ChatMessage[]>(this.AddMessagesAsync)
+                        //.AddHandler<List<ChatMessage>>(this.AddMessagesAsync)
+                        .AddHandler<TurnToken>(this.TakeTurnAsync);
+        }
     }
 
     /// <summary>

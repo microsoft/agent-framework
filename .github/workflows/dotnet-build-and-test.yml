@@ -59,20 +59,20 @@ jobs:
         if: steps.filter.outputs.dotnet != 'true'
         run: echo "NOT dotnet file"
 
-  dotnet-build-and-test:
+  # Build the full solution (including samples) on all TFMs. No tests.
+  dotnet-build:
     needs: paths-filter
     if: needs.paths-filter.outputs.dotnetChanges == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release }
           - { targetFramework: "net9.0", os: "windows-latest", configuration: Debug }
           - { targetFramework: "net8.0", os: "ubuntu-latest", configuration: Release }
-          - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net472", os: "windows-latest", configuration: Release }
 
     runs-on: ${{ matrix.os }}
-    environment: ${{ matrix.environment }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -84,18 +84,8 @@ jobs:
               python
               workflow-samples
 
-      # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
-      - name: Start Azure Cosmos DB Emulator
-        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || (github.event_name != 'pull_request' && matrix.integration-tests)) }}
-        shell: pwsh
-        run: |
-          Write-Host "Launching Azure Cosmos DB Emulator"
-          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
-          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
-          echo "COSMOS_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
-
       - name: Setup dotnet
-        uses: actions/setup-dotnet@v5.1.0
+        uses: actions/setup-dotnet@v5.2.0
         with:
           global-json-file: ${{ github.workspace }}/dotnet/global.json
       - name: Build dotnet solutions
@@ -140,25 +130,98 @@ jobs:
           popd
           rm -rf "$TEMP_DIR"
 
-      - name: Run Unit Tests
-        shell: bash
-        run: |
-          export UT_PROJECTS=$(find ./dotnet -type f -name "*.UnitTests.csproj" | tr '\n' ' ')
-          for project in $UT_PROJECTS; do
-            # Query the project's target frameworks using MSBuild with the current configuration
-            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
+  # Build src+tests only (no samples) for a single TFM and run tests.
+  dotnet-test:
+    needs: paths-filter
+    if: needs.paths-filter.outputs.dotnetChanges == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { targetFramework: "net10.0", os: "ubuntu-latest", configuration: Release, integration-tests: true, environment: "integration" }
+          - { targetFramework: "net472", os: "windows-latest", configuration: Release, integration-tests: true, environment: "integration" }
 
-            # Check if the project supports the target framework
-            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
-              if [[ "${{ matrix.targetFramework }}" == "${{ env.COVERAGE_FRAMEWORK }}" ]]; then
-                dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --collect:"XPlat Code Coverage" --results-directory:"TestResults/Coverage/" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.ExcludeByAttribute=GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
-              else
-                dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx
-              fi
-            else
-              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
-            fi
-          done
+    runs-on: ${{ matrix.os }}
+    environment: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+            persist-credentials: false
+            sparse-checkout: |
+              .
+              .github
+              dotnet
+              python
+              workflow-samples
+
+      # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
+      - name: Start Azure Cosmos DB Emulator
+        if: ${{ runner.os == 'Windows' && (needs.paths-filter.outputs.cosmosDbChanges == 'true' || (github.event_name != 'pull_request' && matrix.integration-tests)) }}
+        shell: pwsh
+        run: |
+          Write-Host "Launching Azure Cosmos DB Emulator"
+          Import-Module "$env:ProgramFiles\Azure Cosmos DB Emulator\PSModules\Microsoft.Azure.CosmosDB.Emulator"
+          Start-CosmosDbEmulator -NoUI -Key "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+          echo "COSMOSDB_EMULATOR_AVAILABLE=true" >> $env:GITHUB_ENV
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v5.2.0
+        with:
+          global-json-file: ${{ github.workspace }}/dotnet/global.json
+
+      - name: Generate test solution (no samples)
+        shell: pwsh
+        run: |
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 `
+            -Solution dotnet/agent-framework-dotnet.slnx `
+            -TargetFramework ${{ matrix.targetFramework }} `
+            -Configuration ${{ matrix.configuration }} `
+            -ExcludeSamples `
+            -OutputPath dotnet/filtered.slnx `
+            -Verbose
+
+      - name: Build src and tests
+        shell: bash
+        run: dotnet build dotnet/filtered.slnx -c ${{ matrix.configuration }} -f ${{ matrix.targetFramework }} --warnaserror
+
+      - name: Generate test-type filtered solutions
+        shell: pwsh
+        run: |
+          $commonArgs = @{
+            Solution       = "dotnet/filtered.slnx"
+            TargetFramework = "${{ matrix.targetFramework }}"
+            Configuration   = "${{ matrix.configuration }}"
+            Verbose         = $true
+          }
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
+            -TestProjectNameFilter "*UnitTests*" `
+            -OutputPath dotnet/filtered-unit.slnx
+          ./dotnet/eng/scripts/New-FilteredSolution.ps1 @commonArgs `
+            -TestProjectNameFilter "*IntegrationTests*" `
+            -OutputPath dotnet/filtered-integration.slnx
+
+      - name: Run Unit Tests
+        shell: pwsh
+        working-directory: dotnet
+        run: |
+          $coverageSettings = Join-Path $PWD "tests/coverage.runsettings"
+          $coverageArgs = @()
+          if ("${{ matrix.targetFramework }}" -eq "${{ env.COVERAGE_FRAMEWORK }}") {
+            $coverageArgs = @(
+              "--coverage",
+              "--coverage-output-format", "cobertura",
+              "--coverage-settings", $coverageSettings,
+              "--results-directory", "../TestResults/Coverage/"
+            )
+          }
+
+          dotnet test --solution ./filtered-unit.slnx `
+            -f ${{ matrix.targetFramework }} `
+            -c ${{ matrix.configuration }} `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --ignore-exit-code 8 `
+            @coverageArgs
         env:
           # Cosmos DB Emulator connection settings
           COSMOSDB_ENDPOINT: https://localhost:8081
@@ -185,53 +248,48 @@ jobs:
         id: azure-functions-setup
 
       - name: Run Integration Tests
-        shell: bash
+        shell: pwsh
+        working-directory: dotnet
         if: github.event_name != 'pull_request' && matrix.integration-tests
         run: |
-          export INTEGRATION_TEST_PROJECTS=$(find ./dotnet -type f -name "*IntegrationTests.csproj" | tr '\n' ' ')
-          for project in $INTEGRATION_TEST_PROJECTS; do
-            # Query the project's target frameworks using MSBuild with the current configuration
-            target_frameworks=$(dotnet msbuild $project -getProperty:TargetFrameworks -p:Configuration=${{ matrix.configuration }} -nologo 2>/dev/null | tr -d '\r')
-
-            # Check if the project supports the target framework
-            if [[ "$target_frameworks" == *"${{ matrix.targetFramework }}"* ]]; then
-              dotnet test -f ${{ matrix.targetFramework }} -c ${{ matrix.configuration }} $project --no-build -v Normal --logger trx --filter "Category!=IntegrationDisabled"
-            else
-              echo "Skipping $project - does not support target framework ${{ matrix.targetFramework }} (supports: $target_frameworks)"
-            fi
-          done
+          dotnet test --solution ./filtered-integration.slnx `
+            -f ${{ matrix.targetFramework }} `
+            -c ${{ matrix.configuration }} `
+            --no-build -v Normal `
+            --report-xunit-trx `
+            --ignore-exit-code 8 `
+            --filter-not-trait "Category=IntegrationDisabled" `
+            --parallel-algorithm aggressive `
+            --max-threads 2.0x
         env:
           # Cosmos DB Emulator connection settings
           COSMOSDB_ENDPOINT: https://localhost:8081
           COSMOSDB_KEY: C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==
           # OpenAI Models
-          OpenAI__ApiKey: ${{ secrets.OPENAI__APIKEY }}
-          OpenAI__ChatModelId: ${{ vars.OPENAI__CHATMODELID }}
-          OpenAI__ChatReasoningModelId: ${{ vars.OPENAI__CHATREASONINGMODELID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_CHAT_MODEL_NAME: ${{ vars.OPENAI_CHAT_MODEL_NAME }}
+          OPENAI_REASONING_MODEL_NAME: ${{ vars.OPENAI_REASONING_MODEL_NAME }}
           # Azure OpenAI Models
-          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-          AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT }}
           # Azure AI Foundry
-          AzureAI__Endpoint: ${{ secrets.AZUREAI__ENDPOINT }}
-          AzureAI__DeploymentName: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-          AzureAI__BingConnectionId: ${{ vars.AZUREAI__BINGCONECTIONID }}
-          FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
-          FOUNDRY_MEDIA_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MEDIA_DEPLOYMENT_NAME }}
-          FOUNDRY_MODEL_DEPLOYMENT_NAME: ${{ vars.FOUNDRY_MODEL_DEPLOYMENT_NAME }}
-          FOUNDRY_CONNECTION_GROUNDING_TOOL: ${{ vars.FOUNDRY_CONNECTION_GROUNDING_TOOL }}
+          AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
+          AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_AI_MODEL_DEPLOYMENT_NAME }}
+          AZURE_AI_BING_CONNECTION_ID: ${{ vars.AZURE_AI_BING_CONNECTION_ID }}
 
       # Generate test reports and check coverage
       - name: Generate test reports
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.1
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.5.3
         with:
-          reports: "./TestResults/Coverage/**/coverage.cobertura.xml"
+          reports: "./TestResults/Coverage/**/*.cobertura.xml"
           targetdir: "./TestResults/Reports"
           reporttypes: "HtmlInline;JsonSummary"
 
       - name: Upload coverage report artifact
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: CoverageReport-${{ matrix.os }}-${{ matrix.targetFramework }}-${{ matrix.configuration }} # Artifact name
           path: ./TestResults/Reports # Directory containing files to upload
@@ -239,13 +297,13 @@ jobs:
       - name: Check coverage
         if: matrix.targetFramework == env.COVERAGE_FRAMEWORK
         shell: pwsh
-        run: .github/workflows/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
+        run: ./dotnet/eng/scripts/dotnet-check-coverage.ps1 -JsonReportPath "TestResults/Reports/Summary.json" -CoverageThreshold $env:COVERAGE_THRESHOLD
 
   # This final job is required to satisfy the merge queue. It must only run (or succeed) if no tests failed
   dotnet-build-and-test-check:
     if: always()
     runs-on: ubuntu-latest
-    needs: [dotnet-build-and-test]
+    needs: [dotnet-build, dotnet-test]
     steps:
       - name: Get Date
         shell: bash

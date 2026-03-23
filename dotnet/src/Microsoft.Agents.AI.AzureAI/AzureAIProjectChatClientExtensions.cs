@@ -2,28 +2,29 @@
 
 using System.ClientModel;
 using System.ClientModel.Primitives;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI;
 using OpenAI.Responses;
-
-#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-#pragma warning disable OPENAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
 namespace Azure.AI.Projects;
 
 /// <summary>
 /// Provides extension methods for <see cref="AIProjectClient"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public static partial class AzureAIProjectChatClientExtensions
 {
     /// <summary>
@@ -39,7 +40,7 @@ public static partial class AzureAIProjectChatClientExtensions
     /// <exception cref="InvalidOperationException">The agent with the specified name was not found.</exception>
     /// <remarks>
     /// When instantiating a <see cref="ChatClientAgent"/> by using an <see cref="AgentReference"/>, minimal information will be available about the agent in the instance level, and any logic that relies
-    /// on <see cref="AIAgent.GetService(Type, object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
+    /// on <see cref="AIAgent.GetService{TService}(object?)"/> to retrieve information about the agent like <see cref="AgentVersion" /> will receive <see langword="null"/> as the result.
     /// </remarks>
     public static ChatClientAgent AsAIAgent(
         this AIProjectClient aiProjectClient,
@@ -189,9 +190,9 @@ public static partial class AzureAIProjectChatClientExtensions
         ThrowIfInvalidAgentName(options.Name);
 
         AgentRecord agentRecord = await GetAgentRecordByNameAsync(aiProjectClient, options.Name, cancellationToken).ConfigureAwait(false);
-        var agentVersion = agentRecord.Versions.Latest;
+        var agentVersion = agentRecord.GetLatestVersion();
 
-        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: true);
+        var agentOptions = CreateChatClientAgentOptions(agentVersion, options, requireInvocableTools: !options.UseProvidedChatClientAsIs);
 
         return AsChatClientAgent(
             aiProjectClient,
@@ -283,8 +284,13 @@ public static partial class AzureAIProjectChatClientExtensions
             TextOptions = new() { TextFormat = ToOpenAIResponseTextFormat(options.ChatOptions?.ResponseFormat, options.ChatOptions) }
         };
 
-        // Attempt to capture breaking glass options from the raw representation factory that match the agent definition.
-        if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
+        // Map reasoning options from the abstraction-level ChatOptions.Reasoning,
+        // falling back to extracting from the raw representation factory for breaking glass scenarios.
+        if (options.ChatOptions?.Reasoning is { } reasoning)
+        {
+            agentDefinition.ReasoningOptions = ToResponseReasoningOptions(reasoning);
+        }
+        else if (options.ChatOptions?.RawRepresentationFactory?.Invoke(new NoOpChatClient()) is CreateResponseOptions respCreationOptions)
         {
             agentDefinition.ReasoningOptions = respCreationOptions.ReasoningOptions;
         }
@@ -350,28 +356,27 @@ public static partial class AzureAIProjectChatClientExtensions
     private static readonly ModelReaderWriterOptions s_modelWriterOptionsWire = new("W");
 
     /// <summary>
-    /// Asynchronously retrieves an agent record by name using the Protocol method with user-agent header.
+    /// Asynchronously retrieves an agent record by name using the protocol method to inject user-agent headers.
     /// </summary>
     private static async Task<AgentRecord> GetAgentRecordByNameAsync(AIProjectClient aiProjectClient, string agentName, CancellationToken cancellationToken)
     {
         ClientResult protocolResponse = await aiProjectClient.Agents.GetAgentAsync(agentName, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
-        AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromOptionalValue(result, rawResponse).Value!
-            ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
+        AgentRecord? result = ModelReaderWriter.Read<AgentRecord>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
+        return result ?? throw new InvalidOperationException($"Agent with name '{agentName}' not found.");
     }
 
     /// <summary>
-    /// Asynchronously creates an agent version using the Protocol method with user-agent header.
+    /// Asynchronously creates an agent version using the protocol method to inject user-agent headers.
     /// </summary>
     private static async Task<AgentVersion> CreateAgentVersionWithProtocolAsync(AIProjectClient aiProjectClient, string agentName, AgentVersionCreationOptions creationOptions, CancellationToken cancellationToken)
     {
-        using BinaryContent protocolRequest = BinaryContent.Create(ModelReaderWriter.Write(creationOptions, ModelReaderWriterOptions.Json, AzureAIProjectsContext.Default));
-        ClientResult protocolResponse = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, protocolRequest, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
-
+        BinaryData serializedOptions = ModelReaderWriter.Write(creationOptions, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
+        BinaryContent content = BinaryContent.Create(serializedOptions);
+        ClientResult protocolResponse = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, content, foundryFeatures: null, cancellationToken.ToRequestOptions(false)).ConfigureAwait(false);
         var rawResponse = protocolResponse.GetRawResponse();
-        AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsOpenAIContext.Default);
-        return ClientResult.FromValue(result, rawResponse).Value!;
+        AgentVersion? result = ModelReaderWriter.Read<AgentVersion>(rawResponse.Content, s_modelWriterOptionsWire, AzureAIProjectsAgentsContext.Default);
+        return result ?? throw new InvalidOperationException($"Failed to create agent version for agent '{agentName}'.");
     }
 
     private static async Task<ChatClientAgent> CreateAIAgentAsync(
@@ -481,7 +486,7 @@ public static partial class AzureAIProjectChatClientExtensions
         => AsChatClientAgent(
             AIProjectClient,
             agentRecord,
-            CreateChatClientAgentOptions(agentRecord.Versions.Latest, new ChatOptions() { Tools = tools }, requireInvocableTools),
+            CreateChatClientAgentOptions(agentRecord.GetLatestVersion(), new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
             services);
 
@@ -517,21 +522,23 @@ public static partial class AzureAIProjectChatClientExtensions
             // Check function tools
             foreach (ResponseTool responseTool in definitionTools)
             {
-                if (requireInvocableTools && responseTool is FunctionTool functionTool)
+                if (responseTool is FunctionTool functionTool)
                 {
                     // Check if a tool with the same type and name exists in the provided tools.
-                    // When invocable tools are required, match only AIFunction.
+                    // Always prefer matching AIFunction when available, regardless of requireInvocableTools.
                     var matchingTool = chatOptions?.Tools?.FirstOrDefault(t => t is AIFunction tf && functionTool.FunctionName == tf.Name);
 
-                    if (matchingTool is null)
-                    {
-                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
-                    }
-                    else
+                    if (matchingTool is not null)
                     {
                         (agentTools ??= []).Add(matchingTool!);
+                        continue;
                     }
-                    continue;
+
+                    if (requireInvocableTools)
+                    {
+                        (missingTools ??= []).Add($"Function tool: {functionTool.FunctionName}");
+                        continue;
+                    }
                 }
 
                 (agentTools ??= []).Add(responseTool.AsAITool());
@@ -543,9 +550,16 @@ public static partial class AzureAIProjectChatClientExtensions
             }
         }
 
+        // Use the agent version's ID if available, otherwise generate one from name and version.
+        // This handles cases where hosted agents (like MCP agents) may not have an ID assigned.
+        var version = string.IsNullOrWhiteSpace(agentVersion.Version) ? "latest" : agentVersion.Version;
+        var agentId = string.IsNullOrWhiteSpace(agentVersion.Id)
+            ? $"{agentVersion.Name}:{version}"
+            : agentVersion.Id;
+
         var agentOptions = new ChatClientAgentOptions()
         {
-            Id = agentVersion.Id,
+            Id = agentId,
             Name = agentVersion.Name,
             Description = agentVersion.Description,
         };
@@ -582,8 +596,8 @@ public static partial class AzureAIProjectChatClientExtensions
         var agentOptions = CreateChatClientAgentOptions(agentVersion, options?.ChatOptions, requireInvocableTools);
         if (options is not null)
         {
-            agentOptions.AIContextProviderFactory = options.AIContextProviderFactory;
-            agentOptions.ChatHistoryProviderFactory = options.ChatHistoryProviderFactory;
+            agentOptions.AIContextProviders = options.AIContextProviders;
+            agentOptions.ChatHistoryProvider = options.ChatHistoryProvider;
             agentOptions.UseProvidedChatClientAsIs = options.UseProvidedChatClientAsIs;
         }
 
@@ -762,6 +776,36 @@ public static partial class AzureAIProjectChatClientExtensions
             throw new ArgumentException("Agent name must be 1-63 characters long, start and end with an alphanumeric character, and can only contain alphanumeric characters or hyphens.", nameof(name));
         }
         return name;
+    }
+
+    private static ResponseReasoningOptions? ToResponseReasoningOptions(ReasoningOptions reasoning)
+    {
+        ResponseReasoningEffortLevel? effortLevel = reasoning.Effort switch
+        {
+            ReasoningEffort.Low => ResponseReasoningEffortLevel.Low,
+            ReasoningEffort.Medium => ResponseReasoningEffortLevel.Medium,
+            ReasoningEffort.High => ResponseReasoningEffortLevel.High,
+            ReasoningEffort.ExtraHigh => ResponseReasoningEffortLevel.High,
+            _ => null,
+        };
+
+        ResponseReasoningSummaryVerbosity? summary = reasoning.Output switch
+        {
+            ReasoningOutput.Summary => ResponseReasoningSummaryVerbosity.Concise,
+            ReasoningOutput.Full => ResponseReasoningSummaryVerbosity.Detailed,
+            _ => null,
+        };
+
+        if (effortLevel is null && summary is null)
+        {
+            return null;
+        }
+
+        return new ResponseReasoningOptions
+        {
+            ReasoningEffortLevel = effortLevel,
+            ReasoningSummaryVerbosity = summary,
+        };
     }
 }
 

@@ -16,10 +16,13 @@ internal sealed class RoleCheckAgent(bool allowOtherAssistantRoles, string? id =
 
     public override string? Name => name;
 
-    public override ValueTask<AgentSession> DeserializeSessionAsync(JsonElement serializedSession, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
         => new(new RoleCheckAgentSession());
 
-    public override ValueTask<AgentSession> GetNewSessionAsync(CancellationToken cancellationToken = default) => new(new RoleCheckAgentSession());
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+        => default;
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) => new(new RoleCheckAgentSession());
 
     protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
         => this.RunStreamingAsync(messages, session, options, cancellationToken).ToAgentResponseAsync(cancellationToken);
@@ -43,5 +46,5 @@ internal sealed class RoleCheckAgent(bool allowOtherAssistantRoles, string? id =
         };
     }
 
-    private sealed class RoleCheckAgentSession : InMemoryAgentSession;
+    private sealed class RoleCheckAgentSession : AgentSession;
 }

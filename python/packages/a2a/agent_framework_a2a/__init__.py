@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import A2AAgent
+from ._agent import A2AAgent, A2AContinuationToken
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -11,5 +11,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "A2AAgent",
+    "A2AContinuationToken",
     "__version__",
 ]

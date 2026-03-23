@@ -2,6 +2,8 @@
 
 """Agent Framework entity discovery implementation."""
 
+from __future__ import annotations
+
 import ast
 import importlib
 import importlib.util
@@ -9,7 +11,7 @@ import logging
 import sys
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 
@@ -111,7 +113,7 @@ class EntityDiscovery:
                 f"Only 'directory' and 'in-memory' sources are supported."
             )
 
-        # Note: Checkpoint storage is now injected at runtime via run_stream() parameter,
+        # Note: Checkpoint storage is now injected at runtime via run() parameter,
         # not at load time. This provides cleaner architecture and explicit control flow.
         # See _executor.py _execute_workflow() for runtime checkpoint storage injection.
 
@@ -139,7 +141,7 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_obj
 
         # Check module-level registry for cleanup hooks
-        from . import _get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
         registered_hooks = _get_registered_cleanup_hooks(entity_obj)
         if registered_hooks:
@@ -297,7 +299,7 @@ class EntityDiscovery:
         self._loaded_objects[entity_id] = entity_object
 
         # Check module-level registry for cleanup hooks
-        from . import _get_registered_cleanup_hooks
+        from . import _get_registered_cleanup_hooks  # type: ignore[reportPrivateUsage]
 
         registered_hooks = _get_registered_cleanup_hooks(entity_object)
         if registered_hooks:
@@ -361,16 +363,10 @@ class EntityDiscovery:
 
         # Log helpful info about agent capabilities (before creating EntityInfo)
         if entity_type == "agent":
-            has_run_stream = hasattr(entity_object, "run_stream")
             has_run = hasattr(entity_object, "run")
 
-            if not has_run_stream and has_run:
-                logger.info(
-                    f"Agent '{entity_id}' only has run() (non-streaming). "
-                    "DevUI will automatically convert to streaming."
-                )
-            elif not has_run_stream and not has_run:
-                logger.warning(f"Agent '{entity_id}' lacks both run() and run_stream() methods. May not work.")
+            if not has_run:
+                logger.warning(f"Agent '{entity_id}' lacks run() method. May not work.")
 
         # Check deployment support based on source
         # For directory-based entities, we need the path to verify deployment support
@@ -382,6 +378,8 @@ class EntityDiscovery:
             # For now, mark as potentially deployable - will be re-evaluated after enrichment
             deployment_supported = True
             deployment_reason = "Ready for deployment (pending path verification)"
+
+        class_name = type(entity_object).__name__
 
         # Create EntityInfo with Agent Framework specifics
         return EntityInfo(
@@ -404,10 +402,7 @@ class EntityDiscovery:
             deployment_reason=deployment_reason,
             metadata={
                 "source": "agent_framework_object",
-                "class_name": entity_object.__class__.__name__
-                if hasattr(entity_object, "__class__")
-                else str(type(entity_object)),
-                "has_run_stream": hasattr(entity_object, "run_stream"),
+                "class_name": class_name,
             },
         )
 
@@ -546,8 +541,8 @@ class EntityDiscovery:
         """Check if a Python file has entity exports (agent or workflow) using AST parsing.
 
         This safely checks for module-level assignments like:
-        - agent = ChatAgent(...)
-        - workflow = WorkflowBuilder()...
+        - agent = Agent(...)
+        - workflow = WorkflowBuilder(start_executor=...)...
 
         Args:
             file_path: Python file to check
@@ -764,19 +759,19 @@ class EntityDiscovery:
             True if object appears to be a valid agent
         """
         try:
-            # Try to import AgentProtocol for proper type checking
+            # Try to import SupportsAgentRun for proper type checking
             try:
-                from agent_framework import AgentProtocol
+                from agent_framework import SupportsAgentRun
 
-                if isinstance(obj, AgentProtocol):
+                if isinstance(obj, SupportsAgentRun):
                     return True
             except ImportError:
                 pass
 
             # Fallback to duck typing for agent protocol
-            # Agent must have either run_stream() or run() method, plus id and name
-            has_execution_method = hasattr(obj, "run_stream") or hasattr(obj, "run")
-            if has_execution_method and hasattr(obj, "id") and hasattr(obj, "name"):
+            # Agent must have run() method, plus id and name
+            has_run = hasattr(obj, "run")
+            if has_run and hasattr(obj, "id") and hasattr(obj, "name"):
                 return True
 
         except (TypeError, AttributeError):
@@ -793,8 +788,9 @@ class EntityDiscovery:
         Returns:
             True if object appears to be a valid workflow
         """
-        # Check for workflow - must have run_stream method and executors
-        return hasattr(obj, "run_stream") and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
+        # Check for workflow - must have run (streaming via stream=True) and executors
+        has_run = hasattr(obj, "run")
+        return has_run and (hasattr(obj, "executors") or hasattr(obj, "get_executors_list"))
 
     async def _register_entity_from_object(
         self, obj: Any, obj_type: str, module_path: str, source: str = "directory"
@@ -858,8 +854,7 @@ class EntityDiscovery:
                     "module_path": module_path,
                     "entity_type": obj_type,
                     "source": source,
-                    "has_run_stream": hasattr(obj, "run_stream"),
-                    "class_name": obj.__class__.__name__ if hasattr(obj, "__class__") else str(type(obj)),
+                    "class_name": type(obj).__name__,
                 },
             )
 
@@ -879,47 +874,63 @@ class EntityDiscovery:
         Returns:
             List of tool/executor names
         """
-        tools = []
+        tools: list[str] = []
 
         try:
             if obj_type == "agent":
-                # For agents, check default_options.get("tools")
                 chat_options = getattr(obj, "default_options", None)
-                chat_options_tools = None
-                if chat_options:
-                    chat_options_tools = chat_options.get("tools")
+                chat_options_tools: object | None = None
+                if isinstance(chat_options, dict):
+                    chat_options_dict = cast(dict[str, Any], chat_options)
+                    chat_options_tools = chat_options_dict.get("tools")
 
-                if chat_options_tools:
-                    for tool in chat_options_tools:
-                        if hasattr(tool, "__name__"):
-                            tools.append(tool.__name__)
-                        elif hasattr(tool, "name"):
-                            tools.append(tool.name)
+                if chat_options_tools is not None:
+                    tool_iterable: list[object] = (
+                        cast(list[object], chat_options_tools)
+                        if isinstance(chat_options_tools, list)
+                        else [chat_options_tools]
+                    )
+                    for tool_obj in tool_iterable:
+                        tool_name = getattr(tool_obj, "__name__", None)
+                        if isinstance(tool_name, str):
+                            tools.append(tool_name)
+                            continue
+
+                        named_tool = getattr(tool_obj, "name", None)
+                        if isinstance(named_tool, str):
+                            tools.append(named_tool)
                         else:
-                            tools.append(str(tool))
+                            tools.append(str(tool_obj))
                 else:
-                    # Fallback to direct tools attribute
                     agent_tools = getattr(obj, "tools", None)
-                    if agent_tools:
-                        for tool in agent_tools:
-                            if hasattr(tool, "__name__"):
-                                tools.append(tool.__name__)
-                            elif hasattr(tool, "name"):
-                                tools.append(tool.name)
+                    if isinstance(agent_tools, list):
+                        for tool_obj in cast(list[object], agent_tools):
+                            tool_name = getattr(tool_obj, "__name__", None)
+                            if isinstance(tool_name, str):
+                                tools.append(tool_name)
+                                continue
+
+                            named_tool = getattr(tool_obj, "name", None)
+                            if isinstance(named_tool, str):
+                                tools.append(named_tool)
                             else:
-                                tools.append(str(tool))
+                                tools.append(str(tool_obj))
 
             elif obj_type == "workflow":
-                # For workflows, extract executor names
                 if hasattr(obj, "get_executors_list"):
                     executor_objects = obj.get_executors_list()
-                    tools = [getattr(ex, "id", str(ex)) for ex in executor_objects]
+                    if isinstance(executor_objects, list):
+                        for executor_obj in cast(list[object], executor_objects):
+                            tools.append(str(getattr(executor_obj, "id", executor_obj)))
                 elif hasattr(obj, "executors"):
                     executors = obj.executors
                     if isinstance(executors, list):
-                        tools = [getattr(ex, "id", str(ex)) for ex in executors]
+                        for executor_obj in cast(list[object], executors):
+                            tools.append(str(getattr(executor_obj, "id", executor_obj)))
                     elif isinstance(executors, dict):
-                        tools = list(executors.keys())
+                        executors_dict = cast(dict[str, Any], executors)
+                        for key_obj in executors_dict:
+                            tools.append(str(key_obj))
 
         except Exception as e:
             logger.debug(f"Error extracting tools from {obj_type} {type(obj)}: {e}")

@@ -2,14 +2,15 @@
 
 """Converter utilities for converting ChatKit thread items to Agent Framework messages."""
 
+from __future__ import annotations
+
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 
 from agent_framework import (
-    ChatMessage,
     Content,
-    Role,
+    Message,
 )
 from chatkit.types import (
     AssistantMessageItem,
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class ThreadItemConverter:
-    """Helper class to convert ChatKit thread items to Agent Framework ChatMessage objects.
+    """Helper class to convert ChatKit thread items to Agent Framework Message objects.
 
     This class provides a base implementation for converting ChatKit thread items
     to Agent Framework messages. It can be extended to handle attachments,
@@ -63,8 +64,8 @@ class ThreadItemConverter:
 
     async def user_message_to_input(
         self, item: UserMessageItem, is_last_message: bool = True
-    ) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit UserMessageItem to Agent Framework ChatMessage(s).
+    ) -> Message | list[Message] | None:
+        """Convert a ChatKit UserMessageItem to Agent Framework Message(s).
 
         This method is called internally by `to_agent_input()`. Override this method
         to customize how user messages are converted.
@@ -74,7 +75,7 @@ class ThreadItemConverter:
             is_last_message: Whether this is the last message in the thread (used for quoted_text handling).
 
         Returns:
-            A ChatMessage, list of messages, or None to skip.
+            A Message, list of messages, or None to skip.
 
         Note:
             Instead of calling this method directly, use `to_agent_input()` which handles
@@ -101,20 +102,20 @@ class ThreadItemConverter:
 
         # If only text and no attachments, use text parameter for simplicity
         if text_content.strip() and not data_contents:
-            user_message = ChatMessage(role=Role.USER, text=text_content.strip())
+            user_message = Message(role="user", text=text_content.strip())
         else:
             # Build contents list with both text and attachments
             contents: list[Content] = []
             if text_content.strip():
                 contents.append(Content.from_text(text=text_content.strip()))
             contents.extend(data_contents)
-            user_message = ChatMessage(role=Role.USER, contents=contents)
+            user_message = Message(role="user", contents=contents)
 
         # Handle quoted text if this is the last message
         messages = [user_message]
         if item.quoted_text and is_last_message:
-            quoted_context = ChatMessage(
-                role=Role.USER,
+            quoted_context = Message(
+                role="user",
                 text=f"The user is referring to this in particular:\n{item.quoted_text}",
             )
             # Prepend quoted context before the main message
@@ -178,10 +179,8 @@ class ThreadItemConverter:
         # Subclasses can override this method to provide custom handling
         return None
 
-    def hidden_context_to_input(
-        self, item: HiddenContextItem | SDKHiddenContextItem
-    ) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit HiddenContextItem or SDKHiddenContextItem to Agent Framework ChatMessage(s).
+    def hidden_context_to_input(self, item: HiddenContextItem | SDKHiddenContextItem) -> Message | list[Message] | None:
+        """Convert a ChatKit HiddenContextItem or SDKHiddenContextItem to Agent Framework Message(s).
 
         This method is called internally by `to_agent_input()`. Override this method
         to customize how hidden context is converted.
@@ -194,7 +193,7 @@ class ThreadItemConverter:
             item: The ChatKit hidden context item to convert.
 
         Returns:
-            A ChatMessage with system role, a list of messages, or None to skip.
+            A Message with system role, a list of messages, or None to skip.
 
         Note:
             Instead of calling this method directly, use `to_agent_input()` which handles
@@ -212,9 +211,9 @@ class ThreadItemConverter:
                     content="User's email: user@example.com",
                 )
                 message = converter.hidden_context_to_input(hidden_item)
-                # Returns: ChatMessage(role=SYSTEM, text="<HIDDEN_CONTEXT>User's email: ...</HIDDEN_CONTEXT>")
+                # Returns: Message(role=SYSTEM, text="<HIDDEN_CONTEXT>User's email: ...</HIDDEN_CONTEXT>")
         """
-        return ChatMessage(role=Role.SYSTEM, text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
+        return Message(role="system", text=f"<HIDDEN_CONTEXT>{item.content}</HIDDEN_CONTEXT>")
 
     def tag_to_message_content(self, tag: UserMessageTagContent) -> Content:
         """Convert a ChatKit tag (@-mention) to Agent Framework content.
@@ -249,8 +248,8 @@ class ThreadItemConverter:
         name = getattr(tag.data, "name", tag.text if hasattr(tag, "text") else "unknown")
         return Content.from_text(text=f"<TAG>Name:{name}</TAG>")
 
-    def task_to_input(self, item: TaskItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit TaskItem to Agent Framework ChatMessage(s).
+    def task_to_input(self, item: TaskItem) -> Message | list[Message] | None:
+        """Convert a ChatKit TaskItem to Agent Framework Message(s).
 
         This method is called internally by `to_agent_input()`. Override this method
         to customize how tasks are converted.
@@ -262,7 +261,7 @@ class ThreadItemConverter:
             item: The ChatKit task item to convert.
 
         Returns:
-            A ChatMessage, a list of messages, or None to skip the task.
+            A Message, a list of messages, or None to skip the task.
 
         Note:
             Instead of calling this method directly, use `to_agent_input()` which handles
@@ -293,10 +292,10 @@ class ThreadItemConverter:
             f"A message was displayed to the user that the following task was performed:\n<Task>\n{task_text}\n</Task>"
         )
 
-        return ChatMessage(role=Role.USER, text=text)
+        return Message(role="user", text=text)
 
-    def workflow_to_input(self, item: WorkflowItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit WorkflowItem to Agent Framework ChatMessage(s).
+    def workflow_to_input(self, item: WorkflowItem) -> Message | list[Message] | None:
+        """Convert a ChatKit WorkflowItem to Agent Framework Message(s).
 
         This method is called internally by `to_agent_input()`. Override this method
         to customize how workflows are converted.
@@ -335,7 +334,7 @@ class ThreadItemConverter:
                 messages = converter.workflow_to_input(workflow_item)
                 # Returns list of messages for each task
         """
-        messages: list[ChatMessage] = []
+        messages: list[Message] = []
         for task in item.workflow.tasks:
             if task.type != "custom" or (not task.title and not task.content):
                 continue
@@ -348,12 +347,12 @@ class ThreadItemConverter:
                 f"<Task>\n{task_text}\n</Task>"
             )
 
-            messages.append(ChatMessage(role=Role.USER, text=text))
+            messages.append(Message(role="user", text=text))
 
         return messages if messages else None
 
-    def widget_to_input(self, item: WidgetItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit WidgetItem to Agent Framework ChatMessage(s).
+    def widget_to_input(self, item: WidgetItem) -> Message | list[Message] | None:
+        """Convert a ChatKit WidgetItem to Agent Framework Message(s).
 
         This method is called internally by `to_agent_input()`. Override this method
         to customize how widgets are converted.
@@ -366,7 +365,7 @@ class ThreadItemConverter:
             item: The ChatKit widget item to convert.
 
         Returns:
-            A ChatMessage describing the widget, or None to skip.
+            A Message describing the widget, or None to skip.
 
         Note:
             Instead of calling this method directly, use `to_agent_input()` which handles
@@ -390,13 +389,13 @@ class ThreadItemConverter:
         try:
             widget_json = item.widget.model_dump_json(exclude_unset=True, exclude_none=True)
             text = f"The following graphical UI widget (id: {item.id}) was displayed to the user:{widget_json}"
-            return ChatMessage(role=Role.USER, text=text)
+            return Message(role="user", text=text)
         except Exception:
             # If JSON serialization fails, skip the widget
             return None
 
-    async def assistant_message_to_input(self, item: AssistantMessageItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit AssistantMessageItem to Agent Framework ChatMessage(s).
+    async def assistant_message_to_input(self, item: AssistantMessageItem) -> Message | list[Message] | None:
+        """Convert a ChatKit AssistantMessageItem to Agent Framework Message(s).
 
         The default implementation extracts text from all content parts and creates
         an assistant message.
@@ -405,7 +404,7 @@ class ThreadItemConverter:
             item: The ChatKit assistant message item to convert.
 
         Returns:
-            A ChatMessage with assistant role, or None to skip.
+            A Message with assistant role, or None to skip.
 
         Note:
             Instead of calling this method directly, use `to_agent_input()` which handles
@@ -416,10 +415,10 @@ class ThreadItemConverter:
         if not text_parts:
             return None
 
-        return ChatMessage(role=Role.ASSISTANT, text="".join(text_parts))
+        return Message(role="assistant", text="".join(text_parts))
 
-    async def client_tool_call_to_input(self, item: ClientToolCallItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit ClientToolCallItem to Agent Framework ChatMessage(s).
+    async def client_tool_call_to_input(self, item: ClientToolCallItem) -> Message | list[Message] | None:
+        """Convert a ChatKit ClientToolCallItem to Agent Framework Message(s).
 
         The default implementation converts completed tool calls into function call
         and result content.
@@ -441,8 +440,8 @@ class ThreadItemConverter:
         import json
 
         # Create function call message
-        function_call_msg = ChatMessage(
-            role=Role.ASSISTANT,
+        function_call_msg = Message(
+            role="assistant",
             contents=[
                 Content.from_function_call(
                     call_id=item.call_id,
@@ -453,8 +452,8 @@ class ThreadItemConverter:
         )
 
         # Create function result message
-        function_result_msg = ChatMessage(
-            role=Role.TOOL,
+        function_result_msg = Message(
+            role="tool",
             contents=[
                 Content.from_function_result(
                     call_id=item.call_id,
@@ -465,8 +464,8 @@ class ThreadItemConverter:
 
         return [function_call_msg, function_result_msg]
 
-    async def end_of_turn_to_input(self, item: EndOfTurnItem) -> ChatMessage | list[ChatMessage] | None:
-        """Convert a ChatKit EndOfTurnItem to Agent Framework ChatMessage(s).
+    async def end_of_turn_to_input(self, item: EndOfTurnItem) -> Message | list[Message] | None:
+        """Convert a ChatKit EndOfTurnItem to Agent Framework Message(s).
 
         The default implementation skips end-of-turn markers as they are only UI hints.
 
@@ -487,15 +486,15 @@ class ThreadItemConverter:
         self,
         item: ThreadItem,
         is_last_message: bool = True,
-    ) -> list[ChatMessage]:
-        """Internal method to convert a single ThreadItem to ChatMessage(s).
+    ) -> list[Message]:
+        """Internal method to convert a single ThreadItem to Message(s).
 
         Args:
             item: The thread item to convert.
             is_last_message: Whether this is the last item in the thread.
 
         Returns:
-            A list of ChatMessage objects (may be empty).
+            A list of Message objects (may be empty).
         """
         match item:
             case UserMessageItem():
@@ -534,7 +533,7 @@ class ThreadItemConverter:
     async def to_agent_input(
         self,
         thread_items: Sequence[ThreadItem] | ThreadItem,
-    ) -> list[ChatMessage]:
+    ) -> list[Message]:
         """Convert ChatKit thread items to Agent Framework ChatMessages.
 
         This is the main entry point for converting ChatKit thread items. It handles
@@ -545,7 +544,7 @@ class ThreadItemConverter:
             thread_items: A single ThreadItem or a sequence of ThreadItems to convert.
 
         Returns:
-            A list of ChatMessage objects that can be sent to an Agent Framework agent.
+            A list of Message objects that can be sent to an Agent Framework agent.
 
         Examples:
             .. code-block:: python
@@ -561,14 +560,14 @@ class ThreadItemConverter:
                 messages = await converter.to_agent_input([user_message_item, assistant_message_item, task_item])
 
                 # Use with agent
-                from agent_framework import ChatAgent
+                from agent_framework import Agent
 
-                agent = ChatAgent(...)
-                response = await agent.run_stream(messages)
+                agent = Agent(...)
+                response = await agent.run(messages)
         """
         thread_items = list(thread_items) if isinstance(thread_items, Sequence) else [thread_items]
 
-        output: list[ChatMessage] = []
+        output: list[Message] = []
         for item in thread_items:
             output.extend(
                 await self._thread_item_to_input_item(
@@ -583,7 +582,7 @@ class ThreadItemConverter:
 _DEFAULT_CONVERTER = ThreadItemConverter()
 
 
-async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem) -> list[ChatMessage]:
+async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem) -> list[Message]:
     """Helper function that uses the default ThreadItemConverter.
 
     This function provides a quick way to get started with ChatKit integration
@@ -593,7 +592,7 @@ async def simple_to_agent_input(thread_items: Sequence[ThreadItem] | ThreadItem)
         thread_items: A single ThreadItem or a sequence of ThreadItems to convert.
 
     Returns:
-        A list of ChatMessage objects that can be sent to an Agent Framework agent.
+        A list of Message objects that can be sent to an Agent Framework agent.
 
     Examples:
         .. code-block:: python

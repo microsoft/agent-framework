@@ -19,19 +19,20 @@ public static class HostApplicationBuilderWorkflowExtensions
     /// <param name="builder">The <see cref="IHostApplicationBuilder"/> to configure.</param>
     /// <param name="name">The unique name for the workflow.</param>
     /// <param name="createWorkflowDelegate">A factory function that creates the <see cref="Workflow"/> instance. The function receives the service provider and workflow name as parameters.</param>
+    /// <param name="lifetime">The DI service lifetime for the workflow registration. Defaults to <see cref="ServiceLifetime.Singleton"/>.</param>
     /// <returns>An <see cref="IHostedWorkflowBuilder"/> that can be used to further configure the workflow.</returns>
     /// <exception cref="ArgumentNullException">Thrown when <paramref name="builder"/>, <paramref name="name"/>, or <paramref name="createWorkflowDelegate"/> is null.</exception>
     /// <exception cref="ArgumentException">Thrown when <paramref name="name"/> is empty.</exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the factory delegate returns null or a workflow with a name that doesn't match the expected name.
     /// </exception>
-    public static IHostedWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate)
+    public static IHostedWorkflowBuilder AddWorkflow(this IHostApplicationBuilder builder, string name, Func<IServiceProvider, string, Workflow> createWorkflowDelegate, ServiceLifetime lifetime = ServiceLifetime.Singleton)
     {
         Throw.IfNull(builder);
         Throw.IfNull(name);
         Throw.IfNull(createWorkflowDelegate);
 
-        builder.Services.AddKeyedSingleton(name, (sp, key) =>
+        builder.Services.AddKeyedService(name, (sp, key) =>
         {
             Throw.IfNull(key);
             var keyString = key as string;
@@ -43,7 +44,7 @@ public static class HostApplicationBuilderWorkflowExtensions
             }
 
             return workflow;
-        });
+        }, lifetime);
 
         return new HostedWorkflowBuilder(name, builder);
     }

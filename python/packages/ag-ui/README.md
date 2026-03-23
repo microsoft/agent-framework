@@ -14,15 +14,15 @@ pip install agent-framework-ag-ui
 
 ```python
 from fastapi import FastAPI
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Create your agent
-agent = ChatAgent(
+agent = Agent(
     name="my_agent",
     instructions="You are a helpful assistant.",
-    chat_client=AzureOpenAIChatClient(
+    client=AzureOpenAIChatClient(
         endpoint="https://your-resource.openai.azure.com/",
         deployment_name="gpt-4o-mini",
         api_key="your-api-key",
@@ -36,19 +36,56 @@ add_agent_framework_fastapi_endpoint(app, agent, "/")
 # Run with: uvicorn main:app --reload
 ```
 
+### Server (Host a Workflow)
+
+```python
+from fastapi import FastAPI
+from agent_framework import WorkflowBuilder, WorkflowContext, executor
+from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
+
+@executor(id="start")
+async def start(message: str, ctx: WorkflowContext) -> None:
+    await ctx.yield_output(f"Workflow received: {message}")
+
+workflow = WorkflowBuilder(start_executor=start).build()
+
+app = FastAPI()
+add_agent_framework_fastapi_endpoint(app, workflow, "/")
+```
+
+### Server (Thread-Scoped WorkflowBuilder)
+
+Use `workflow_factory` when your workflow keeps runtime state (for example pending `request_info` interrupts) and must be isolated per AG-UI thread:
+
+```python
+from fastapi import FastAPI
+from agent_framework import Workflow, WorkflowBuilder
+from agent_framework.ag_ui import AgentFrameworkWorkflow, add_agent_framework_fastapi_endpoint
+
+def build_workflow_for_thread(thread_id: str) -> Workflow:
+    # Build a fresh workflow instance for each thread id.
+    return WorkflowBuilder(start_executor=...).build()
+
+app = FastAPI()
+thread_scoped_workflow = AgentFrameworkWorkflow(
+    workflow_factory=build_workflow_for_thread,
+    name="my_workflow",
+)
+add_agent_framework_fastapi_endpoint(app, thread_scoped_workflow, "/")
+```
+
 ### Client (Connect to an AG-UI Server)
 
 ```python
 import asyncio
-from agent_framework import TextContent
 from agent_framework.ag_ui import AGUIChatClient
 
 async def main():
     async with AGUIChatClient(endpoint="http://localhost:8000/") as client:
         # Stream responses
-        async for update in client.get_streaming_response("Hello!"):
+        async for update in client.get_response("Hello!", stream=True):
             for content in update.contents:
-                if isinstance(content, TextContent):
+                if content.type == "text" and content.text:
                     print(content.text, end="", flush=True)
         print()
 
@@ -59,7 +96,8 @@ The `AGUIChatClient` supports:
 - Streaming and non-streaming responses
 - Hybrid tool execution (client-side + server-side tools)
 - Automatic thread management for conversation continuity
-- Integration with `ChatAgent` for client-side history management
+- Integration with `Agent` for client-side history management
+- Interrupt metadata passthrough (`availableInterrupts` and `resume`)
 
 ## Documentation
 
@@ -82,6 +120,13 @@ This integration supports all 7 AG-UI features:
 6. **Shared State**: Bidirectional state sync between client and server
 7. **Predictive State Updates**: Stream tool arguments as optimistic state updates during execution
 
+Additional compatibility and draft support:
+- Native `Workflow` endpoint registration via `add_agent_framework_fastapi_endpoint(...)`
+- Workflow-to-AG-UI event mapping (run/step/activity/tool/custom events)
+- Custom event compatibility for inbound `CUSTOM`, `CUSTOM_EVENT`, and `custom_event`
+- Pragmatic multimodal input parsing for both legacy (`binary`) and draft media-part shapes
+- Pragmatic interrupt/resume handling (`availableInterrupts`, `resume`, and `RUN_FINISHED.interrupt`)
+
 ## Security: Authentication & Authorization
 
 The AG-UI endpoint does not enforce authentication by default. **For production deployments, you should add authentication** using FastAPI's dependency injection system via the `dependencies` parameter.
@@ -92,7 +137,7 @@ The AG-UI endpoint does not enforce authentication by default. **For production 
 import os
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
-from agent_framework import ChatAgent
+from agent_framework import Agent
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 
 # Configure API key authentication
@@ -105,7 +150,7 @@ async def verify_api_key(api_key: str | None = Security(API_KEY_HEADER)) -> None
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Create agent and app
-agent = ChatAgent(name="my_agent", instructions="...", chat_client=...)
+agent = Agent(name="my_agent", instructions="...", client=...)
 app = FastAPI()
 
 # Register endpoint WITH authentication

@@ -7,7 +7,6 @@ using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Client.Entities;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -55,7 +54,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
             });
 
         AIAgent agentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
-        AgentSession session = await agentProxy.GetNewSessionAsync(this.TestTimeoutToken);
+        AgentSession session = await agentProxy.CreateSessionAsync(this.TestTimeoutToken);
         DurableTaskClient client = testHelper.GetClient();
         AgentSessionId sessionId = session.GetService<AgentSessionId>();
 
@@ -120,7 +119,7 @@ public sealed class TimeToLiveTests(ITestOutputHelper outputHelper) : IDisposabl
             });
 
         AIAgent agentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
-        AgentSession session = await agentProxy.GetNewSessionAsync(this.TestTimeoutToken);
+        AgentSession session = await agentProxy.CreateSessionAsync(this.TestTimeoutToken);
         DurableTaskClient client = testHelper.GetClient();
         AgentSessionId sessionId = session.GetService<AgentSessionId>();
 

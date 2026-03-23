@@ -4,7 +4,7 @@ description = "Microsoft Agent Framework for building AI Agents with Python. Thi
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260130"
+version = "1.0.0rc5"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,38 +23,27 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core[all]==1.0.0b260130",
+    "agent-framework-core[all]==1.0.0rc5",
 ]
 
 [dependency-groups]
 dev = [
-    "uv>=0.9,<1.0.0",
-    "flit>=3.12.0",
-    "pre-commit >= 3.7",
-    "ruff>=0.11.8",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.0.0",
-    "pytest-cov>=6.2.1",
-    "pytest-env>=1.1.5",
-    "pytest-xdist[psutil]>=3.8.0",
-    "pytest-timeout>=2.3.1",
-    "pytest-retry>=1",
-    "mypy>=1.16.1",
-    "pyright>=1.1.402",
+    "uv==0.10.9",
+    "flit==3.12.0",
+    "ruff==0.15.5",
+    "pytest==9.0.2",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.0.0",
+    "pytest-xdist[psutil]==3.8.0",
+    "pytest-timeout==2.4.0",
+    "pytest-retry==1.7.0",
+    "mypy==1.19.1",
+    "pyright==1.1.408",
     #tasks
-    "poethepoet>=0.36.0",
-    "rich",
-    "tomli",
-    "tomli-w",
-    # AutoGen migration samples
-    "autogen-agentchat",
-    "autogen-ext[openai]",
-]
-docs = [
-    # Documentation
-    "debugpy>=1.8.16",
-    "py2docfx>=0.1.22.dev2259826",
-    "pip",
+    "poethepoet==0.42.1",
+    "rich==13.7.1",
+    "tomli==2.4.0",
+    "prek==0.3.4",
 ]
 
 [tool.uv]
@@ -64,18 +53,6 @@ environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
     "sys_platform == 'win32'"
-]
-override-dependencies = [
-  # A conflict between the dependency of litellm[proxy] < 0.30.0, which is a dependency of agent-lightning
-  # and uvicorn >= 0.34.0, which is a dependency of tau2
-  "uvicorn==0.38.0",
-  # Similar problem with websockets, which is a dependency conflict between litellm[proxy] and mcp
-  "websockets==15.0.1",
-  # grpcio 1.67.x has no Python 3.14 wheels; grpcio 1.76.0+ supports Python 3.14
-  # litellm constrains grpcio<1.68.0 due to resource exhaustion bug (https://github.com/grpc/grpc/issues/38290)
-  # Use version-specific overrides to satisfy both constraints
-  "grpcio>=1.76.0; python_version >= '3.14'",
-  "grpcio>=1.62.3,<1.68.0; python_version < '3.14'",
 ]
 
 [tool.uv.workspace]
@@ -87,6 +64,7 @@ agent-framework-core = { workspace = true }
 agent-framework-a2a = { workspace = true }
 agent-framework-ag-ui = { workspace = true }
 agent-framework-azure-ai-search = { workspace = true }
+agent-framework-azure-cosmos = { workspace = true }
 agent-framework-anthropic = { workspace = true }
 agent-framework-azure-ai = { workspace = true }
 agent-framework-azurefunctions = { workspace = true }
@@ -104,13 +82,14 @@ agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
+agent-framework-orchestrations = { workspace = true }
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
 fix = true
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
-exclude = ["docs/*", "run_tasks_in_packages_if_exists.py", "check_md_code_blocks.py"]
+exclude = ["scripts"]
 extend-exclude = [
     "[{][{]cookiecutter.package_name[}][}]",
 ]
@@ -156,7 +135,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Ignore all directories named `tests` and `samples`.
 "**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
-"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
 "*.ipynb" = ["CPY", "E501"]
 
 [tool.ruff.format]
@@ -170,17 +149,18 @@ notice-rgx = "^# Copyright \\(c\\) Microsoft\\. All rights reserved\\."
 min-file-size = 1
 
 [tool.pytest.ini_options]
-testpaths = 'packages/**/tests'
+testpaths = ['packages/**/tests', 'packages/**/ag_ui_tests']
 norecursedirs = '**/lab/**'
 addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
-timeout = 120
+timeout = 60
 markers = [
     "azure: marks tests as Azure provider specific",
     "azure-ai: marks tests as Azure AI provider specific",
     "openai: marks tests as OpenAI provider specific",
+    "integration: marks tests as integration tests that require external services",
 ]
 
 [tool.coverage.run]
@@ -189,11 +169,40 @@ omit = [
 ]
 
 [tool.pyright]
-include = ["agent_framework*"]
-exclude = ["**/tests/**", "docs", "**/.venv/**", "packages/devui/frontend/**"]
+exclude = ["**/tests/**", "**/.venv/**", "packages/devui/frontend/**"]
 typeCheckingMode = "strict"
 reportUnnecessaryIsInstance = false
 reportMissingTypeStubs = false
+reportUnnecessaryCast = "error"
+# Tests intentionally probe internal implementation details.
+executionEnvironments = [
+    { root = "packages/a2a/tests", reportPrivateUsage = "none" },
+    { root = "packages/ag-ui/tests", reportPrivateUsage = "none" },
+    { root = "packages/anthropic/tests", reportPrivateUsage = "none" },
+    { root = "packages/azure-ai-search/tests", reportPrivateUsage = "none" },
+    { root = "packages/azure-ai/tests", reportPrivateUsage = "none" },
+    { root = "packages/azure-cosmos/tests", reportPrivateUsage = "none" },
+    { root = "packages/azurefunctions/tests", reportPrivateUsage = "none" },
+    { root = "packages/bedrock/tests", reportPrivateUsage = "none" },
+    { root = "packages/chatkit/tests", reportPrivateUsage = "none" },
+    { root = "packages/claude/tests", reportPrivateUsage = "none" },
+    { root = "packages/copilotstudio/tests", reportPrivateUsage = "none" },
+    { root = "packages/core/tests", reportPrivateUsage = "none" },
+    { root = "packages/declarative/tests", reportPrivateUsage = "none" },
+    { root = "packages/devui/tests", reportPrivateUsage = "none" },
+    { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
+    { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
+    { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
+    { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
+    { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
+    { root = "packages/lab/tau2/tests", reportPrivateUsage = "none" },
+    { root = "packages/mem0/tests", reportPrivateUsage = "none" },
+    { root = "packages/ollama/tests", reportPrivateUsage = "none" },
+    { root = "packages/orchestrations/tests", reportPrivateUsage = "none" },
+    { root = "packages/purview/tests", reportPrivateUsage = "none" },
+    { root = "packages/redis/tests", reportPrivateUsage = "none" },
+    { root = "tests", reportPrivateUsage = "none" },
+]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -211,118 +220,187 @@ disallow_untyped_decorators = true
 
 [tool.bandit]
 targets = ["agent_framework"]
-exclude_dirs = ["tests", "./run_tasks_in_packages_if_exists.py", "./check_md_code_blocks.py", "docs", "samples"]
+exclude_dirs = ["tests", "scripts", "samples"]
 
 [tool.poe]
 executor.type = "uv"
 
-[tool.poe.tasks]
-markdown-code-lint = "uv run python check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
-pre-commit-install = "uv run pre-commit install --install-hooks --overwrite"
-install = "uv sync --all-packages --all-extras --dev -U --prerelease=if-necessary-or-explicit --no-group=docs"
-test = "python run_tasks_in_packages_if_exists.py test"
-fmt = "python run_tasks_in_packages_if_exists.py fmt"
-format.ref = "fmt"
-lint = "python run_tasks_in_packages_if_exists.py lint"
-pyright = "python run_tasks_in_packages_if_exists.py pyright"
-mypy = "python run_tasks_in_packages_if_exists.py mypy"
-# cleaning
-clean-dist-packages = "python run_tasks_in_packages_if_exists.py clean-dist"
-clean-dist-meta = "rm -rf dist"
-clean-dist = ["clean-dist-packages", "clean-dist-meta"]
-# build and publish
-build-packages = "python run_tasks_in_packages_if_exists.py build"
-build-meta = "python -m flit build"
-build = ["build-packages", "build-meta"]
-publish = "uv publish"
-# combined checks
-check = ["fmt", "lint", "pyright", "mypy", "test", "markdown-code-lint"]
-
-[tool.poe.tasks.all-tests-cov]
-cmd = """
-pytest --import-mode=importlib
---cov=agent_framework
---cov=agent_framework_core
---cov=agent_framework_a2a
---cov=agent_framework_ag_ui
---cov=agent_framework_anthropic
---cov=agent_framework_azure_ai
---cov=agent_framework_azurefunctions
---cov=agent_framework_chatkit
---cov=agent_framework_copilotstudio
---cov=agent_framework_mem0
---cov=agent_framework_purview
---cov=agent_framework_redis
---cov-config=pyproject.toml
---cov-report=term-missing:skip-covered
---ignore-glob=packages/lab/**
---ignore-glob=packages/devui/**
--rs
--n logical --dist loadfile --dist worksteal
-packages/**/tests
-"""
-
-[tool.poe.tasks.all-tests]
-cmd = """
-pytest --import-mode=importlib
---ignore-glob=packages/lab/**
---ignore-glob=packages/devui/**
--rs
--n logical --dist loadfile --dist worksteal
-packages/**/tests
-"""
-
-[tool.poe.tasks.venv]
-cmd = "uv venv --clear --python $python"
-args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+# Workspace setup
+[tool.poe.tasks.install]
+help = "Install all workspace packages, extras, and dev dependencies from the lockfile."
+cmd = "uv sync --all-packages --all-extras --dev --frozen --prerelease=if-necessary-or-explicit"
 
 [tool.poe.tasks.setup]
+help = "Create the workspace virtual environment for -P/--python, install dependencies, and install prek hooks."
 sequence = [
     { ref = "venv --python $python"},
     { ref = "install" },
-    { ref = "pre-commit-install" }
+    { ref = "prek-install" }
 ]
-args = [{ name = "python", default = "3.13", options = ['-p', '--python'] }]
+args = [{ name = "python", default = "3.13", options = ['-P', '-p', '--python'] }]
 
-[tool.poe.tasks.pre-commit-markdown-code-lint]
-cmd = "uv run python check_md_code_blocks.py ${files} --no-glob --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend'"
-args = [{ name = "files", default = ".", positional = true, multiple = true }]
+[tool.poe.tasks.venv]
+help = "Create or recreate the workspace virtual environment for -P/--python."
+cmd = "uv venv --clear --python $python"
+args = [{ name = "python", default = "3.13", options = ['-P', '-p', '--python'] }]
 
-[tool.poe.tasks.pre-commit-pyright]
-cmd = "uv run python run_tasks_in_changed_packages.py pyright ${files}"
-args = [{ name = "files", default = ".", positional = true, multiple = true }]
+[tool.poe.tasks.prek-install]
+help = "Install or refresh the prek git hooks."
+cmd = "prek install --overwrite"
 
+# Syntax, typing, and validation
+[tool.poe.tasks.syntax]
+help = "Run Ruff formatting and Ruff checks for -P/--package packages, or use -S/--samples; add -F/--format or -C/--check to narrow the mode."
+cmd = "python scripts/workspace_poe_tasks.py syntax"
 
-[tool.poe.tasks.ci-mypy]
+[tool.poe.tasks.fmt]
+help = "DEPRECATED: Use `syntax --format` instead."
+cmd = "python scripts/workspace_poe_tasks.py syntax --format"
+
+[tool.poe.tasks.format]
+help = "DEPRECATED: Use `syntax --format` instead."
+cmd = "python scripts/workspace_poe_tasks.py syntax --format"
+
+[tool.poe.tasks.lint]
+help = "DEPRECATED: Use `syntax --check` instead."
+cmd = "python scripts/workspace_poe_tasks.py syntax --check"
+
+[tool.poe.tasks.samples-lint]
+help = "DEPRECATED: Use `syntax --samples --check` instead."
+cmd = "python scripts/workspace_poe_tasks.py syntax --samples --check"
+
+[tool.poe.tasks.pyright]
+help = "Run Pyright for -P/--package packages, use -A/--all for one aggregate sweep, or use -S/--samples for sample checks."
+cmd = "python scripts/workspace_poe_tasks.py pyright"
+
+[tool.poe.tasks.mypy]
+help = "Run MyPy for -P/--package packages, or use -A/--all for one aggregate sweep."
+cmd = "python scripts/workspace_poe_tasks.py mypy"
+
+[tool.poe.tasks.typing]
+help = "Run both MyPy and Pyright for -P/--package packages, or use -A/--all for aggregate mode."
+cmd = "python scripts/workspace_poe_tasks.py typing"
+
+[tool.poe.tasks.samples-syntax]
+help = "DEPRECATED: Use `pyright --samples` instead."
+cmd = "python scripts/workspace_poe_tasks.py pyright --samples"
+
+[tool.poe.tasks.check-packages]
+help = "Run `syntax` and `pyright` for -P/--package packages."
+cmd = "python scripts/workspace_poe_tasks.py check-packages"
+
+[tool.poe.tasks.check]
+help = "Run package syntax, pyright, and tests for -P/--package packages; without -P also include sample checks and markdown code lint, or use -S/--samples for sample-only checks."
+cmd = "python scripts/workspace_poe_tasks.py check"
+
+[tool.poe.tasks.markdown-code-lint]
+help = "Lint Python code blocks embedded in README and sample markdown files."
+cmd = "uv run python scripts/check_md_code_blocks.py 'README.md' './packages/**/README.md' './samples/**/*.md' --exclude cookiecutter-agent-framework-lab --exclude tau2 --exclude 'packages/devui/frontend' --exclude context_providers/azure_ai_search"
+
+# Testing
+[tool.poe.tasks.test]
+help = "Run tests for -P/--package packages, or use -A/--all for one aggregate sweep; add -C/--cov for coverage."
+cmd = "python scripts/workspace_poe_tasks.py test"
+
+[tool.poe.tasks.all-tests]
+help = "DEPRECATED: Use `test --all` instead."
+cmd = "python scripts/workspace_poe_tasks.py test --all"
+
+[tool.poe.tasks.all-tests-cov]
+help = "DEPRECATED: Use `test --all --cov` instead."
+cmd = "python scripts/workspace_poe_tasks.py test --all --cov"
+
+# Build and publishing
+[tool.poe.tasks._clean-dist-packages]
+cmd = "python scripts/workspace_poe_tasks.py clean-dist"
+
+[tool.poe.tasks._clean-dist-meta]
+cmd = "rm -rf dist"
+
+[tool.poe.tasks.clean-dist]
+help = "Remove generated dist artifacts for -P/--package packages and the root meta package."
+sequence = [
+    { ref = "_clean-dist-packages --package ${project}" },
+    { ref = "_clean-dist-meta" },
+]
+args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks._build-packages]
+cmd = "python scripts/workspace_poe_tasks.py build"
+
+[tool.poe.tasks._build-meta]
+cmd = "python -m flit build"
+
+[tool.poe.tasks.build]
+help = "Build -P/--package packages and the root meta package."
+sequence = [
+    { ref = "_build-packages --package ${project}" },
+    { ref = "_build-meta" },
+]
+args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks.publish]
+help = "Publish built distributions with uv."
+cmd = "uv publish"
+
+# Dependency maintenance
+[tool.poe.tasks.upgrade-dev-dependency-pins]
+help = "Repin the workspace dev dependency versions used in pyproject.toml."
+cmd = "python -m scripts.dependencies.upgrade_dev_dependencies"
+
+[tool.poe.tasks._upgrade-lockfile]
+cmd = "uv lock --upgrade"
+
+[tool.poe.tasks.upgrade-dev-dependencies]
+help = "Repin dev dependencies, refresh uv.lock, reinstall, and rerun validation commands."
+sequence = [
+    { ref = "upgrade-dev-dependency-pins" },
+    { ref = "_upgrade-lockfile" },
+    { ref = "install" },
+    { ref = "check" },
+    { ref = "typing" },
+    { ref = "test" },
+]
+
+[tool.poe.tasks.add-dependency-to-project]
+help = "Add a dependency to a -P/--package workspace package selected by short name such as `core`."
+cmd = "python -m scripts.dependencies.add_dependency_to_project --package ${project} --dependency ${dependency}"
+args = [
+    { name = "project", options = ["-P", "--package"] },
+    { name = "dependency", options = ["-D", "-d", "--dependency"] },
+]
+
+[tool.poe.tasks.validate-dependency-bounds-test]
+help = "Run workspace dependency-bound validation in test mode, optionally scoped with -P/--package short names such as `core`."
+shell = "python -m scripts.dependencies.validate_dependency_bounds --mode test --package \"$project\""
+args = [{ name = "project", default = "*", options = ["-P", "--package"] }]
+
+[tool.poe.tasks.validate-dependency-bounds-project]
+help = "Validate lower and upper dependency bounds for a -P/--package workspace package, optionally narrowed with -M/--mode and -D/--dependency."
 shell = """
-# Try multiple strategies to get changed files
-if [ -n "$GITHUB_BASE_REF" ]; then
-    # In GitHub Actions PR context
-    git fetch origin $GITHUB_BASE_REF --depth=1 2>/dev/null || true
-    CHANGED_FILES=$(git diff --name-only origin/$GITHUB_BASE_REF...HEAD -- . 2>/dev/null || \
-                    git diff --name-only FETCH_HEAD...HEAD -- . 2>/dev/null || \
-                    git diff --name-only HEAD^...HEAD -- . 2>/dev/null || \
-                    echo ".")
-else
-    # Local development
-    CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- . 2>/dev/null || \
-                    git diff --name-only main...HEAD -- . 2>/dev/null || \
-                    git diff --name-only HEAD~1 -- . 2>/dev/null || \
-                    echo ".")
+command=(python -m scripts.dependencies.validate_dependency_bounds --mode "${mode}" --package "${project}")
+if [ -n "${dependency}" ]; then
+    command+=(--dependencies "${dependency}")
 fi
-echo "Changed files: $CHANGED_FILES"
-uv run python run_tasks_in_changed_packages.py mypy $CHANGED_FILES
+"${command[@]}"
 """
 interpreter = "bash"
-
-[tool.poe.tasks.pre-commit-check]
-sequence = [
-    { ref = "fmt" },
-    { ref = "lint" },
-    { ref = "pre-commit-pyright ${files}" },
-    { ref = "pre-commit-markdown-code-lint ${files}" }
+args = [
+    { name = "mode", default = "both", options = ["-M", "-m", "--mode"] },
+    { name = "project", default = "*", options = ["-P", "--package"] },
+    { name = "dependency", default = "", options = ["-D", "-d", "--dependency"] },
 ]
-args = [{ name = "files", default = ".", positional = true, multiple = true }]
+
+[tool.poe.tasks.add-dependency-and-validate-bounds]
+help = "Add a dependency to a -P/--package workspace package selected by short name such as `core`, then validate its dependency bounds with -D/--dependency."
+sequence = [
+    { ref = "add-dependency-to-project --package ${project} --dependency ${dependency}" },
+    { ref = "validate-dependency-bounds-project --mode both --package ${project} --dependency ${dependency}" },
+]
+args = [
+    { name = "project", options = ["-P", "--package"] },
+    { name = "dependency", options = ["-D", "-d", "--dependency"] },
+]
 
 [tool.setuptools.packages.find]
 where = ["packages"]

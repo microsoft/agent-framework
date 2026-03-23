@@ -8,7 +8,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using Xunit.Abstractions;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Framework;
@@ -95,7 +94,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
         while (current is not null)
         {
-            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+            if (Directory.Exists(Path.Combine(current.FullName, "workflow-samples")))
             {
                 return current.FullName;
             }
@@ -134,7 +133,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
             }
         }
 
-        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, WorkflowAgentProvider agentProvider)
+        public static async ValueTask MessagesAsync(string? conversationId, Testcase testcase, ResponseAgentProvider agentProvider)
         {
             int minExpectedCount = testcase.Validation.MinMessageCount ?? testcase.Validation.MinResponseCount;
             int maxExpectedCount = testcase.Validation.MaxMessageCount ?? testcase.Validation.MaxResponseCount ?? minExpectedCount;

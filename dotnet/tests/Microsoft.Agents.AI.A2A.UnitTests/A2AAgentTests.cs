@@ -126,6 +126,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Single(result.Messages);
         Assert.Equal(ChatRole.Assistant, result.Messages[0].Role);
         Assert.Equal("Hello! How can I help you today?", result.Messages[0].Text);
+        Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
     }
 
     [Fact]
@@ -148,7 +149,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync(inputMessages, session);
@@ -168,7 +169,7 @@ public sealed class A2AAgentTests : IDisposable
             new(ChatRole.User, "Test message")
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -201,7 +202,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "different-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -249,8 +250,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("stream-1", updates[0].MessageId);
         Assert.Equal(this._agent.Id, updates[0].AgentId);
         Assert.Equal("stream-1", updates[0].ResponseId);
-
-        Assert.NotNull(updates[0].RawRepresentation);
+        Assert.Equal(ChatFinishReason.Stop, updates[0].FinishReason);
         Assert.IsType<AgentMessage>(updates[0].RawRepresentation);
         Assert.Equal("stream-1", ((AgentMessage)updates[0].RawRepresentation!).MessageId);
     }
@@ -272,7 +272,7 @@ public sealed class A2AAgentTests : IDisposable
             ContextId = "new-stream-context"
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync(inputMessages, session))
@@ -296,7 +296,7 @@ public sealed class A2AAgentTests : IDisposable
 
         this._handler.StreamingResponseToReturn = new AgentMessage();
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -316,7 +316,7 @@ public sealed class A2AAgentTests : IDisposable
     public async Task RunStreamingAsync_WithSessionHavingDifferentContextId_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
         var a2aSession = (A2AAgentSession)session;
         a2aSession.ContextId = "existing-context-id";
 
@@ -440,7 +440,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         var inputMessage = new ChatMessage(ChatRole.User, "Please make the background transparent");
@@ -466,7 +466,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await this._agent.RunAsync("Start a task", session);
@@ -492,7 +492,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var result = await this._agent.RunAsync("Start a long-running task", session);
@@ -501,8 +501,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(this._agent.Id, result.AgentId);
         Assert.Equal("task-789", result.ResponseId);
-
-        Assert.NotNull(result.RawRepresentation);
+        Assert.Null(result.FinishReason);
         Assert.IsType<AgentTask>(result.RawRepresentation);
         Assert.Equal("task-789", ((AgentTask)result.RawRepresentation).Id);
 
@@ -552,6 +551,15 @@ public sealed class A2AAgentTests : IDisposable
         {
             Assert.Null(result.ContinuationToken);
         }
+
+        if (taskState is TaskState.Completed)
+        {
+            Assert.Equal(ChatFinishReason.Stop, result.FinishReason);
+        }
+        else
+        {
+            Assert.Null(result.FinishReason);
+        }
     }
 
     [Fact]
@@ -586,7 +594,7 @@ public sealed class A2AAgentTests : IDisposable
             Parts = [new TextPart { Text = "Response to task" }]
         };
 
-        var session = (A2AAgentSession)await this._agent.GetNewSessionAsync();
+        var session = (A2AAgentSession)await this._agent.CreateSessionAsync();
         session.TaskId = "task-123";
 
         // Act
@@ -613,7 +621,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Submitted }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync("Start a task", session))
@@ -661,6 +669,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(MessageId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
         Assert.Equal(MessageText, update0.Text);
+        Assert.Equal(ChatFinishReason.Stop, update0.FinishReason);
         Assert.IsType<AgentMessage>(update0.RawRepresentation);
         Assert.Equal(MessageId, ((AgentMessage)update0.RawRepresentation!).MessageId);
     }
@@ -686,7 +695,7 @@ public sealed class A2AAgentTests : IDisposable
             ]
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -702,6 +711,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<AgentTask>(update0.RawRepresentation);
         Assert.Equal(TaskId, ((AgentTask)update0.RawRepresentation!).Id);
 
@@ -725,7 +735,7 @@ public sealed class A2AAgentTests : IDisposable
             Status = new() { State = TaskState.Working }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -741,6 +751,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<TaskStatusUpdateEvent>(update0.RawRepresentation);
 
         // Assert - session should be updated with context and task IDs
@@ -768,7 +779,7 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        var session = await this._agent.GetNewSessionAsync();
+        var session = await this._agent.CreateSessionAsync();
 
         // Act
         var updates = new List<AgentResponseUpdate>();
@@ -784,6 +795,7 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal(ChatRole.Assistant, update0.Role);
         Assert.Equal(TaskId, update0.ResponseId);
         Assert.Equal(this._agent.Id, update0.AgentId);
+        Assert.Null(update0.FinishReason);
         Assert.IsType<TaskArtifactUpdateEvent>(update0.RawRepresentation);
 
         // Assert - artifact content should be in the update
@@ -1146,6 +1158,100 @@ public sealed class A2AAgentTests : IDisposable
         Assert.Equal("a2a", metadata.ProviderName);
     }
 
+    /// <summary>
+    /// Verify that CreateSessionAsync with contextId creates a session with the correct context ID.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_WithContextId_CreatesSessionWithContextIdAsync()
+    {
+        // Arrange
+        const string ContextId = "test-context-123";
+
+        // Act
+        var session = await this._agent.CreateSessionAsync(ContextId);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.IsType<A2AAgentSession>(session);
+        var typedSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, typedSession.ContextId);
+        Assert.Null(typedSession.TaskId);
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with contextId and taskId creates a session with both IDs set correctly.
+    /// </summary>
+    [Fact]
+    public async Task CreateSessionAsync_WithContextIdAndTaskId_CreatesSessionWithBothIdsAsync()
+    {
+        // Arrange
+        const string ContextId = "test-context-456";
+        const string TaskId = "test-task-789";
+
+        // Act
+        var session = await this._agent.CreateSessionAsync(ContextId, TaskId);
+
+        // Assert
+        Assert.NotNull(session);
+        Assert.IsType<A2AAgentSession>(session);
+        var typedSession = (A2AAgentSession)session;
+        Assert.Equal(ContextId, typedSession.ContextId);
+        Assert.Equal(TaskId, typedSession.TaskId);
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync throws when contextId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithInvalidContextId_ThrowsArgumentExceptionAsync(string? contextId)
+    {
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(contextId!));
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with both parameters throws when contextId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithInvalidContextIdAndValidTaskId_ThrowsArgumentExceptionAsync(string? contextId)
+    {
+        // Arrange
+        const string TaskId = "valid-task-id";
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(contextId!, TaskId));
+    }
+
+    /// <summary>
+    /// Verify that CreateSessionAsync with both parameters throws when taskId is null, empty, or whitespace.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    [InlineData("\r\n")]
+    public async Task CreateSessionAsync_WithValidContextIdAndInvalidTaskId_ThrowsArgumentExceptionAsync(string? taskId)
+    {
+        // Arrange
+        const string ContextId = "valid-context-id";
+
+        // Act & Assert
+        await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+            await this._agent.CreateSessionAsync(ContextId, taskId!));
+    }
     #endregion
 
     public void Dispose()

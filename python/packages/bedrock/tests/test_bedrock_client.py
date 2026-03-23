@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
-from agent_framework import ChatMessage, Content, Role
-from agent_framework.exceptions import ServiceInitializationError
+from agent_framework import Content, Message
 
 from agent_framework_bedrock import BedrockChatClient
 
@@ -33,7 +31,16 @@ class _StubBedrockRuntime:
         }
 
 
-def test_get_response_invokes_bedrock_runtime() -> None:
+def _make_client() -> BedrockChatClient:
+    """Create a BedrockChatClient with a stub runtime for unit tests."""
+    return BedrockChatClient(
+        model_id="amazon.titan-text",
+        region="us-west-2",
+        client=_StubBedrockRuntime(),
+    )
+
+
+async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
         model_id="amazon.titan-text",
@@ -42,11 +49,11 @@ def test_get_response_invokes_bedrock_runtime() -> None:
     )
 
     messages = [
-        ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="You are concise.")]),
-        ChatMessage(role=Role.USER, contents=[Content.from_text(text="hello")]),
+        Message(role="system", contents=[Content.from_text(text="You are concise.")]),
+        Message(role="user", contents=[Content.from_text(text="hello")]),
     ]
 
-    response = asyncio.run(client.get_response(messages=messages, options={"max_tokens": 32}))
+    response = await client.get_response(messages=messages, options={"max_tokens": 32})
 
     assert stub.calls, "Expected the runtime client to be called"
     payload = stub.calls[0]
@@ -63,7 +70,70 @@ def test_build_request_requires_non_system_messages() -> None:
         client=_StubBedrockRuntime(),
     )
 
-    messages = [ChatMessage(role=Role.SYSTEM, contents=[Content.from_text(text="Only system text")])]
+    messages = [Message(role="system", contents=[Content.from_text(text="Only system text")])]
 
-    with pytest.raises(ServiceInitializationError):
+    with pytest.raises(ValueError):
         client._prepare_options(messages, {})
+
+
+def test_prepare_options_tool_choice_none_omits_tool_config() -> None:
+    """When tool_choice='none', toolConfig must be omitted entirely.
+
+    Bedrock's Converse API only accepts 'auto', 'any', or 'tool' as valid
+    toolChoice keys. Sending {"none": {}} causes a ParamValidationError.
+    The fix omits toolConfig so the model won't attempt tool calls.
+
+    Fixes #4529.
+    """
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    # Even when tools are provided, tool_choice="none" should strip toolConfig
+    options: dict[str, Any] = {
+        "tool_choice": "none",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" not in request, (
+        f"toolConfig should be omitted when tool_choice='none', got: {request.get('toolConfig')}"
+    )
+
+
+def test_prepare_options_tool_choice_auto_includes_tool_config() -> None:
+    """When tool_choice='auto', toolConfig.toolChoice should be {'auto': {}}."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "auto",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" in request
+    assert request["toolConfig"]["toolChoice"] == {"auto": {}}
+
+
+def test_prepare_options_tool_choice_required_includes_any() -> None:
+    """When tool_choice='required' (no specific function), toolChoice should be {'any': {}}."""
+    client = _make_client()
+    messages = [Message(role="user", contents=[Content.from_text(text="hello")])]
+
+    options: dict[str, Any] = {
+        "tool_choice": "required",
+        "tools": [
+            {"toolSpec": {"name": "get_weather", "description": "Get weather", "inputSchema": {"json": {}}}},
+        ],
+    }
+
+    request = client._prepare_options(messages, options)
+
+    assert "toolConfig" in request
+    assert request["toolConfig"]["toolChoice"] == {"any": {}}

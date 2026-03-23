@@ -1,14 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import inspect
 import json
-from typing import Any, cast
+import logging
+from typing import Any, Literal, TypeVar, overload
 from uuid import uuid4
 
 import httpx
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT
-from agent_framework._logging import get_logger
+from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from agent_framework.observability import get_tracer
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
@@ -29,28 +32,31 @@ from ._models import (
     ProtectionScopesRequest,
     ProtectionScopesResponse,
 )
-from ._settings import PurviewSettings
+from ._settings import PurviewSettings, get_purview_scopes
 
-logger = get_logger("agent_framework.purview")
+logger = logging.getLogger("agent_framework.purview")
+
+ResponseT = TypeVar("ResponseT")
 
 
 class PurviewClient:
     """Async client for calling Graph Purview endpoints.
 
-    Supports both synchronous TokenCredential and asynchronous AsyncTokenCredential implementations.
-    A sync credential will be invoked in a thread to avoid blocking the event loop.
+    Supports synchronous TokenCredential, asynchronous AsyncTokenCredential,
+    or callable token providers. A sync credential will be invoked in a thread
+    to avoid blocking the event loop.
     """
 
     def __init__(
         self,
-        credential: TokenCredential | AsyncTokenCredential,
+        credential: AzureCredentialTypes | AzureTokenProvider,
         settings: PurviewSettings,
         *,
         timeout: float | None = 10.0,
     ):
-        self._credential: TokenCredential | AsyncTokenCredential = credential
+        self._credential: AzureCredentialTypes | AzureTokenProvider = credential
         self._settings = settings
-        self._graph_uri = settings.graph_base_uri.rstrip("/")
+        self._graph_uri = (settings.get("graph_base_uri") or "https://graph.microsoft.com/v1.0/").rstrip("/")
         self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -58,10 +64,14 @@ class PurviewClient:
         await self._client.aclose()
 
     async def _get_token(self, *, tenant_id: str | None = None) -> str:
-        """Acquire an access token using either async or sync credential."""
-        scopes = self._settings.get_scopes()
+        """Acquire an access token using either async or sync credential, or callable token provider."""
         cred = self._credential
-        token = cred.get_token(*scopes, tenant_id=tenant_id)
+        # Callable token provider — returns a token string directly
+        if callable(cred) and not isinstance(cred, (TokenCredential, AsyncTokenCredential)):
+            result = cred()
+            return await result if inspect.isawaitable(result) else result  # type: ignore[return-value]
+        scopes = get_purview_scopes(self._settings)
+        token = cred.get_token(*scopes, tenant_id=tenant_id)  # type: ignore[union-attr]
         token = await token if inspect.isawaitable(token) else token
         return token.token
 
@@ -90,7 +100,7 @@ class PurviewClient:
         with get_tracer().start_as_current_span("purview.process_content"):
             token = await self._get_token(tenant_id=request.tenant_id)
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/processContent"
-            headers = {}
+            headers: dict[str, str] = {}
             # Add If-None-Match header if scope_identifier is present
             if hasattr(request, "scope_identifier") and request.scope_identifier:
                 headers["If-None-Match"] = request.scope_identifier
@@ -98,21 +108,23 @@ class PurviewClient:
             if hasattr(request, "process_inline") and request.process_inline:
                 headers["Prefer"] = "evaluateInline"
 
-            response = await self._post(
+            response: ProcessContentResponse | tuple[ProcessContentResponse, httpx.Headers] = await self._post(
                 url, request, ProcessContentResponse, token, headers=headers, return_response=True
             )
 
             if isinstance(response, tuple) and len(response) == 2:
                 response_obj, _ = response
-                return cast(ProcessContentResponse, response_obj)
+                return response_obj
 
-            return cast(ProcessContentResponse, response)
+            return response
 
     async def get_protection_scopes(self, request: ProtectionScopesRequest) -> ProtectionScopesResponse:
         with get_tracer().start_as_current_span("purview.get_protection_scopes"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/protectionScopes/compute"
-            response = await self._post(url, request, ProtectionScopesResponse, token, return_response=True)
+            response: ProtectionScopesResponse | tuple[ProtectionScopesResponse, httpx.Headers] = await self._post(
+                url, request, ProtectionScopesResponse, token, return_response=True
+            )
 
             # Extract etag from response headers
             if isinstance(response, tuple) and len(response) == 2:
@@ -120,25 +132,47 @@ class PurviewClient:
                 if "etag" in headers:
                     etag_value = headers["etag"].strip('"')
                     response_obj.scope_identifier = etag_value
-                return cast(ProtectionScopesResponse, response_obj)
+                return response_obj
 
-            return cast(ProtectionScopesResponse, response)
+            return response
 
     async def send_content_activities(self, request: ContentActivitiesRequest) -> ContentActivitiesResponse:
         with get_tracer().start_as_current_span("purview.send_content_activities"):
             token = await self._get_token()
             url = f"{self._graph_uri}/users/{request.user_id}/dataSecurityAndGovernance/activities/contentActivities"
-            return cast(ContentActivitiesResponse, await self._post(url, request, ContentActivitiesResponse, token))
+            return await self._post(url, request, ContentActivitiesResponse, token)
+
+    @overload
+    async def _post(
+        self,
+        url: str,
+        model: Any,
+        response_type: type[ResponseT],
+        token: str,
+        headers: dict[str, str] | None = None,
+        return_response: Literal[False] = False,
+    ) -> ResponseT: ...
+
+    @overload
+    async def _post(
+        self,
+        url: str,
+        model: Any,
+        response_type: type[ResponseT],
+        token: str,
+        headers: dict[str, str] | None = None,
+        return_response: Literal[True] = True,
+    ) -> tuple[ResponseT, httpx.Headers]: ...
 
     async def _post(
         self,
         url: str,
         model: Any,
-        response_type: type[Any],
+        response_type: type[ResponseT],
         token: str,
         headers: dict[str, str] | None = None,
         return_response: bool = False,
-    ) -> Any:
+    ) -> ResponseT | tuple[ResponseT, httpx.Headers]:
         if hasattr(model, "correlation_id") and not model.correlation_id:
             model.correlation_id = str(uuid4())
 
@@ -165,8 +199,8 @@ class PurviewClient:
         if resp.status_code in (401, 403):
             raise PurviewAuthenticationError(f"Auth failure {resp.status_code}: {resp.text}")
         if resp.status_code == 402:
-            if self._settings.ignore_payment_required:
-                return response_type()  # type: ignore[call-arg, no-any-return]
+            if self._settings.get("ignore_payment_required", False):
+                return response_type()  # type: ignore[call-arg]
             raise PurviewPaymentRequiredError(f"Payment required {resp.status_code}: {resp.text}")
         if resp.status_code == 429:
             raise PurviewRateLimitError(f"Rate limited {resp.status_code}: {resp.text}")
@@ -179,18 +213,18 @@ class PurviewClient:
 
         try:
             # Prefer pydantic-style model_validate if present, else fall back to constructor.
-            if hasattr(response_type, "model_validate"):
-                response_obj = response_type.model_validate(data)  # type: ignore[no-any-return]
-            else:
-                response_obj = response_type(**data)  # type: ignore[call-arg, no-any-return]
+            model_validate = getattr(response_type, "model_validate", None)
+            response_obj = model_validate(data) if callable(model_validate) else response_type(**data)  # type: ignore[call-arg]
 
             # Extract correlation_id from response headers if response object supports it
             if "client-request-id" in resp.headers and hasattr(response_obj, "correlation_id"):
-                response_obj.correlation_id = resp.headers["client-request-id"]
-                logger.info(f"Purview response from {url} with correlation_id: {response_obj.correlation_id}")
+                response_correlation_id = resp.headers["client-request-id"]
+                response_obj.correlation_id = response_correlation_id  # pyright: ignore[reportAttributeAccessIssue]
+                logger.info(f"Purview response from {url} with correlation_id: {response_correlation_id}")
 
+            typed_response_obj = response_obj if isinstance(response_obj, response_type) else response_type(**data)
             if return_response:
-                return (response_obj, resp.headers)
-            return response_obj
+                return (typed_response_obj, resp.headers)
+            return typed_response_obj
         except Exception as ex:
             raise PurviewServiceError(f"Failed to deserialize Purview response: {ex}") from ex

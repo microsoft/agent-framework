@@ -10,12 +10,102 @@ We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting
 - **Target Python version**: 3.10+
 - **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
 
+### Module Docstrings
+
+Public modules must include a module-level docstring, including `__init__.py` files.
+
+- Namespace-style `__init__.py` modules (for example under `agent_framework/<provider>/`) should use a structured
+  docstring that includes:
+  - A one-line summary of the namespace
+  - A short "This module lazily re-exports objects from:" section that lists only pip install package names
+    (for example `agent-framework-a2a`)
+  - A short "Supported classes:" (or "Supported classes and functions:") section
+- The main `agent_framework/__init__.py` should include a concise background-oriented docstring rather than a long
+  per-symbol list.
+- Core modules with broad surface area, including `agent_framework/exceptions.py` and
+  `agent_framework/observability.py`, should always have explicit module docstrings.
+
+## Type Annotations
+
+We use typing as a helper, it is not a goal in and of itself, so be pragmatic about where and when to strictly type, versus when to use a targetted cast or ignore.
+In general, the public interfaces of our classes, are important to get right, internally it is okay to have loosely typed code, as long as tests cover the code itself.
+This includes making a conscious choice when to program defensively, you can always do `getattr(item, 'attribute')` but that might end up causing you issues down the road
+because the type of `item` in this case, should have that attribute and if it doesn't it points to a larger issue, so if the type is expected to have that attribute, you should
+use `item.attribute` to ensure it fails at that point, rather then somewhere downstream where a value is expected but none was found.
+
+### Future Annotations
+
+> **Note:** This convention is being adopted. See [#3578](https://github.com/microsoft/agent-framework/issues/3578) for progress.
+
+Use `from __future__ import annotations` at the top of files to enable postponed evaluation of annotations. This prevents the need for string-based type hints for forward references:
+
+```python
+# ✅ Preferred - use future annotations
+from __future__ import annotations
+
+class Agent:
+    def create_child(self) -> Agent:  # No quotes needed
+        ...
+
+# ❌ Avoid - string-based type hints
+class Agent:
+    def create_child(self) -> "Agent":  # Requires quotes without future annotations
+        ...
+```
+
+### TypeVar Naming Convention
+
+> **Note:** This convention is being adopted. See [#3594](https://github.com/microsoft/agent-framework/issues/3594) for progress.
+
+Use the suffix `T` for TypeVar names instead of a prefix:
+
+```python
+# ✅ Preferred - suffix T
+ChatResponseT = TypeVar("ChatResponseT", bound=ChatResponse)
+AgentT = TypeVar("AgentT", bound=Agent)
+
+# ❌ Avoid - prefix T
+TChatResponse = TypeVar("TChatResponse", bound=ChatResponse)
+TAgent = TypeVar("TAgent", bound=Agent)
+```
+
+### Mapping Types
+
+> **Note:** This convention is being adopted. See [#3577](https://github.com/microsoft/agent-framework/issues/3577) for progress.
+
+Use `Mapping` instead of `MutableMapping` for input parameters when mutation is not required:
+
+```python
+# ✅ Preferred - Mapping for read-only access
+def process_config(config: Mapping[str, Any]) -> None:
+    ...
+
+# ❌ Avoid - MutableMapping when mutation isn't needed
+def process_config(config: MutableMapping[str, Any]) -> None:
+    ...
+```
+
+### Typing Ignore and Cast Policy
+
+Use typing as a helper first and suppressions as a last resort:
+
+- **Prefer explicit typing before suppression**: Start with clearer type annotations, helper types, overloads,
+  protocols, or refactoring dynamic code into typed helpers. Prioritize performance over completeness of typing, but make a good-faith effort to reduce uncertainty with typing before ignoring. Prefer to use a cast over a typeguard function since that does add overhead.
+- **Avoid redundant casts**: Do not add `cast(...)` if the type already matches; casts should be reserved for
+  unavoidable narrowing where the runtime contract is known, we will use mypy's check on redundant casts to enforce this.
+- **Avoid multiple assignments**: Avoid assigning multiple variables just to get typing to pass, that has performance impact while typing should not have that.
+- **Line-level pyright ignores only**: If suppression is still required, use a line-level rule-specific ignore
+  (`# pyright: ignore[reportGeneralTypeIssues]`), file-level is allowed if there is a compelling reason for it, that should be documented right beneath the ignore.
+  Never change the global suppression flags for mypy and pyright unless the dev team okays it.
+- **Private usage boundary**: Accessing private members across `agent_framework*` packages can be acceptable for this
+  codebase, but private member usage for non-Agent Framework dependencies should remain flagged.
+
 ## Function Parameter Guidelines
 
 To make the code easier to use and maintain:
 
-- **Positional parameters**: Only use for up to 3 fully expected parameters
-- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
+- **Positional parameters**: Only use for up to 3 fully expected parameters (this is not a hard rule, but a guideline there are instances where this does make sense to exceed)
+- **Keyword-only parameters**: Arguments after `*` in function signatures are keyword-only; prefer these for optional parameters
 - **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
 ```python
 def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
@@ -28,8 +118,24 @@ def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | Cha
     if isinstance(tool_mode, str):
         tool_mode = ChatToolMode(tool_mode)
 ```
-- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
-- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Avoid shadowing built-ins**: Do not use parameter names that shadow Python built-ins (e.g., use `next_handler` instead of `next`). See [#3583](https://github.com/microsoft/agent-framework/issues/3583) for progress.
+
+### Using `**kwargs`
+
+> **Note:** This convention is being adopted. See [#3642](https://github.com/microsoft/agent-framework/issues/3642) for progress.
+
+Avoid `**kwargs` unless absolutely necessary. It should only be used as an escape route, not for well-known flows of data:
+
+- **Prefer named parameters**: If there are known extra arguments being passed, use explicit named parameters instead of kwargs
+- **Prefer purpose-specific buckets over generic kwargs**: If a flexible payload is still needed, use an explicit named parameter such as `additional_properties`, `function_invocation_kwargs`, or `client_kwargs` rather than a blanket `**kwargs`
+- **Subclassing support**: kwargs is acceptable in methods that are part of classes designed for subclassing, allowing subclass-defined kwargs to pass through without issues. In this case, clearly document that kwargs exists for subclass extensibility and not for passing arbitrary data
+- **Make known flows explicit first**: For abstract hooks, move known data flows into explicit parameters before leaving `**kwargs` behind for subclass extensibility (for example, prefer `state=` explicitly instead of passing it through kwargs)
+- **Prefer explicit metadata containers**: For constructors that expose metadata, prefer an explicit `additional_properties` parameter.
+- **Keep SDK passthroughs narrow and documented**: A kwargs escape hatch may be acceptable for provider helper APIs that pass through to a large or unstable external SDK surface, but it should be documented as SDK passthrough and revisited regularly
+- **Do not keep passthrough kwargs on wrappers that do not use them**: Convenience wrappers and session helpers should not accept generic kwargs merely to forward or ignore them
+- **Remove when possible**: In other cases, removing kwargs is likely better than keeping it
+- **Separate kwargs by purpose**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
+- **Always document**: If kwargs must be used, always document how it's used, either by referencing external documentation or explaining its purpose
 
 ## Method Naming Inside Connectors
 
@@ -53,37 +159,20 @@ Prefer attributes over inheritance when parameters are mostly the same:
 
 ```python
 # ✅ Preferred - using attributes
-from agent_framework import ChatMessage
+from agent_framework import Message
 
-user_msg = ChatMessage(role="user", content="Hello, world!")
-asst_msg = ChatMessage(role="assistant", content="Hello, world!")
+user_msg = Message("user", ["Hello, world!"])
+asst_msg = Message("assistant", ["Hello, world!"])
 
 # ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
+class UserMessage(Message):
+    pass
 
-user_msg = UserMessage(content="Hello, world!")
-asst_msg = AssistantMessage(content="Hello, world!")
-```
+class AssistantMessage(Message):
+    pass
 
-### Logging
-
-Use the centralized logging system:
-
-```python
-from agent_framework import get_logger
-
-# For main package
-logger = get_logger()
-
-# For subpackages
-logger = get_logger('agent_framework.azure')
-```
-
-**Do not use** direct logging module imports:
-```python
-# ❌ Avoid this
-import logging
-logger = logging.getLogger(__name__)
+user_msg = UserMessage("user", ["Hello, world!"])
+asst_msg = AssistantMessage("assistant", ["Hello, world!"])
 ```
 
 ### Import Structure
@@ -92,7 +181,7 @@ The package follows a flat import structure:
 
 - **Core**: Import directly from `agent_framework`
   ```python
-  from agent_framework import ChatAgent, tool
+  from agent_framework import Agent, tool
   ```
 
 - **Components**: Import from `agent_framework.<component>`
@@ -105,6 +194,105 @@ The package follows a flat import structure:
   from agent_framework.openai import OpenAIChatClient
   from agent_framework.azure import AzureOpenAIChatClient
   ```
+
+## Exception Hierarchy
+
+The Agent Framework defines a structured exception hierarchy rooted at `AgentFrameworkException`. Every AF-specific
+exception inherits from this base, so callers can catch `AgentFrameworkException` as a broad fallback. The hierarchy
+is organized into domain-specific L1 branches, each with a consistent set of leaf exceptions where applicable.
+
+### Design Principles
+
+- **Domain-scoped branches**: Exceptions are grouped by the subsystem that raises them (agent, chat client,
+  integration, workflow, content, tool, middleware), not by HTTP status code or generic error category.
+- **Consistent suberror pattern**: The `AgentException`, `ChatClientException`, and `IntegrationException` branches
+  share a parallel set of leaf exceptions (`InvalidAuth`, `InvalidRequest`, `InvalidResponse`, `ContentFilter`) so
+  that callers can handle the same failure mode uniformly across domains.
+- **Built-ins for validation**: Configuration/parameter validation errors use Python built-in exceptions
+  (`ValueError`, `TypeError`, `RuntimeError`) rather than AF-specific classes. AF exceptions are reserved for
+  domain-level failures that callers may want to catch and handle distinctly from programming errors.
+- **No compatibility aliases**: When exceptions are renamed or removed, the old names are not kept as aliases.
+  This is a deliberate trade-off for hierarchy clarity over backward compatibility.
+- **Suffix convention**: L1 branch classes use `...Exception` (e.g., `AgentException`). Leaf classes may use
+  either `...Exception` or `...Error` depending on the domain convention (e.g., `ContentError`,
+  `WorkflowValidationError`). Within a branch, the suffix is consistent.
+
+### Full Hierarchy
+
+```
+AgentFrameworkException                          # Base for all AF exceptions
+├── AgentException                               # Agent-scoped failures
+│   ├── AgentInvalidAuthException                # Agent auth failures
+│   ├── AgentInvalidRequestException             # Invalid request to agent (e.g., agent not found, bad input)
+│   ├── AgentInvalidResponseException            # Invalid/unexpected response from agent
+│   └── AgentContentFilterException              # Agent content filter triggered
+│
+├── ChatClientException                          # Chat client lifecycle and communication failures
+│   ├── ChatClientInvalidAuthException           # Chat client auth failures
+│   ├── ChatClientInvalidRequestException        # Invalid request to chat client
+│   ├── ChatClientInvalidResponseException       # Invalid/unexpected response from chat client
+│   └── ChatClientContentFilterException         # Chat client content filter triggered
+│
+├── IntegrationException                         # External service/dependency integration failures
+│   ├── IntegrationInitializationError           # Wrapped dependency lifecycle failure during setup
+│   ├── IntegrationInvalidAuthException          # Integration auth failures (e.g., 401/403)
+│   ├── IntegrationInvalidRequestException       # Invalid request to integration
+│   ├── IntegrationInvalidResponseException      # Invalid/unexpected response from integration
+│   └── IntegrationContentFilterException        # Integration content filter triggered
+│
+├── ContentError                                 # Content processing/validation failures
+│   └── AdditionItemMismatch                     # Type mismatch when merging content items
+│
+├── WorkflowException                            # Workflow engine failures
+│   ├── WorkflowRunnerException                  # Runtime execution failures
+│   │   ├── WorkflowConvergenceException         # Runner exceeded max iterations
+│   │   └── WorkflowCheckpointException          # Checkpoint save/restore/decode failures
+│   ├── WorkflowValidationError                  # Graph validation errors
+│   │   ├── EdgeDuplicationError                 # Duplicate edge in workflow graph
+│   │   ├── TypeCompatibilityError               # Type mismatch between connected executors
+│   │   └── GraphConnectivityError               # Graph connectivity issues
+│   ├── WorkflowActionError                      # User-level error from declarative ThrowException action
+│   └── DeclarativeWorkflowError                 # Declarative workflow definition/YAML errors
+│
+├── ToolException                                # Tool-related failures
+│   └── ToolExecutionException                   # Failure during tool execution
+│
+├── MiddlewareException                          # Middleware failures
+│   └── MiddlewareTermination                    # Control-flow: early middleware termination
+│
+└── SettingNotFoundError                         # Required setting not resolved from any source
+```
+
+### When to Use AF Exceptions vs Built-ins
+
+| Scenario | Exception to use |
+|---|---|
+| Missing or invalid constructor argument (e.g., `api_key` is `None`) | `ValueError` or `TypeError` |
+| Object in wrong state (e.g., client not initialized) | `RuntimeError` |
+| External service returns 401/403 | `IntegrationInvalidAuthException` (or `ChatClient`/`Agent` variant) |
+| External service returns unexpected response | `IntegrationInvalidResponseException` (or variant) |
+| Content filter blocks a request | `IntegrationContentFilterException` (or variant) |
+| Request validation fails before sending to service | `IntegrationInvalidRequestException` (or variant) |
+| Agent not found in registry | `AgentInvalidRequestException` |
+| Agent returned no/bad response | `AgentInvalidResponseException` |
+| Workflow runner exceeds max iterations | `WorkflowConvergenceException` |
+| Checkpoint serialization/deserialization failure | `WorkflowCheckpointException` |
+| Workflow graph has invalid structure | `WorkflowValidationError` (or specific subclass) |
+| Declarative YAML definition error | `DeclarativeWorkflowError` |
+| Tool execution failure | `ToolExecutionException` |
+| Content merge type mismatch | `AdditionItemMismatch` |
+
+### Choosing Between Agent, ChatClient, and Integration Branches
+
+- **`AgentException`**: The failure is scoped to agent-level logic — agent lookup, agent response handling,
+  agent content filtering. Use when the agent itself is the source of the problem.
+- **`ChatClientException`**: The failure is scoped to the chat client (the LLM provider connection) — auth with
+  the LLM provider, request/response format issues specific to the chat protocol, chat-level content filtering.
+- **`IntegrationException`**: The failure is in a non-chat external dependency — search services, vector stores,
+  Purview, custom APIs, or any service that is not the primary LLM chat provider.
+
+When in doubt: if the code is in a chat client constructor or method, use `ChatClient*`. If it's in an agent
+method, use `Agent*`. If it's talking to an external service that isn't the chat LLM, use `Integration*`.
 
 ## Package Structure
 
@@ -124,8 +312,6 @@ python/
 │   │       ├── _clients.py     # Chat client protocols and base classes
 │   │       ├── _tools.py       # Tool definitions
 │   │       ├── _types.py       # Type definitions
-│   │       ├── _logging.py     # Logging utilities
-│   │       │
 │   │       │   # Provider folders - lazy load from connector packages
 │   │       ├── openai/         # OpenAI clients (built into core)
 │   │       ├── azure/          # Lazy loads from azure-ai, azure-ai-search, azurefunctions
@@ -199,6 +385,26 @@ After the package has been released and gained a measure of confidence:
 2. Add the package to the `[all]` extra in `packages/core/pyproject.toml`
 3. Create a provider folder in `agent_framework/` with lazy loading `__init__.py`
 
+### Versioning and Core Dependency
+
+All non-core packages declare a lower bound on `agent-framework-core` (e.g., `"agent-framework-core>=1.0.0b260130"`). Follow these rules when bumping versions:
+
+- **Core version changes**: When `agent-framework-core` is updated with breaking or significant changes and its version is bumped, update the `agent-framework-core>=...` lower bound in every other package's `pyproject.toml` to match the new core version.
+- **Non-core version changes**: Non-core packages (connectors, extensions) can have their own versions incremented independently while keeping the existing core lower bound pinned. Only raise the core lower bound if the non-core package actually depends on new core APIs.
+
+### External Dependency Version Bounds
+
+The guiding principle for external dependencies is to make the range of allowed versions as broad as possible, even if that means we have to do some conditional imports, and other tricks to allow small changes in versions.
+So we use bounded ranges for external package dependencies in `pyproject.toml`:
+
+
+- For stable dependencies (`>=1.0.0`), use a lower bound at a known-good version and an explicit upper bound that reflects the maximum major version we currently support (for example: `openai>=1.99.0,<3`).
+- For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good lower bound with a hard upper boundary in the same prerelease line (for example: `azure-ai-projects>=2.0.0b3,<2.0.0b4`).
+- For `<1.0.0` dependencies, use a known-good bounded range with an explicit upper cap. Prefer the broadest validated range the package can actually support: that may be a patch line, a minor line, or multiple minor lines (for example: `a2a-sdk>=0.3.5,<0.4.0`, `fastapi>=0.115.0,<0.136.0`, `uvicorn>=0.30.0,<0.39.0`).
+- For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good bounded range with a hard upper cap and keep the range only as broad as the package's validation coverage justifies.
+- Prefer keeping support for multiple major versions when practical. This may mean that the upper bound spans multiple major versions when the dependency maintains backward compatibility; if APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility.
+- When adding or changing an external dependency, first run `uv run poe validate-dependency-bounds-test` to validate workspace-wide lower/upper compatibility, then run `uv run poe validate-dependency-bounds-project --mode both --package <workspace-package-name> --dependency "<dependency-name>"` to expand package-scoped bounds.
+
 ### Installation Options
 
 Connectors are distributed as separate packages and are not imported by default in the core package. Users install the specific connectors they need:
@@ -212,7 +418,7 @@ pip install agent-framework-core[all]
 # or (equivalently):
 pip install agent-framework
 
-# Install specific connector
+# Install specific connector (pulls in core as dependency)
 pip install agent-framework-azure-ai
 ```
 
@@ -234,10 +440,9 @@ They should contain:
     - Type and default values do not have to be specified, they will be pulled from the definition.
 - Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
 - Keyword arguments are specified after a header called `Keyword Args:`, with each argument being specified in the same format as `Args:`.
-- A header for exceptions can be added, called `Raises:`, but should only be used for:
-  - Agent Framework specific exceptions (e.g., `ServiceInitializationError`)
-  - Base exceptions that might be unexpected in the context
-  - Obvious exceptions like `ValueError` or `TypeError` do not need to be documented
+- A header for exceptions can be added, called `Raises:`, following these guidelines:
+  - **Always document** Agent Framework specific exceptions (e.g., `AgentInvalidRequestException`, `IntegrationInvalidAuthException`)
+  - **Only document** standard Python exceptions (TypeError, ValueError, KeyError, etc.) when the condition is non-obvious or provides value to API users
   - Format: `ExceptionType`: Explanation of the exception.
   - If a longer explanation is needed, it should be placed on the next line, indented by 4 spaces.
 - Code examples can be added using the `Examples:` header followed by `.. code-block:: python` directive.
@@ -310,12 +515,12 @@ def create_client(
 Use Google-style docstrings for all public APIs:
 
 ```python
-def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
+def create_agent(name: str, client: SupportsChatGetResponse) -> Agent:
     """Create a new agent with the specified configuration.
 
     Args:
         name: The name of the agent.
-        chat_client: The chat client to use for communication.
+        client: The chat client to use for communication.
 
     Returns:
         True if the strings are the same, False otherwise.
@@ -327,6 +532,55 @@ def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
 ```
 
 If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
+
+## Public API and Exports
+
+### Explicit Exports
+
+**All wildcard imports (`from ... import *`) are prohibited** in production code, including both `.py` and `.pyi` files. Always use explicit import lists to maintain clarity and avoid namespace pollution.
+
+Do not use ``__all__`` in internal modules. Define it in the ``__init__`` file of the level you want to expose.
+If a non-``__init__`` module is intentionally part of the public API surface (for example, ``observability.py``),
+it should define ``__all__`` as well.
+
+Also avoid identity alias imports in ``__init__`` files. Use ``from ._module import Symbol`` instead of
+``from ._module import Symbol as Symbol``.
+
+```python
+# ✅ Preferred - explicit __all__ and named imports
+from ._agents import Agent
+from ._types import Message, ChatResponse
+
+# ✅ For many exports, use parenthesized multi-line imports
+from ._types import (
+    AgentResponse,
+    ChatResponse,
+    Message,
+    ResponseStream,
+)
+
+__all__ = [
+    "Agent",
+    "AgentResponse",
+    "ChatResponse",
+    "Message",
+    "ResponseStream",
+]
+
+# ❌ Prohibited pattern: wildcard/star imports (do not use)
+# from ._agents import *
+# from ._types import *
+
+# ❌ Prohibited pattern: identity alias imports (do not use)
+# from ._agents import Agent as Agent
+```
+
+**Rationale:**
+- **Clarity**: Explicit imports make it clear exactly what is being exported and used
+- **IDE Support**: Enables better autocomplete, go-to-definition, and refactoring
+- **Type Checking**: Improves static analysis and type checker accuracy
+- **Maintenance**: Makes it easier to track symbol usage and detect breaking changes
+- **Performance**: Avoids unnecessary symbol resolution during module import
 
 ## Performance considerations
 
@@ -400,3 +654,84 @@ otel_messages.append(_to_otel_message(message)) # this already serializes
 message_data = message.to_dict(exclude_none=True)  # and this does so again!
 logger.info(message_data, extra={...})
 ```
+
+## Test Organization
+
+### Test Directory Structure
+
+Test folders require specific organization to avoid pytest conflicts when running tests across packages:
+
+1. **No `__init__.py` in test folders**: Test directories should NOT contain `__init__.py` files. This can cause import conflicts when pytest collects tests across multiple packages.
+
+2. **File naming**: Files starting with `test_` are treated as test files by pytest. Do not use this prefix for helper modules or utilities. If you need shared test utilities, put them in `conftest.py` or a file with a different name pattern (e.g., `helpers.py`, `fixtures.py`).
+
+3. **Package-specific conftest location**: The `tests/conftest.py` path is reserved for the core package (`packages/core/tests/conftest.py`). Other packages must place their tests in a uniquely-named subdirectory:
+
+```plaintext
+# ✅ Correct structure for non-core packages
+packages/devui/
+├── tests/
+│   └── devui/           # Unique subdirectory matching package name
+│       ├── conftest.py  # Package-specific fixtures
+│       ├── test_server.py
+│       └── test_mapper.py
+
+packages/anthropic/
+├── tests/
+│   └── anthropic/       # Unique subdirectory
+│       ├── conftest.py
+│       └── test_client.py
+
+# ❌ Incorrect - will conflict with core package
+packages/devui/
+├── tests/
+│   ├── conftest.py      # Conflicts when running all tests
+│   ├── test_server.py
+│   └── test_helpers.py  # Bad name - looks like a test file
+
+# ✅ Core package can use tests/ directly
+packages/core/
+├── tests/
+│   ├── conftest.py      # Core's conftest.py
+│   ├── core/
+│   │   └── test_agents.py
+│   └── openai/
+│       └── test_client.py
+```
+
+4. **Keep the `tests/` folder**: Even when using a subdirectory, keep the `tests/` folder at the package root. Some test discovery commands and tooling rely on this convention.
+
+### Fixture Guidelines
+
+- Use `conftest.py` for shared fixtures within a test directory
+- Factory functions with parameters should be regular functions, not fixtures (fixtures can't accept arguments)
+- Import factory functions explicitly: `from conftest import create_test_request`
+- Fixtures should use simple names that describe what they provide: `mapper`, `test_request`, `mock_client`
+
+### Integration Test Markers
+
+New integration tests that call external services must have all three markers:
+
+```python
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_openai_integration_tests_disabled
+async def test_chat_completion() -> None:
+    ...
+```
+
+- `@pytest.mark.flaky` — marks the test as potentially flaky since it depends on external services
+- `@pytest.mark.integration` — enables selecting/excluding integration tests with `-m integration` / `-m "not integration"`
+- `@skip_if_..._integration_tests_disabled` — skips the test when required API keys or service endpoints are missing
+
+For test modules where all tests are integration tests, use `pytestmark`:
+
+```python
+pytestmark = [
+    pytest.mark.flaky,
+    pytest.mark.integration,
+    pytest.mark.sample("01_single_agent"),
+]
+```
+
+When adding integration tests for a new provider, update the path filters and job assignments in **both** `python-merge-tests.yml` and `python-integration-tests.yml` — these workflows must be kept in sync. See the `python-testing` skill for details.

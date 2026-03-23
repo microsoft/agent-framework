@@ -10,23 +10,33 @@ public class CopilotStudioRunTests() : RunTests<CopilotStudioFixture>(() => new(
     // Set to null to run the tests.
     private const string ManualVerification = "For manual verification";
 
-    [Fact(Skip = "Copilot Studio does not support session history retrieval, so this test is not applicable.")]
-    public override Task SessionMaintainsHistoryAsync() =>
-        Task.CompletedTask;
+    public override Task SessionMaintainsHistoryAsync()
+    {
+        Assert.Skip("Copilot Studio does not support session history retrieval, so this test is not applicable.");
+        return base.SessionMaintainsHistoryAsync();
+    }
 
-    [Fact(Skip = ManualVerification)]
-    public override Task RunWithChatMessageReturnsExpectedResultAsync() => base.RunWithChatMessageReturnsExpectedResultAsync();
+    public override Task RunWithChatMessageReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(ManualVerification is not null, ManualVerification ?? string.Empty);
+        return base.RunWithChatMessageReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = ManualVerification)]
-    public override Task RunWithChatMessagesReturnsExpectedResultAsync() =>
+    public override Task RunWithChatMessagesReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(ManualVerification is not null, ManualVerification ?? string.Empty);
+        return base.RunWithChatMessagesReturnsExpectedResultAsync();
+    }
 
-        base.RunWithChatMessagesReturnsExpectedResultAsync();
+    public override Task RunWithNoMessageDoesNotFailAsync()
+    {
+        Assert.SkipWhen(ManualVerification is not null, ManualVerification ?? string.Empty);
+        return base.RunWithNoMessageDoesNotFailAsync();
+    }
 
-    [Fact(Skip = ManualVerification)]
-    public override Task RunWithNoMessageDoesNotFailAsync() =>
-        base.RunWithNoMessageDoesNotFailAsync();
-
-    [Fact(Skip = ManualVerification)]
-    public override Task RunWithStringReturnsExpectedResultAsync() =>
-        base.RunWithStringReturnsExpectedResultAsync();
+    public override Task RunWithStringReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(ManualVerification is not null, ManualVerification ?? string.Empty);
+        return base.RunWithStringReturnsExpectedResultAsync();
+    }
 }

@@ -16,25 +16,27 @@ namespace Microsoft.Agents.AI.Workflows;
 public record ExternalRequest(RequestPortInfo PortInfo, string RequestId, PortableValue Data)
 {
     /// <summary>
-    /// Attempts to retrieve the underlying data as the specified type.
-    /// </summary>
-    /// <typeparam name="TValue">The type to which the data should be cast or converted.</typeparam>
-    /// <returns>The data cast to the specified type, or null if the data cannot be cast to the specified type.</returns>
-    public TValue? DataAs<TValue>() => this.Data.As<TValue>();
-
-    /// <summary>
     /// Determines whether the underlying data is of the specified type.
     /// </summary>
     /// <typeparam name="TValue">The type to compare with the underlying data.</typeparam>
     /// <returns>true if the underlying data is of type TValue; otherwise, false.</returns>
-    public bool DataIs<TValue>() => this.Data.Is<TValue>();
+    public bool IsDataOfType<TValue>() => this.Data.Is<TValue>();
 
     /// <summary>
     /// Determines whether the underlying data is of the specified type and outputs the value if it is.
     /// </summary>
     /// <typeparam name="TValue">The type to compare with the underlying data.</typeparam>
     /// <returns>true if the underlying data is of type TValue; otherwise, false.</returns>
-    public bool DataIs<TValue>([NotNullWhen(true)] out TValue? value) => this.Data.Is(out value);
+    public bool TryGetDataAs<TValue>([NotNullWhen(true)] out TValue? value) => this.Data.Is(out value);
+
+    /// <summary>
+    /// Attempts to retrieve the underlying data as the specified type.
+    /// </summary>
+    /// <param name="targetType">The type to which the data should be cast or converted.</param>
+    /// <param name="value">When this method returns <see langword="true"/>, contains the value of type
+    /// <paramref name="targetType"/> if the data is available and compatible.</param>
+    /// <returns>true if the data is present and can be cast to <paramref name="targetType"/>; otherwise, false.</returns>
+    public bool TryGetDataAs(Type targetType, [NotNullWhen(true)] out object? value) => this.Data.IsType(targetType, out value);
 
     /// <summary>
     /// Creates a new <see cref="ExternalRequest"/> for the specified input port and data payload.

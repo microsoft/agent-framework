@@ -5,23 +5,18 @@ from unittest.mock import Mock
 import pytest
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from agent_framework import (
     Content,
     FunctionTool,
-    HostedCodeInterpreterTool,
-    HostedImageGenerationTool,
-    HostedMCPTool,
-    ToolProtocol,
     tool,
 )
+from agent_framework._middleware import FunctionInvocationContext
 from agent_framework._tools import (
-    _build_pydantic_model_from_json_schema,
     _parse_annotation,
     _parse_inputs,
 )
-from agent_framework.exceptions import ToolException
 from agent_framework.observability import OtelAttr
 
 # region FunctionTool and tool decorator tests
@@ -35,7 +30,6 @@ def test_tool_decorator():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -56,7 +50,6 @@ def test_tool_decorator_without_args():
         """A simple function that adds two numbers."""
         return x + y
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -70,6 +63,188 @@ def test_tool_decorator_without_args():
     assert test_tool.approval_mode == "never_require"
 
 
+def test_tool_decorator_with_pydantic_schema():
+    """Test that the tool decorator accepts an explicit Pydantic model schema."""
+    from pydantic import Field
+
+    class MyInput(BaseModel):
+        location: Annotated[str, Field(description="City name")]
+        unit: str = "celsius"
+
+    @tool(name="weather", description="Get weather", schema=MyInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        return f"{location}: {unit}"
+
+    assert isinstance(get_weather, FunctionTool)
+    assert get_weather.name == "weather"
+    params = get_weather.parameters()
+    assert "location" in params["properties"]
+    assert params["properties"]["location"].get("description") == "City name"
+    assert get_weather("Seattle") == "Seattle: celsius"
+    assert get_weather("Seattle", "fahrenheit") == "Seattle: fahrenheit"
+
+
+def test_tool_decorator_with_json_schema_dict():
+    """Test that the tool decorator accepts an explicit JSON schema dict."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Search query"},
+            "max_results": {"type": "integer", "default": 10},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"Searching for: {query} (max {max_results})"
+
+    assert isinstance(search, FunctionTool)
+    params = search.parameters()
+    assert params["properties"]["query"]["type"] == "string"
+    assert params["properties"]["query"]["description"] == "Search query"
+    assert "max_results" in params["properties"]
+    assert search("hello") == "Searching for: hello (max 10)"
+
+
+async def test_tool_decorator_with_json_schema_invoke_uses_mapping():
+    """Test that schema-based tools can be invoked directly with mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    result = await search.invoke(arguments={"query": "hello", "max_results": 3})
+    assert isinstance(result, list)
+    assert result[0].text == "hello:3"
+
+
+async def test_tool_decorator_with_json_schema_invoke_missing_required():
+    """Test schema-required fields are checked for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str) -> str:
+        return query
+
+    with pytest.raises(TypeError, match="Missing required argument"):
+        await search.invoke(arguments={})
+
+
+async def test_tool_decorator_with_json_schema_invoke_invalid_type():
+    """Test schema type checks run for mapping arguments."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "max_results": {"type": "integer"},
+        },
+        "required": ["query"],
+    }
+
+    @tool(name="search", description="Search tool", schema=json_schema)
+    def search(query: str, max_results: int = 10) -> str:
+        return f"{query}:{max_results}"
+
+    with pytest.raises(TypeError, match="Invalid type for 'max_results'"):
+        await search.invoke(arguments={"query": "hello", "max_results": "three"})
+
+
+def test_tool_decorator_with_json_schema_preserves_custom_properties():
+    """Test schema passthrough keeps custom JSON schema properties."""
+
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "x-custom-field": "custom-value",
+            },
+        },
+        "required": ["priority"],
+        "additionalProperties": False,
+    }
+
+    @tool(name="process", description="Process tool", schema=json_schema)
+    def process(priority: str) -> str:
+        return priority
+
+    params = process.parameters()
+    assert not params.get("additionalProperties")
+    assert params["properties"]["priority"]["x-custom-field"] == "custom-value"
+
+
+def test_tool_decorator_schema_none_default():
+    """Test that schema=None (default) still infers from function signature."""
+
+    @tool(name="adder", schema=None)
+    def add(x: int, y: int) -> int:
+        return x + y
+
+    assert isinstance(add, FunctionTool)
+    params = add.parameters()
+    assert params == {
+        "properties": {"x": {"title": "X", "type": "integer"}, "y": {"title": "Y", "type": "integer"}},
+        "required": ["x", "y"],
+        "title": "adder_input",
+        "type": "object",
+    }
+    assert add(1, 2) == 3
+
+
+async def test_tool_decorator_with_schema_invoke():
+    """Test that invoke works correctly with explicit schema."""
+
+    class CalcInput(BaseModel):
+        a: int
+        b: int
+
+    @tool(name="calc", description="Calculator", schema=CalcInput)
+    def calculate(a: int, b: int) -> int:
+        return a + b
+
+    result = await calculate.invoke(arguments=CalcInput(a=3, b=7))
+    assert isinstance(result, list)
+    assert result[0].text == "10"
+
+
+def test_tool_decorator_with_schema_overrides_annotations():
+    """Test that explicit schema completely overrides function signature inference."""
+    from pydantic import Field
+
+    class DetailedInput(BaseModel):
+        location: Annotated[str, Field(description="The city and state")]
+        unit: Annotated[str, Field(description="Temperature unit")] = "celsius"
+
+    @tool(schema=DetailedInput)
+    def get_weather(location: str, unit: str = "celsius") -> str:
+        """Get weather for a location."""
+        return f"{location}: {unit}"
+
+    params = get_weather.parameters()
+    assert params["properties"]["location"].get("description") == "The city and state"
+    assert params["properties"]["unit"].get("description") == "Temperature unit"
+
+
 def test_tool_without_args():
     """Test the tool decorator."""
 
@@ -78,7 +253,7 @@ def test_tool_without_args():
         """A simple function that adds two numbers."""
         return 1 + 2
 
-    assert isinstance(test_tool, ToolProtocol)
+    assert isinstance(test_tool, FunctionTool)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A simple function that adds two numbers."
@@ -98,7 +273,6 @@ async def test_tool_decorator_with_async():
         """An async function that adds two numbers."""
         return x + y
 
-    assert isinstance(async_test_tool, ToolProtocol)
     assert isinstance(async_test_tool, FunctionTool)
     assert async_test_tool.name == "async_test_tool"
     assert async_test_tool.description == "An async test tool"
@@ -122,7 +296,6 @@ def test_tool_decorator_in_class():
 
     test_tool = my_tools().test_tool
 
-    assert isinstance(test_tool, ToolProtocol)
     assert isinstance(test_tool, FunctionTool)
     assert test_tool.name == "test_tool"
     assert test_tool.description == "A test tool"
@@ -322,11 +495,13 @@ async def test_tool_decorator_shared_state():
 
     # Test with invoke method as well (simulating agent execution)
     result6 = await increment_tool.invoke(amount=5)
-    assert result6 == "Counter incremented by 5. New value: 60"
+    assert isinstance(result6, list)
+    assert result6[0].text == "Counter incremented by 5. New value: 60"
     assert counter_instance.counter == 60
 
     result7 = await get_value_tool.invoke()
-    assert result7 == "Current counter value: 60"
+    assert isinstance(result7, list)
+    assert result7[0].text == "Current counter value: 60"
     assert counter_instance.counter == 60
 
 
@@ -349,7 +524,8 @@ async def test_tool_invoke_telemetry_enabled(span_exporter: InMemorySpanExporter
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -393,7 +569,8 @@ async def test_tool_invoke_telemetry_sensitive_disabled(span_exporter: InMemoryS
     result = await telemetry_test_tool.invoke(x=1, y=2, tool_call_id="test_call_id")
 
     # Verify result
-    assert result == 3
+    assert isinstance(result, list)
+    assert result[0].text == "3"
 
     # Verify telemetry calls
     spans = span_exporter.get_finished_spans()
@@ -434,7 +611,8 @@ async def test_tool_invoke_ignores_additional_kwargs() -> None:
         options={"model_id": "dummy"},
     )
 
-    assert result == "HELLO WORLD"
+    assert isinstance(result, list)
+    assert result[0].text == "HELLO WORLD"
 
 
 async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemorySpanExporter):
@@ -458,7 +636,8 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     result = await pydantic_test_tool.invoke(arguments=args_model, tool_call_id="pydantic_call")
 
     # Verify result
-    assert result == 15
+    assert isinstance(result, list)
+    assert result[0].text == "15"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -468,7 +647,7 @@ async def test_tool_invoke_telemetry_with_pydantic_args(span_exporter: InMemoryS
     assert span.attributes[OtelAttr.TOOL_CALL_ID] == "pydantic_call"
     assert span.attributes[OtelAttr.TOOL_TYPE] == "function"
     assert span.attributes[OtelAttr.TOOL_DESCRIPTION] == "A test tool with Pydantic args"
-    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x":5,"y":10}'
+    assert span.attributes[OtelAttr.TOOL_ARGUMENTS] == '{"x": 5, "y": 10}'
 
 
 async def test_tool_invoke_telemetry_with_exception(span_exporter: InMemorySpanExporter):
@@ -526,7 +705,8 @@ async def test_tool_invoke_telemetry_async_function(span_exporter: InMemorySpanE
     result = await async_telemetry_test.invoke(x=3, y=4, tool_call_id="async_call")
 
     # Verify result
-    assert result == 12
+    assert isinstance(result, list)
+    assert result[0].text == "12"
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
     span = spans[0]
@@ -605,30 +785,7 @@ def test_tool_serialization():
     assert restored_tool_2(10, 4) == 6
 
 
-# region HostedCodeInterpreterTool and _parse_inputs
-
-
-def test_hosted_code_interpreter_tool_default():
-    """Test HostedCodeInterpreterTool with default parameters."""
-    tool = HostedCodeInterpreterTool()
-
-    assert tool.name == "code_interpreter"
-    assert tool.inputs == []
-    assert tool.description == ""
-    assert tool.additional_properties is None
-    assert str(tool) == "HostedCodeInterpreterTool(name=code_interpreter)"
-
-
-def test_hosted_code_interpreter_tool_with_description():
-    """Test HostedCodeInterpreterTool with description and additional properties."""
-    tool = HostedCodeInterpreterTool(
-        description="A test code interpreter",
-        additional_properties={"version": "1.0", "language": "python"},
-    )
-
-    assert tool.name == "code_interpreter"
-    assert tool.description == "A test code interpreter"
-    assert tool.additional_properties == {"version": "1.0", "language": "python"}
+# region _parse_inputs tests
 
 
 def test_parse_inputs_none():
@@ -757,705 +914,11 @@ def test_parse_inputs_unsupported_type():
         _parse_inputs(123)
 
 
-def test_hosted_code_interpreter_tool_with_string_input():
-    """Test HostedCodeInterpreterTool with string input."""
+# endregion
 
-    tool = HostedCodeInterpreterTool(inputs="http://example.com")
 
-    assert len(tool.inputs) == 1
-    assert tool.inputs[0].type == "uri"
-    assert tool.inputs[0].uri == "http://example.com"
-
-
-def test_hosted_code_interpreter_tool_with_dict_inputs():
-    """Test HostedCodeInterpreterTool with dictionary inputs."""
-
-    inputs = [{"uri": "http://example.com", "media_type": "text/html"}, {"file_id": "file-123"}]
-
-    tool = HostedCodeInterpreterTool(inputs=inputs)
-
-    assert len(tool.inputs) == 2
-    assert tool.inputs[0].type == "uri"
-    assert tool.inputs[0].uri == "http://example.com"
-    assert tool.inputs[0].media_type == "text/html"
-    assert tool.inputs[1].type == "hosted_file"
-    assert tool.inputs[1].file_id == "file-123"
-
-
-def test_hosted_code_interpreter_tool_with_ai_contents():
-    """Test HostedCodeInterpreterTool with Content instances."""
-
-    inputs = [Content.from_text(text="Hello, world!"), Content.from_data(data=b"test", media_type="text/plain")]
-
-    tool = HostedCodeInterpreterTool(inputs=inputs)
-
-    assert len(tool.inputs) == 2
-    assert tool.inputs[0].type == "text"
-    assert tool.inputs[0].text == "Hello, world!"
-    assert tool.inputs[1].type == "data"
-    assert tool.inputs[1].media_type == "text/plain"
-
-
-def test_hosted_code_interpreter_tool_with_single_input():
-    """Test HostedCodeInterpreterTool with single input (not in list)."""
-
-    input_dict = {"file_id": "file-single"}
-    tool = HostedCodeInterpreterTool(inputs=input_dict)
-
-    assert len(tool.inputs) == 1
-    assert tool.inputs[0].type == "hosted_file"
-    assert tool.inputs[0].file_id == "file-single"
-
-
-def test_hosted_code_interpreter_tool_with_unknown_input():
-    """Test HostedCodeInterpreterTool with single unknown input."""
-    with pytest.raises(ValueError, match="Unsupported input type"):
-        HostedCodeInterpreterTool(inputs={"hosted_file": "file-single"})
-
-
-def test_hosted_image_generation_tool_defaults():
-    """HostedImageGenerationTool should default name and empty description."""
-    tool = HostedImageGenerationTool()
-
-    assert tool.name == "image_generation"
-    assert tool.description == ""
-    assert tool.options is None
-    assert str(tool) == "HostedImageGenerationTool(name=image_generation)"
-
-
-def test_hosted_image_generation_tool_with_options():
-    """HostedImageGenerationTool should store options."""
-    tool = HostedImageGenerationTool(
-        description="Generate images",
-        options={"format": "png", "size": "1024x1024"},
-        additional_properties={"quality": "high"},
-    )
-
-    assert tool.name == "image_generation"
-    assert tool.description == "Generate images"
-    assert tool.options == {"format": "png", "size": "1024x1024"}
-    assert tool.additional_properties == {"quality": "high"}
-
-
-# region HostedMCPTool tests
-
-
-def test_hosted_mcp_tool_with_other_fields():
-    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMCPTool(
-        name="mcp-tool",
-        url="https://mcp.example",
-        description="A test MCP tool",
-        headers={"x": "y"},
-        additional_properties={"p": 1},
-    )
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    assert tool.headers == {"x": "y"}
-    assert tool.additional_properties == {"p": 1}
-    assert tool.description == "A test MCP tool"
-
-
-@pytest.mark.parametrize(
-    "approval_mode",
-    [
-        "always_require",
-        "never_require",
-        {
-            "always_require_approval": {"toolA"},
-            "never_require_approval": {"toolB"},
-        },
-        {
-            "always_require_approval": ["toolA"],
-            "never_require_approval": ("toolB",),
-        },
-    ],
-    ids=["always_require", "never_require", "specific", "specific_with_parsing"],
-)
-def test_hosted_mcp_tool_with_approval_mode(approval_mode: str | dict[str, Any]):
-    """Test creating a HostedMCPTool with a specific approval dict, headers and additional properties."""
-    tool = HostedMCPTool(name="mcp-tool", url="https://mcp.example", approval_mode=approval_mode)
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    if not isinstance(approval_mode, dict):
-        assert tool.approval_mode == approval_mode
-    else:
-        # approval_mode parsed to sets
-        assert isinstance(tool.approval_mode["always_require_approval"], set)
-        assert isinstance(tool.approval_mode["never_require_approval"], set)
-        assert "toolA" in tool.approval_mode["always_require_approval"]
-        assert "toolB" in tool.approval_mode["never_require_approval"]
-
-
-def test_hosted_mcp_tool_invalid_approval_mode_raises():
-    """Invalid approval_mode string should raise ServiceInitializationError."""
-    with pytest.raises(ToolException):
-        HostedMCPTool(name="bad", url="https://x", approval_mode="invalid_mode")
-
-
-@pytest.mark.parametrize(
-    "tools",
-    [
-        {"toolA", "toolB"},
-        ("toolA", "toolB"),
-        ["toolA", "toolB"],
-        ["toolA", "toolB", "toolA"],
-    ],
-    ids=[
-        "set",
-        "tuple",
-        "list",
-        "list_with_duplicates",
-    ],
-)
-def test_hosted_mcp_tool_with_allowed_tools(tools: list[str] | tuple[str, ...] | set[str]):
-    """Test creating a HostedMCPTool with a list of allowed tools."""
-    tool = HostedMCPTool(
-        name="mcp-tool",
-        url="https://mcp.example",
-        allowed_tools=tools,
-    )
-
-    assert tool.name == "mcp-tool"
-    # pydantic AnyUrl preserves as string-like
-    assert str(tool.url).startswith("https://")
-    # approval_mode parsed to set
-    assert isinstance(tool.allowed_tools, set)
-    assert tool.allowed_tools == {"toolA", "toolB"}
-
-
-def test_hosted_mcp_tool_with_dict_of_allowed_tools():
-    """Test creating a HostedMCPTool with a dict of allowed tools."""
-    with pytest.raises(ToolException):
-        HostedMCPTool(
-            name="mcp-tool",
-            url="https://mcp.example",
-            allowed_tools={"toolA": "Tool A", "toolC": "Tool C"},
-        )
-
-
-# region Approval Flow Tests
-
-
-@pytest.fixture
-def mock_chat_client():
-    """Create a mock chat client for testing approval flows."""
-    from agent_framework import ChatMessage, ChatResponse, ChatResponseUpdate
-
-    class MockChatClient:
-        def __init__(self):
-            self.call_count = 0
-            self.responses = []
-
-        async def get_response(self, messages, **kwargs):
-            """Mock get_response that returns predefined responses."""
-            if self.call_count < len(self.responses):
-                response = self.responses[self.call_count]
-                self.call_count += 1
-                return response
-            # Default response
-            return ChatResponse(
-                messages=[ChatMessage(role="assistant", contents=["Default response"])],
-            )
-
-        async def get_streaming_response(self, messages, **kwargs):
-            """Mock get_streaming_response that yields predefined updates."""
-            if self.call_count < len(self.responses):
-                response = self.responses[self.call_count]
-                self.call_count += 1
-                # Yield updates from the response
-                for msg in response.messages:
-                    for content in msg.contents:
-                        yield ChatResponseUpdate(contents=[content], role=msg.role)
-            else:
-                # Default response
-                yield ChatResponseUpdate(text="Default response", role="assistant")
-
-    return MockChatClient()
-
-
-@tool(
-    name="no_approval_tool",
-    description="Tool that doesn't require approval",
-    approval_mode="never_require",
-)
-def no_approval_tool(x: int) -> int:
-    """A tool that doesn't require approval."""
-    return x * 2
-
-
-@tool(
-    name="requires_approval_tool",
-    description="Tool that requires approval",
-    approval_mode="always_require",
-)
-def requires_approval_tool(x: int) -> int:
-    """A tool that requires approval."""
-    return x * 3
-
-
-async def test_non_streaming_single_function_no_approval():
-    """Test non-streaming handler with single function call that doesn't require approval."""
-    from agent_framework import ChatMessage, ChatResponse
-    from agent_framework._tools import _handle_function_calls_response
-
-    # Create mock client
-    mock_client = type("MockClient", (), {})()
-
-    # Create responses: first with function call, second with final answer
-    initial_response = ChatResponse(
-        messages=[
-            ChatMessage(
-                role="assistant",
-                contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
-            )
-        ]
-    )
-    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="The result is 10")])
-
-    call_count = [0]
-    responses = [initial_response, final_response]
-
-    async def mock_get_response(self, messages, **kwargs):
-        result = responses[call_count[0]]
-        call_count[0] += 1
-        return result
-
-    # Wrap the function
-    wrapped = _handle_function_calls_response(mock_get_response)
-
-    # Execute
-    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]})
-
-    # Verify: should have 3 messages: function call, function result, final answer
-    assert len(result.messages) == 3
-    assert result.messages[0].contents[0].type == "function_call"
-
-    assert result.messages[1].contents[0].type == "function_result"
-    assert result.messages[1].contents[0].result == 10  # 5 * 2
-    assert result.messages[2].text == "The result is 10"
-
-
-async def test_non_streaming_single_function_requires_approval():
-    """Test non-streaming handler with single function call that requires approval."""
-    from agent_framework import ChatMessage, ChatResponse
-    from agent_framework._tools import _handle_function_calls_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with function call
-    initial_response = ChatResponse(
-        messages=[
-            ChatMessage(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
-                ],
-            )
-        ]
-    )
-
-    call_count = [0]
-    responses = [initial_response]
-
-    async def mock_get_response(self, messages, **kwargs):
-        result = responses[call_count[0]]
-        call_count[0] += 1
-        return result
-
-    wrapped = _handle_function_calls_response(mock_get_response)
-
-    # Execute
-    result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
-
-    # Verify: should return 1 message with function call and approval request
-
-    assert len(result.messages) == 1
-    assert len(result.messages[0].contents) == 2
-    assert result.messages[0].contents[0].type == "function_call"
-    assert result.messages[0].contents[1].type == "function_approval_request"
-    assert result.messages[0].contents[1].function_call.name == "requires_approval_tool"
-
-
-async def test_non_streaming_two_functions_both_no_approval():
-    """Test non-streaming handler with two function calls, neither requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse
-    from agent_framework._tools import _handle_function_calls_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls to the same tool
-    initial_response = ChatResponse(
-        messages=[
-            ChatMessage(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
-                    Content.from_function_call(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
-                ],
-            )
-        ]
-    )
-    final_response = ChatResponse(messages=[ChatMessage(role="assistant", text="Both tools executed successfully")])
-
-    call_count = [0]
-    responses = [initial_response, final_response]
-
-    async def mock_get_response(self, messages, **kwargs):
-        result = responses[call_count[0]]
-        call_count[0] += 1
-        return result
-
-    wrapped = _handle_function_calls_response(mock_get_response)
-
-    # Execute
-    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]})
-
-    # Verify: should have function calls, results, and final answer
-
-    assert len(result.messages) == 3
-    # First message has both function calls
-    assert len(result.messages[0].contents) == 2
-    # Second message has both results
-    assert len(result.messages[1].contents) == 2
-    assert all(c.type == "function_result" for c in result.messages[1].contents)
-    assert result.messages[1].contents[0].result == 10  # 5 * 2
-    assert result.messages[1].contents[1].result == 6  # 3 * 2
-
-
-async def test_non_streaming_two_functions_both_require_approval():
-    """Test non-streaming handler with two function calls, both requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse
-    from agent_framework._tools import _handle_function_calls_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls to the same tool
-    initial_response = ChatResponse(
-        messages=[
-            ChatMessage(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}'),
-                    Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
-                ],
-            )
-        ]
-    )
-
-    call_count = [0]
-    responses = [initial_response]
-
-    async def mock_get_response(self, messages, **kwargs):
-        result = responses[call_count[0]]
-        call_count[0] += 1
-        return result
-
-    wrapped = _handle_function_calls_response(mock_get_response)
-
-    # Execute
-    result = await wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]})
-
-    # Verify: should return 1 message with function calls and approval requests
-
-    assert len(result.messages) == 1
-    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
-    function_calls = [c for c in result.messages[0].contents if c.type == "function_call"]
-    approval_requests = [c for c in result.messages[0].contents if c.type == "function_approval_request"]
-    assert len(function_calls) == 2
-    assert len(approval_requests) == 2
-    assert approval_requests[0].function_call.name == "requires_approval_tool"
-    assert approval_requests[1].function_call.name == "requires_approval_tool"
-
-
-async def test_non_streaming_two_functions_mixed_approval():
-    """Test non-streaming handler with two function calls, one requiring approval."""
-    from agent_framework import ChatMessage, ChatResponse
-    from agent_framework._tools import _handle_function_calls_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls
-    initial_response = ChatResponse(
-        messages=[
-            ChatMessage(
-                role="assistant",
-                contents=[
-                    Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
-                    Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}'),
-                ],
-            )
-        ]
-    )
-
-    call_count = [0]
-    responses = [initial_response]
-
-    async def mock_get_response(self, messages, **kwargs):
-        result = responses[call_count[0]]
-        call_count[0] += 1
-        return result
-
-    wrapped = _handle_function_calls_response(mock_get_response)
-
-    # Execute
-    result = await wrapped(mock_client, messages=[], options={"tools": [no_approval_tool, requires_approval_tool]})
-
-    # Verify: should return approval requests for both (when one needs approval, all are sent for approval)
-
-    assert len(result.messages) == 1
-    assert len(result.messages[0].contents) == 4  # 2 function calls + 2 approval requests
-    approval_requests = [c for c in result.messages[0].contents if c.type == "function_approval_request"]
-    assert len(approval_requests) == 2
-
-
-async def test_streaming_single_function_no_approval():
-    """Test streaming handler with single function call that doesn't require approval."""
-    from agent_framework import ChatResponseUpdate
-    from agent_framework._tools import _handle_function_calls_streaming_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with function call, then final response after function execution
-    initial_updates = [
-        ChatResponseUpdate(
-            contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
-            role="assistant",
-        )
-    ]
-    final_updates = [ChatResponseUpdate(text="The result is 10", role="assistant")]
-
-    call_count = [0]
-    updates_list = [initial_updates, final_updates]
-
-    async def mock_get_streaming_response(self, messages, **kwargs):
-        updates = updates_list[call_count[0]]
-        call_count[0] += 1
-        for update in updates:
-            yield update
-
-    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
-
-    # Execute and collect updates
-    updates = []
-    async for update in wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]}):
-        updates.append(update)
-
-    # Verify: should have function call update, tool result update (injected), and final update
-    from agent_framework import Role
-
-    assert len(updates) >= 3
-    # First update is the function call
-    assert updates[0].contents[0].type == "function_call"
-    # Second update should be the tool result (injected by the wrapper)
-    assert updates[1].role == Role.TOOL
-    assert updates[1].contents[0].type == "function_result"
-    assert updates[1].contents[0].result == 10  # 5 * 2
-    # Last update is the final message
-    assert updates[-1].contents[0].type == "text"
-    assert updates[-1].contents[0].text == "The result is 10"
-
-
-async def test_streaming_single_function_requires_approval():
-    """Test streaming handler with single function call that requires approval."""
-    from agent_framework import ChatResponseUpdate
-    from agent_framework._tools import _handle_function_calls_streaming_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with function call
-    initial_updates = [
-        ChatResponseUpdate(
-            contents=[
-                Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
-            ],
-            role="assistant",
-        )
-    ]
-
-    call_count = [0]
-    updates_list = [initial_updates]
-
-    async def mock_get_streaming_response(self, messages, **kwargs):
-        updates = updates_list[call_count[0]]
-        call_count[0] += 1
-        for update in updates:
-            yield update
-
-    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
-
-    # Execute and collect updates
-    updates = []
-    async for update in wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]}):
-        updates.append(update)
-
-    # Verify: should yield function call and then approval request
-    from agent_framework import Role
-
-    assert len(updates) == 2
-    assert updates[0].contents[0].type == "function_call"
-    assert updates[1].role == Role.ASSISTANT
-    assert updates[1].contents[0].type == "function_approval_request"
-
-
-async def test_streaming_two_functions_both_no_approval():
-    """Test streaming handler with two function calls, neither requiring approval."""
-    from agent_framework import ChatResponseUpdate
-    from agent_framework._tools import _handle_function_calls_streaming_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls to the same tool
-    initial_updates = [
-        ChatResponseUpdate(
-            contents=[
-                Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}'),
-                Content.from_function_call(call_id="call_2", name="no_approval_tool", arguments='{"x": 3}'),
-            ],
-            role="assistant",
-        ),
-    ]
-    final_updates = [ChatResponseUpdate(text="Both tools executed successfully", role="assistant")]
-
-    call_count = [0]
-    updates_list = [initial_updates, final_updates]
-
-    async def mock_get_streaming_response(self, messages, **kwargs):
-        updates = updates_list[call_count[0]]
-        call_count[0] += 1
-        for update in updates:
-            yield update
-
-    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
-
-    # Execute and collect updates
-    updates = []
-    async for update in wrapped(mock_client, messages=[], options={"tools": [no_approval_tool]}):
-        updates.append(update)
-
-    # Verify: should have both function calls, one tool result update with both results, and final message
-    from agent_framework import Role
-
-    assert len(updates) >= 2
-    # First update has both function calls
-    assert len(updates[0].contents) == 2
-    assert updates[0].contents[0].type == "function_call"
-    assert updates[0].contents[1].type == "function_call"
-    # Should have a tool result update with both results
-    tool_updates = [u for u in updates if u.role == Role.TOOL]
-    assert len(tool_updates) == 1
-    assert len(tool_updates[0].contents) == 2
-    assert all(c.type == "function_result" for c in tool_updates[0].contents)
-
-
-async def test_streaming_two_functions_both_require_approval():
-    """Test streaming handler with two function calls, both requiring approval."""
-    from agent_framework import ChatResponseUpdate
-    from agent_framework._tools import _handle_function_calls_streaming_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls to the same tool
-    initial_updates = [
-        ChatResponseUpdate(
-            contents=[
-                Content.from_function_call(call_id="call_1", name="requires_approval_tool", arguments='{"x": 5}')
-            ],
-            role="assistant",
-        ),
-        ChatResponseUpdate(
-            contents=[
-                Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')
-            ],
-            role="assistant",
-        ),
-    ]
-
-    call_count = [0]
-    updates_list = [initial_updates]
-
-    async def mock_get_streaming_response(self, messages, **kwargs):
-        updates = updates_list[call_count[0]]
-        call_count[0] += 1
-        for update in updates:
-            yield update
-
-    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
-
-    # Execute and collect updates
-    updates = []
-    async for update in wrapped(mock_client, messages=[], options={"tools": [requires_approval_tool]}):
-        updates.append(update)
-
-    # Verify: should yield both function calls and then approval requests
-    from agent_framework import Role
-
-    assert len(updates) == 3
-    assert updates[0].contents[0].type == "function_call"
-    assert updates[1].contents[0].type == "function_call"
-    # Assistant update with both approval requests
-    assert updates[2].role == Role.ASSISTANT
-    assert len(updates[2].contents) == 2
-    assert all(c.type == "function_approval_request" for c in updates[2].contents)
-
-
-async def test_streaming_two_functions_mixed_approval():
-    """Test streaming handler with two function calls, one requiring approval."""
-    from agent_framework import ChatResponseUpdate
-    from agent_framework._tools import _handle_function_calls_streaming_response
-
-    mock_client = type("MockClient", (), {})()
-
-    # Initial response with two function calls
-    initial_updates = [
-        ChatResponseUpdate(
-            contents=[Content.from_function_call(call_id="call_1", name="no_approval_tool", arguments='{"x": 5}')],
-            role="assistant",
-        ),
-        ChatResponseUpdate(
-            contents=[
-                Content.from_function_call(call_id="call_2", name="requires_approval_tool", arguments='{"x": 3}')
-            ],
-            role="assistant",
-        ),
-    ]
-
-    call_count = [0]
-    updates_list = [initial_updates]
-
-    async def mock_get_streaming_response(self, messages, **kwargs):
-        updates = updates_list[call_count[0]]
-        call_count[0] += 1
-        for update in updates:
-            yield update
-
-    wrapped = _handle_function_calls_streaming_response(mock_get_streaming_response)
-
-    # Execute and collect updates
-    updates = []
-    async for update in wrapped(
-        mock_client, messages=[], options={"tools": [no_approval_tool, requires_approval_tool]}
-    ):
-        updates.append(update)
-
-    # Verify: should yield both function calls and then approval requests (when one needs approval, all wait)
-    from agent_framework import Role
-
-    assert len(updates) == 3
-    assert updates[0].contents[0].type == "function_call"
-    assert updates[1].contents[0].type == "function_call"
-    # Assistant update with both approval requests
-    assert updates[2].role == Role.ASSISTANT
-    assert len(updates[2].contents) == 2
-    assert all(c.type == "function_approval_request" for c in updates[2].contents)
-
-
-async def test_tool_with_kwargs_injection():
-    """Test that tool correctly handles kwargs injection and hides them from schema."""
+async def test_ai_function_with_kwargs_injection():
+    """Test that ai_function correctly handles kwargs injection and hides them from schema."""
 
     @tool
     def tool_with_kwargs(x: int, **kwargs: Any) -> str:
@@ -1479,13 +942,137 @@ async def test_tool_with_kwargs_injection():
         arguments=tool_with_kwargs.input_model(x=5),
         user_id="user2",
     )
-    assert result == "x=5, user=user2"
+    assert isinstance(result, list)
+    assert result[0].text == "x=5, user=user2"
 
     # Verify invoke works without injected args (uses default)
     result_default = await tool_with_kwargs.invoke(
         arguments=tool_with_kwargs.input_model(x=10),
     )
-    assert result_default == "x=10, user=unknown"
+    assert isinstance(result_default, list)
+    assert result_default[0].text == "x=10, user=unknown"
+
+
+async def test_ai_function_with_explicit_invocation_context():
+    """Test that invoke() can receive runtime kwargs via FunctionInvocationContext."""
+
+    @tool
+    def tool_with_context(x: int, ctx: FunctionInvocationContext) -> str:
+        """A tool that accepts runtime context injection."""
+        user_id = ctx.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_context,
+        arguments=tool_with_context.input_model(x=7),
+        kwargs={"user_id": "ctx-user"},
+    )
+
+    result = await tool_with_context.invoke(context=context)
+
+    assert result[0].text == "x=7, user=ctx-user"
+
+
+async def test_ai_function_with_typed_context_parameter_using_custom_name():
+    """Test that typed context injection works for names other than ctx."""
+
+    @tool
+    def tool_with_runtime_context(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool that uses a custom context parameter name."""
+        user_id = runtime.kwargs.get("user_id", "unknown")
+        return f"x={x}, user={user_id}"
+
+    assert tool_with_runtime_context.parameters() == {
+        "properties": {"x": {"title": "X", "type": "integer"}},
+        "required": ["x"],
+        "title": "tool_with_runtime_context_input",
+        "type": "object",
+    }
+
+    context = FunctionInvocationContext(
+        function=tool_with_runtime_context,
+        arguments=tool_with_runtime_context.input_model(x=8),
+        kwargs={"user_id": "runtime-user"},
+    )
+
+    result = await tool_with_runtime_context.invoke(context=context)
+
+    assert result[0].text == "x=8, user=runtime-user"
+
+
+async def test_ai_function_with_explicit_schema_and_untyped_ctx():
+    """Test that explicit schemas allow an untyped ctx parameter."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x, ctx) -> str:
+        """A tool with explicit schema and implicit ctx injection."""
+        return f"x={x}, user={ctx.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=9),
+        kwargs={"user_id": "schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert result[0].text == "x=9, user=schema-user"
+
+
+async def test_ai_function_with_explicit_schema_and_typed_ctx():
+    """Test that explicit schemas also work with typed context injection."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    @tool(schema=ToolInput)
+    def tool_with_schema(x: int, runtime: FunctionInvocationContext) -> str:
+        """A tool with explicit schema and typed context injection."""
+        return f"x={x}, user={runtime.kwargs.get('user_id', 'unknown')}"
+
+    context = FunctionInvocationContext(
+        function=tool_with_schema,
+        arguments=ToolInput(x=11),
+        kwargs={"user_id": "typed-schema-user"},
+    )
+
+    result = await tool_with_schema.invoke(context=context)
+
+    assert tool_with_schema.parameters() == ToolInput.model_json_schema()
+    assert result[0].text == "x=11, user=typed-schema-user"
+
+
+def test_ai_function_with_multiple_typed_context_parameters_fails():
+    """Test that tools reject multiple typed FunctionInvocationContext parameters."""
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool
+        def invalid_tool(ctx_one: FunctionInvocationContext, ctx_two: FunctionInvocationContext) -> str:
+            return f"{ctx_one.kwargs}-{ctx_two.kwargs}"
+
+
+def test_ai_function_with_ctx_and_typed_context_parameter_fails():
+    """Test that explicit-schema tools reject both implicit ctx and typed context parameters."""
+
+    class ToolInput(BaseModel):
+        x: int
+
+    with pytest.raises(ValueError, match="multiple FunctionInvocationContext parameters"):
+
+        @tool(schema=ToolInput)
+        def invalid_tool(x, ctx, runtime: FunctionInvocationContext) -> str:
+            return f"{x}-{ctx.kwargs}-{runtime.kwargs}"
 
 
 # region _parse_annotation tests
@@ -1545,469 +1132,6 @@ def test_parse_annotation_with_annotated_and_literal():
     literal_type = args[0]
     assert get_origin(literal_type) is Literal
     assert get_args(literal_type) == ("A", "B", "C")
-
-
-def test_build_pydantic_model_from_json_schema_array_of_objects_issue():
-    """Test for Tools with complex input schema (array of objects).
-
-    This test verifies that JSON schemas with array properties containing nested objects
-    are properly parsed, ensuring that the nested object schema is preserved
-    and not reduced to a bare dict.
-
-    Example from issue:
-    ```
-    const SalesOrderItemSchema = z.object({
-        customerMaterialNumber: z.string().optional(),
-        quantity: z.number(),
-        unitOfMeasure: z.string()
-    });
-
-    const CreateSalesOrderInputSchema = z.object({
-        contract: z.string(),
-        items: z.array(SalesOrderItemSchema)
-    });
-    ```
-
-    The issue was that agents only saw:
-    ```
-    {"contract": "str", "items": "list[dict]"}
-    ```
-
-    Instead of the proper nested schema with all fields.
-    """
-    # Schema matching the issue description
-    schema = {
-        "type": "object",
-        "properties": {
-            "contract": {"type": "string", "description": "Reference contract number"},
-            "items": {
-                "type": "array",
-                "description": "Sales order line items",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "customerMaterialNumber": {
-                            "type": "string",
-                            "description": "Customer's material number",
-                        },
-                        "quantity": {"type": "number", "description": "Order quantity"},
-                        "unitOfMeasure": {
-                            "type": "string",
-                            "description": "Unit of measure (e.g., 'ST', 'KG', 'TO')",
-                        },
-                    },
-                    "required": ["quantity", "unitOfMeasure"],
-                },
-            },
-        },
-        "required": ["contract", "items"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("create_sales_order", schema)
-
-    # Test valid data
-    valid_data = {
-        "contract": "CONTRACT-123",
-        "items": [
-            {
-                "customerMaterialNumber": "MAT-001",
-                "quantity": 10,
-                "unitOfMeasure": "ST",
-            },
-            {"quantity": 5.5, "unitOfMeasure": "KG"},
-        ],
-    }
-
-    instance = model(**valid_data)
-
-    # Verify the data was parsed correctly
-    assert instance.contract == "CONTRACT-123"
-    assert len(instance.items) == 2
-
-    # Verify first item
-    assert instance.items[0].customerMaterialNumber == "MAT-001"
-    assert instance.items[0].quantity == 10
-    assert instance.items[0].unitOfMeasure == "ST"
-
-    # Verify second item (optional field not provided)
-    assert instance.items[1].quantity == 5.5
-    assert instance.items[1].unitOfMeasure == "KG"
-
-    # Verify that items are proper BaseModel instances, not bare dicts
-    assert isinstance(instance.items[0], BaseModel)
-    assert isinstance(instance.items[1], BaseModel)
-
-    # Verify that the nested object has the expected fields
-    assert hasattr(instance.items[0], "customerMaterialNumber")
-    assert hasattr(instance.items[0], "quantity")
-    assert hasattr(instance.items[0], "unitOfMeasure")
-
-    # CRITICAL: Validate using the same methods that actual chat clients use
-    # This is what would actually be sent to the LLM
-
-    # Create a FunctionTool wrapper to access the client-facing APIs
-    def dummy_func(**kwargs):
-        return kwargs
-
-    test_func = FunctionTool(
-        func=dummy_func,
-        name="create_sales_order",
-        description="Create a sales order",
-        input_model=model,
-    )
-
-    # Test 1: Anthropic client uses tool.parameters() directly
-    anthropic_schema = test_func.parameters()
-
-    # Verify contract property
-    assert "contract" in anthropic_schema["properties"]
-    assert anthropic_schema["properties"]["contract"]["type"] == "string"
-
-    # Verify items array property exists
-    assert "items" in anthropic_schema["properties"]
-    items_prop = anthropic_schema["properties"]["items"]
-    assert items_prop["type"] == "array"
-
-    # THE KEY TEST for Anthropic: array items must have proper object schema
-    assert "items" in items_prop, "Array should have 'items' schema definition"
-    array_items_schema = items_prop["items"]
-
-    # Resolve schema if using $ref
-    if "$ref" in array_items_schema:
-        ref_path = array_items_schema["$ref"]
-        assert ref_path.startswith("#/$defs/") or ref_path.startswith("#/definitions/")
-        ref_name = ref_path.split("/")[-1]
-        defs = anthropic_schema.get("$defs", anthropic_schema.get("definitions", {}))
-        assert ref_name in defs, f"Referenced schema '{ref_name}' should exist"
-        item_schema = defs[ref_name]
-    else:
-        item_schema = array_items_schema
-
-    # Verify the nested object has all properties defined
-    assert "properties" in item_schema, "Array items should have properties (not bare dict)"
-    item_properties = item_schema["properties"]
-
-    # All three fields must be present in schema sent to LLM
-    assert "customerMaterialNumber" in item_properties, "customerMaterialNumber missing from LLM schema"
-    assert "quantity" in item_properties, "quantity missing from LLM schema"
-    assert "unitOfMeasure" in item_properties, "unitOfMeasure missing from LLM schema"
-
-    # Verify types are correct
-    assert item_properties["customerMaterialNumber"]["type"] == "string"
-    assert item_properties["quantity"]["type"] in ["number", "integer"]
-    assert item_properties["unitOfMeasure"]["type"] == "string"
-
-    # Test 2: OpenAI client uses tool.to_json_schema_spec()
-    openai_spec = test_func.to_json_schema_spec()
-
-    assert openai_spec["type"] == "function"
-    assert "function" in openai_spec
-    openai_schema = openai_spec["function"]["parameters"]
-
-    # Verify the same structure is present in OpenAI format
-    assert "items" in openai_schema["properties"]
-    openai_items_prop = openai_schema["properties"]["items"]
-    assert openai_items_prop["type"] == "array"
-    assert "items" in openai_items_prop
-
-    openai_array_items = openai_items_prop["items"]
-    if "$ref" in openai_array_items:
-        ref_path = openai_array_items["$ref"]
-        ref_name = ref_path.split("/")[-1]
-        defs = openai_schema.get("$defs", openai_schema.get("definitions", {}))
-        openai_item_schema = defs[ref_name]
-    else:
-        openai_item_schema = openai_array_items
-
-    assert "properties" in openai_item_schema
-    openai_props = openai_item_schema["properties"]
-    assert "customerMaterialNumber" in openai_props
-    assert "quantity" in openai_props
-    assert "unitOfMeasure" in openai_props
-
-    # Test validation - missing required quantity
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-456",
-            items=[
-                {
-                    "customerMaterialNumber": "MAT-002",
-                    "unitOfMeasure": "TO",
-                    # Missing required 'quantity'
-                }
-            ],
-        )
-
-    # Test validation - missing required unitOfMeasure
-    with pytest.raises(ValidationError):
-        model(
-            contract="CONTRACT-789",
-            items=[
-                {
-                    "quantity": 20
-                    # Missing required 'unitOfMeasure'
-                }
-            ],
-        )
-
-
-def test_one_of_discriminator_polymorphism():
-    """Test that oneOf with discriminator creates proper polymorphic union types.
-
-    Tests that oneOf + discriminator patterns are properly converted to Pydantic discriminated unions.
-    """
-    schema = {
-        "$defs": {
-            "CreateProject": {
-                "description": "Action: Create an Azure DevOps project.",
-                "properties": {
-                    "name": {
-                        "const": "create_project",
-                        "default": "create_project",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/CreateProjectParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "CreateProjectParams": {
-                "description": "Parameters for the create_project action.",
-                "properties": {
-                    "orgUrl": {"minLength": 1, "type": "string"},
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "description": {"default": "", "type": "string"},
-                    "template": {"default": "Agile", "type": "string"},
-                    "sourceControl": {
-                        "default": "Git",
-                        "enum": ["Git", "Tfvc"],
-                        "type": "string",
-                    },
-                    "visibility": {"default": "private", "type": "string"},
-                },
-                "required": ["orgUrl", "projectName"],
-                "type": "object",
-            },
-            "DeployRequest": {
-                "description": "Request to deploy Azure DevOps resources.",
-                "properties": {
-                    "projectName": {"minLength": 1, "type": "string"},
-                    "organization": {"minLength": 1, "type": "string"},
-                    "actions": {
-                        "items": {
-                            "discriminator": {
-                                "mapping": {
-                                    "create_project": "#/$defs/CreateProject",
-                                    "hello_world": "#/$defs/HelloWorld",
-                                },
-                                "propertyName": "name",
-                            },
-                            "oneOf": [
-                                {"$ref": "#/$defs/HelloWorld"},
-                                {"$ref": "#/$defs/CreateProject"},
-                            ],
-                        },
-                        "type": "array",
-                    },
-                },
-                "required": ["projectName", "organization"],
-                "type": "object",
-            },
-            "HelloWorld": {
-                "description": "Action: Prints a greeting message.",
-                "properties": {
-                    "name": {
-                        "const": "hello_world",
-                        "default": "hello_world",
-                        "type": "string",
-                    },
-                    "params": {"$ref": "#/$defs/HelloWorldParams"},
-                },
-                "required": ["params"],
-                "type": "object",
-            },
-            "HelloWorldParams": {
-                "description": "Parameters for the hello_world action.",
-                "properties": {
-                    "name": {
-                        "description": "Name to greet",
-                        "minLength": 1,
-                        "type": "string",
-                    }
-                },
-                "required": ["name"],
-                "type": "object",
-            },
-        },
-        "properties": {"params": {"$ref": "#/$defs/DeployRequest"}},
-        "required": ["params"],
-        "type": "object",
-    }
-
-    # Build the model
-    model = _build_pydantic_model_from_json_schema("deploy_tool", schema)
-
-    # Verify the model structure
-    assert model is not None
-    assert issubclass(model, BaseModel)
-
-    # Test with HelloWorld action
-    hello_world_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "hello_world",
-                    "params": {"name": "Alice"},
-                }
-            ],
-        }
-    }
-
-    instance = model(**hello_world_data)
-    assert instance.params.projectName == "MyProject"
-    assert instance.params.organization == "MyOrg"
-    assert len(instance.params.actions) == 1
-    assert instance.params.actions[0].name == "hello_world"
-    assert instance.params.actions[0].params.name == "Alice"
-
-    # Test with CreateProject action
-    create_project_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "NewProject",
-                        "sourceControl": "Git",
-                    },
-                }
-            ],
-        }
-    }
-
-    instance2 = model(**create_project_data)
-    assert instance2.params.actions[0].name == "create_project"
-    assert instance2.params.actions[0].params.projectName == "NewProject"
-    assert instance2.params.actions[0].params.sourceControl == "Git"
-
-    # Test with mixed actions
-    mixed_data = {
-        "params": {
-            "projectName": "MyProject",
-            "organization": "MyOrg",
-            "actions": [
-                {"name": "hello_world", "params": {"name": "Bob"}},
-                {
-                    "name": "create_project",
-                    "params": {
-                        "orgUrl": "https://dev.azure.com/myorg",
-                        "projectName": "AnotherProject",
-                    },
-                },
-            ],
-        }
-    }
-
-    instance3 = model(**mixed_data)
-    assert len(instance3.params.actions) == 2
-    assert instance3.params.actions[0].name == "hello_world"
-    assert instance3.params.actions[1].name == "create_project"
-
-
-def test_const_creates_literal():
-    """Test that const in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "action": {
-                "const": "create",
-                "type": "string",
-                "description": "Action type",
-            },
-            "value": {"type": "integer"},
-        },
-        "required": ["action", "value"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_const", schema)
-
-    # Verify valid const value works
-    instance = model(action="create", value=42)
-    assert instance.action == "create"
-    assert instance.value == 42
-
-    # Verify incorrect const value fails
-    with pytest.raises(ValidationError):
-        model(action="delete", value=42)
-
-
-def test_enum_creates_literal():
-    """Test that enum in JSON Schema creates Literal type."""
-    schema = {
-        "properties": {
-            "status": {
-                "enum": ["pending", "approved", "rejected"],
-                "type": "string",
-                "description": "Status",
-            },
-            "priority": {"enum": [1, 2, 3], "type": "integer"},
-        },
-        "required": ["status"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_enum", schema)
-
-    # Verify valid enum values work
-    instance = model(status="approved", priority=2)
-    assert instance.status == "approved"
-    assert instance.priority == 2
-
-    # Verify invalid enum value fails
-    with pytest.raises(ValidationError):
-        model(status="unknown")
-
-    with pytest.raises(ValidationError):
-        model(status="pending", priority=5)
-
-
-def test_nested_object_with_const_and_enum():
-    """Test that const and enum work in nested objects."""
-    schema = {
-        "properties": {
-            "config": {
-                "type": "object",
-                "properties": {
-                    "type": {
-                        "const": "production",
-                        "default": "production",
-                        "type": "string",
-                    },
-                    "level": {"enum": ["low", "medium", "high"], "type": "string"},
-                },
-                "required": ["level"],
-            }
-        },
-        "required": ["config"],
-    }
-
-    model = _build_pydantic_model_from_json_schema("test_nested", schema)
-
-    # Valid data
-    instance = model(config={"type": "production", "level": "high"})
-    assert instance.config.type == "production"
-    assert instance.config.level == "high"
-
-    # Invalid const in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "development", "level": "low"})
-
-    # Invalid enum in nested object
-    with pytest.raises(ValidationError):
-        model(config={"type": "production", "level": "critical"})
 
 
 # endregion

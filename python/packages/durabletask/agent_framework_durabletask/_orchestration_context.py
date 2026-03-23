@@ -8,13 +8,14 @@ orchestration functions to interact with durable agents.
 
 from __future__ import annotations
 
-from agent_framework import get_logger
+import logging
+
 from durabletask.task import OrchestrationContext
 
 from ._executors import DurableAgentTask, OrchestrationAgentExecutor
 from ._shim import DurableAgentProvider, DurableAIAgent
 
-logger = get_logger("agent_framework.durabletask.orchestration_context")
+logger = logging.getLogger("agent_framework.durabletask")
 
 
 class DurableAIAgentOrchestrationContext(DurableAgentProvider[DurableAgentTask]):

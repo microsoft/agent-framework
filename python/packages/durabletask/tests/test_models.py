@@ -3,7 +3,6 @@
 """Unit tests for data models (RunRequest)."""
 
 import pytest
-from agent_framework import Role
 from pydantic import BaseModel
 
 from agent_framework_durabletask._models import RunRequest
@@ -22,7 +21,7 @@ class TestRunRequest:
 
         assert request.message == "Hello"
         assert request.correlation_id == "corr-001"
-        assert request.role == Role.USER
+        assert request.role == "user"
         assert request.response_format is None
         assert request.enable_tool_calls is True
         assert request.wait_for_response is True
@@ -33,7 +32,7 @@ class TestRunRequest:
         request = RunRequest(
             message="Hello",
             correlation_id="corr-002",
-            role=Role.SYSTEM,
+            role="system",
             response_format=schema,
             enable_tool_calls=False,
             wait_for_response=False,
@@ -41,7 +40,7 @@ class TestRunRequest:
 
         assert request.message == "Hello"
         assert request.correlation_id == "corr-002"
-        assert request.role == Role.SYSTEM
+        assert request.role == "system"
         assert request.response_format is schema
         assert request.enable_tool_calls is False
         assert request.wait_for_response is False
@@ -50,7 +49,7 @@ class TestRunRequest:
         """Ensure string role values are coerced into Role instances."""
         request = RunRequest(message="Hello", correlation_id="corr-003", role="system")  # type: ignore[arg-type]
 
-        assert request.role == Role.SYSTEM
+        assert request.role == "system"
 
     def test_to_dict_with_defaults(self) -> None:
         """Test to_dict with default values."""
@@ -71,7 +70,7 @@ class TestRunRequest:
         request = RunRequest(
             message="Hello",
             correlation_id="corr-005",
-            role=Role.ASSISTANT,
+            role="assistant",
             response_format=schema,
             enable_tool_calls=False,
             wait_for_response=False,
@@ -95,7 +94,7 @@ class TestRunRequest:
 
         assert request.message == "Hello"
         assert request.correlation_id == "corr-006"
-        assert request.role == Role.USER
+        assert request.role == "user"
         assert request.enable_tool_calls is True
         assert request.wait_for_response is True
 
@@ -122,7 +121,7 @@ class TestRunRequest:
 
         assert request.message == "Test"
         assert request.correlation_id == "corr-008"
-        assert request.role == Role.SYSTEM
+        assert request.role == "system"
         assert request.response_format is ModuleStructuredResponse
         assert request.enable_tool_calls is False
 
@@ -131,8 +130,8 @@ class TestRunRequest:
         data = {"message": "Test", "correlationId": "corr-009", "role": "reviewer"}
         request = RunRequest.from_dict(data)
 
-        assert request.role.value == "reviewer"
-        assert request.role != Role.USER
+        assert request.role == "reviewer"
+        assert request.role != "user"
 
     def test_from_dict_empty_message(self) -> None:
         """Test from_dict with empty message."""
@@ -140,7 +139,7 @@ class TestRunRequest:
 
         assert request.message == ""
         assert request.correlation_id == "corr-010"
-        assert request.role == Role.USER
+        assert request.role == "user"
 
     def test_from_dict_missing_correlation_id_raises(self) -> None:
         """Test from_dict raises when correlationId is missing."""
@@ -152,7 +151,7 @@ class TestRunRequest:
         original = RunRequest(
             message="Test message",
             correlation_id="corr-011",
-            role=Role.SYSTEM,
+            role="system",
             response_format=ModuleStructuredResponse,
             enable_tool_calls=False,
         )
@@ -232,7 +231,7 @@ class TestRunRequest:
         """Test round-trip to_dict and from_dict with correlationId."""
         original = RunRequest(
             message="Test message",
-            role=Role.SYSTEM,
+            role="system",
             correlation_id="corr-124",
         )
 
@@ -292,7 +291,7 @@ class TestRunRequest:
         """Test round-trip to_dict and from_dict with orchestration_id."""
         original = RunRequest(
             message="Test message",
-            role=Role.SYSTEM,
+            role="system",
             correlation_id="corr-129",
             orchestration_id="orch-123",
         )

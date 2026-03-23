@@ -7,9 +7,9 @@ namespace AzureAI.IntegrationTests;
 
 public class AIProjectClientChatClientAgentRunStreamingTests() : ChatClientAgentRunStreamingTests<AIProjectClientFixture>(() => new())
 {
-    [Fact(Skip = "No messages is not supported")]
     public override Task RunWithInstructionsAndNoMessageReturnsExpectedResultAsync()
     {
-        return Task.CompletedTask;
+        Assert.Skip("No messages is not supported");
+        return base.RunWithInstructionsAndNoMessageReturnsExpectedResultAsync();
     }
 }

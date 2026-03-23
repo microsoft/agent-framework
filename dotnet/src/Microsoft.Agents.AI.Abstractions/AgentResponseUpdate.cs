@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
@@ -71,6 +70,7 @@ public class AgentResponseUpdate
         this.AuthorName = chatResponseUpdate.AuthorName;
         this.Contents = chatResponseUpdate.Contents;
         this.CreatedAt = chatResponseUpdate.CreatedAt;
+        this.FinishReason = chatResponseUpdate.FinishReason;
         this.MessageId = chatResponseUpdate.MessageId;
         this.RawRepresentation = chatResponseUpdate;
         this.ResponseId = chatResponseUpdate.ResponseId;
@@ -94,13 +94,6 @@ public class AgentResponseUpdate
     /// </remarks>
     [JsonIgnore]
     public string Text => this._contents is not null ? this._contents.ConcatText() : string.Empty;
-
-    /// <summary>Gets the user input requests associated with the response.</summary>
-    /// <remarks>
-    /// This property concatenates all <see cref="UserInputRequestContent"/> instances in the response.
-    /// </remarks>
-    [JsonIgnore]
-    public IEnumerable<UserInputRequestContent> UserInputRequests => this._contents?.OfType<UserInputRequestContent>() ?? [];
 
     /// <summary>Gets or sets the agent run response update content items.</summary>
     [AllowNull]
@@ -160,6 +153,15 @@ public class AgentResponseUpdate
     /// </para>
     /// </remarks>
     public ResponseContinuationToken? ContinuationToken { get; set; }
+
+    /// <summary>
+    /// Gets or sets the reason for the agent response finishing.
+    /// </summary>
+    /// <value>
+    /// A <see cref="ChatFinishReason"/> value indicating why the response finished (e.g., stop, length, content filter, tool calls),
+    /// or <see langword="null"/> if the finish reason is not available or not yet determined (mid-stream).
+    /// </value>
+    public ChatFinishReason? FinishReason { get; set; }
 
     /// <inheritdoc/>
     public override string ToString() => this.Text;

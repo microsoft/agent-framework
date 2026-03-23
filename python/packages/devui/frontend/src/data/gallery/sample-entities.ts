@@ -30,7 +30,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     description:
       "Weather agent using Azure AI Agent (Foundry) with Azure CLI authentication",
     type: "agent",
-    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/getting_started/devui/foundry_agent/agent.py",
+    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/02-agents/devui/foundry_agent/agent.py",
     tags: ["azure-ai", "foundry", "tools"],
     author: "Microsoft",
     difficulty: "beginner",
@@ -61,7 +61,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     description:
       "Weather agent using Azure OpenAI with API key authentication",
     type: "agent",
-    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/getting_started/devui/weather_agent_azure/agent.py",
+    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/02-agents/devui/weather_agent_azure/agent.py",
     tags: ["azure", "openai", "tools"],
     author: "Microsoft",
     difficulty: "beginner",
@@ -99,7 +99,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     description:
       "5-step workflow demonstrating email spam detection with branching logic",
     type: "workflow",
-    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/getting_started/devui/spam_workflow/workflow.py",
+    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/02-agents/devui/spam_workflow/workflow.py",
     tags: ["workflow", "branching", "multi-step"],
     author: "Microsoft",
     difficulty: "beginner",
@@ -117,7 +117,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     description:
       "Advanced data processing workflow with parallel validation, transformation, and quality assurance stages",
     type: "workflow",
-    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/getting_started/devui/fanout_workflow/workflow.py",
+    url: "https://raw.githubusercontent.com/microsoft/agent-framework/main/python/samples/02-agents/devui/fanout_workflow/workflow.py",
     tags: ["workflow", "fan-out", "fan-in", "parallel"],
     author: "Microsoft",
     difficulty: "advanced",

@@ -22,7 +22,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -53,7 +53,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session);
 
         Assert.True(requestTriggered);
@@ -71,7 +71,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -102,7 +102,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
@@ -120,7 +120,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -151,7 +151,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "conv_12345" } });
 
         Assert.True(requestTriggered);
@@ -169,7 +169,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -200,7 +200,7 @@ public class AzureAIProjectChatClientTests
             });
 
         // Act
-        var session = await agent.GetNewSessionAsync();
+        var session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session, options: new ChatClientAgentRunOptions() { ChatOptions = new() { ConversationId = "resp_0888a" } });
 
         Assert.True(requestTriggered);

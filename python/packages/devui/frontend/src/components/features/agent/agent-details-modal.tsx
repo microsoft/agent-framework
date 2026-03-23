@@ -161,7 +161,7 @@ export function AgentDetailsModal({
             </DetailCard>
           )}
 
-          {/* Tools and Middleware Grid */}
+          {/* Tools and MiddlewareTypes Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Tools */}
             {agent.tools && agent.tools.length > 0 && (

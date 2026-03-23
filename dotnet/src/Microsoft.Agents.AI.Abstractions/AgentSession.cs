@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -26,7 +28,7 @@ namespace Microsoft.Agents.AI;
 /// <item><description>Chat history reduction, e.g. where messages needs to be summarized or truncated to reduce the size.</description></item>
 /// </list>
 /// An <see cref="AgentSession"/> is always constructed by an <see cref="AIAgent"/> so that the <see cref="AIAgent"/>
-/// can attach any necessary behaviors to the <see cref="AgentSession"/>. See the <see cref="AIAgent.GetNewSessionAsync(System.Threading.CancellationToken)"/>
+/// can attach any necessary behaviors to the <see cref="AgentSession"/>. See the <see cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
 /// and <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> methods for more information.
 /// </para>
 /// <para>
@@ -36,14 +38,24 @@ namespace Microsoft.Agents.AI;
 /// <para>
 /// To support conversations that may need to survive application restarts or separate service requests, an <see cref="AgentSession"/> can be serialized
 /// and deserialized, so that it can be saved in a persistent store.
-/// The <see cref="AgentSession"/> provides the <see cref="Serialize(JsonSerializerOptions?)"/> method to serialize the session to a
+/// The <see cref="AIAgent"/> provides the <see cref="AIAgent.SerializeSessionAsync(AgentSession, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method to serialize the session to a
 /// <see cref="JsonElement"/> and the <see cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/> method
 /// can be used to deserialize the session.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Serialized sessions may contain conversation content, session identifiers,
+/// and other potentially sensitive data including PII. Developers should:
+/// <list type="bullet">
+/// <item><description>Treat serialized session data as sensitive and store it securely with appropriate access controls and encryption at rest.</description></item>
+/// <item><description>Treat restoring a session from an untrusted source as equivalent to accepting untrusted input. A compromised storage backend
+/// could alter message roles to escalate trust, or inject adversarial content that influences LLM behavior.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 /// <seealso cref="AIAgent"/>
-/// <seealso cref="AIAgent.GetNewSessionAsync(System.Threading.CancellationToken)"/>
+/// <seealso cref="AIAgent.CreateSessionAsync(System.Threading.CancellationToken)"/>
 /// <seealso cref="AIAgent.DeserializeSessionAsync(JsonElement, JsonSerializerOptions?, System.Threading.CancellationToken)"/>
+[DebuggerDisplay("{DebuggerDisplay,nq}")]
 public abstract class AgentSession
 {
     /// <summary>
@@ -54,12 +66,23 @@ public abstract class AgentSession
     }
 
     /// <summary>
-    /// Serializes the current object's state to a <see cref="JsonElement"/> using the specified serialization options.
+    /// Initializes a new instance of the <see cref="AgentSession"/> class.
     /// </summary>
-    /// <param name="jsonSerializerOptions">The JSON serialization options to use.</param>
-    /// <returns>A <see cref="JsonElement"/> representation of the object's state.</returns>
-    public virtual JsonElement Serialize(JsonSerializerOptions? jsonSerializerOptions = null)
-        => default;
+    protected AgentSession(AgentSessionStateBag stateBag)
+    {
+        this.StateBag = Throw.IfNull(stateBag);
+    }
+
+    /// <summary>
+    /// Gets any arbitrary state associated with this session.
+    /// </summary>
+    /// <remarks>
+    /// Data stored in the <see cref="StateBag"/> will be included when the session is serialized.
+    /// Avoid storing secrets, credentials, or highly sensitive data in the state bag without appropriate encryption,
+    /// as this data may be persisted to external storage.
+    /// </remarks>
+    [JsonPropertyName("stateBag")]
+    public AgentSessionStateBag StateBag { get; protected set; } = new();
 
     /// <summary>Asks the <see cref="AgentSession"/> for an object of the specified type <paramref name="serviceType"/>.</summary>
     /// <param name="serviceType">The type of object being requested.</param>
@@ -90,4 +113,7 @@ public abstract class AgentSession
     /// </remarks>
     public TService? GetService<TService>(object? serviceKey = null)
         => this.GetService(typeof(TService), serviceKey) is TService service ? service : default;
+
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+    private string DebuggerDisplay => $"StateBag Count = {this.StateBag.Count}";
 }

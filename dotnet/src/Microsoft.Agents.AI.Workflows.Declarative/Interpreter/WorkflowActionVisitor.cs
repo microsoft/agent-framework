@@ -51,6 +51,14 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
 
         this._workflowModel.Build(builder);
 
+        // Apply telemetry if configured
+        if (this._workflowOptions.IsTelemetryEnabled)
+        {
+            builder.WorkflowBuilder.WithOpenTelemetry(
+                this._workflowOptions.ConfigureTelemetry,
+                this._workflowOptions.TelemetryActivitySource);
+        }
+
         // Build final workflow
         return builder.WorkflowBuilder.Build(validateOrphans: false);
     }
@@ -193,7 +201,7 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         {
             // Transition to end of inner actions
             string endActionsId = ForeachExecutor.Steps.End(action.Id);
-            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.ResetAsync), action.Id);
+            this.ContinueWith(new DelegateActionExecutor(endActionsId, this._workflowState, action.CompleteAsync), action.Id);
             // Transition to select the next item
             this._workflowModel.AddLink(endActionsId, loopId);
         }
@@ -382,6 +390,27 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
     }
 
+    protected override void Visit(InvokeFunctionTool item)
+    {
+        this.Trace(item);
+
+        // Entry point to invoke function tool - always yields for external execution
+        InvokeFunctionToolExecutor action = new(item, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Define request-port for function tool invocation (always requires external input)
+        string externalInputPortId = InvokeFunctionToolExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLinkFromPeer(action.ParentId, externalInputPortId);
+
+        // Capture response when external input is received
+        string resumeId = InvokeFunctionToolExecutor.Steps.Resume(action.Id);
+        this.ContinueWith(
+            new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync),
+            action.ParentId);
+    }
+
     protected override void Visit(InvokeAzureResponse item)
     {
         this.NotSupported(item);
@@ -462,6 +491,42 @@ internal sealed class WorkflowActionVisitor : DialogActionVisitor
         this.Trace(item);
 
         this.ContinueWith(new SendActivityExecutor(item, this._workflowState));
+    }
+
+    protected override void Visit(InvokeMcpTool item)
+    {
+        this.Trace(item);
+
+        // Verify MCP handler is configured
+        if (this._workflowOptions.McpToolHandler is null)
+        {
+            throw new DeclarativeModelException("MCP tool handler not configured. Set McpToolHandler in DeclarativeWorkflowOptions to use InvokeMcpTool actions.");
+        }
+
+        // Entry point to invoke MCP tool - may yield for approval
+        InvokeMcpToolExecutor action = new(item, this._workflowOptions.McpToolHandler, this._workflowOptions.AgentProvider, this._workflowState);
+        this.ContinueWith(action);
+
+        // Transition to post action if no external input is required (no approval needed)
+        string postId = Steps.Post(action.Id);
+        this._workflowModel.AddLink(action.Id, postId, InvokeMcpToolExecutor.RequiresNothing);
+
+        // If approval is required, define request-port for approval flow
+        string externalInputPortId = InvokeMcpToolExecutor.Steps.ExternalInput(action.Id);
+        RequestPortAction externalInputPort = new(RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(externalInputPortId));
+        this._workflowModel.AddNode(externalInputPort, action.ParentId);
+        this._workflowModel.AddLink(action.Id, externalInputPortId, InvokeMcpToolExecutor.RequiresInput);
+
+        // Capture response when external input is received
+        string resumeId = InvokeMcpToolExecutor.Steps.Resume(action.Id);
+        this._workflowModel.AddNode(new DelegateActionExecutor<ExternalInputResponse>(resumeId, this._workflowState, action.CaptureResponseAsync), action.ParentId);
+        this._workflowModel.AddLink(externalInputPortId, resumeId);
+
+        // After resume, transition to post action
+        this._workflowModel.AddLink(resumeId, postId);
+
+        // Define post action (completion)
+        this._workflowModel.AddNode(new DelegateActionExecutor(postId, this._workflowState, action.CompleteAsync), action.ParentId);
     }
 
     #region Not supported

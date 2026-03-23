@@ -6,9 +6,11 @@ These executors handle simple actions like SetValue, SendActivity, etc.
 Each action becomes a node in the workflow graph.
 """
 
-from typing import Any
+import uuid
+from collections.abc import Mapping
+from typing import Any, cast
 
-from agent_framework._workflows import (
+from agent_framework import (
     WorkflowContext,
     handler,
 )
@@ -27,9 +29,12 @@ def _get_variable_path(action_def: dict[str, Any], key: str = "variable") -> str
     variable = action_def.get(key)
     if isinstance(variable, str):
         return variable
-    if isinstance(variable, dict):
-        return variable.get("path")
-    return action_def.get("path")
+    if isinstance(variable, Mapping):
+        path = variable.get("path")  # type: ignore[reportUnknownVariableType]
+        return path if isinstance(path, str) else None
+
+    fallback_path = action_def.get("path")
+    return fallback_path if isinstance(fallback_path, str) else None
 
 
 class SetValueExecutor(DeclarativeActionExecutor):
@@ -52,8 +57,8 @@ class SetValueExecutor(DeclarativeActionExecutor):
 
         if path:
             # Evaluate value if it's an expression
-            evaluated_value = await state.eval_if_expression(value)
-            await state.set(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -74,8 +79,43 @@ class SetVariableExecutor(DeclarativeActionExecutor):
         value = self._action_def.get("value")
 
         if path:
-            evaluated_value = await state.eval_if_expression(value)
-            await state.set(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.set(path, evaluated_value)
+
+        await ctx.send_message(ActionComplete())
+
+
+class CreateConversationExecutor(DeclarativeActionExecutor):
+    """Executor for the CreateConversation action.
+
+    Generates a unique conversation ID and initialises a conversation entry
+    in ``System.conversations``.  The generated ID is stored at the state
+    path specified by the ``conversationId`` parameter (if provided).
+    """
+
+    @handler
+    async def handle_action(
+        self,
+        trigger: Any,
+        ctx: WorkflowContext[ActionComplete],
+    ) -> None:
+        """Handle the CreateConversation action."""
+        state = await self._ensure_state_initialized(ctx, trigger)
+
+        generated_id = str(uuid.uuid4())
+
+        # Store the generated ID at the requested path (e.g. "Local.myConvId")
+        conversation_id_path = _get_variable_path(self._action_def, "conversationId")
+        if conversation_id_path:
+            state.set(conversation_id_path, generated_id)
+
+        # Initialise the conversation entry in System.conversations
+        conversations: dict[str, Any] = state.get("System.conversations") or {}
+        conversations[generated_id] = {
+            "id": generated_id,
+            "messages": [],
+        }
+        state.set("System.conversations", conversations)
 
         await ctx.send_message(ActionComplete())
 
@@ -96,8 +136,8 @@ class SetTextVariableExecutor(DeclarativeActionExecutor):
         text = self._action_def.get("text", "")
 
         if path:
-            evaluated_text = await state.eval_if_expression(text)
-            await state.set(path, str(evaluated_text) if evaluated_text is not None else "")
+            evaluated_text = state.eval_if_expression(text)
+            state.set(path, str(evaluated_text) if evaluated_text is not None else "")
 
         await ctx.send_message(ActionComplete())
 
@@ -114,20 +154,27 @@ class SetMultipleVariablesExecutor(DeclarativeActionExecutor):
         """Handle the SetMultipleVariables action."""
         state = await self._ensure_state_initialized(ctx, trigger)
 
-        assignments = self._action_def.get("assignments", [])
+        assignments = cast(
+            list[Mapping[str, Any]],
+            self._action_def.get("assignments") if isinstance(self._action_def.get("assignments"), list) else [],
+        )
         for assignment in assignments:
+            if not isinstance(assignment, Mapping):
+                continue
             variable = assignment.get("variable")
             path: str | None
             if isinstance(variable, str):
                 path = variable
-            elif isinstance(variable, dict):
-                path = variable.get("path")
+            elif isinstance(variable, Mapping):
+                path_value = variable.get("path")  # type: ignore[reportUnknownMemberType]
+                path = path_value if isinstance(path_value, str) else None
             else:
-                path = assignment.get("path")
+                fallback_path = assignment.get("path")
+                path = fallback_path if isinstance(fallback_path, str) else None
             value = assignment.get("value")
             if path:
-                evaluated_value = await state.eval_if_expression(value)
-                await state.set(path, evaluated_value)
+                evaluated_value = state.eval_if_expression(value)
+                state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -148,8 +195,8 @@ class AppendValueExecutor(DeclarativeActionExecutor):
         value = self._action_def.get("value")
 
         if path:
-            evaluated_value = await state.eval_if_expression(value)
-            await state.append(path, evaluated_value)
+            evaluated_value = state.eval_if_expression(value)
+            state.append(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -170,7 +217,7 @@ class ResetVariableExecutor(DeclarativeActionExecutor):
 
         if path:
             # Reset to None/empty
-            await state.set(path, None)
+            state.set(path, None)
 
         await ctx.send_message(ActionComplete())
 
@@ -188,9 +235,9 @@ class ClearAllVariablesExecutor(DeclarativeActionExecutor):
         state = await self._ensure_state_initialized(ctx, trigger)
 
         # Get state data and clear Local variables
-        state_data = await state.get_state_data()
+        state_data = state.get_state_data()
         state_data["Local"] = {}
-        await state.set_state_data(state_data)
+        state.set_state_data(state_data)
 
         await ctx.send_message(ActionComplete())
 
@@ -213,18 +260,21 @@ class SendActivityExecutor(DeclarativeActionExecutor):
         activity = self._action_def.get("activity", "")
 
         # Activity can be a string directly or a dict with a "text" field
-        text = activity.get("text", "") if isinstance(activity, dict) else activity
+        if isinstance(activity, Mapping):
+            text: Any = activity.get("text", "")  # type: ignore[reportUnknownMemberType]
+        else:
+            text = activity
 
         if isinstance(text, str):
             # First evaluate any =expression syntax
-            text = await state.eval_if_expression(text)
+            text = state.eval_if_expression(text)
             # Then interpolate any {Variable.Path} template syntax
             if isinstance(text, str):
-                text = await state.interpolate_string(text)
+                text = state.interpolate_string(text)
 
         # Yield the text as workflow output
         if text:
-            await ctx.yield_output(str(text))
+            await ctx.yield_output(str(text))  # type: ignore[reportUnknownArgumentType]
 
         await ctx.send_message(ActionComplete())
 
@@ -258,8 +308,8 @@ class EmitEventExecutor(DeclarativeActionExecutor):
             event_value = event_def.get("data")
 
         if event_name:
-            evaluated_name = await state.eval_if_expression(event_name)
-            evaluated_value = await state.eval_if_expression(event_value)
+            evaluated_name = state.eval_if_expression(event_name)
+            evaluated_value = state.eval_if_expression(event_value)
 
             event_data = {
                 "eventName": evaluated_name,
@@ -300,16 +350,19 @@ class EditTableExecutor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = await state.get(table_path)
-            if current_table is None:
+            current_table_value = state.get(table_path)
+            current_table: list[Any]
+            if current_table_value is None:
                 current_table = []
-            elif not isinstance(current_table, list):
-                current_table = [current_table]
+            elif isinstance(current_table_value, list):
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
+            else:
+                current_table = [current_table_value]
 
             if operation == "add" or operation == "insert":
-                evaluated_value = await state.eval_if_expression(value)
+                evaluated_value = state.eval_if_expression(value)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else len(current_table)
                     current_table.insert(idx, evaluated_value)
                 else:
@@ -318,12 +371,12 @@ class EditTableExecutor(DeclarativeActionExecutor):
             elif operation == "remove":
                 if value is not None:
                     # Remove by value
-                    evaluated_value = await state.eval_if_expression(value)
+                    evaluated_value = state.eval_if_expression(value)
                     if evaluated_value in current_table:
                         current_table.remove(evaluated_value)
                 elif index is not None:
                     # Remove by index
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else -1
                     if 0 <= idx < len(current_table):
                         current_table.pop(idx)
@@ -334,13 +387,13 @@ class EditTableExecutor(DeclarativeActionExecutor):
             elif operation == "set" or operation == "update":
                 # Update item at index
                 if index is not None:
-                    evaluated_value = await state.eval_if_expression(value)
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_value = state.eval_if_expression(value)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else 0
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_value
 
-            await state.set(table_path, current_table)
+            state.set(table_path, current_table)
 
         await ctx.send_message(ActionComplete())
 
@@ -377,16 +430,19 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
         if table_path:
             # Get current table value
-            current_table = await state.get(table_path)
-            if current_table is None:
+            current_table_value = state.get(table_path)
+            current_table: list[Any]
+            if current_table_value is None:
                 current_table = []
-            elif not isinstance(current_table, list):
-                current_table = [current_table]
+            elif isinstance(current_table_value, list):
+                current_table = list(current_table_value)  # type: ignore[reportUnknownArgumentType]
+            else:
+                current_table = [current_table_value]
 
             if operation == "add":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else len(current_table)
                     current_table.insert(idx, evaluated_item)
                 else:
@@ -394,17 +450,20 @@ class EditTableV2Executor(DeclarativeActionExecutor):
 
             elif operation == "remove":
                 if item is not None:
-                    evaluated_item = await state.eval_if_expression(item)
+                    evaluated_item = state.eval_if_expression(item)
                     if key_field and isinstance(evaluated_item, dict):
                         # Remove by key match
-                        key_value = evaluated_item.get(key_field)
+                        evaluated_item_dict = cast(dict[str, Any], evaluated_item)
+                        key_value = evaluated_item_dict.get(key_field)
                         current_table = [
-                            r for r in current_table if not (isinstance(r, dict) and r.get(key_field) == key_value)
+                            r
+                            for r in current_table
+                            if not (isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value)
                         ]
                     elif evaluated_item in current_table:
                         current_table.remove(evaluated_item)
                 elif index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else -1
                     if 0 <= idx < len(current_table):
                         current_table.pop(idx)
@@ -413,13 +472,13 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                 current_table = []
 
             elif operation == "addorupdate":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if key_field and isinstance(evaluated_item, dict):
-                    key_value = evaluated_item.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     # Find existing item with same key
                     found_idx = -1
                     for i, r in enumerate(current_table):
-                        if isinstance(r, dict) and r.get(key_field) == key_value:
+                        if isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value:
                             found_idx = i
                             break
                     if found_idx >= 0:
@@ -433,20 +492,20 @@ class EditTableV2Executor(DeclarativeActionExecutor):
                     current_table.append(evaluated_item)
 
             elif operation == "update":
-                evaluated_item = await state.eval_if_expression(item)
+                evaluated_item = state.eval_if_expression(item)
                 if index is not None:
-                    evaluated_index = await state.eval_if_expression(index)
+                    evaluated_index = state.eval_if_expression(index)
                     idx = int(evaluated_index) if evaluated_index is not None else 0
                     if 0 <= idx < len(current_table):
                         current_table[idx] = evaluated_item
                 elif key_field and isinstance(evaluated_item, dict):
-                    key_value = evaluated_item.get(key_field)
+                    key_value = evaluated_item.get(key_field)  # type: ignore[reportUnknownArgumentType]
                     for i, r in enumerate(current_table):
-                        if isinstance(r, dict) and r.get(key_field) == key_value:
+                        if isinstance(r, dict) and cast(dict[str, Any], r).get(key_field) == key_value:
                             current_table[i] = evaluated_item
                             break
 
-            await state.set(table_path, current_table)
+            state.set(table_path, current_table)
 
         await ctx.send_message(ActionComplete())
 
@@ -479,13 +538,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
 
         if path and value is not None:
             # Evaluate the value expression
-            evaluated_value = await state.eval_if_expression(value)
+            evaluated_value = state.eval_if_expression(value)
 
             # Convert to target type if specified
             if value_type:
                 evaluated_value = self._convert_to_type(evaluated_value, value_type)
 
-            await state.set(path, evaluated_value)
+            state.set(path, evaluated_value)
 
         await ctx.send_message(ActionComplete())
 
@@ -532,11 +591,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return {}
             if isinstance(value, dict):
-                return value
+                return cast(dict[str, Any], value)
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
-                    return parsed if isinstance(parsed, dict) else {"value": parsed}
+                    if isinstance(parsed, dict):
+                        return cast(dict[str, Any], parsed)
+                    return {"value": parsed}
                 except json.JSONDecodeError:
                     return {"value": value}
             return {"value": value}
@@ -545,11 +606,13 @@ class ParseValueExecutor(DeclarativeActionExecutor):
             if value is None:
                 return []
             if isinstance(value, list):
-                return value
+                return cast(list[Any], value)  # type: ignore[redundant-cast]
             if isinstance(value, str):
                 try:
                     parsed = json.loads(value)
-                    return parsed if isinstance(parsed, list) else [parsed]
+                    if isinstance(parsed, list):
+                        return cast(list[Any], parsed)  # type: ignore[redundant-cast]
+                    return [parsed]
                 except json.JSONDecodeError:
                     return [value]
             return [value]
@@ -560,6 +623,7 @@ class ParseValueExecutor(DeclarativeActionExecutor):
 
 # Mapping of action kinds to executor classes
 BASIC_ACTION_EXECUTORS: dict[str, type[DeclarativeActionExecutor]] = {
+    "CreateConversation": CreateConversationExecutor,
     "SetValue": SetValueExecutor,
     "SetVariable": SetVariableExecutor,
     "SetTextVariable": SetTextVariableExecutor,

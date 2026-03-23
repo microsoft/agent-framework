@@ -9,7 +9,6 @@ using Microsoft.DurableTask.Client.Entities;
 using Microsoft.DurableTask.Entities;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Chat;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 
@@ -51,7 +50,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentSession session = await simpleAgentProxy.GetNewSessionAsync(this.TestTimeoutToken);
+        AgentSession session = await simpleAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
@@ -98,7 +97,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         // A proxy agent is needed to call the hosted test agent
         AIAgent simpleAgentProxy = simpleAgent.AsDurableAgentProxy(testHelper.Services);
 
-        AgentSession session = await simpleAgentProxy.GetNewSessionAsync(this.TestTimeoutToken);
+        AgentSession session = await simpleAgentProxy.CreateSessionAsync(this.TestTimeoutToken);
 
         DurableTaskClient client = testHelper.GetClient();
 
@@ -184,7 +183,7 @@ public sealed class AgentEntityTests(ITestOutputHelper outputHelper) : IDisposab
         public override async Task<string> RunAsync(TaskOrchestrationContext context, string input)
         {
             DurableAIAgent writer = context.GetAgent("TestAgent");
-            AgentSession writerSession = await writer.GetNewSessionAsync();
+            AgentSession writerSession = await writer.CreateSessionAsync();
 
             await writer.RunAsync(
                 message: context.GetInput<string>()!,
