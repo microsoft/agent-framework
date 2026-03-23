@@ -21,15 +21,15 @@ internal static class SubprocessScriptExecutor
     /// <summary>
     /// Runs a skill script as a local subprocess.
     /// </summary>
-    public static Task<object?> ExecuteAsync(
-        AgentSkill skill,
+    public static async Task<object?> ExecuteAsync(
+        AgentFileSkill skill,
         AgentFileSkillScript script,
         AIFunctionArguments arguments,
         CancellationToken cancellationToken)
     {
         if (!File.Exists(script.FullPath))
         {
-            return Task.FromResult<object?>($"Error: Script file not found: {script.FullPath}");
+            return $"Error: Script file not found: {script.FullPath}";
         }
 
         string extension = Path.GetExtension(script.FullPath);
@@ -85,29 +85,45 @@ internal static class SubprocessScriptExecutor
             using var process = Process.Start(startInfo);
             if (process is null)
             {
-                return Task.FromResult<object?>($"Error: Failed to start process for script '{script.Name}'.");
+                return $"Error: Failed to start process for script '{script.Name}'.";
             }
 
-            string output = process.StandardOutput.ReadToEnd();
-            string error = process.StandardError.ReadToEnd();
-
-            process.WaitForExit(TimeSpan.FromSeconds(30));
-
-            if (!string.IsNullOrEmpty(error))
+            try
             {
-                output += $"\nStderr:\n{error}";
-            }
+                Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
-            if (process.ExitCode != 0)
+                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+                string output = await outputTask.ConfigureAwait(false);
+                string error = await errorTask.ConfigureAwait(false);
+
+                if (!string.IsNullOrEmpty(error))
+                {
+                    output += $"\nStderr:\n{error}";
+                }
+
+                if (process.ExitCode != 0)
+                {
+                    output += $"\nScript exited with code {process.ExitCode}";
+                }
+
+                return string.IsNullOrEmpty(output) ? "(no output)" : output.Trim();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                output += $"\nScript exited with code {process.ExitCode}";
+                // Kill the process on cancellation to avoid leaving orphaned subprocesses.
+                process.Kill(entireProcessTree: true);
+                throw;
             }
-
-            return Task.FromResult<object?>(string.IsNullOrEmpty(output) ? "(no output)" : output.Trim());
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            return Task.FromResult<object?>($"Error: Failed to execute script '{script.Name}': {ex.Message}");
+            return $"Error: Failed to execute script '{script.Name}': {ex.Message}";
         }
     }
 

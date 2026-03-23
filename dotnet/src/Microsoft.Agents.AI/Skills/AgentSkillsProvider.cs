@@ -224,7 +224,8 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             return "Error: Script name cannot be empty.";
         }
 
-        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName); if (skill == null)
+        var skill = skills?.FirstOrDefault(skill => skill.Frontmatter.Name == skillName);
+        if (skill == null)
         {
             return $"Error: Skill '{skillName}' not found.";
         }
