@@ -1,6 +1,5 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;

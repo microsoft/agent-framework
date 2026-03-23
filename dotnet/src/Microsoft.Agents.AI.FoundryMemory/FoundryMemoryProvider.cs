@@ -19,7 +19,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.FoundryMemory;
 
 /// <summary>
-/// Provides an Microsoft Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
+/// Provides a Microsoft Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>

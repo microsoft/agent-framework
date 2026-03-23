@@ -19,7 +19,7 @@ public class AIProjectClientAgentRunStreamingPreviousResponseTests() : RunStream
 }
 
 [Obsolete("Use FoundryVersionedAgentRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientAgentRunStreamingConversationTests() : RunTests<AIProjectClientFixture>(() => new())
+public class AIProjectClientAgentRunStreamingConversationTests() : RunStreamingTests<AIProjectClientFixture>(() => new())
 {
     public override Func<Task<AgentRunOptions?>> AgentRunOptionsFactory => async () =>
     {

@@ -20,9 +20,9 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// </para>
 /// <para>
 /// Instead of writing:
-/// <code>((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool()</code>
+/// <c>((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool()</c>
 /// You can write:
-/// <code>FoundryAITool.CreateOpenApiTool(definition)</code>
+/// <c>FoundryAITool.CreateOpenApiTool(definition)</c>
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
