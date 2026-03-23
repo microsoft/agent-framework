@@ -188,6 +188,29 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
+def test_mcp_tool_dict_passed_through_to_chat_api(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts are passed through unchanged by the chat client.
+
+    The Chat Completions API does not support "type": "mcp" tools. MCP tools
+    should be used with the Responses API client instead. This test documents
+    that the chat client passes dict-based tools through without filtering,
+    so callers must use the correct client for MCP tools.
+    """
+    client = OpenAIChatClient()
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    result = client._prepare_tools_for_openai(mcp_tool)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    # The chat client passes dict tools through unchanged, including unsupported types
+    assert result["tools"][0]["type"] == "mcp"
+
+
 def test_prepare_tools_with_single_function_tool(
     openai_unit_test_env: dict[str, str],
 ) -> None:
