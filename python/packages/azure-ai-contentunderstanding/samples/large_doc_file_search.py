@@ -14,9 +14,11 @@
 import asyncio
 import os
 from pathlib import Path
+from typing import Any
 
 from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import AsyncAzureOpenAI
@@ -58,22 +60,33 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "
 
 
 async def main() -> None:
-    credential = AzureCliCredential()
+    # Support both API key and credential-based auth
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    credential = AzureCliCredential() if not api_key else None
 
     # Create async OpenAI client for vector store operations
-    token = credential.get_token("https://cognitiveservices.azure.com/.default").token
-    openai_client = AsyncAzureOpenAI(
-        azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        azure_ad_token=token,
-        api_version="2025-03-01-preview",
-    )
+    openai_kwargs: dict[str, Any] = {
+        "azure_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        "api_version": "2025-03-01-preview",
+    }
+    if api_key:
+        openai_kwargs["api_key"] = api_key
+    else:
+        token = credential.get_token("https://cognitiveservices.azure.com/.default").token  # type: ignore[union-attr]
+        openai_kwargs["azure_ad_token"] = token
+    openai_client = AsyncAzureOpenAI(**openai_kwargs)
 
     # Configure CU provider with file_search integration
     # When file_search is set, CU-extracted markdown is automatically uploaded
     # to a vector store and a file_search tool is registered on the context.
+    cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+    cu_credential: AzureKeyCredential | AzureCliCredential = (
+        AzureKeyCredential(cu_key) if cu_key else credential  # type: ignore[arg-type]
+    )
+
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-        credential=credential,
+        credential=cu_credential,
         analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,
         file_search=FileSearchConfig(
@@ -82,11 +95,15 @@ async def main() -> None:
         ),
     )
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
-    )
+    client_kwargs: dict[str, Any] = {
+        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    }
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    else:
+        client_kwargs["credential"] = credential
+    client = AzureOpenAIResponsesClient(**client_kwargs)
 
     if SAMPLE_PDF_PATH.exists():
         pdf_bytes = SAMPLE_PDF_PATH.read_bytes()

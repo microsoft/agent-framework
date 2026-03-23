@@ -21,6 +21,7 @@ Run with DevUI:
 import os
 
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -28,20 +29,28 @@ from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingCo
 
 load_dotenv()
 
-credential = AzureCliCredential()
+# Support both API key and credential-based auth
+_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+_credential = AzureCliCredential() if not _api_key else None
+_cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+_cu_credential = AzureKeyCredential(_cu_key) if _cu_key else _credential
 
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-    credential=credential,
+    credential=_cu_credential,
     analyzer_id="prebuilt-documentSearch",
     max_wait=5.0,
 )
 
-client = AzureOpenAIResponsesClient(
-    project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-    credential=credential,
-)
+_client_kwargs: dict = {
+    "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+}
+if _api_key:
+    _client_kwargs["api_key"] = _api_key
+else:
+    _client_kwargs["credential"] = _credential
+client = AzureOpenAIResponsesClient(**_client_kwargs)
 
 agent = client.as_agent(
     name="MultiModalDocAgent",

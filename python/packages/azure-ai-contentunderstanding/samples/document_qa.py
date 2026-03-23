@@ -16,6 +16,7 @@ from pathlib import Path
 
 from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
+from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -45,21 +46,29 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "
 
 
 async def main() -> None:
-    credential = AzureCliCredential()
+    # Support both API key and credential-based auth
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    credential = AzureCliCredential() if not api_key else None
+    cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+    cu_credential = AzureKeyCredential(cu_key) if cu_key else credential
 
     # Set up Azure Content Understanding context provider
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-        credential=credential,
+        credential=cu_credential,
         analyzer_id="prebuilt-documentSearch",  # RAG-optimized document analyzer
     )
 
     # Set up the LLM client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=credential,
-    )
+    client_kwargs = {
+        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    }
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    else:
+        client_kwargs["credential"] = credential
+    client = AzureOpenAIResponsesClient(**client_kwargs)
 
     # Create agent with CU context provider
     async with cu:
