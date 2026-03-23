@@ -229,7 +229,7 @@ public sealed class AgentInMemorySkillsSource : AgentSkillsSource
 
 Inline skills are built at runtime via the `AgentInlineSkill` class and its fluent API. They are ideal for quick, agent-specific skill definitions where a full class hierarchy would be overkill.
 
-**`AgentInlineSkill`** — A skill defined entirely in code. Resources can be static values or functions; scripts are always functions. Constructed with name, description, and instructions, then extended with resources and scripts:
+**`AgentInlineSkill`** — A skill defined entirely in code. Resources can be static values, delegates, or pre-built `AIFunction` instances; scripts can be delegates or `AIFunction` instances. Constructed with name, description, and instructions, then extended with resources and scripts:
 
 ```csharp
 public sealed class AgentInlineSkill : AgentSkill
@@ -239,47 +239,36 @@ public sealed class AgentInlineSkill : AgentSkill
 
     public AgentInlineSkill AddResource(object value, string name, string? description = null);
     public AgentInlineSkill AddResource(Delegate handler, string name, string? description = null);
+    public AgentInlineSkill AddResource(AIFunction function);
     public AgentInlineSkill AddScript(Delegate handler, string name, string? description = null);
+    public AgentInlineSkill AddScript(AIFunction function);
 }
 ```
 
-**`AgentInlineSkillResource`** — A skill resource that wraps a static value:
+**`AgentInlineSkillResource`** — A skill resource backed by a static value, a delegate, or a pre-built `AIFunction`. Static resources return a fixed value; delegate-based resources use `AIFunctionFactory` for automatic parameter marshaling; `AIFunction`-based resources use the function's name and description directly:
 
 ```csharp
 public sealed class AgentInlineSkillResource : AgentSkillResource
 {
     public AgentInlineSkillResource(object value, string name, string? description = null)
-        : base(name, description)
-    {
-        _value = value;
-    }
+        : base(name, description) { _value = value; }
 
-    public override Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default)
-    {
-        return Task.FromResult<object?>(_value);
-    }
-}
-```
-
-**`AgentInlineSkillResource`** — A skill resource backed by a delegate. The delegate is invoked via an `AIFunction` each time `ReadAsync` is called, producing a dynamic (computed) value:
-
-```csharp
-public sealed class AgentInlineSkillResource : AgentSkillResource
-{
     public AgentInlineSkillResource(Delegate handler, string name, string? description = null)
-        : base(name, description)
-    {
-        _function = AIFunctionFactory.Create(handler, name: name);
-    }
+        : base(name, description) { _function = AIFunctionFactory.Create(handler, name: name); }
+
+    public AgentInlineSkillResource(AIFunction function)
+        : base(function.Name, function.Description) { _function = function; }
 
     public override async Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default)
     {
-        return await _function.InvokeAsync(arguments, cancellationToken);
+        if (_function is not null)
+            return await _function.InvokeAsync(arguments, cancellationToken);
+        return _value;
     }
 }
 ```
 
-**`AgentInlineSkillScript`** — A skill script backed by a delegate via an `AIFunction`:
+**`AgentInlineSkillScript`** — A skill script backed by a delegate or a pre-built `AIFunction`. Delegate-based scripts use `AIFunctionFactory` for automatic parameter marshaling; `AIFunction`-based scripts use the function's name and description directly:
 
 ```csharp
 public sealed class AgentInlineSkillScript : AgentSkillScript
@@ -287,10 +276,10 @@ public sealed class AgentInlineSkillScript : AgentSkillScript
     private readonly AIFunction _function;
 
     public AgentInlineSkillScript(Delegate handler, string name, string? description = null)
-        : base(name, description)
-    {
-        _function = AIFunctionFactory.Create(handler, name: name);
-    }
+        : base(name, description) { _function = AIFunctionFactory.Create(handler, name: name); }
+
+    public AgentInlineSkillScript(AIFunction function)
+        : base(function.Name, function.Description) { _function = function; }
 
     public JsonElement? ParametersSchema => _function.JsonSchema;
 
