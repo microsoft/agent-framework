@@ -879,6 +879,32 @@ async def test_streaming_usage_only_on_final_chunk() -> None:
     assert any(c.type == "usage" for c in updates[-1].contents)
 
 
+async def test_streaming_get_final_response() -> None:
+    """get_final_response() must return a fully assembled ChatResponse after the stream is exhausted."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response([_make_part(text="world!")], finish_reason="STOP", prompt_tokens=10, output_tokens=5),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+
+    async for _ in stream:
+        pass
+
+    final = await stream.get_final_response()
+
+    assert final.messages[0].text == "Hello world!"
+    assert final.finish_reason == "stop"
+    assert final.usage_details is not None
+    assert final.usage_details["input_token_count"] == 10
+    assert final.usage_details["output_token_count"] == 5
+
+
 # service_url
 
 
