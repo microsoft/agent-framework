@@ -14,11 +14,13 @@ These samples demonstrate how to use the `agent-framework-azure-ai-contentunders
 
 ## Samples
 
-| Sample | Description | Run |
-|--------|-------------|-----|
-| [Document Q&A](document_qa.py) | Upload a PDF, ask questions, follow-up with cached results | `uv run samples/document_qa.py` |
-| [Multi-Modal Chat](multimodal_chat.py) | Multi-file session with PDF + status tracking | `uv run samples/multimodal_chat.py` |
-| [Invoice Processing](invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/invoice_processing.py` |
+| # | Sample | Description | Run |
+|---|--------|-------------|-----|
+| S1 | [Document Q&A](document_qa.py) | Upload a PDF, ask questions, follow-up with cached results | `uv run samples/document_qa.py` |
+| S2 | [Multi-Modal Chat](multimodal_chat.py) | Multi-file session with status tracking | `uv run samples/multimodal_chat.py` |
+| S3 | [DevUI Multi-Modal](devui_multimodal_agent/) | Web UI for file upload + CU-powered chat | `uv run poe devui --agent samples/devui_multimodal_agent` |
+| S4 | [Large Doc + file_search](large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/large_doc_file_search.py` |
+| S5 | [Invoice Processing](invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/invoice_processing.py` |
 
 ## Install (preview)
 
