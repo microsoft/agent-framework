@@ -362,8 +362,8 @@ class GeminiChatClient(
                     parts.append(types.Part(text=content.text or ""))
                 case "function_call":
                     call_id = content.call_id or self._generate_tool_call_id()
-                    if content.call_id and content.name:
-                        call_id_to_name[content.call_id] = content.name
+                    if content.name:
+                        call_id_to_name[call_id] = content.name
                     parts.append(
                         types.Part(
                             function_call=types.FunctionCall(

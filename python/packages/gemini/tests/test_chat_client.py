@@ -350,6 +350,34 @@ async def test_function_result_name_resolved_from_call_history() -> None:
     assert function_response.id == "call-42"
 
 
+async def test_function_result_resolved_when_call_id_was_generated() -> None:
+    """When a function_call has no call_id and a fallback is generated, the subsequent
+    function_result referencing that generated ID must still resolve the function name."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    generated_id = "tool-call-generated-123"
+    with patch.object(client, "_generate_tool_call_id", return_value=generated_id):
+        await client.get_response(
+            messages=[
+                Message(role="user", contents=[Content.from_text("Go")]),
+                Message(
+                    role="assistant",
+                    contents=[Content.from_function_call(call_id=None, name="get_weather", arguments={})],  # type: ignore[arg-type]
+                ),
+                Message(
+                    role="tool",
+                    contents=[Content.from_function_result(call_id=generated_id, result="sunny")],
+                ),
+            ]
+        )
+
+    contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
+    tool_turn = next(c for c in contents if c.role == "user" and any(p.function_response for p in c.parts))
+    assert tool_turn.parts[0].function_response.name == "get_weather"
+    assert tool_turn.parts[0].function_response.id == generated_id
+
+
 async def test_function_result_without_matching_call_is_skipped(caplog: pytest.LogCaptureFixture) -> None:
     """A function_result with no prior function_call in history should be skipped with a warning."""
     client, mock = _make_gemini_client()
