@@ -1390,6 +1390,7 @@ class Content:
 
         return Content(
             "text_reasoning",
+            id=self.id or other.id,
             text=combined_text,
             protected_data=protected_data,
             annotations=_combine_annotations(self.annotations, other.annotations),

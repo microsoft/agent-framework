@@ -1526,6 +1526,44 @@ def test_text_reasoning_content_iadd_coverage():
     assert t1.text == "Thinking 1 Thinking 2"
 
 
+
+def test_text_reasoning_content_add_preserves_id():
+    """Test that coalescing text_reasoning Content preserves the id field."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_id_fallback_to_other():
+    """Test that coalescing falls back to other's id when self has no id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_preserves_id_with_encrypted_content():
+    """Test that id and encrypted_content both survive coalescing for round-trip."""
+
+    t1 = Content.from_text_reasoning(
+        id="rs_abc123",
+        text="Thinking",
+        additional_properties={"encrypted_content": "enc_blob_data"},
+    )
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" more")
+
+    result = t1 + t2
+    assert result.text == "Thinking more"
+    assert result.id == "rs_abc123"
+    assert result.additional_properties.get("encrypted_content") == "enc_blob_data"
+
+
 def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
