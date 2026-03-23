@@ -1380,6 +1380,11 @@ class Content:
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
+        # Ensure we do not silently merge contents with conflicting ids
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch(f"Cannot add text_reasoning content with different ids: {self.id!r} != {other.id!r}")
+        combined_id = self.id or other.id
+
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
         other_text = other.text or ""  # type: ignore[attr-defined]
@@ -1390,7 +1395,7 @@ class Content:
 
         return Content(
             "text_reasoning",
-            id=self.id or other.id,
+            id=combined_id,
             text=combined_text,
             protected_data=protected_data,
             annotations=_combine_annotations(self.annotations, other.annotations),

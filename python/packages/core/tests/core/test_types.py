@@ -43,7 +43,7 @@ from agent_framework._types import (
     add_usage_details,
     validate_tool_mode,
 )
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
 
 @fixture
@@ -1561,6 +1561,27 @@ def test_text_reasoning_content_add_preserves_id_with_encrypted_content():
     assert result.text == "Thinking more"
     assert result.id == "rs_abc123"
     assert result.additional_properties.get("encrypted_content") == "enc_blob_data"
+
+
+def test_text_reasoning_content_add_conflicting_ids_raises():
+    """Test that coalescing text_reasoning Content with different ids raises AdditionItemMismatch."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_xyz789", text=" part 2")
+
+    with pytest.raises(AdditionItemMismatch, match="different ids"):
+        t1 + t2
+
+
+def test_text_reasoning_content_add_neither_has_id():
+    """Test that coalescing text_reasoning Content when neither has an id results in None id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id is None
 
 
 def test_comprehensive_to_dict_exclude_options():
