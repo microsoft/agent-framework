@@ -160,8 +160,8 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 
 
 class GeminiChatClient(
-    ChatMiddlewareLayer[GeminiChatOptionsT],
     FunctionInvocationLayer[GeminiChatOptionsT],
+    ChatMiddlewareLayer[GeminiChatOptionsT],
     ChatTelemetryLayer[GeminiChatOptionsT],
     BaseChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
@@ -175,24 +175,24 @@ class GeminiChatClient(
         *,
         api_key: str | None = None,
         model_id: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
         client: genai.Client | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
     ) -> None:
         """Create a Gemini chat client.
 
         Args:
             api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` env var.
             model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` env var.
+            env_file_path: Path to a ``.env`` file for credential loading.
+            env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
             additional_properties: Extra properties stored on the client instance.
             middleware: Optional middleware chain.
             function_invocation_configuration: Optional function invocation configuration.
-            env_file_path: Path to a ``.env`` file for credential loading.
-            env_file_encoding: Encoding for the ``.env`` file.
         """
         settings = load_settings(
             GeminiSettings,
