@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 
 class AnalysisSection(str, Enum):
@@ -65,3 +65,23 @@ class DocumentEntry(TypedDict):
     analyzed_at: str | None
     result: dict[str, object] | None
     error: str | None
+
+
+@dataclass
+class FileSearchConfig:
+    """Configuration for uploading CU-extracted content to an OpenAI vector store.
+
+    When provided to ``ContentUnderstandingContextProvider``, analyzed document
+    markdown is automatically uploaded to a vector store and a ``file_search``
+    tool is registered on the context. This enables token-efficient RAG retrieval
+    on follow-up turns for large documents.
+
+    Args:
+        openai_client: An async OpenAI client (``AsyncOpenAI`` or ``AsyncAzureOpenAI``)
+            used to create files and vector stores. Must support
+            ``client.files.create()`` and ``client.vector_stores.*`` APIs.
+        vector_store_name: Display name for the auto-created vector store.
+    """
+
+    openai_client: Any
+    vector_store_name: str = "cu_extracted_docs"

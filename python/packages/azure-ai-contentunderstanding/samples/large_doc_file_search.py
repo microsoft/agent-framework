@@ -12,18 +12,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import io
 import os
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from agent_framework import Content, Message
-from agent_framework._sessions import AgentSession, SessionContext
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from openai import AsyncAzureOpenAI
 
-from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
+from agent_framework_azure_ai_contentunderstanding import (
+    ContentUnderstandingContextProvider,
+    FileSearchConfig,
+)
 
 load_dotenv()
 
@@ -32,17 +33,20 @@ Large Document + file_search RAG — CU extraction + OpenAI vector store
 
 For large documents (100+ pages) or long audio/video, injecting the full
 CU-extracted content into the LLM context is impractical. This sample shows
-how to combine CU extraction with OpenAI's file_search tool for token-efficient
-RAG retrieval.
+how to use the built-in file_search integration: CU extracts markdown and
+automatically uploads it to an OpenAI vector store for token-efficient RAG.
+
+When ``FileSearchConfig`` is provided, the provider:
+  1. Extracts markdown via CU (handles scanned PDFs, audio, video)
+  2. Uploads the extracted markdown to a vector store
+  3. Registers a ``file_search`` tool on the agent context
+  4. Cleans up the vector store on close
 
 Architecture:
-  Large PDF -> CU extracts markdown -> Upload to vector store -> file_search
+  Large PDF -> CU extracts markdown -> auto-upload to vector store -> file_search
   Follow-up -> file_search retrieves top-k chunks -> LLM answers
 
-CU adds value even for formats file_search supports (PDF): CU-extracted markdown
-produces better vector store chunks than raw PDF parsing (85% vs 75% accuracy).
-
-NOTE: Requires OpenAI Responses API for file_search (not available with Anthropic/Ollama).
+NOTE: Requires an async OpenAI client for vector store operations.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
@@ -56,12 +60,26 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "
 async def main() -> None:
     credential = AzureCliCredential()
 
-    # Step 1: Use CU to extract high-quality markdown
+    # Create async OpenAI client for vector store operations
+    token = credential.get_token("https://cognitiveservices.azure.com/.default").token
+    openai_client = AsyncAzureOpenAI(
+        azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        azure_ad_token=token,
+        api_version="2025-03-01-preview",
+    )
+
+    # Configure CU provider with file_search integration
+    # When file_search is set, CU-extracted markdown is automatically uploaded
+    # to a vector store and a file_search tool is registered on the context.
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=credential,
         analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,
+        file_search=FileSearchConfig(
+            openai_client=openai_client,
+            vector_store_name="cu_large_doc_demo",
+        ),
     )
 
     client = AzureOpenAIResponsesClient(
@@ -78,78 +96,43 @@ async def main() -> None:
         pdf_bytes = b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
         filename = "large_document.pdf"
 
-    print("--- Step 1: CU Extraction ---")
+    # The provider handles everything: CU extraction + vector store upload + file_search tool
     async with cu:
-        msg = Message(
-            role="user",
-            contents=[
-                Content.from_text("Extract content from this document."),
-                Content.from_data(pdf_bytes, "application/pdf", additional_properties={"filename": filename}),
-            ],
-        )
-        context = SessionContext(input_messages=[msg])
-        state: dict = {}
-        session = AgentSession()
-
-        await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
-
-        docs = state.get("documents", {})
-        if not docs:
-            print("No documents were analyzed.")
-            return
-
-        doc_entry = next(iter(docs.values()))
-        if doc_entry["status"] != "ready":
-            print(f"Document not ready: {doc_entry['status']}")
-            return
-
-        markdown = doc_entry["result"].get("markdown", "")
-        print(f"Extracted {len(markdown)} chars of markdown from '{filename}'")
-
-    # Step 2: Upload CU-extracted markdown to OpenAI vector store for RAG
-    print("\n--- Step 2: Upload to Vector Store ---")
-    from openai import AzureOpenAI
-
-    token = credential.get_token("https://cognitiveservices.azure.com/.default").token
-    openai_client = AzureOpenAI(
-        azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        azure_ad_token=token,
-        api_version="2025-03-01-preview",
-    )
-
-    try:
-        md_bytes = markdown.encode("utf-8")
-        file = openai_client.files.create(file=("extracted.md", io.BytesIO(md_bytes)), purpose="assistants")
-        print(f"Uploaded file: {file.id}")
-
-        vector_store = openai_client.vector_stores.create(name="cu_extracted_docs")
-        openai_client.vector_stores.files.create(vector_store_id=vector_store.id, file_id=file.id)
-        print(f"Vector store: {vector_store.id}")
-
-        # Step 3: Use file_search for token-efficient follow-up Q&A
-        print("\n--- Step 3: RAG Q&A with file_search ---")
         agent = client.as_agent(
             name="LargeDocAgent",
             instructions=(
                 "You are a document analyst. Use the file_search tool to find "
-                "relevant sections from the document and answer precisely."
+                "relevant sections from the document and answer precisely. "
+                "Cite specific sections when answering."
             ),
-            tools=[{"type": "file_search", "vector_store_ids": [vector_store.id]}],
+            context_providers=[cu],
         )
 
-        response = await agent.run("What are the key points in this document?")
+        # Turn 1: Upload — CU extracts and uploads to vector store automatically
+        print("--- Turn 1: Upload document ---")
+        response = await agent.run(
+            Message(
+                role="user",
+                contents=[
+                    Content.from_text("What are the key points in this document?"),
+                    Content.from_data(
+                        pdf_bytes,
+                        "application/pdf",
+                        additional_properties={"filename": filename},
+                    ),
+                ],
+            )
+        )
         print(f"Agent: {response}\n")
 
-        response = await agent.run("What numbers or metrics are mentioned?")
+        # Turn 2: Follow-up — file_search retrieves relevant chunks (token efficient)
+        print("--- Turn 2: Follow-up (RAG) ---")
+        response = await agent.run("What numbers or financial metrics are mentioned?")
         print(f"Agent: {response}\n")
 
-    finally:
-        try:
-            openai_client.vector_stores.delete(vector_store.id)
-            openai_client.files.delete(file.id)
-        except Exception:
-            pass
-        print("Cleaned up vector store and files.")
+    # Vector store is automatically cleaned up when the provider closes
+    await openai_client.close()
+    print("Done. Vector store cleaned up automatically.")
 
 
 if __name__ == "__main__":

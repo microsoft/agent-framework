@@ -20,7 +20,7 @@ from azure.core.credentials_async import AsyncTokenCredential
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
-from ._models import AnalysisSection, ContentLimits, DocumentEntry
+from ._models import AnalysisSection, ContentLimits, DocumentEntry, FileSearchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         max_wait: float | None = DEFAULT_MAX_WAIT,
         output_sections: list[AnalysisSection] | None = None,
         content_limits: ContentLimits | None = DEFAULT_CONTENT_LIMITS,
+        file_search: FileSearchConfig | None = None,
         source_id: str = DEFAULT_SOURCE_ID,
     ) -> None:
         super().__init__(source_id)
@@ -95,8 +96,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self.max_wait = max_wait
         self.output_sections = output_sections or [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
         self.content_limits = content_limits
+        self.file_search = file_search
         self._client: ContentUnderstandingClient | None = None
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
+        self._vector_store_id: str | None = None
+        self._uploaded_file_ids: list[str] = []
 
     async def __aenter__(self) -> ContentUnderstandingContextProvider:
         self._client = ContentUnderstandingClient(self._endpoint, self._credential)
@@ -111,6 +115,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if not task.done():
                 task.cancel()
         self._pending_tasks.clear()
+        # Clean up vector store resources
+        if self.file_search and (self._vector_store_id or self._uploaded_file_ids):
+            await self._cleanup_vector_store()
         if self._client:
             await self._client.close()
             self._client = None
@@ -147,18 +154,35 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         for doc_key, _, _ in new_files:
             entry = documents.get(doc_key)
             if entry and entry["status"] == "ready" and entry["result"]:
-                context.extend_messages(
-                    self,
-                    [
-                        Message(role="user", text=self._format_result(entry["filename"], entry["result"])),
-                    ],
-                )
+                # Upload to vector store if file_search is configured
+                if self.file_search:
+                    await self._upload_to_vector_store(doc_key, entry)
+                else:
+                    # Without file_search, inject full content into context
+                    context.extend_messages(
+                        self,
+                        [
+                            Message(role="user", text=self._format_result(entry["filename"], entry["result"])),
+                        ],
+                    )
                 context.extend_instructions(
                     self.source_id,
                     "A document has been analyzed using Azure Content Understanding. "
                     "The document content (markdown) and extracted fields (JSON) are provided above. "
                     "Use specific field values and cite page numbers when answering.",
                 )
+
+        # 6. Register file_search tool if vector store exists
+        if self.file_search and self._vector_store_id:
+            context.extend_tools(
+                self.source_id,
+                [
+                    {
+                        "type": "file_search",
+                        "vector_store_ids": [self._vector_store_id],
+                    }
+                ],
+            )
 
     # ------------------------------------------------------------------
     # File Detection
@@ -563,3 +587,68 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             "Use 'section' parameter to get 'markdown', 'fields', or 'all' (default).",
             func=get_analyzed_document,
         )
+
+    # ------------------------------------------------------------------
+    # file_search Vector Store Integration
+    # ------------------------------------------------------------------
+
+    async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> None:
+        """Upload CU-extracted markdown to an OpenAI vector store for RAG retrieval."""
+        if not self.file_search:
+            return
+
+        result = entry.get("result")
+        if not result:
+            return
+
+        markdown = result.get("markdown")
+        if not markdown or not isinstance(markdown, str):
+            return
+
+        oai_client = self.file_search.openai_client
+
+        try:
+            # Create vector store on first upload
+            if not self._vector_store_id:
+                vs = await oai_client.vector_stores.create(name=self.file_search.vector_store_name)  # type: ignore[union-attr]
+                self._vector_store_id = vs.id
+                logger.info("Created vector store '%s' (%s).", self.file_search.vector_store_name, vs.id)
+
+            # Upload markdown as a .md file
+            md_bytes = markdown.encode("utf-8")
+            import io
+
+            uploaded = await oai_client.files.create(  # type: ignore[union-attr]
+                file=(f"{doc_key}.md", io.BytesIO(md_bytes)),
+                purpose="assistants",
+            )
+            self._uploaded_file_ids.append(uploaded.id)
+
+            await oai_client.vector_stores.files.create(  # type: ignore[union-attr]
+                vector_store_id=self._vector_store_id,
+                file_id=uploaded.id,
+            )
+            logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(md_bytes))
+
+        except Exception as e:
+            logger.warning("Failed to upload '%s' to vector store: %s", doc_key, e)
+
+    async def _cleanup_vector_store(self) -> None:
+        """Delete the auto-created vector store and uploaded files."""
+        if not self.file_search:
+            return
+
+        oai_client = self.file_search.openai_client
+
+        try:
+            if self._vector_store_id:
+                await oai_client.vector_stores.delete(self._vector_store_id)  # type: ignore[union-attr]
+                logger.info("Deleted vector store %s.", self._vector_store_id)
+                self._vector_store_id = None
+
+            for file_id in self._uploaded_file_ids:
+                await oai_client.files.delete(file_id)  # type: ignore[union-attr]
+            self._uploaded_file_ids.clear()
+
+        except Exception as e:
+            logger.warning("Failed to clean up vector store resources: %s", e)

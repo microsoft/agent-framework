@@ -802,3 +802,186 @@ class TestSupportedMediaTypes:
 
     def test_zip_not_supported(self) -> None:
         assert "application/zip" not in SUPPORTED_MEDIA_TYPES
+
+
+class TestFileSearchIntegration:
+    def _make_mock_openai_client(self) -> AsyncMock:
+        """Create a mock async OpenAI client for vector store operations."""
+        client = AsyncMock()
+        # Mock vector_stores.create
+        mock_vs = AsyncMock()
+        mock_vs.id = "vs_test123"
+        client.vector_stores.create = AsyncMock(return_value=mock_vs)
+        # Mock vector_stores.files.create
+        client.vector_stores.files.create = AsyncMock()
+        # Mock vector_stores.delete
+        client.vector_stores.delete = AsyncMock()
+        # Mock files.create
+        mock_file = AsyncMock()
+        mock_file.id = "file_test456"
+        client.files.create = AsyncMock(return_value=mock_file)
+        # Mock files.delete
+        client.files.delete = AsyncMock()
+        return client
+
+    async def test_file_search_uploads_to_vector_store(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(
+            agent=_make_mock_agent(),
+            session=session,
+            context=context,
+            state=state,
+        )
+
+        # Vector store should be created
+        mock_oai.vector_stores.create.assert_called_once()
+        # File should be uploaded
+        mock_oai.files.create.assert_called_once()
+        # File should be added to vector store
+        mock_oai.vector_stores.files.create.assert_called_once()
+        # file_search tool should be registered on context
+        file_search_tools = [t for t in context.tools if isinstance(t, dict) and t.get("type") == "file_search"]
+        assert len(file_search_tools) == 1
+        assert file_search_tools[0]["vector_store_ids"] == ["vs_test123"]
+
+    async def test_file_search_no_content_injection(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """When file_search is enabled, full content should NOT be injected into context."""
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(
+            agent=_make_mock_agent(),
+            session=session,
+            context=context,
+            state=state,
+        )
+
+        # Context messages should NOT contain full document content
+        # (file_search handles retrieval instead)
+        for msgs in context.context_messages.values():
+            for m in msgs:
+                assert "Document Content" not in m.text
+
+    async def test_cleanup_deletes_vector_store(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(
+            agent=_make_mock_agent(),
+            session=session,
+            context=context,
+            state=state,
+        )
+
+        # Close should clean up
+        await provider.close()
+        mock_oai.vector_stores.delete.assert_called_once_with("vs_test123")
+        mock_oai.files.delete.assert_called_once_with("file_test456")
+
+    async def test_no_file_search_injects_content(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Without file_search, full content should be injected (default behavior)."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(
+            agent=_make_mock_agent(),
+            session=session,
+            context=context,
+            state=state,
+        )
+
+        # Without file_search, content SHOULD be injected
+        found_content = False
+        for msgs in context.context_messages.values():
+            for m in msgs:
+                if "Document Content" in m.text or "Contoso" in m.text:
+                    found_content = True
+        assert found_content

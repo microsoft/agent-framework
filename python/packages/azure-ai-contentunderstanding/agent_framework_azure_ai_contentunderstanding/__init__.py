@@ -3,7 +3,7 @@
 import importlib.metadata
 
 from ._context_provider import ContentUnderstandingContextProvider
-from ._models import AnalysisSection, ContentLimits
+from ._models import AnalysisSection, ContentLimits, FileSearchConfig
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -14,5 +14,6 @@ __all__ = [
     "AnalysisSection",
     "ContentLimits",
     "ContentUnderstandingContextProvider",
+    "FileSearchConfig",
     "__version__",
 ]
