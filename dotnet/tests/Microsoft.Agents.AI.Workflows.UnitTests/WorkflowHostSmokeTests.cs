@@ -29,7 +29,7 @@ public sealed class ExpectedException : Exception
 }
 
 /// <summary>
-/// A simple agent that emits a FunctionCallContent or UserInputRequestContent request.
+/// A simple agent that emits a FunctionCallContent or ToolApprovalRequestContent request.
 /// Used to test that RequestInfoEvent handling preserves the original content type.
 /// </summary>
 internal sealed class RequestEmittingAgent : AIAgent
@@ -44,7 +44,7 @@ internal sealed class RequestEmittingAgent : AIAgent
     /// <param name="completeOnResponse">
     /// When <see langword="true"/>, the agent emits a text completion instead of re-emitting
     /// the request when the incoming messages contain a <see cref="FunctionResultContent"/>
-    /// or <see cref="UserInputResponseContent"/>.  This models realistic agent behaviour
+    /// or <see cref="ToolApprovalResponseContent"/>.  This models realistic agent behaviour
     /// where the agent processes the tool result and produces a final answer.
     /// </param>
     public RequestEmittingAgent(AIContent requestContent, bool completeOnResponse = false)
@@ -73,7 +73,7 @@ internal sealed class RequestEmittingAgent : AIAgent
     protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (this._completeOnResponse && messages.Any(m => m.Contents.Any(c =>
-            c is FunctionResultContent || c is UserInputResponseContent)))
+            c is FunctionResultContent || c is ToolApprovalResponseContent)))
         {
             yield return new AgentResponseUpdate(ChatRole.Assistant, [new TextContent("Request processed")]);
         }
@@ -328,16 +328,16 @@ public class WorkflowHostSmokeTests
     }
 
     /// <summary>
-    /// Tests that when a workflow emits a RequestInfoEvent with UserInputRequestContent data,
-    /// the AgentResponseUpdate preserves the original UserInputRequestContent type.
+    /// Tests that when a workflow emits a RequestInfoEvent with ToolApprovalRequestContent data,
+    /// the AgentResponseUpdate preserves the original ToolApprovalRequestContent type.
     /// </summary>
     [Fact]
-    public async Task Test_AsAgent_UserInputRequestContentPreservedInRequestInfoAsync()
+    public async Task Test_AsAgent_ToolApprovalRequestContentPreservedInRequestInfoAsync()
     {
         // Arrange
         const string RequestId = "test-request-id";
         McpServerToolCallContent mcpCall = new("call-id", "testToolName", "http://localhost");
-        UserInputRequestContent originalContent = new McpServerToolApprovalRequestContent(RequestId, mcpCall);
+        ToolApprovalRequestContent originalContent = new(RequestId, mcpCall);
         RequestEmittingAgent requestAgent = new(originalContent);
         ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
             new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });
@@ -350,17 +350,17 @@ public class WorkflowHostSmokeTests
 
         // Assert
         AgentResponseUpdate? updateWithUserInput = updates.FirstOrDefault(u =>
-            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is UserInputRequestContent));
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is ToolApprovalRequestContent));
 
-        updateWithUserInput.Should().NotBeNull("a UserInputRequestContent should be present in the response updates");
-        UserInputRequestContent retrievedContent = updateWithUserInput!.Contents
-            .OfType<UserInputRequestContent>()
+        updateWithUserInput.Should().NotBeNull("a ToolApprovalRequestContent should be present in the response updates");
+        ToolApprovalRequestContent retrievedContent = updateWithUserInput!.Contents
+            .OfType<ToolApprovalRequestContent>()
             .Should().ContainSingle()
             .Which;
 
-        retrievedContent.Should().BeOfType<McpServerToolApprovalRequestContent>();
-        retrievedContent.Id.Should().NotBe(RequestId);
-        retrievedContent.Id.Should().EndWith($":{RequestId}");
+        retrievedContent.Should().NotBeNull();
+        retrievedContent.RequestId.Should().NotBe(RequestId);
+        retrievedContent.RequestId.Should().EndWith($":{RequestId}");
     }
 
     /// <summary>
@@ -414,41 +414,40 @@ public class WorkflowHostSmokeTests
     }
 
     /// <summary>
-    /// Tests the full roundtrip for UserInputRequestContent: workflow emits request, external caller responds.
-    /// Verifying inbound UserInputResponseContent conversion.
+    /// Tests the full roundtrip for ToolApprovalRequestContent: workflow emits request, external caller responds.
+    /// Verifying inbound ToolApprovalResponseContent conversion.
     /// </summary>
     [Fact]
-    public async Task Test_AsAgent_UserInputRoundtrip_ResponseIsProcessedAsync()
+    public async Task Test_AsAgent_ToolApprovalRoundtrip_ResponseIsProcessedAsync()
     {
-        // Arrange: Create an agent that emits a UserInputRequestContent request
+        // Arrange: Create an agent that emits a ToolApprovalRequestContent request
         const string RequestId = "roundtrip-request-id";
         McpServerToolCallContent mcpCall = new("mcp-call-id", "testMcpTool", "http://localhost");
-        McpServerToolApprovalRequestContent requestContent = new(RequestId, mcpCall);
+        ToolApprovalRequestContent requestContent = new(RequestId, mcpCall);
         RequestEmittingAgent requestAgent = new(requestContent, completeOnResponse: true);
         ExecutorBinding agentBinding = requestAgent.BindAsExecutor(
             new AIAgentHostOptions { InterceptUserInputRequests = false, EmitAgentUpdateEvents = true });
         Workflow workflow = new WorkflowBuilder(agentBinding).Build();
         AIAgent agent = workflow.AsAIAgent("WorkflowAgent");
 
-        // Act 1: First call - should receive the UserInputRequestContent request
+        // Act 1: First call - should receive the ToolApprovalRequestContent request
         AgentSession session = await agent.CreateSessionAsync();
         List<AgentResponseUpdate> firstCallUpdates = await agent.RunStreamingAsync(
             new ChatMessage(ChatRole.User, "Start"),
             session).ToListAsync();
 
-        // Assert 1: We should have received a UserInputRequestContent
+        // Assert 1: We should have received a ToolApprovalRequestContent
         AgentResponseUpdate? updateWithRequest = firstCallUpdates.FirstOrDefault(u =>
-            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is UserInputRequestContent));
-        updateWithRequest.Should().NotBeNull("a UserInputRequestContent should be present in the response updates");
+            u.RawRepresentation is RequestInfoEvent && u.Contents.Any(c => c is ToolApprovalRequestContent));
+        updateWithRequest.Should().NotBeNull("a ToolApprovalRequestContent should be present in the response updates");
 
-        UserInputRequestContent receivedRequest = updateWithRequest!.Contents
-            .OfType<UserInputRequestContent>()
+        ToolApprovalRequestContent receivedRequest = updateWithRequest!.Contents
+            .OfType<ToolApprovalRequestContent>()
             .First();
-        receivedRequest.Id.Should().EndWith($":{RequestId}");
-        receivedRequest.Should().BeOfType<McpServerToolApprovalRequestContent>();
+        receivedRequest.RequestId.Should().EndWith($":{RequestId}");
 
         // Act 2: Send the response back - use CreateResponse to get the right response type
-        UserInputResponseContent responseContent = ((McpServerToolApprovalRequestContent)receivedRequest).CreateResponse(approved: true);
+        ToolApprovalResponseContent responseContent = receivedRequest.CreateResponse(approved: true);
         ChatMessage responseMessage = new(ChatRole.User, [responseContent]);
 
         // Act 2: Run the workflow again with the response and capture the updates
@@ -458,8 +457,8 @@ public class WorkflowHostSmokeTests
         secondCallUpdates.Should().NotBeEmpty("handling the user input response should produce follow-up updates");
         bool requestStillPresent = secondCallUpdates.Any(u =>
             u.RawRepresentation is RequestInfoEvent
-            && u.Contents.OfType<UserInputRequestContent>().Any(r => r.Id == receivedRequest.Id));
-        requestStillPresent.Should().BeFalse("the original UserInputRequestContent should not be re-emitted after its response is processed");
+            && u.Contents.OfType<ToolApprovalRequestContent>().Any(r => r.RequestId == receivedRequest.RequestId));
+        requestStillPresent.Should().BeFalse("the original ToolApprovalRequestContent should not be re-emitted after its response is processed");
     }
 
     /// <summary>

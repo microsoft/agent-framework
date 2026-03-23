@@ -279,8 +279,8 @@ internal sealed class WorkflowSession : AgentSession
     {
         ExternalRequest externalRequest when externalRequest.TryGetDataAs(out FunctionCallContent? functionCallContent)
             => CloneFunctionCallContent(functionCallContent, externalRequest.RequestId),
-        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out UserInputRequestContent? userInputRequestContent)
-            => CloneUserInputRequestContent(userInputRequestContent, externalRequest.RequestId),
+        ExternalRequest externalRequest when externalRequest.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
+            => CloneToolApprovalRequestContent(toolApprovalRequestContent, externalRequest.RequestId),
         ExternalRequest externalRequest
             => externalRequest.ToFunctionCall(),
     };
@@ -292,8 +292,8 @@ internal sealed class WorkflowSession : AgentSession
     {
         FunctionResultContent functionResultContent when request.TryGetDataAs(out FunctionCallContent? functionCallContent)
             => CloneFunctionResultContent(functionResultContent, functionCallContent.CallId),
-        UserInputResponseContent userInputResponseContent when request.TryGetDataAs(out UserInputRequestContent? userInputRequestContent)
-            => CloneUserInputResponseContent(userInputResponseContent, userInputRequestContent.Id),
+        ToolApprovalResponseContent toolApprovalResponseContent when request.TryGetDataAs(out ToolApprovalRequestContent? toolApprovalRequestContent)
+            => CloneToolApprovalResponseContent(toolApprovalResponseContent, toolApprovalRequestContent.RequestId),
         _ => content,
     };
 
@@ -303,7 +303,7 @@ internal sealed class WorkflowSession : AgentSession
     private static string? GetResponseContentId(AIContent content) => content switch
     {
         FunctionResultContent functionResultContent => functionResultContent.CallId,
-        UserInputResponseContent userInputResponseContent => userInputResponseContent.Id,
+        ToolApprovalResponseContent toolApprovalResponseContent => toolApprovalResponseContent.RequestId,
         _ => null
     };
 
@@ -509,39 +509,22 @@ internal sealed class WorkflowSession : AgentSession
     }
 
     /// <summary>
-    /// Clones a <see cref="UserInputRequestContent"/> with a workflow-facing request ID.
+    /// Clones a <see cref="ToolApprovalRequestContent"/> with a workflow-facing request ID.
     /// </summary>
-    private static UserInputRequestContent CloneUserInputRequestContent(UserInputRequestContent content, string id)
+    private static ToolApprovalRequestContent CloneToolApprovalRequestContent(ToolApprovalRequestContent content, string id)
     {
-        UserInputRequestContent clone = content switch
-        {
-            FunctionApprovalRequestContent functionApprovalRequestContent =>
-                new FunctionApprovalRequestContent(id, functionApprovalRequestContent.FunctionCall),
-            McpServerToolApprovalRequestContent mcpApprovalRequestContent =>
-                new McpServerToolApprovalRequestContent(id, mcpApprovalRequestContent.ToolCall),
-            _ => throw new NotSupportedException(
-                $"Unsupported user input request content type '{content.GetType().Name}' for workflow request ID rewriting."),
-        };
-
+        ToolApprovalRequestContent clone = new(id, content.ToolCall);
         return CopyContentMetadata(content, clone);
     }
 
     /// <summary>
-    /// Clones a <see cref="UserInputResponseContent"/> with an agent-owned request ID.
+    /// Clones a <see cref="ToolApprovalResponseContent"/> with an agent-owned request ID.
     /// </summary>
-    private static UserInputResponseContent CloneUserInputResponseContent(UserInputResponseContent content, string id)
+    private static ToolApprovalResponseContent CloneToolApprovalResponseContent(ToolApprovalResponseContent content, string id)
     {
-        UserInputResponseContent clone = content switch
+        ToolApprovalResponseContent clone = new(id, content.Approved, content.ToolCall)
         {
-            FunctionApprovalResponseContent functionApprovalResponseContent =>
-                new FunctionApprovalResponseContent(id, functionApprovalResponseContent.Approved, functionApprovalResponseContent.FunctionCall)
-                {
-                    Reason = functionApprovalResponseContent.Reason,
-                },
-            McpServerToolApprovalResponseContent mcpApprovalResponseContent =>
-                new McpServerToolApprovalResponseContent(id, mcpApprovalResponseContent.Approved),
-            _ => throw new NotSupportedException(
-                $"Unsupported user input response content type '{content.GetType().Name}' for workflow response ID rewriting."),
+            Reason = content.Reason,
         };
 
         return CopyContentMetadata(content, clone);
