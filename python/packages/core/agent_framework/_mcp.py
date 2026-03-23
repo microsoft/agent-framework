@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import json
 import logging
 import re
@@ -59,6 +60,7 @@ class MCPSpecificApproval(TypedDict, total=False):
 
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
+_mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
 
 # region: Helpers
 
@@ -1386,6 +1388,7 @@ class MCPStreamableHTTPTool(MCPTool):
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
         http_client: AsyncClient | None = None,
+        header_provider: Callable[[dict[str, Any]], dict[str, str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -1433,6 +1436,11 @@ class MCPStreamableHTTPTool(MCPTool):
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
                 and pass your own ``asyncClient`` instance.
+            header_provider: Optional callable that receives the runtime keyword arguments
+                (from ``FunctionInvocationContext.kwargs``) and returns a ``dict[str, str]``
+                of HTTP headers to inject into every outbound request to the MCP server.
+                Use this to forward per-request context (e.g. authentication tokens set in
+                agent middleware) without creating a separate ``httpx.AsyncClient``.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -1453,6 +1461,7 @@ class MCPStreamableHTTPTool(MCPTool):
         self.url = url
         self.terminate_on_close = terminate_on_close
         self._httpx_client: AsyncClient | None = http_client
+        self._header_provider = header_provider
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
@@ -1460,17 +1469,54 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        try:
-            from mcp.client.streamable_http import streamable_http_client
-        except ModuleNotFoundError as ex:
-            raise ModuleNotFoundError("`mcp` is required to use `MCPStreamableHTTPTool`. Please install `mcp`.") from ex
+        from mcp.client.streamable_http import streamable_http_client
 
-        # Pass the http_client (which may be None) to streamable_http_client
+        http_client = self._httpx_client
+        if self._header_provider is not None:
+            if http_client is None:
+                from mcp.shared._httpx_utils import create_mcp_http_client
+
+                http_client = create_mcp_http_client()
+                self._httpx_client = http_client
+
+            async def _inject_headers(request: httpx.Request) -> None:  # noqa: RUF029
+                headers = _mcp_call_headers.get({})
+                for key, value in headers.items():
+                    request.headers[key] = value
+
+            http_client.event_hooks["request"].append(_inject_headers)
+
         return streamable_http_client(
             url=self.url,
-            http_client=self._httpx_client,
+            http_client=http_client,
             terminate_on_close=self.terminate_on_close if self.terminate_on_close is not None else True,
         )
+
+    async def call_tool(self, tool_name: str, **kwargs: Any) -> str | list[Content]:
+        """Call a tool, injecting headers from the header_provider if configured.
+
+        When a ``header_provider`` was supplied at construction time, the runtime
+        *kwargs* (originating from ``FunctionInvocationContext.kwargs``) are passed
+        to the provider.  The returned headers are attached to every HTTP request
+        made during this tool call via a ``contextvars.ContextVar``.
+
+        Args:
+            tool_name: The name of the tool to call.
+
+        Keyword Args:
+            kwargs: Arguments to pass to the tool.
+
+        Returns:
+            A list of Content items representing the tool output.
+        """
+        if self._header_provider is not None:
+            headers = self._header_provider(kwargs)
+            token = _mcp_call_headers.set(headers)
+            try:
+                return await super().call_tool(tool_name, **kwargs)
+            finally:
+                _mcp_call_headers.reset(token)
+        return await super().call_tool(tool_name, **kwargs)
 
 
 class MCPWebsocketTool(MCPTool):

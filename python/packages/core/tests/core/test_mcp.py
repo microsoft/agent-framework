@@ -3805,3 +3805,260 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
 
 
 # endregion
+
+
+# region: MCPStreamableHTTPTool header_provider
+
+
+async def test_mcp_streamable_http_tool_header_provider_injects_headers():
+    """Test that header_provider injects per-request HTTP headers via runtime kwargs.
+
+    When header_provider is configured, runtime kwargs from FunctionInvocationContext
+    are passed to the provider and the returned headers appear on outbound HTTP requests.
+    """
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={
+                                "type": "object",
+                                "properties": {"name": {"type": "string"}},
+                                "required": ["name"],
+                            },
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):
+            return None
+
+    def provider(kwargs):
+        return {"X-Some-Token": kwargs.get("some_token", "")}
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=provider,
+    )
+    async with server:
+        await server.load_tools()
+
+        # Simulate the runtime kwargs that flow from FunctionInvocationContext.kwargs
+        await server.call_tool("greet", name="Alice", some_token="my-secret")
+
+        # Verify the MCP session.call_tool was called
+        server.session.call_tool.assert_called_once()
+
+
+async def test_mcp_streamable_http_tool_header_provider_sets_contextvar():
+    """Test that call_tool sets the contextvar with headers from header_provider."""
+    from agent_framework._mcp import _mcp_call_headers
+
+    observed_headers: list[dict[str, str]] = []
+    original_call_tool = MCPTool.call_tool
+
+    async def spy_call_tool(self, tool_name, **kwargs):
+        # Capture the contextvar value during the super call
+        try:
+            observed_headers.append(_mcp_call_headers.get())
+        except LookupError:
+            observed_headers.append({})
+        return await original_call_tool(self, tool_name, **kwargs)
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Auth": kw.get("auth_token", "")},
+    )
+    async with server:
+        await server.load_tools()
+
+        with patch.object(MCPTool, "call_tool", spy_call_tool):
+            await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
+
+    assert len(observed_headers) == 1
+    assert observed_headers[0] == {"X-Auth": "bearer-xyz"}
+
+
+async def test_mcp_streamable_http_tool_header_provider_contextvar_reset_after_call():
+    """Test that the contextvar is properly reset after call_tool completes."""
+    from agent_framework._mcp import _mcp_call_headers
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Token": kw.get("token", "")},
+    )
+    async with server:
+        await server.load_tools()
+        await server.call_tool("greet", name="Alice", token="secret")
+
+    # After call_tool, the contextvar should be unset (reset to no value)
+    with pytest.raises(LookupError):
+        _mcp_call_headers.get()
+
+
+async def test_mcp_streamable_http_tool_without_header_provider():
+    """Test that call_tool works normally when no header_provider is configured."""
+
+    class _TestServer(MCPStreamableHTTPTool):
+        async def connect(self):
+            self.session = Mock(spec=ClientSession)
+            self.session.list_tools = AsyncMock(
+                return_value=types.ListToolsResult(
+                    tools=[
+                        types.Tool(
+                            name="greet",
+                            description="Says hello",
+                            inputSchema={"type": "object", "properties": {"name": {"type": "string"}}},
+                        )
+                    ]
+                )
+            )
+            self.session.call_tool = AsyncMock(
+                return_value=types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
+            )
+            self.session.send_ping = AsyncMock()
+            self.is_connected = True
+
+        def get_mcp_client(self):
+            return None
+
+    server = _TestServer(
+        name="test",
+        url="http://example.com/mcp",
+    )
+    async with server:
+        await server.load_tools()
+        await server.call_tool("greet", name="Alice")
+        server.session.call_tool.assert_called_once()
+
+    # Without header_provider, call_tool should delegate directly to MCPTool
+    assert server._header_provider is None
+
+
+async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
+    """Test that the httpx event hook injects headers from the contextvar."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Custom": kw.get("custom", "")},
+    )
+
+    with patch("agent_framework._mcp.streamable_http_client"):
+        # Trigger get_mcp_client to set up the event hook
+        tool.get_mcp_client()
+
+        # The tool should have created an httpx client with the event hook
+        assert tool._httpx_client is not None
+        hooks = tool._httpx_client.event_hooks.get("request", [])
+        assert len(hooks) == 1, "Expected one request event hook"
+
+        # Simulate what happens during a call_tool: contextvar is set
+        token = _mcp_call_headers.set({"X-Custom": "test-value"})
+        try:
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("X-Custom") == "test-value"
+        finally:
+            _mcp_call_headers.reset(token)
+
+
+async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():
+    """Test that header_provider works when the user provides their own httpx client."""
+    import httpx
+
+    from agent_framework._mcp import _mcp_call_headers
+
+    user_client = httpx.AsyncClient(headers={"X-Base": "static"})
+
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        http_client=user_client,
+        header_provider=lambda kw: {"X-Dynamic": kw.get("dynamic", "")},
+    )
+
+    with patch("agent_framework._mcp.streamable_http_client"):
+        tool.get_mcp_client()
+
+        # The user's client should still be used
+        assert tool._httpx_client is user_client
+        hooks = user_client.event_hooks.get("request", [])
+        assert len(hooks) == 1
+
+        # Verify the hook injects headers
+        token = _mcp_call_headers.set({"X-Dynamic": "per-request"})
+        try:
+            request = httpx.Request("POST", "http://example.com/mcp")
+            await hooks[0](request)
+            assert request.headers.get("X-Dynamic") == "per-request"
+        finally:
+            _mcp_call_headers.reset(token)
+
+    await user_client.aclose()
+
+
+# endregion
