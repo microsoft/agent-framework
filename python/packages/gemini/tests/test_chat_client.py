@@ -674,6 +674,28 @@ async def test_function_tool_converted_to_function_declaration() -> None:
     assert function_declaration.name == "get_weather"
 
 
+async def test_callable_tool_resolved_via_validate_options() -> None:
+    """Raw callables passed as tools must be normalized by _validate_options into FunctionTools
+    and reach the Gemini config as function declarations."""
+
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return "sunny"
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Done")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Weather?")])],
+        options={"tools": [get_weather]},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.tools is not None
+    function_declaration = config.tools[0].function_declarations[0]
+    assert function_declaration.name == "get_weather"
+
+
 # _coerce_to_dict
 
 
