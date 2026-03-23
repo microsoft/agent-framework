@@ -172,7 +172,7 @@ def _parse_contents(data: dict[str, Any]) -> list[DurableAgentStateContent]:
                         DurableAgentStateFunctionCallContent(
                             call_id=str(content_dict.get(DurableStateFields.CALL_ID, "")),
                             name=str(content_dict.get(DurableStateFields.NAME, "")),
-                            arguments=content_dict.get(DurableStateFields.ARGUMENTS, {}),
+                            arguments=content_dict.get(DurableStateFields.ARGUMENTS),
                         )
                     )
 
@@ -940,11 +940,11 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
 
     call_id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: str | dict[str, Any] | None
 
     type: str = ContentTypes.FUNCTION_CALL
 
-    def __init__(self, call_id: str, name: str, arguments: dict[str, Any]) -> None:
+    def __init__(self, call_id: str, name: str, arguments: str | dict[str, Any] | None) -> None:
         self.call_id = call_id
         self.name = name
         self.arguments = arguments
@@ -963,17 +963,11 @@ class DurableAgentStateFunctionCallContent(DurableAgentStateContent):
             raise ValueError("call_id is required for function call content")
         if content.name is None:
             raise ValueError("name is required for function call content")
-        # Ensure arguments is a dict; parse string if needed
-        arguments: dict[str, Any] = {}
-        if content.arguments:
-            if isinstance(content.arguments, dict):
-                arguments = content.arguments
-            elif isinstance(content.arguments, str):
-                # Parse JSON string to dict
-                try:
-                    arguments = json.loads(content.arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
+        arguments: str | dict[str, Any] | None
+        if content.arguments is None or isinstance(content.arguments, str):
+            arguments = content.arguments
+        else:
+            arguments = dict(content.arguments)
 
         return DurableAgentStateFunctionCallContent(call_id=content.call_id, name=content.name, arguments=arguments)
 
