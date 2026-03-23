@@ -555,7 +555,7 @@ async def test_thinking_config_budget() -> None:
 async def test_thinking_config_level() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
-    tc: ThinkingConfig = {"thinking_level": "high"}
+    tc: ThinkingConfig = {"thinking_level": types.ThinkingLevel.HIGH}
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],

@@ -67,14 +67,17 @@ class ThinkingConfig(TypedDict, total=False):
     """Extended thinking configuration for Gemini models.
 
     Attributes:
-        thinking_budget: Token budget for Gemini 2.5 models. Set to 0 to disable
-            thinking or -1 to enable a dynamic budget.
+        include_thoughts: Whether to include the model's reasoning thoughts in the response.
+        thinking_budget: Token budget for Gemini 2.5 models. Set to ``0`` to disable
+            thinking or ``-1`` to enable a dynamic budget.
         thinking_level: Thinking level for Gemini 3.x models. One of
-            ``'minimal'``, ``'low'``, ``'medium'``, or ``'high'``.
+            ``ThinkingLevel.THINKING_LEVEL_UNSPECIFIED`` (default), ``ThinkingLevel.MINIMAL``,
+            ``ThinkingLevel.LOW``, ``ThinkingLevel.MEDIUM``, or ``ThinkingLevel.HIGH``.
     """
 
+    include_thoughts: bool
     thinking_budget: int
-    thinking_level: str
+    thinking_level: types.ThinkingLevel
 
 
 class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
