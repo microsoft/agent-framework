@@ -738,18 +738,18 @@ class TestFoundryEvals:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_123"
-        mock_client.evals.create.return_value = mock_eval
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_456"
-        mock_client.evals.runs.create.return_value = mock_run
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 2, "failed": 0}
         mock_completed.report_url = "https://portal.azure.com/eval/run_456"
         mock_completed.per_testing_criteria_results = None
-        mock_client.evals.runs.retrieve.return_value = mock_completed
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         items = [
             EvalItem(conversation=[Message("user", ["Hello"]), Message("assistant", ["Hi there!"])]),
@@ -789,18 +789,18 @@ class TestFoundryEvals:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_1"
-        mock_client.evals.create.return_value = mock_eval
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_1"
-        mock_client.evals.runs.create.return_value = mock_run
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_client.evals.runs.retrieve.return_value = mock_completed
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         fe = FoundryEvals(openai_client=mock_client, model_deployment="gpt-4o")
         await fe.evaluate([EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])])
@@ -820,18 +820,18 @@ class TestFoundryEvals:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_ds"
-        mock_client.evals.create.return_value = mock_eval
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_ds"
-        mock_client.evals.runs.create.return_value = mock_run
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_client.evals.runs.retrieve.return_value = mock_completed
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         items = [
             EvalItem(
@@ -855,18 +855,18 @@ class TestFoundryEvals:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_tool"
-        mock_client.evals.create.return_value = mock_eval
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_tool"
-        mock_client.evals.runs.create.return_value = mock_run
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_client.evals.runs.retrieve.return_value = mock_completed
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         items = [
             EvalItem(
@@ -895,18 +895,18 @@ class TestFoundryEvals:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_pc"
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_pc"
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         fe = FoundryEvals(project_client=mock_project, model_deployment="gpt-4o")
         results = await fe.evaluate([EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])])
@@ -1165,18 +1165,18 @@ class TestEvaluateAgentWithResponses:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_fb"
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_fb"
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = "https://portal.azure.com/eval"
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         response = AgentResponse(messages=[Message("assistant", ["It's sunny."])])
 
@@ -1205,18 +1205,18 @@ class TestEvaluateAgentWithResponses:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_tools"
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_tools"
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         mock_agent = MagicMock()
         mock_agent.default_options = {
@@ -1249,18 +1249,18 @@ class TestEvaluateAgentWithResponses:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_multi_fb"
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_multi_fb"
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 2, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         responses = [
             AgentResponse(messages=[Message("assistant", ["Answer 1"])]),
@@ -1304,18 +1304,18 @@ class TestEvaluateAgentWithResponses:
 
         mock_eval = MagicMock()
         mock_eval.id = "eval_tool"
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
 
         mock_run = MagicMock()
         mock_run.id = "run_tool"
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
         response = AgentResponse(
             messages=[Message("assistant", ["It's sunny"])],
@@ -1566,16 +1566,16 @@ class TestEvaluateWorkflow:
         mock_oai = MagicMock()
         mock_eval = MagicMock()
         mock_eval.id = eval_id
-        mock_oai.evals.create.return_value = mock_eval
+        mock_oai.evals.create = AsyncMock(return_value=mock_eval)
         mock_run = MagicMock()
         mock_run.id = run_id
-        mock_oai.evals.runs.create.return_value = mock_run
+        mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
         mock_completed = MagicMock()
         mock_completed.status = "completed"
         mock_completed.result_counts = {"passed": 1, "failed": 0}
         mock_completed.report_url = "https://portal.azure.com/eval"
         mock_completed.per_testing_criteria_results = None
-        mock_oai.evals.runs.retrieve.return_value = mock_completed
+        mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
         return mock_oai
 
     @pytest.mark.asyncio
@@ -1979,7 +1979,7 @@ class TestFetchOutputItems:
         mock_client = MagicMock()
         mock_page = MagicMock()
         mock_page.__iter__ = MagicMock(return_value=iter([mock_oi]))
-        mock_client.evals.runs.output_items.list = MagicMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
 
@@ -2023,7 +2023,7 @@ class TestFetchOutputItems:
         mock_client = MagicMock()
         mock_page = MagicMock()
         mock_page.__iter__ = MagicMock(return_value=iter([mock_oi]))
-        mock_client.evals.runs.output_items.list = MagicMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
 
@@ -2039,7 +2039,7 @@ class TestFetchOutputItems:
         from agent_framework_azure_ai._foundry_evals import _fetch_output_items
 
         mock_client = MagicMock()
-        mock_client.evals.runs.output_items.list = MagicMock(side_effect=Exception("API error"))
+        mock_client.evals.runs.output_items.list = AsyncMock(side_effect=TypeError("API error"))
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
         assert items == []

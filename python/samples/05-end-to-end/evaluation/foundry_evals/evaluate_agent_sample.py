@@ -82,7 +82,11 @@ async def main() -> None:
         agent=agent,
         responses=response,
         queries=[query],
-        evaluators=evals.select(FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY),
+        evaluators=FoundryEvals(
+            project_client=project_client,
+            model_deployment=deployment,
+            evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
+        ),
     )
 
     for r in results:
@@ -178,7 +182,11 @@ async def main() -> None:
             print(f"  Tools: {[t.name for t in item.tools]}")
 
     # Submit directly to the evaluator
-    tool_evals = evals.select(FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY)
+    tool_evals = FoundryEvals(
+        project_client=project_client,
+        model_deployment=deployment,
+        evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
+    )
     results = await tool_evals.evaluate(items, eval_name="Travel Assistant Eval")
 
     print(f"\nStatus: {results.status}")

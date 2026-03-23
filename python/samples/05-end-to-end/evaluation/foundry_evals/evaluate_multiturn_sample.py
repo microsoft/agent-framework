@@ -17,7 +17,7 @@ Prerequisites:
 import asyncio
 import os
 
-from agent_framework import ConversationSplit, EvalItem
+from agent_framework import Content, ConversationSplit, EvalItem, FunctionTool, Message
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity import DefaultAzureCredential
@@ -26,52 +26,39 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # A multi-turn conversation with tool calls that we'll evaluate three ways.
-CONVERSATION = [
+# Uses framework Message/Content types for type-safe conversation construction.
+CONVERSATION: list[Message] = [
     # Turn 1: user asks about weather → agent calls tool → responds
-    {"role": "user", "content": "What's the weather in Seattle?"},
-    {
-        "role": "assistant",
-        "content": [
-            {"type": "tool_call", "tool_call_id": "c1", "name": "get_weather", "arguments": {"location": "seattle"}}
-        ],
-    },
-    {
-        "role": "tool",
-        "tool_call_id": "c1",
-        "content": [{"type": "tool_result", "tool_result": "62°F, cloudy with a chance of rain"}],
-    },
-    {"role": "assistant", "content": "Seattle is 62°F, cloudy with a chance of rain."},
+    Message("user", ["What's the weather in Seattle?"]),
+    Message("assistant", [
+        Content.from_function_call("c1", "get_weather", arguments={"location": "seattle"}),
+    ]),
+    Message("tool", [
+        Content.from_function_result("c1", result="62°F, cloudy with a chance of rain"),
+    ]),
+    Message("assistant", ["Seattle is 62°F, cloudy with a chance of rain."]),
     # Turn 2: user asks about Paris → agent calls tool → responds
-    {"role": "user", "content": "And Paris?"},
-    {
-        "role": "assistant",
-        "content": [
-            {"type": "tool_call", "tool_call_id": "c2", "name": "get_weather", "arguments": {"location": "paris"}}
-        ],
-    },
-    {
-        "role": "tool",
-        "tool_call_id": "c2",
-        "content": [{"type": "tool_result", "tool_result": "68°F, partly sunny"}],
-    },
-    {"role": "assistant", "content": "Paris is 68°F, partly sunny."},
+    Message("user", ["And Paris?"]),
+    Message("assistant", [
+        Content.from_function_call("c2", "get_weather", arguments={"location": "paris"}),
+    ]),
+    Message("tool", [
+        Content.from_function_result("c2", result="68°F, partly sunny"),
+    ]),
+    Message("assistant", ["Paris is 68°F, partly sunny."]),
     # Turn 3: user asks for comparison → agent synthesizes without tool
-    {"role": "user", "content": "Can you compare them?"},
-    {
-        "role": "assistant",
-        "content": (
-            "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
-            "at 68°F and partly sunny. Paris is the better choice for outdoor activities."
-        ),
-    },
+    Message("user", ["Can you compare them?"]),
+    Message("assistant", [
+        "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
+        "at 68°F and partly sunny. Paris is the better choice for outdoor activities.",
+    ]),
 ]
 
-TOOL_DEFINITIONS = [
-    {
-        "name": "get_weather",
-        "description": "Get the current weather for a location.",
-        "parameters": {"type": "object", "properties": {"location": {"type": "string"}}},
-    },
+TOOLS = [
+    FunctionTool(
+        name="get_weather",
+        description="Get the current weather for a location.",
+    ),
 ]
 
 
@@ -107,15 +94,8 @@ async def main() -> None:
     print("Strategy 1: LAST_TURN — evaluate the final response")
     print("=" * 70)
 
-    item = EvalItem(
-        query="Can you compare them?",
-        response=(
-            "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
-            "at 68°F and partly sunny. Paris is the better choice for outdoor activities."
-        ),
-        conversation=CONVERSATION,
-        tool_definitions=TOOL_DEFINITIONS,
-    )
+    # EvalItem takes conversation + tools; query/response are derived via split strategy
+    item = EvalItem(CONVERSATION, tools=TOOLS)
 
     print_split(item, ConversationSplit.LAST_TURN)
 
@@ -165,10 +145,7 @@ async def main() -> None:
     print("Strategy 3: per_turn_items — evaluate each turn independently")
     print("=" * 70)
 
-    items = EvalItem.per_turn_items(
-        CONVERSATION,
-        tool_definitions=TOOL_DEFINITIONS,
-    )
+    items = EvalItem.per_turn_items(CONVERSATION, tools=TOOLS)
     print(f"  Split into {len(items)} items from {len(CONVERSATION)} messages:\n")
     for i, it in enumerate(items):
         print(f"  Turn {i + 1}: query={it.query!r}, response={it.response[:60]!r}...")

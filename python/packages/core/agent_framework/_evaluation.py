@@ -580,7 +580,7 @@ class AgentEvalConverter:
                     try:
                         args = json.loads(args)
                     except (json.JSONDecodeError, TypeError):
-                        args = {"raw": args}
+                        args = {"_raw_arguments": args}
                 tc: dict[str, Any] = {
                     "type": "tool_call",
                     "tool_call_id": c.call_id or "",
@@ -1555,6 +1555,13 @@ async def evaluate_response(
     Evaluate one or more agent responses that have already been produced.
     This is a thin wrapper that delegates to ``evaluate_agent``.
     """
+    import warnings
+
+    warnings.warn(
+        "evaluate_response() is deprecated; use evaluate_agent(responses=...) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     # Normalize queries for evaluate_agent (it expects Sequence[str] | None)
     queries_norm: list[str] | None = None
     if query is not None:

@@ -133,7 +133,11 @@ async def main() -> None:
             "Plan a trip from London to Tokyo",
             "Plan a trip from New York to Rome",
         ],
-        evaluators=evals.select(FoundryEvals.RELEVANCE, FoundryEvals.TASK_ADHERENCE),
+        evaluators=FoundryEvals(
+            project_client=project_client,
+            model_deployment=deployment,
+            evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TASK_ADHERENCE],
+        ),
     )
 
     for r in eval_results:

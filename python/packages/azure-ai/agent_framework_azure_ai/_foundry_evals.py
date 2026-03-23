@@ -228,21 +228,27 @@ def _filter_tool_evaluators(
     if has_tools:
         return evaluators
     filtered = [e for e in evaluators if _resolve_evaluator(e) not in _TOOL_EVALUATORS]
-    return filtered if filtered else list(_DEFAULT_EVALUATORS)
+    if not filtered:
+        logger.warning(
+            "All requested evaluators (%s) require tool definitions, but no items have tools. "
+            "Falling back to default evaluators: %s",
+            evaluators,
+            list(_DEFAULT_EVALUATORS),
+        )
+        return list(_DEFAULT_EVALUATORS)
+    if len(filtered) < len(evaluators):
+        removed = [e for e in evaluators if _resolve_evaluator(e) in _TOOL_EVALUATORS]
+        logger.info("Removed tool evaluators %s (no items have tools)", removed)
+    return filtered
 
 
 async def _ensure_async_result(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke a sync or async client method transparently.
+    """Invoke an async client method and await the result.
 
-    If ``func`` returns a coroutine (async client), awaits it directly.
-    Otherwise returns the already-resolved result.
+    Only async clients (``AsyncOpenAI``) are supported.  The function call is
+    awaited directly.
     """
-    import inspect
-
-    result = func(*args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    return await func(*args, **kwargs)
 
 
 async def _poll_eval_run(
@@ -256,7 +262,7 @@ async def _poll_eval_run(
     fetch_output_items: bool = True,
 ) -> EvalResults:
     """Poll an eval run until completion or timeout."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while True:
         run = await _ensure_async_result(client.evals.runs.retrieve, run_id=run_id, eval_id=eval_id)
@@ -426,8 +432,8 @@ async def _fetch_output_items(
                     token_usage=token_usage,
                 )
             )
-    except Exception:
-        logger.debug("Could not fetch output_items for run %s", run_id, exc_info=True)
+    except (AttributeError, KeyError, TypeError) as exc:
+        logger.warning("Could not fetch output_items for run %s: %s", run_id, exc)
 
     return items
 

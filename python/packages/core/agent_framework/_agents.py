@@ -701,6 +701,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # Agent(options={"store": False}) works as expected instead of
         # silently dropping the options into additional_properties.
         if "options" in kwargs and default_options is None:
+            import warnings
+
+            warnings.warn(
+                "Passing 'options' as a keyword argument is deprecated; use 'default_options' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             default_options = kwargs.pop("options")
 
         opts = dict(default_options) if default_options else {}
