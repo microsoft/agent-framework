@@ -362,7 +362,7 @@ class TestBeforeRunPendingFailure:
         provider = _make_provider(mock_client=mock_cu_client)
 
         async def failing_task() -> AnalysisResult:
-            raise RuntimeError("CU service unavailable")  # noqa: EM101
+            raise RuntimeError("CU service unavailable")
 
         task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(failing_task())
         await asyncio.sleep(0.01)  # Let task fail

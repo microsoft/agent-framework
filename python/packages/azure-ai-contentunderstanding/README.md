@@ -83,6 +83,37 @@ cu = ContentUnderstandingContextProvider(
 )
 ```
 
+## Samples
+
+The `samples/` directory contains runnable examples. Each sample uses [PEP 723](https://peps.python.org/pep-0723/) inline metadata so it can be run directly with `uv run`.
+
+### Required Environment Variables
+
+Set these in your shell or in a `.env` file in the `python/` directory:
+
+```bash
+AZURE_AI_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
+AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4.1
+AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
+```
+
+You also need to be logged in with `az login` (for `AzureCliCredential`).
+
+### Running Samples
+
+```bash
+# From the python/ directory:
+uv run packages/azure-ai-contentunderstanding/samples/document_qa.py
+uv run packages/azure-ai-contentunderstanding/samples/invoice_processing.py
+uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
+```
+
+| Sample | Description |
+|--------|-------------|
+| [document_qa.py](samples/document_qa.py) | Upload a PDF, ask questions, follow-up with cached results |
+| [invoice_processing.py](samples/invoice_processing.py) | Structured field extraction with `prebuilt-invoice` analyzer |
+| [multimodal_chat.py](samples/multimodal_chat.py) | Multi-file session with status tracking |
+
 ## Links
 
 - [Microsoft Agent Framework](https://aka.ms/agent-framework)

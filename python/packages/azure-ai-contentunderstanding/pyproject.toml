@@ -52,6 +52,10 @@ markers = [
 [tool.ruff]
 extend = "../../pyproject.toml"
 
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["D", "INP", "TD", "ERA001", "RUF", "S"]
+"samples/**" = ["D", "INP", "ERA001", "RUF", "S", "T201", "CPY"]
+
 [tool.coverage.run]
 omit = ["**/__init__.py"]
 
