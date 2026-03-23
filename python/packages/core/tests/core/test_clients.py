@@ -53,11 +53,9 @@ def test_base_client(chat_client_base: SupportsChatGetResponse):
     assert isinstance(chat_client_base, SupportsChatGetResponse)
 
 
-def test_base_client_warns_for_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
-    with pytest.warns(DeprecationWarning, match="additional_properties"):
-        client = type(chat_client_base)(legacy_key="legacy-value")
-
-    assert client.additional_properties["legacy_key"] == "legacy-value"
+def test_base_client_rejects_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
+    with pytest.raises(TypeError):
+        type(chat_client_base)(legacy_key="legacy-value")
 
 
 def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:

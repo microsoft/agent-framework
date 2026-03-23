@@ -49,8 +49,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._agents import SupportsAgentRun
     from ._clients import SupportsChatGetResponse
     from ._compaction import CompactionStrategy, TokenizerProtocol
+    from ._middleware import MiddlewareTypes
     from ._sessions import AgentSession
-    from ._tools import FunctionTool
+    from ._tools import FunctionTool, ToolTypes
     from ._types import (
         AgentResponse,
         AgentResponseUpdate,
@@ -1191,7 +1192,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1203,7 +1205,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[None] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1215,7 +1218,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     def get_response(
@@ -1226,7 +1230,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         options: OptionsCoT | ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Trace chat responses with OpenTelemetry spans and metrics.
 
@@ -1238,25 +1243,14 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             tokenizer: Optional tokenizer used by token-aware compaction strategies.
 
         Keyword Args:
-            kwargs: Compatibility keyword arguments from higher client layers. This layer does
-                not consume ``function_invocation_kwargs`` directly; if present, it is ignored
-                because function invocation has already been processed above. If a ``client_kwargs``
-                mapping is present, it is flattened into ordinary keyword arguments for tracing and
-                forwarding so clients that use those values continue to work while clients that
-                ignore extra kwargs remain compatible.
+            function_invocation_kwargs: Keyword arguments forwarded only to tool invocation layers.
+            client_kwargs: Additional client-specific keyword arguments for downstream chat clients.
         """
         from ._types import ChatResponse, ChatResponseUpdate, ResponseStream  # type: ignore[reportUnusedImport]
 
         global OBSERVABILITY_SETTINGS
         super_get_response = super().get_response  # type: ignore[misc]
-        compatibility_client_kwargs = kwargs.pop("client_kwargs", None)
-        kwargs.pop("function_invocation_kwargs", None)
-        merged_client_kwargs = (
-            dict(cast(Mapping[str, Any], compatibility_client_kwargs))
-            if isinstance(compatibility_client_kwargs, Mapping)
-            else {}
-        )
-        merged_client_kwargs.update(kwargs)
+        merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
 
         if not OBSERVABILITY_SETTINGS.ENABLED:
             return super_get_response(  # type: ignore[no-any-return]
@@ -1265,7 +1259,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                **merged_client_kwargs,
+                function_invocation_kwargs=function_invocation_kwargs,
+                client_kwargs=merged_client_kwargs,
             )
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
@@ -1292,7 +1287,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                     options=opts,
                     compaction_strategy=compaction_strategy,
                     tokenizer=tokenizer,
-                    **merged_client_kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=merged_client_kwargs,
                 ),
             )
 
@@ -1384,7 +1380,8 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
                             options=opts,
                             compaction_strategy=compaction_strategy,
                             tokenizer=tokenizer,
-                            **merged_client_kwargs,
+                            function_invocation_kwargs=function_invocation_kwargs,
+                            client_kwargs=merged_client_kwargs,
                         ),
                     )
                 except Exception as exception:
@@ -1512,11 +1509,29 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[ResponseModelBoundT],
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -1526,11 +1541,13 @@ class AgentTelemetryLayer:
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -1539,11 +1556,13 @@ class AgentTelemetryLayer:
         *,
         stream: bool = False,
         session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[Any] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Trace agent runs with OpenTelemetry spans and metrics."""
         global OBSERVABILITY_SETTINGS
@@ -1559,18 +1578,20 @@ class AgentTelemetryLayer:
                 messages=messages,
                 stream=stream,
                 session=session,
+                middleware=middleware,
+                tools=tools,
+                options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
-                **kwargs,
             )
 
-        default_options = getattr(self, "default_options", {})
-        options = kwargs.get("options")
+        default_options = dict(getattr(self, "default_options", {}))
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        merged_client_kwargs.update(kwargs)
-        merged_options: dict[str, Any] = merge_chat_options(default_options, options or {})
+        merged_options: dict[str, Any] = merge_chat_options(
+            default_options, dict(options) if options is not None else {}
+        )
         attributes = _get_span_attributes(
             operation_name=OtelAttr.AGENT_INVOKE_OPERATION,
             provider_name=provider_name,
@@ -1594,11 +1615,13 @@ class AgentTelemetryLayer:
                     messages=messages,
                     stream=True,
                     session=session,
+                    middleware=middleware,
+                    tools=tools,
+                    options=options,
                     compaction_strategy=compaction_strategy,
                     tokenizer=tokenizer,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
-                    **kwargs,
                 )
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
@@ -1697,11 +1720,13 @@ class AgentTelemetryLayer:
                             messages=messages,
                             stream=False,
                             session=session,
+                            middleware=middleware,
+                            tools=tools,
+                            options=options,
                             compaction_strategy=compaction_strategy,
                             tokenizer=tokenizer,
                             function_invocation_kwargs=function_invocation_kwargs,
                             client_kwargs=client_kwargs,
-                            **kwargs,
                         )
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())

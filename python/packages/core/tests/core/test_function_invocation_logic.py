@@ -74,7 +74,7 @@ async def test_base_client_with_function_calling(chat_client_base: SupportsChatG
     assert response.messages[2].text == "done"
 
 
-async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_base: SupportsChatGetResponse):
+async def test_base_client_with_function_calling_string_input(chat_client_base: SupportsChatGetResponse):
     exec_counter = 0
 
     @tool(name="test_function", approval_mode="never_require")
@@ -95,7 +95,7 @@ async def test_base_client_with_function_calling_tools_in_kwargs(chat_client_bas
         ChatResponse(messages=Message(role="assistant", text="done")),
     ]
 
-    response = await chat_client_base.get_response("hello", tools=[ai_func])
+    response = await chat_client_base.get_response("hello", options={"tool_choice": "auto", "tools": [ai_func]})
 
     assert exec_counter == 1
     assert len(response.messages) == 3
@@ -1523,7 +1523,7 @@ async def test_function_invocation_stop_clears_conversation_id_non_stream(chat_c
     response = await chat_client_base.get_response(
         [Message(role="user", text="hello")],
         options={"tool_choice": "auto", "tools": [error_func]},
-        session=session_stub,
+        client_kwargs={"session": session_stub},
     )
 
     assert response.conversation_id is None
@@ -1881,8 +1881,7 @@ async def test_hosted_tool_approval_response(chat_client_base: SupportsChatGetRe
     # Send the approval response
     response = await chat_client_base.get_response(
         [Message(role="user", contents=[approval_response])],
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     # The hosted tool approval should be returned as-is (not executed)
@@ -1930,8 +1929,7 @@ async def test_hosted_mcp_approval_response_passthrough(chat_client_base: Suppor
 
     response = await chat_client_base.get_response(
         messages,
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     # The response should succeed without errors
@@ -2024,8 +2022,7 @@ async def test_mixed_local_and_hosted_approval_flow(chat_client_base: SupportsCh
 
     response = await chat_client_base.get_response(
         messages,
-        tool_choice="auto",
-        tools=[local_func],
+        options={"tool_choice": "auto", "tools": [local_func]},
     )
 
     assert response is not None
@@ -2799,7 +2796,7 @@ async def test_streaming_function_invocation_stop_clears_conversation_id(chat_cl
         "hello",
         options={"tool_choice": "auto", "tools": [error_func]},
         stream=True,
-        session=session_stub,
+        client_kwargs={"session": session_stub},
     )
     async for _ in stream:
         pass
