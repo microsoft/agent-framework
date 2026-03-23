@@ -89,14 +89,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>
         {
-            State state = stateInitializer(session);
-
-            if (state is null)
-            {
-                throw new InvalidOperationException("State initializer must return a non-null state.");
-            }
-
-            return state;
+            return stateInitializer(session) ?? throw new InvalidOperationException("State initializer must return a non-null state.");
         };
 
     /// <inheritdoc />

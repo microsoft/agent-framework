@@ -74,7 +74,7 @@ public class ResponsesAgentExtensionCreateTests
 
         ChatClientAgent agent = this._client.AsAIAgent(options);
         string conversationId = (await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync()).Value.Id;
-        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync(conversationId);
+        ChatClientAgentSession session = (ChatClientAgentSession)await ChatClientAgent.CreateSessionAsync(conversationId);
 
         try
         {
