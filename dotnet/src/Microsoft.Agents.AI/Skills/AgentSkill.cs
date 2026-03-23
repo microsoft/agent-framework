@@ -1,0 +1,50 @@
+﻿// Copyright (c) Microsoft. All rights reserved.
+
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
+
+namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// Abstract base class for all agent skills.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A skill represents a domain-specific capability with instructions, resources, and scripts.
+/// Concrete implementations include <see cref="AgentFileSkill"/> (filesystem-backed).
+/// </para>
+/// <para>
+/// Skill metadata follows the <see href="https://agentskills.io/specification">Agent Skills specification</see>.
+/// </para>
+/// </remarks>
+[Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+public abstract class AgentSkill
+{
+    /// <summary>
+    /// Gets the frontmatter metadata for this skill.
+    /// </summary>
+    /// <remarks>
+    /// Contains the L1 discovery metadata (name, description, license, compatibility, etc.)
+    /// as defined by the <see href="https://agentskills.io/specification">Agent Skills specification</see>.
+    /// </remarks>
+    public abstract AgentSkillFrontmatter Frontmatter { get; }
+
+    /// <summary>
+    /// Gets the full skill content.
+    /// </summary>
+    /// <remarks>
+    /// For file-based skills this is the raw SKILL.md file content.
+    /// </remarks>
+    public abstract string Content { get; }
+
+    /// <summary>
+    /// Gets the resources associated with this skill, or <see langword="null"/> if none.
+    /// </summary>
+    public abstract IReadOnlyList<AgentSkillResource>? Resources { get; }
+
+    /// <summary>
+    /// Gets the scripts associated with this skill, or <see langword="null"/> if none.
+    /// </summary>
+    public abstract IReadOnlyList<AgentSkillScript>? Scripts { get; }
+}
