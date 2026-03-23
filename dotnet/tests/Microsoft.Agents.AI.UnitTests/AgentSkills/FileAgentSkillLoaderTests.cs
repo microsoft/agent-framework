@@ -447,7 +447,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var resource = skills[0].Resources!.First(r => r.Name == "refs/doc.md");
 
         // Act
-        var content = await resource.ReadAsync(new Extensions.AI.AIFunctionArguments());
+        var content = await resource.ReadAsync([]);
 
         // Assert
         Assert.Equal("Document content here.", content);

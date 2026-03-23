@@ -18,7 +18,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// Skills for which the predicate returns <see langword="true"/> are included in the result;
 /// skills for which it returns <see langword="false"/> are excluded and logged at
-/// <see cref="Microsoft.Extensions.Logging.LogLevel.Debug"/> level.
+/// <see cref="LogLevel.Debug"/> level.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource

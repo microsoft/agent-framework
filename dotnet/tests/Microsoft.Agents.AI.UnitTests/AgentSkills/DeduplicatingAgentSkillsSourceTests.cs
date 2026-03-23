@@ -53,13 +53,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     [Fact]
     public async Task GetSkillsAsync_CaseInsensitiveDuplication_KeepsFirstAsync()
     {
-        // Arrange
-        _ = new AgentSkill[]
-        {
-            new TestAgentSkill("my-skill", "Lowercase", "Instructions."),
-        };
-
-        // Use a custom source that returns skills with same name but different casing
+        // Arrange — use a custom source that returns skills with same name but different casing
         var inner = new FakeDuplicateCaseSource();
         var source = new DeduplicatingAgentSkillsSource(inner);
 
