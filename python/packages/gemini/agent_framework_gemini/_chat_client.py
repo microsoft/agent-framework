@@ -80,46 +80,79 @@ class ThinkingConfig(TypedDict, total=False):
 class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], total=False):
     """Google Gemini API-specific chat options.
 
-    Supported ChatOptions fields (mapped to GenerateContentConfig):
-        model_id          -> model parameter
-        temperature       -> temperature
-        max_tokens        -> max_output_tokens
-        top_p             -> top_p
-        stop              -> stop_sequences
-        seed              -> seed
-        frequency_penalty -> frequency_penalty
-        presence_penalty  -> presence_penalty
-        tools             -> tools[].function_declarations
-        tool_choice       -> tool_config.function_calling_config.mode
-        response_format   -> response_mime_type (signals JSON mode)
-        instructions      -> merged into system_instruction
+    Extends ``ChatOptions`` with Gemini-specific fields. Standard options are mapped to their
+    ``GenerateContentConfig`` equivalents; Gemini-specific fields are declared below.
 
-    Gemini-specific options:
-        thinking_config: Extended thinking. Maps to types.ThinkingConfig.
-        top_k: Top-K sampling.
-        google_search_grounding: Enable Google Search as a grounding tool.
-        google_maps_grounding: Enable Google Maps as a grounding tool.
-        code_execution: Enable the built-in code execution tool.
-        response_schema: JSON schema for structured output.
+    Only text output is supported for now. Other modalities may be added later.
 
-    Unsupported base options (passing these is a type error):
-        logit_bias, allow_multiple_tool_calls, store, user, metadata, conversation_id
+    See: https://ai.google.dev/api/generate-content#generationconfig
+
+    Inherited fields from ``ChatOptions``:
+        model_id: Model to use for this call (e.g. ``"gemini-2.5-flash"``).
+        temperature: Controls randomness. Higher values produce more varied output.
+        max_tokens: Maximum number of tokens to generate (``maxOutputTokens``).
+        top_p: Nucleus sampling cutoff. Only tokens within the top-p probability mass are considered.
+        stop: One or more sequences that stop generation when encountered (``stopSequences``).
+        seed: Fixed seed for reproducible outputs.
+        frequency_penalty: Reduces repetition by penalising tokens that appear frequently.
+        presence_penalty: Reduces repetition by penalising tokens that have already appeared.
+        tools: Function tools the model may call. Accepts ``FunctionTool`` instances or plain callables.
+        tool_choice: How the model picks a tool. One of ``'auto'``, ``'none'``, or ``'required'``.
+        response_format: Pydantic model type for structured JSON output. The response text is
+            parsed into the model and exposed via ``ChatResponse.value``.
+        instructions: Extra system-level instructions prepended to the system message.
+
+    Not supported, and passing these raises a type error:
+        - ``logit_bias``
+        - ``allow_multiple_tool_calls``
+        - ``store``
+        - ``user``
+        - ``metadata``
+        - ``conversation_id``
     """
 
-    thinking_config: ThinkingConfig
-    top_k: int
-    google_search_grounding: bool
-    google_maps_grounding: bool
-    code_execution: bool
+    # Gemini's GenerationConfig options
     response_schema: dict[str, Any]
+    """Raw JSON schema dict for structured output (alternative to ``response_format``).
+    Sets ``response_mime_type`` to ``'application/json'`` and passes the schema directly."""
 
-    # Unsupported base options (override with None to indicate not supported)
+    top_k: int
+    """Top-K sampling: limits token selection to the K most probable tokens."""
+
+    thinking_config: ThinkingConfig
+    """Extended thinking configuration. See ``ThinkingConfig`` for available fields."""
+
+    # Tool options
+    code_execution: bool
+    """Allow the model to write and run Python code in a sandboxed environment."""
+
+    google_search_grounding: bool | types.GoogleSearch
+    """Ground responses with live Google Search results. Pass ``True`` to use default settings,
+    or a ``types.GoogleSearch`` instance for full control (e.g. ``time_range_filter``,
+    ``search_types``, ``exclude_domains``)."""
+
+    google_maps_grounding: bool | types.GoogleMaps
+    """Ground responses with Google Maps data. Pass ``True`` to use default settings,
+    or a ``types.GoogleMaps`` instance for full control (e.g. ``enable_widget``)."""
+
+    # Unsupported base options. Override with None to indicate not supported
     logit_bias: None  # type: ignore[misc]
+    """Not supported in the Gemini API."""
+
     allow_multiple_tool_calls: None  # type: ignore[misc]
+    """Not supported. Gemini handles parallel tool calls automatically."""
+
     store: None  # type: ignore[misc]
+    """Not supported in the Gemini API."""
+
     user: None  # type: ignore[misc]
+    """Not supported in the Gemini API."""
+
     metadata: None  # type: ignore[misc]
+    """Not supported in the Gemini API."""
+
     conversation_id: None  # type: ignore[misc]
+    """Not supported in the Gemini API."""
 
 
 GeminiChatOptionsT = TypeVar(
@@ -185,8 +218,8 @@ class GeminiChatClient(
         """Create a Gemini chat client.
 
         Args:
-            api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` env var.
-            model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` env var.
+            api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
+            model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` environment variable.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
@@ -494,15 +527,16 @@ class GeminiChatClient(
         """Build the Gemini tool list from options, combining function declarations and built-in tools.
 
         Args:
-            options: Resolved chat options containing ``tools``, ``google_search_grounding``,
-                ``google_maps_grounding``, and ``code_execution`` flags.
+            options: Resolved chat options containing ``tools``, ``google_search_grounding``
+                (``bool`` or ``types.GoogleSearch``), ``google_maps_grounding``
+                (``bool`` or ``types.GoogleMaps``), and ``code_execution`` flag.
 
         Returns:
             A list of ``types.Tool`` objects, or None if no tools are configured.
         """
         function_tools: list[Any] = options.get("tools") or []
-        include_search = options.get("google_search_grounding", False)
-        include_maps = options.get("google_maps_grounding", False)
+        search_option = options.get("google_search_grounding", False)
+        maps_option = options.get("google_maps_grounding", False)
         include_code_exec = options.get("code_execution", False)
 
         result: list[types.Tool] = []
@@ -518,10 +552,12 @@ class GeminiChatClient(
         ]
         if declarations:
             result.append(types.Tool(function_declarations=declarations))
-        if include_search:
-            result.append(types.Tool(google_search=types.GoogleSearch()))
-        if include_maps:
-            result.append(types.Tool(google_maps=types.GoogleMaps()))
+        if search_option:
+            google_search = search_option if isinstance(search_option, types.GoogleSearch) else types.GoogleSearch()
+            result.append(types.Tool(google_search=google_search))
+        if maps_option:
+            google_maps = maps_option if isinstance(maps_option, types.GoogleMaps) else types.GoogleMaps()
+            result.append(types.Tool(google_maps=google_maps))
         if include_code_exec:
             result.append(types.Tool(code_execution=types.ToolCodeExecution()))
 
