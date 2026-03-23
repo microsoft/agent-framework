@@ -23,17 +23,135 @@
             padding: 20px;
         }
 
+        .page-layout {
+            display: flex;
+            gap: 16px;
+            width: 100%;
+            max-width: 1100px;
+            height: 650px;
+        }
+
         .container {
             background: white;
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
-            width: 100%;
-            max-width: 800px;
-            height: 600px;
+            flex: 1;
             display: flex;
             flex-direction: column;
+            min-width: 0;
         }
 
+        /* ── Info panel ─────────────────────────────────────────── */
+        .info-panel {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            width: 280px;
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .info-panel-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 14px 16px;
+            font-weight: 600;
+            font-size: 14px;
+            border-radius: 12px 12px 0 0;
+        }
+
+        .info-panel-body {
+            padding: 16px;
+            flex: 1;
+            overflow-y: auto;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .info-section {
+            margin-bottom: 16px;
+        }
+
+        .info-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .info-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6b7280;
+            margin-bottom: 4px;
+            font-weight: 600;
+        }
+
+        .info-value {
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+            font-size: 12px;
+            background: #f3f4f6;
+            padding: 6px 8px;
+            border-radius: 6px;
+            word-break: break-all;
+            color: #111827;
+        }
+
+        .info-value.muted {
+            color: #9ca3af;
+            font-style: italic;
+            background: none;
+            padding: 0;
+        }
+
+        .info-divider {
+            border: none;
+            border-top: 1px solid #e5e7eb;
+            margin: 12px 0;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+        }
+
+        .stat-label {
+            color: #6b7280;
+            font-size: 12px;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            font-size: 13px;
+            color: #111827;
+        }
+
+        .btn-new-chat {
+            width: 100%;
+            padding: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-top: 8px;
+        }
+
+        .btn-new-chat:hover {
+            opacity: 0.9;
+        }
+
+        .btn-new-chat:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* ── Chat ───────────────────────────────────────────────── */
         .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -175,29 +293,97 @@
             border-bottom-left-radius: 4px;
             color: #9ca3af;
         }
+
+        @media (max-width: 860px) {
+            .page-layout {
+                flex-direction: column;
+                height: auto;
+                max-height: 100vh;
+            }
+
+            .info-panel {
+                width: 100%;
+                max-height: 180px;
+            }
+
+            .container {
+                height: 500px;
+            }
+        }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🌍 Travel Planner Agent</h1>
-            <div class="status">
-                <div class="status-dot" id="statusDot"></div>
-                <span id="statusText">Connecting...</span>
+    <div class="page-layout">
+        <!-- Chat panel -->
+        <div class="container">
+            <div class="header">
+                <h1>🌍 Travel Planner Agent</h1>
+                <div class="status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+            <div class="messages" id="messages">
+                <div class="message system">
+                    <div class="message-bubble">Welcome! Ask me to plan a trip to any destination.</div>
+                </div>
+            </div>
+            <div class="input-area">
+                <form class="input-form" id="messageForm">
+                    <input type="text" id="messageInput" placeholder="e.g., Plan a 3-day trip to Tokyo"
+                        autocomplete="off" />
+                    <button type="submit" id="sendButton" disabled>Send</button>
+                </form>
             </div>
         </div>
-        <div class="messages" id="messages">
-            <div class="message system">
-                <div class="message-bubble">Welcome! Ask me to plan a trip to any destination.</div>
+
+        <!-- Info panel -->
+        <div class="info-panel">
+            <div class="info-panel-header">Session Info</div>
+            <div class="info-panel-body">
+                <div class="info-section">
+                    <div class="info-label">User ID</div>
+                    <div class="info-value" id="infoUserId">—</div>
+                </div>
+                <div class="info-section">
+                    <div class="info-label">Thread ID</div>
+                    <div class="info-value muted" id="infoThreadId">Not started</div>
+                </div>
+                <div class="info-section">
+                    <div class="info-label">SignalR Connection ID</div>
+                    <div class="info-value muted" id="infoConnectionId">—</div>
+                </div>
+
+                <hr class="info-divider" />
+
+                <div class="info-section">
+                    <div class="info-label">Conversation Stats</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Messages sent</span>
+                        <span class="stat-value" id="statUserMsgs">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Agent responses</span>
+                        <span class="stat-value" id="statAgentMsgs">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Chunks received</span>
+                        <span class="stat-value" id="statChunks">0</span>
+                    </div>
+                </div>
+
+                <hr class="info-divider" />
+
+                <div class="info-section">
+                    <div class="info-label">Latest Correlation ID</div>
+                    <div class="info-value muted" id="infoCorrelationId">—</div>
+                </div>
+
+                <hr class="info-divider" />
+
+                <button class="btn-new-chat" id="newChatButton">New Conversation</button>
             </div>
-        </div>
-        <div class="input-area">
-            <form class="input-form" id="messageForm">
-                <input type="text" id="messageInput" placeholder="e.g., Plan a 3-day trip to Tokyo"
-                    autocomplete="off" />
-                <button type="submit" id="sendButton" disabled>Send</button>
-            </form>
         </div>
     </div>
 
@@ -205,6 +391,9 @@
         let signalRConnection = null;
         let conversationId = null;
         let isAgentProcessing = false;
+        let userMsgCount = 0;
+        let agentMsgCount = 0;
+        let chunkCount = 0;
 
         const messagesDiv = document.getElementById('messages');
         const messageInput = document.getElementById('messageInput');
@@ -213,11 +402,56 @@
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
 
+        // Info panel elements
+        const infoUserId = document.getElementById('infoUserId');
+        const infoThreadId = document.getElementById('infoThreadId');
+        const infoConnectionId = document.getElementById('infoConnectionId');
+        const infoCorrelationId = document.getElementById('infoCorrelationId');
+        const statUserMsgs = document.getElementById('statUserMsgs');
+        const statAgentMsgs = document.getElementById('statAgentMsgs');
+        const statChunks = document.getElementById('statChunks');
+        const newChatButton = document.getElementById('newChatButton');
+
+        function updateInfoPanel() {
+            infoUserId.textContent = getUserId();
+            infoUserId.classList.remove('muted');
+
+            if (conversationId) {
+                infoThreadId.textContent = conversationId;
+                infoThreadId.classList.remove('muted');
+            } else {
+                infoThreadId.textContent = 'Not started';
+                infoThreadId.classList.add('muted');
+            }
+
+            if (signalRConnection && signalRConnection.connectionId) {
+                infoConnectionId.textContent = signalRConnection.connectionId;
+                infoConnectionId.classList.remove('muted');
+            }
+
+            statUserMsgs.textContent = userMsgCount;
+            statAgentMsgs.textContent = agentMsgCount;
+            statChunks.textContent = chunkCount;
+        }
+
+        // Generate a persistent user ID for SignalR user-targeted messaging.
+        // Stored in sessionStorage so it survives page refreshes within a tab.
+        function getUserId() {
+            let userId = sessionStorage.getItem('userId');
+            if (!userId) {
+                userId = 'user-' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+                sessionStorage.setItem('userId', userId);
+            }
+            return userId;
+        }
+
         // Initialize SignalR connection
         async function initSignalR() {
             try {
-                // Get connection info from negotiate endpoint
-                const response = await fetch('/api/agent/negotiate');
+                // Get connection info from negotiate endpoint (user_id embedded in token)
+                const response = await fetch('/api/agent/negotiate', {
+                    headers: { 'x-user-id': getUserId() }
+                });
                 const { url, accessToken } = await response.json();
 
                 // Create SignalR connection
@@ -234,7 +468,13 @@
                         conversationId = data.conversationId;
                     }
                     if (conversationId === data.conversationId) {
+                        chunkCount++;
                         updateOrAppendAgentMessage(data.text || '');
+                        if (data.correlationId) {
+                            infoCorrelationId.textContent = data.correlationId;
+                            infoCorrelationId.classList.remove('muted');
+                        }
+                        updateInfoPanel();
                     }
                 });
 
@@ -245,10 +485,12 @@
                         conversationId = data.conversationId;
                     }
                     if (conversationId === data.conversationId) {
+                        agentMsgCount++;
                         isAgentProcessing = false;
                         removeTypingIndicator();
                         enableInput();
                         currentAgentMessage = null;
+                        updateInfoPanel();
                     }
                 });
 
@@ -264,6 +506,7 @@
                 await signalRConnection.start();
                 updateStatus(true, 'Connected');
                 sendButton.disabled = false;
+                updateInfoPanel();
                 console.log('SignalR connected, connectionId:', signalRConnection.connectionId);
             } catch (error) {
                 console.error('SignalR connection error:', error);
@@ -353,46 +596,27 @@
             messageInput.focus();
         }
 
-        // Join a SignalR group for user isolation
-        async function joinGroup(group) {
-            try {
-                const response = await fetch('/api/agent/join-group', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        group: group,
-                        connectionId: signalRConnection.connectionId
-                    })
-                });
-                if (!response.ok) {
-                    console.error('Failed to join group:', await response.text());
-                } else {
-                    console.log('Joined group:', group);
-                }
-            } catch (error) {
-                console.error('Error joining group:', error);
-            }
-        }
-
         // Send message to agent
         async function sendMessage(message) {
             if (!message.trim() || isAgentProcessing) return;
 
             addMessage(message, true);
+            userMsgCount++;
             disableInput();
             isAgentProcessing = true;
             currentAgentMessage = null;
             showTypingIndicator();
 
             try {
-                // For new conversations, get thread_id from server and join group BEFORE sending
+                // For new conversations, create a thread with user mapping
                 if (!conversationId) {
                     const threadResponse = await fetch('/api/agent/create-thread', {
-                        method: 'POST'
+                        method: 'POST',
+                        headers: { 'x-user-id': getUserId() }
                     });
                     const threadData = await threadResponse.json();
                     conversationId = threadData.thread_id;
-                    await joinGroup(conversationId);
+                    updateInfoPanel();
                 }
 
                 // Build URL with thread_id as query parameter for conversation continuity
@@ -418,6 +642,20 @@
             }
         }
 
+        // New conversation button
+        newChatButton.addEventListener('click', () => {
+            if (isAgentProcessing) return;
+            conversationId = null;
+            userMsgCount = 0;
+            agentMsgCount = 0;
+            chunkCount = 0;
+            currentAgentMessage = null;
+            messagesDiv.innerHTML = '';
+            addSystemMessage('New conversation started. Ask me to plan a trip!');
+            updateInfoPanel();
+            messageInput.focus();
+        });
+
         messageForm.addEventListener('submit', (e) => {
             e.preventDefault();
             const message = messageInput.value.trim();
@@ -428,6 +666,7 @@
         });
 
         // Initialize on load
+        updateInfoPanel();
         initSignalR();
     </script>
 </body>
