@@ -1,8 +1,19 @@
 // Copyright (c) Microsoft. All rights reserved.
 
+
+<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.AzureAI(net9.0)', Before:
+<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.AzureAI(net9.0)', Before:
+=======
+<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.AzureAI(net9.0)', Before:
+>>>>>>> After
+<<<<<<< TODO: Unmerged change from project 'Microsoft.Agents.AI.AzureAI(net9.0)', Before:
 using System;
+=======
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+>>>>>>> After
+using Azure.AI.Extensions.OpenAI;
+using Azure.AI.Projects;
+using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 

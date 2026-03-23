@@ -27,7 +27,7 @@ const string AgentNameNative = "MemorySearchAgent-NATIVE";
 
 string userScope = $"user_{Environment.MachineName}";
 
-MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelay = 0 };
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)

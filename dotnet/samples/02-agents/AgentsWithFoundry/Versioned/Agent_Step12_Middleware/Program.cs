@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows multiple middleware layers working together with Microsoft Foundry Agents:
 // agent run (PII filtering and guardrails),
@@ -8,7 +8,7 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;

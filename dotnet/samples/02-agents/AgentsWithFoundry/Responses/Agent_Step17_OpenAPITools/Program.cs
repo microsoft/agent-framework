@@ -3,7 +3,7 @@
 // This sample shows how to use OpenAPI Tools with AI Agents.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
@@ -42,7 +42,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAI()
     return aiProjectClient.AsAIAgent(agentVersion);
 }
 
-OpenAPIFunctionDefinition CreateOpenAPIFunctionDefinition()
+OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
 {
     // A simple OpenAPI specification for the REST Countries API
     const string CountriesOpenApiSpec = """

@@ -172,21 +172,21 @@ async Task<AgentResponse> ConsolePromptingApprovalMiddleware(IEnumerable<ChatMes
 {
     AgentResponse agentResponse = await innerAgent.RunAsync(messages, session, options, cancellationToken);
 
-    List<FunctionApprovalRequestContent> approvalRequests = agentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+    List<ToolApprovalRequestContent> approvalRequests = agentResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
 
     while (approvalRequests.Count > 0)
     {
         agentResponse.Messages = approvalRequests
             .ConvertAll(functionApprovalRequest =>
             {
-                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {functionApprovalRequest.FunctionCall.Name}");
+                Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
                 bool approved = Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
                 return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved)]);
             });
 
         agentResponse = await innerAgent.RunAsync(agentResponse.Messages, session, options, cancellationToken);
 
-        approvalRequests = agentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>().ToList();
+        approvalRequests = agentResponse.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>().ToList();
     }
 
     return agentResponse;

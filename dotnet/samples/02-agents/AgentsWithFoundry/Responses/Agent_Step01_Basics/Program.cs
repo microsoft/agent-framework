@@ -2,8 +2,8 @@
 
 // This sample shows how to create and run a basic agent with AIProjectClient.AsAIAgent(...).
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use an agent with function tools that require a human in the loop for approvals.
 // It shows both non-streaming and streaming agent interactions using weather-related tools.
@@ -7,7 +7,7 @@
 
 using System.ComponentModel;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;

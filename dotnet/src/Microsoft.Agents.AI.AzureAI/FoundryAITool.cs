@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
@@ -42,7 +42,7 @@ public static class FoundryAITool
     /// </summary>
     /// <param name="definition">The OpenAPI function definition specifying the API endpoint, schema, and authentication.</param>
     /// <returns>An <see cref="AITool"/> that calls the specified OpenAPI endpoint.</returns>
-    public static AITool CreateOpenApiTool(OpenAPIFunctionDefinition definition)
+    public static AITool CreateOpenApiTool(OpenApiFunctionDefinition definition)
         => ((ResponseTool)AgentTool.CreateOpenApiTool(definition)).AsAITool();
 
     /// <summary>
@@ -58,7 +58,7 @@ public static class FoundryAITool
     /// </summary>
     /// <param name="parameters">The Bing Custom Search configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for Bing Custom Search.</returns>
-    public static AITool CreateBingCustomSearchTool(BingCustomSearchToolParameters parameters)
+    public static AITool CreateBingCustomSearchTool(BingCustomSearchToolOptions parameters)
         => ((ResponseTool)AgentTool.CreateBingCustomSearchTool(parameters)).AsAITool();
 
     /// <summary>
@@ -90,7 +90,7 @@ public static class FoundryAITool
     /// </summary>
     /// <param name="parameters">The browser automation configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for browser automation.</returns>
-    public static AITool CreateBrowserAutomationTool(BrowserAutomationToolParameters parameters)
+    public static AITool CreateBrowserAutomationTool(BrowserAutomationToolOptions parameters)
         => ((ResponseTool)AgentTool.CreateBrowserAutomationTool(parameters)).AsAITool();
 
     /// <summary>

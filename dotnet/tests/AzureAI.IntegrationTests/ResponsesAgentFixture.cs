@@ -6,10 +6,16 @@ using System.Linq;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
-using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
-using Microsoft.Agents.AI;
+using Azure.AI.Extensions.OpenAI;
+
+<<<<<<< TODO: Unmerged change from project 'AzureAI.IntegrationTests(net472)', Before:
 using Microsoft.Agents.AI.AzureAI;
+using Microsoft.Extensions.AI;
+=======
+using Microsoft.Extensions.AI;
+>>>>>>> After
+using Azure.AI.Projects;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;

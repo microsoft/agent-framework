@@ -3,7 +3,7 @@
 // This sample shows how to create and use versioned AI agents with AIProjectClient.Agents.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
@@ -20,7 +20,7 @@ AgentRecord jokerAgentRecord = await GetAgentRecord(deploymentName, JokerName, a
 ChatClientAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
 
 // The AgentVersion can be accessed via the GetService method.
-Console.WriteLine($"Latest agent version id: {jokerAgentRecord.Versions.Latest.Id}");
+Console.WriteLine($"Latest agent version id: {jokerAgentRecord.GetLatestVersion().Id}");
 
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await jokerAgentLatest.RunAsync("Tell me a joke about a pirate."));

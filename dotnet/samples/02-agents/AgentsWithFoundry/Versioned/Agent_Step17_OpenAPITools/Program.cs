@@ -58,7 +58,7 @@ async Task<ChatClientAgent> CreateAgentWithNativeSDK()
     return aiProjectClient.AsAIAgent(agentVersion);
 }
 
-OpenAPIFunctionDefinition CreateOpenAPIFunctionDefinition()
+OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
 {
     // A simple OpenAPI specification for the REST Countries API
     const string CountriesOpenApiSpec = """

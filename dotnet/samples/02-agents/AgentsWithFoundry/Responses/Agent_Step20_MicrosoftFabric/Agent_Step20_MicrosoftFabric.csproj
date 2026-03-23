@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.Identity" />
-    <PackageReference Include="Azure.AI.Projects.OpenAI" />
   </ItemGroup>
 
   <ItemGroup>

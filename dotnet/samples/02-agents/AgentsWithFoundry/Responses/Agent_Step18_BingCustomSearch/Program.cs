@@ -3,7 +3,7 @@
 // This sample shows how to use Bing Custom Search Tool with a ChatClientAgent.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
@@ -17,7 +17,7 @@ const string AgentInstructions = """
     """;
 
 // Bing Custom Search tool parameters
-BingCustomSearchToolParameters bingCustomSearchToolParameters = new([
+BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
     new BingCustomSearchConfiguration(connectionId, instanceName)
 ]);
 
