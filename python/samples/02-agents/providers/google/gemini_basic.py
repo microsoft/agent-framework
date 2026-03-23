@@ -1,5 +1,14 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Shows how to use GeminiChatClient with an agent and a custom tool, covering both
+non-streaming and streaming responses.
+
+Requires the following environment variables to be set:
+- GEMINI_API_KEY
+- GEMINI_CHAT_MODEL_ID
+"""
+
 import asyncio
 from random import randint
 from typing import Annotated
@@ -8,23 +17,10 @@ from agent_framework import Agent, tool
 from agent_framework_gemini import GeminiChatClient
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
-"""
-Gemini Chat Agent Example
 
-This sample demonstrates using GeminiChatClient with an agent and a single custom tool.
-
-Environment variables used:
-- GEMINI_API_KEY
-- GEMINI_CHAT_MODEL_ID (defaults to gemini-2.5-flash if unset)
-"""
-
-
-# NOTE: approval_mode="never_require" is for sample brevity.
-# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, "The location to get the weather for."],
@@ -35,8 +31,8 @@ def get_weather(
 
 
 async def non_streaming_example() -> None:
-    """Example of non-streaming response (get the complete result at once)."""
-    print("=== Non-streaming Response Example ===")
+    """Runs the agent and waits for the complete response before printing it."""
+    print("=== Non-streaming ===")
 
     agent = Agent(
         client=GeminiChatClient(),
@@ -45,15 +41,15 @@ async def non_streaming_example() -> None:
         tools=[get_weather],
     )
 
-    query = "What's the weather like in Karlsruhe?"
+    query = "What's the weather like in Karlsruhe, Germany?"
     print(f"User: {query}")
     result = await agent.run(query)
     print(f"Result: {result}\n")
 
 
 async def streaming_example() -> None:
-    """Example of streaming response (get results as they are generated)."""
-    print("=== Streaming Response Example ===")
+    """Runs the agent and prints each chunk as it is received."""
+    print("=== Streaming ===")
 
     agent = Agent(
         client=GeminiChatClient(),
@@ -72,8 +68,6 @@ async def streaming_example() -> None:
 
 
 async def main() -> None:
-    print("=== Gemini Example ===\n")
-
     await non_streaming_example()
     await streaming_example()
 

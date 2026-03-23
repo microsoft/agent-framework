@@ -1,28 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Shows how to enable Google Maps grounding so Gemini can retrieve location and
+mapping information before responding.
+
+Requires the following environment variables to be set:
+- GEMINI_API_KEY
+- GEMINI_CHAT_MODEL_ID
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
-
-"""
-Gemini Google Maps Grounding Example
-
-This sample demonstrates Google Maps grounding, which lets Gemini retrieve
-location and mapping information from Google Maps before responding.
-
-Environment variables used:
-- GEMINI_API_KEY
-- GEMINI_CHAT_MODEL_ID (defaults to gemini-2.5-flash if unset)
-"""
 
 
 async def main() -> None:
-    print("=== Google Maps Grounding Example ===")
+    print("=== Google Maps grounding ===")
 
     options: GeminiChatOptions = {
         "google_maps_grounding": True,

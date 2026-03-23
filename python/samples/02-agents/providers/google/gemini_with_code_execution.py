@@ -1,28 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Shows how to enable Gemini's built-in code execution tool so the model can write
+and run code in a sandboxed environment to answer questions.
+
+Requires the following environment variables to be set:
+- GEMINI_API_KEY
+- GEMINI_CHAT_MODEL_ID
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
-
-"""
-Gemini Code Execution Example
-
-This sample demonstrates Gemini's built-in code execution tool, which lets the
-model write and run Python code in a sandboxed environment to answer questions.
-
-Environment variables used:
-- GEMINI_API_KEY
-- GEMINI_CHAT_MODEL_ID (defaults to gemini-2.5-flash if unset)
-"""
 
 
 async def main() -> None:
-    print("=== Code Execution Example ===")
+    print("=== Code execution ===")
 
     options: GeminiChatOptions = {
         "code_execution": True,

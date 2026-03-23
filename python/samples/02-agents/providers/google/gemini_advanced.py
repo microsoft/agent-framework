@@ -1,29 +1,26 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""
+Shows how to enable extended thinking with ThinkingConfig so the model can
+reason through complex problems before responding.
+
+Requires the following environment variables to be set:
+- GEMINI_API_KEY
+- GEMINI_CHAT_MODEL_ID
+"""
+
 import asyncio
 
 from agent_framework import Agent
 from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, ThinkingConfig
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
-
-"""
-Gemini Advanced Example
-
-This sample demonstrates extended thinking via ThinkingConfig (Gemini 2.5+),
-which lets the model reason through complex problems before responding.
-
-Environment variables used:
-- GEMINI_API_KEY
-- GEMINI_CHAT_MODEL_ID (defaults to gemini-2.5-flash if unset)
-"""
 
 
 async def main() -> None:
     """Example of extended thinking with a Python version comparison question."""
-    print("=== Extended Thinking Example ===")
+    print("=== Extended thinking ===")
 
     options: GeminiChatOptions = {
         "thinking_config": ThinkingConfig(thinking_budget=2048),
