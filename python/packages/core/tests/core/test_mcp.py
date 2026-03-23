@@ -3804,6 +3804,28 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
             assert meta is None
 
 
+async def test_mcp_streamable_http_tool_hook_not_duplicated_on_repeated_get_mcp_client():
+    """Test that calling get_mcp_client multiple times does not accumulate duplicate hooks."""
+    tool = MCPStreamableHTTPTool(
+        name="test",
+        url="http://example.com/mcp",
+        header_provider=lambda kw: {"X-Token": kw.get("token", "")},
+    )
+
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            tool.get_mcp_client()
+            tool.get_mcp_client()
+            tool.get_mcp_client()
+
+            assert tool._httpx_client is not None
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1, f"Expected exactly one hook, got {len(hooks)}"
+    finally:
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()
+
+
 # endregion
 
 
@@ -3811,10 +3833,10 @@ async def test_mcp_tool_call_tool_otel_meta(use_span, expect_traceparent, span_e
 
 
 async def test_mcp_streamable_http_tool_header_provider_injects_headers():
-    """Test that header_provider injects per-request HTTP headers via runtime kwargs.
+    """Test that header_provider integrates with call_tool via runtime kwargs.
 
     When header_provider is configured, runtime kwargs from FunctionInvocationContext
-    are passed to the provider and the returned headers appear on outbound HTTP requests.
+    are passed to the provider and the MCP session.call_tool is invoked successfully.
     """
 
     class _TestServer(MCPStreamableHTTPTool):
@@ -3999,7 +4021,7 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
     """Test that the httpx event hook injects headers from the contextvar."""
     import httpx
 
-    from agent_framework._mcp import _mcp_call_headers
+    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, _mcp_call_headers
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -4007,23 +4029,31 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
         header_provider=lambda kw: {"X-Custom": kw.get("custom", "")},
     )
 
-    with patch("agent_framework._mcp.streamable_http_client"):
-        # Trigger get_mcp_client to set up the event hook
-        tool.get_mcp_client()
+    try:
+        with patch("agent_framework._mcp.streamable_http_client"):
+            # Trigger get_mcp_client to set up the event hook
+            tool.get_mcp_client()
 
-        # The tool should have created an httpx client with the event hook
-        assert tool._httpx_client is not None
-        hooks = tool._httpx_client.event_hooks.get("request", [])
-        assert len(hooks) == 1, "Expected one request event hook"
+            # The tool should have created an httpx client with the event hook
+            assert tool._httpx_client is not None
+            assert tool._httpx_client.follow_redirects is True
+            assert tool._httpx_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert tool._httpx_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
+            hooks = tool._httpx_client.event_hooks.get("request", [])
+            assert len(hooks) == 1, "Expected one request event hook"
 
-        # Simulate what happens during a call_tool: contextvar is set
-        token = _mcp_call_headers.set({"X-Custom": "test-value"})
-        try:
-            request = httpx.Request("POST", "http://example.com/mcp")
-            await hooks[0](request)
-            assert request.headers.get("X-Custom") == "test-value"
-        finally:
-            _mcp_call_headers.reset(token)
+            # Simulate what happens during a call_tool: contextvar is set
+            token = _mcp_call_headers.set({"X-Custom": "test-value"})
+            try:
+                request = httpx.Request("POST", "http://example.com/mcp")
+                await hooks[0](request)
+                assert request.headers.get("X-Custom") == "test-value"
+            finally:
+                _mcp_call_headers.reset(token)
+    finally:
+        # Ensure any created httpx client is properly closed
+        if getattr(tool, "_httpx_client", None) is not None:
+            await tool._httpx_client.aclose()
 
 
 async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client():

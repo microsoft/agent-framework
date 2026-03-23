@@ -1469,22 +1469,27 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
+        from httpx import AsyncClient
         from mcp.client.streamable_http import streamable_http_client
 
         http_client = self._httpx_client
         if self._header_provider is not None:
             if http_client is None:
-                from mcp.shared._httpx_utils import create_mcp_http_client
-
-                http_client = create_mcp_http_client()
+                http_client = AsyncClient(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                )
                 self._httpx_client = http_client
 
-            async def _inject_headers(request: httpx.Request) -> None:  # noqa: RUF029
-                headers = _mcp_call_headers.get({})
-                for key, value in headers.items():
-                    request.headers[key] = value
+            if not hasattr(self, "_inject_headers_hook"):
 
-            http_client.event_hooks["request"].append(_inject_headers)
+                async def _inject_headers(request: httpx.Request) -> None:  # noqa: RUF029
+                    headers = _mcp_call_headers.get({})
+                    for key, value in headers.items():
+                        request.headers[key] = value
+
+                self._inject_headers_hook = _inject_headers  # type: ignore[attr-defined]
+                http_client.event_hooks["request"].append(self._inject_headers_hook)  # type: ignore[attr-defined]
 
         return streamable_http_client(
             url=self.url,
