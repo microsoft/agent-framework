@@ -647,6 +647,14 @@ def test_coerce_to_dict_with_numeric_value() -> None:
     assert GeminiChatClient._coerce_to_dict(42) == {"result": "42"}
 
 
+def test_coerce_to_dict_with_json_array_string() -> None:
+    assert GeminiChatClient._coerce_to_dict("[1, 2, 3]") == {"result": "[1, 2, 3]"}
+
+
+def test_coerce_to_dict_with_json_string_literal() -> None:
+    assert GeminiChatClient._coerce_to_dict('"hello"') == {"result": '"hello"'}
+
+
 # tool choice
 
 
