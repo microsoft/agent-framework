@@ -2043,3 +2043,206 @@ class TestFetchOutputItems:
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
         assert items == []
+
+
+# ---------------------------------------------------------------------------
+# _poll_eval_run — timeout / failed / canceled paths
+# ---------------------------------------------------------------------------
+
+
+class TestPollEvalRun:
+    @pytest.mark.asyncio
+    async def test_timeout_returns_timeout_status(self) -> None:
+        """Poll timeout returns EvalResults with status='timeout'."""
+        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+
+        mock_client = MagicMock()
+        mock_pending = MagicMock()
+        mock_pending.status = "queued"
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_pending)
+
+        results = await _poll_eval_run(
+            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=0.05
+        )
+        assert results.status == "timeout"
+        assert results.eval_id == "eval_1"
+        assert results.run_id == "run_1"
+
+    @pytest.mark.asyncio
+    async def test_failed_run_returns_error(self) -> None:
+        """Failed run returns EvalResults with error message."""
+        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+
+        mock_client = MagicMock()
+        mock_failed = MagicMock()
+        mock_failed.status = "failed"
+        mock_failed.error = "Model deployment unavailable"
+        mock_failed.result_counts = None
+        mock_failed.report_url = None
+        mock_failed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_failed)
+
+        results = await _poll_eval_run(
+            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0
+        )
+        assert results.status == "failed"
+        assert results.error == "Model deployment unavailable"
+
+    @pytest.mark.asyncio
+    async def test_canceled_run_returns_canceled_status(self) -> None:
+        """Canceled run returns EvalResults with status='canceled'."""
+        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+
+        mock_client = MagicMock()
+        mock_canceled = MagicMock()
+        mock_canceled.status = "canceled"
+        mock_canceled.error = None
+        mock_canceled.result_counts = None
+        mock_canceled.report_url = None
+        mock_canceled.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_canceled)
+
+        results = await _poll_eval_run(
+            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0
+        )
+        assert results.status == "canceled"
+        assert results.error is None
+
+
+# ---------------------------------------------------------------------------
+# evaluate_traces
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateTraces:
+    @pytest.mark.asyncio
+    async def test_raises_without_required_args(self) -> None:
+        """Raises ValueError when no response_ids, trace_ids, or agent_id given."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+
+        mock_client = MagicMock()
+        with pytest.raises(ValueError, match="Provide at least one of"):
+            await evaluate_traces(
+                openai_client=mock_client,
+                model_deployment="gpt-4o",
+            )
+
+    @pytest.mark.asyncio
+    async def test_response_ids_path(self) -> None:
+        """evaluate_traces with response_ids delegates to _evaluate_via_responses."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_tr"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_tr"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.report_url = "https://portal.azure.com/eval/run_tr"
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        results = await evaluate_traces(
+            response_ids=["resp_abc", "resp_def"],
+            openai_client=mock_client,
+            model_deployment="gpt-4o",
+        )
+        assert results.status == "completed"
+        assert results.eval_id == "eval_tr"
+
+        # Verify the response IDs are in the data source
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "azure_ai_responses"
+        content = ds["item_generation_params"]["source"]["content"]
+        assert len(content) == 2
+        assert content[0]["item"]["resp_id"] == "resp_abc"
+
+    @pytest.mark.asyncio
+    async def test_trace_ids_path(self) -> None:
+        """evaluate_traces with trace_ids builds azure_ai_traces data source."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_tid"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_tid"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.report_url = None
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        results = await evaluate_traces(
+            trace_ids=["trace_1"],
+            openai_client=mock_client,
+            model_deployment="gpt-4o",
+        )
+        assert results.status == "completed"
+
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "azure_ai_traces"
+        assert ds["trace_ids"] == ["trace_1"]
+
+
+# ---------------------------------------------------------------------------
+# evaluate_foundry_target
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateFoundryTarget:
+    @pytest.mark.asyncio
+    async def test_happy_path(self) -> None:
+        """evaluate_foundry_target creates eval + run and polls to completion."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_foundry_target
+
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_tgt"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_tgt"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.report_url = "https://portal.azure.com/eval/run_tgt"
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        results = await evaluate_foundry_target(
+            target={"type": "azure_ai_agent", "name": "my-agent"},
+            test_queries=["Query 1", "Query 2"],
+            openai_client=mock_client,
+            model_deployment="gpt-4o",
+        )
+        assert results.status == "completed"
+        assert results.eval_id == "eval_tgt"
+        assert results.all_passed
+
+        # Verify the target and queries in data source
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "azure_ai_target_completions"
+        assert ds["target"]["type"] == "azure_ai_agent"
+        content = ds["source"]["content"]
+        assert len(content) == 2
+        assert content[0]["item"]["query"] == "Query 1"

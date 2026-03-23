@@ -747,3 +747,28 @@ class TestNumRepetitions:
                 evaluators=LocalEvaluator(keyword_check("hello")),
                 num_repetitions=-1,
             )
+
+    @pytest.mark.asyncio
+    async def test_num_repetitions_multiplies_items(self):
+        """num_repetitions=2 produces 2× the eval items."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_agent
+        from agent_framework._types import AgentResponse, Message
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
+        )
+
+        results = await evaluate_agent(
+            agent=mock_agent,
+            queries=["Q1", "Q2"],
+            evaluators=LocalEvaluator(keyword_check("reply")),
+            num_repetitions=2,
+        )
+        # 2 queries × 2 reps = 4 items
+        assert results[0].total == 4
+        assert mock_agent.run.call_count == 4
