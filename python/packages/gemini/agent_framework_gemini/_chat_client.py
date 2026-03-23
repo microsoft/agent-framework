@@ -585,11 +585,11 @@ class GeminiChatClient(
 
         match tool_mode.get("mode"):
             case "auto":
-                function_calling_mode, allowed_names = "AUTO", None
+                function_calling_mode, allowed_names = types.FunctionCallingConfigMode.AUTO, None
             case "none":
-                function_calling_mode, allowed_names = "NONE", None
+                function_calling_mode, allowed_names = types.FunctionCallingConfigMode.NONE, None
             case "required":
-                function_calling_mode = "ANY"
+                function_calling_mode = types.FunctionCallingConfigMode.ANY
                 name = tool_mode.get("required_function_name")
                 allowed_names = [name] if name else None
             case unknown_mode:
