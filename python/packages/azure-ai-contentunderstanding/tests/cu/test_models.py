@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_framework_azure_contentunderstanding._models import AnalysisSection, ContentLimits
+from agent_framework_azure_ai_contentunderstanding._models import AnalysisSection, ContentLimits
 
 
 class TestAnalysisSection:

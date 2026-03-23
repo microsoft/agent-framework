@@ -1,8 +1,8 @@
-# AGENTS.md — azure-contentunderstanding
+# AGENTS.md — azure-ai-contentunderstanding
 
 ## Package Overview
 
-`agent-framework-azure-contentunderstanding` integrates Azure Content Understanding (CU)
+`agent-framework-azure-ai-contentunderstanding` integrates Azure Content Understanding (CU)
 into the Agent Framework as a context provider. It automatically analyzes file attachments
 (documents, images, audio, video) and injects structured results into the LLM context.
 
@@ -32,5 +32,5 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 ## Running Tests
 
 ```bash
-uv run poe test -P azure-contentunderstanding
+uv run poe test -P azure-ai-contentunderstanding
 ```

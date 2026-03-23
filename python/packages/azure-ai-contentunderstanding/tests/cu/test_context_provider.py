@@ -13,20 +13,45 @@ import pytest
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.models import AnalysisResult
-from conftest import make_failing_poller, make_mock_poller, make_slow_poller
 
-from agent_framework_azure_contentunderstanding import (
+from agent_framework_azure_ai_contentunderstanding import (
     AnalysisSection,
     ContentLimits,
     ContentUnderstandingContextProvider,
 )
-from agent_framework_azure_contentunderstanding._context_provider import SUPPORTED_MEDIA_TYPES
+from agent_framework_azure_ai_contentunderstanding._context_provider import SUPPORTED_MEDIA_TYPES
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _SAMPLE_PDF_BYTES = b"%PDF-1.4 fake content for testing"
+
+
+def _make_mock_poller(result: AnalysisResult) -> AsyncMock:
+    """Create a mock poller that returns the given result immediately."""
+    poller = AsyncMock()
+    poller.result = AsyncMock(return_value=result)
+    return poller
+
+
+def _make_slow_poller(result: AnalysisResult, delay: float = 10.0) -> AsyncMock:
+    """Create a mock poller that simulates a timeout then eventually returns."""
+    poller = AsyncMock()
+
+    async def slow_result() -> AnalysisResult:
+        await asyncio.sleep(delay)
+        return result
+
+    poller.result = slow_result
+    return poller
+
+
+def _make_failing_poller(error: Exception) -> AsyncMock:
+    """Create a mock poller that raises an exception."""
+    poller = AsyncMock()
+    poller.result = AsyncMock(side_effect=error)
+    return poller
 
 
 def _make_data_uri(data: bytes, media_type: str) -> str:
@@ -121,7 +146,7 @@ class TestAsyncContextManager:
             credential=AsyncMock(),
         )
         with patch(
-            "agent_framework_azure_contentunderstanding._context_provider.ContentUnderstandingClient",
+            "agent_framework_azure_ai_contentunderstanding._context_provider.ContentUnderstandingClient",
         ) as mock_cls:
             mock_instance = AsyncMock()
             mock_cls.return_value = mock_instance
@@ -148,7 +173,7 @@ class TestBeforeRunNewFile:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         msg = Message(
@@ -182,7 +207,7 @@ class TestBeforeRunNewFile:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         msg = Message(
@@ -229,8 +254,8 @@ class TestBeforeRunMultiFile:
     ) -> None:
         mock_cu_client.begin_analyze_binary = AsyncMock(
             side_effect=[
-                make_mock_poller(pdf_analysis_result),
-                make_mock_poller(image_analysis_result),
+                _make_mock_poller(pdf_analysis_result),
+                _make_mock_poller(image_analysis_result),
             ]
         )
         provider = _make_provider(mock_client=mock_cu_client)
@@ -260,7 +285,7 @@ class TestBeforeRunTimeout:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_slow_poller(pdf_analysis_result, delay=10.0))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_slow_poller(pdf_analysis_result, delay=10.0))
         provider = _make_provider(mock_client=mock_cu_client, max_wait=0.1)
 
         msg = Message(
@@ -391,7 +416,7 @@ class TestSessionState:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         state: dict[str, Any] = {}
@@ -426,7 +451,7 @@ class TestListDocumentsTool:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         state: dict[str, Any] = {}
@@ -463,7 +488,7 @@ class TestGetDocumentTool:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         state: dict[str, Any] = {}
@@ -495,7 +520,7 @@ class TestGetDocumentTool:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         state: dict[str, Any] = {}
@@ -588,7 +613,7 @@ class TestContentLimits:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client, content_limits=None)
 
         msg = Message(
@@ -613,7 +638,7 @@ class TestBinaryStripping:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=make_mock_poller(pdf_analysis_result))
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
         provider = _make_provider(mock_client=mock_cu_client)
 
         msg = Message(
@@ -667,7 +692,7 @@ class TestBinaryStripping:
 class TestErrorHandling:
     async def test_cu_service_error(self, mock_cu_client: AsyncMock) -> None:
         mock_cu_client.begin_analyze_binary = AsyncMock(
-            return_value=make_failing_poller(RuntimeError("Service unavailable"))
+            return_value=_make_failing_poller(RuntimeError("Service unavailable"))
         )
         provider = _make_provider(mock_client=mock_cu_client)
 

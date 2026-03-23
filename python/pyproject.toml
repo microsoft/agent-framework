@@ -86,7 +86,7 @@ agent-framework-openai = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
-agent-framework-azure-contentunderstanding = { workspace = true }
+agent-framework-azure-ai-contentunderstanding = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
 litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }

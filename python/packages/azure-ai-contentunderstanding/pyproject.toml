@@ -1,5 +1,5 @@
 [project]
-name = "agent-framework-azure-contentunderstanding"
+name = "agent-framework-azure-ai-contentunderstanding"
 description = "Azure Content Understanding integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com" }]
 readme = "README.md"
@@ -57,7 +57,7 @@ omit = ["**/__init__.py"]
 
 [tool.pyright]
 extends = "../../pyproject.toml"
-include = ["agent_framework_azure_contentunderstanding"]
+include = ["agent_framework_azure_ai_contentunderstanding"]
 exclude = ['tests']
 
 [tool.mypy]
@@ -75,7 +75,7 @@ disallow_incomplete_defs = true
 disallow_untyped_decorators = true
 
 [tool.bandit]
-targets = ["agent_framework_azure_contentunderstanding"]
+targets = ["agent_framework_azure_ai_contentunderstanding"]
 exclude_dirs = ["tests"]
 
 [tool.poe]
@@ -84,11 +84,11 @@ include = "../../shared_tasks.toml"
 
 [tool.poe.tasks.mypy]
 help = "Run MyPy for this package."
-cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_contentunderstanding"
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_azure_ai_contentunderstanding"
 
 [tool.poe.tasks.test]
 help = "Run the default unit test suite for this package."
-cmd = 'pytest -m "not integration" --cov=agent_framework_azure_contentunderstanding --cov-report=term-missing:skip-covered tests'
+cmd = 'pytest -m "not integration" --cov=agent_framework_azure_ai_contentunderstanding --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["flit-core >= 3.11,<4.0"]

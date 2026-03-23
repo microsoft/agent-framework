@@ -1,6 +1,5 @@
 # Azure Content Understanding for Microsoft Agent Framework
 
-[![PyPI](https://img.shields.io/pypi/v/agent-framework-azure-contentunderstanding)](https://pypi.org/project/agent-framework-azure-contentunderstanding/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Azure Content Understanding (CU) integration for the [Microsoft Agent Framework](https://aka.ms/agent-framework). Provides a context provider that automatically analyzes file attachments (documents, images, audio, video) using Azure Content Understanding and injects structured results into the LLM context.
@@ -8,7 +7,7 @@ Azure Content Understanding (CU) integration for the [Microsoft Agent Framework]
 ## Installation
 
 ```bash
-pip install --pre agent-framework-azure-contentunderstanding
+pip install --pre agent-framework-azure-ai-contentunderstanding
 ```
 
 > **Note:** This package is in preview. The `--pre` flag is required to install pre-release versions.
@@ -18,7 +17,7 @@ pip install --pre agent-framework-azure-contentunderstanding
 ```python
 from agent_framework import Agent, Message, Content
 from agent_framework.azure import AzureOpenAIResponsesClient
-from agent_framework_azure_contentunderstanding import ContentUnderstandingContextProvider
+from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
 from azure.identity import DefaultAzureCredential
 
 credential = DefaultAzureCredential()
@@ -61,7 +60,7 @@ async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
 ## Configuration
 
 ```python
-from agent_framework_azure_contentunderstanding import (
+from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
     AnalysisSection,
     ContentLimits,
@@ -88,4 +87,3 @@ cu = ContentUnderstandingContextProvider(
 
 - [Microsoft Agent Framework](https://aka.ms/agent-framework)
 - [Azure Content Understanding](https://learn.microsoft.com/azure/ai-services/content-understanding/)
-- [API Reference](https://learn.microsoft.com/python/api/azure-ai-contentunderstanding/)

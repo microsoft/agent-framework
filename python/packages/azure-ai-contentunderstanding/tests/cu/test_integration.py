@@ -74,7 +74,7 @@ async def test_before_run_e2e() -> None:
     from agent_framework._sessions import AgentSession
     from azure.identity.aio import DefaultAzureCredential
 
-    from agent_framework_azure_contentunderstanding import ContentUnderstandingContextProvider
+    from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
 
     endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
     analyzer_id = os.environ.get("AZURE_CONTENTUNDERSTANDING_ANALYZER_ID", "prebuilt-documentSearch")
