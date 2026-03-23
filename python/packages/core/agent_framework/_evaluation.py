@@ -1660,7 +1660,7 @@ async def evaluate_workflow(
                     if overall_item:
                         overall_items.append(overall_item)
     else:
-        assert workflow_result is not None  # noqa: S101
+        assert workflow_result is not None  # noqa: S101  # nosec B101
         all_agent_data = _extract_agent_eval_data(workflow_result, workflow)
         if include_overall:
             original_query = _extract_overall_query(workflow_result)
