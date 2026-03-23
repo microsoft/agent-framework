@@ -1072,12 +1072,12 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
         """Execute the chat pipeline if middleware is configured."""
         super_get_response = super().get_response  # type: ignore[misc]
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        call_middleware = effective_client_kwargs.pop("middleware", [])
         context_kwargs = dict(effective_client_kwargs)
         if compaction_strategy is not None:
             context_kwargs["compaction_strategy"] = compaction_strategy
         if tokenizer is not None:
             context_kwargs["tokenizer"] = tokenizer
-        call_middleware = effective_client_kwargs.pop("middleware", [])
         pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]

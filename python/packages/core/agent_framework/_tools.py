@@ -2159,6 +2159,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 options=mutable_options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
+                function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=filtered_kwargs,
             )
         if not stream:

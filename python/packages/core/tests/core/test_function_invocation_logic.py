@@ -13,6 +13,7 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
+    chat_middleware,
     tool,
 )
 from agent_framework._compaction import (
@@ -1427,6 +1428,36 @@ async def test_function_invocation_config_enabled_false(chat_client_base: Suppor
     assert exec_counter == 0
     # The response should be from the mock client
     assert len(response.messages) > 0
+
+
+async def test_function_invocation_config_enabled_false_preserves_invocation_kwargs(
+    chat_client_base: SupportsChatGetResponse,
+):
+    """Test disabled function invocation still forwards invocation kwargs downstream."""
+    captured_kwargs: dict[str, Any] = {}
+
+    @tool(name="test_function")
+    def ai_func(arg1: str) -> str:
+        return f"Processed {arg1}"
+
+    @chat_middleware
+    async def capture_middleware(context, call_next):
+        captured_kwargs.update(context.function_invocation_kwargs or {})
+        await call_next()
+
+    chat_client_base.chat_middleware = [capture_middleware]
+    chat_client_base.run_responses = [
+        ChatResponse(messages=Message(role="assistant", text="response without function calling")),
+    ]
+    chat_client_base.function_invocation_configuration["enabled"] = False
+
+    await chat_client_base.get_response(
+        [Message(role="user", text="hello")],
+        options={"tool_choice": "auto", "tools": [ai_func]},
+        function_invocation_kwargs={"tool_request_id": "tool-123"},
+    )
+
+    assert captured_kwargs == {"tool_request_id": "tool-123"}
 
 
 @pytest.mark.skip(reason="Error handling and failsafe behavior needs investigation in unified API")

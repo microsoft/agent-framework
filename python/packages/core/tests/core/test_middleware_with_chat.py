@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
 from agent_framework import (
     Agent,
@@ -295,6 +296,35 @@ class TestChatMiddleware:
         )
         assert response3 is not None
         assert execution_count["count"] == 2  # Should be 2 now
+
+    async def test_run_level_middleware_is_not_forwarded_to_inner_client(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that run-level middleware stays in the middleware pipeline only."""
+        observed_context_kwargs: dict[str, Any] = {}
+
+        @chat_middleware
+        async def inspecting_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            observed_context_kwargs.update(context.kwargs)
+            await call_next()
+
+        async def fake_inner_get_response(**kwargs: Any) -> ChatResponse:
+            assert "middleware" not in kwargs
+            return ChatResponse(messages=[Message(role="assistant", text="ok")])
+
+        with patch.object(
+            chat_client_base,
+            "_inner_get_response",
+            side_effect=fake_inner_get_response,
+        ) as mock_inner_get_response:
+            response = await chat_client_base.get_response(
+                [Message(role="user", text="hello")],
+                client_kwargs={"middleware": [inspecting_middleware], "trace_id": "trace-123"},
+            )
+
+        assert response.messages[0].text == "ok"
+        assert observed_context_kwargs == {"trace_id": "trace-123"}
+        mock_inner_get_response.assert_called_once()
 
     async def test_chat_client_middleware_can_access_and_override_options(
         self, chat_client_base: "MockBaseChatClient"

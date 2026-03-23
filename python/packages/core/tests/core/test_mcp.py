@@ -1751,6 +1751,13 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
     assert "Failed to get right content types from the response." in result.message
+    mock_chat_client.get_response.assert_awaited_once()
+    _, kwargs = mock_chat_client.get_response.await_args
+    assert kwargs["options"] == {
+        "temperature": None,
+        "max_tokens": None,
+        "stop": None,
+    }
 
 
 async def test_mcp_tool_sampling_callback_no_response_and_successful_message_creation():
