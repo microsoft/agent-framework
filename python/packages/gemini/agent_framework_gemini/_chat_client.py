@@ -493,14 +493,15 @@ class GeminiChatClient(
         """
         kwargs: dict[str, Any] = {}
 
+        # Base ChatOptions fields
         if system_instruction:
             kwargs["system_instruction"] = system_instruction
         if (v := options.get("temperature")) is not None:
             kwargs["temperature"] = v
-        if (v := options.get("max_tokens")) is not None:
-            kwargs["max_output_tokens"] = v
         if (v := options.get("top_p")) is not None:
             kwargs["top_p"] = v
+        if (v := options.get("max_tokens")) is not None:
+            kwargs["max_output_tokens"] = v
         if (v := options.get("stop")) is not None:
             kwargs["stop_sequences"] = v
         if (v := options.get("seed")) is not None:
@@ -509,20 +510,22 @@ class GeminiChatClient(
             kwargs["frequency_penalty"] = v
         if (v := options.get("presence_penalty")) is not None:
             kwargs["presence_penalty"] = v
+        if options.get("response_format"):
+            kwargs["response_mime_type"] = "application/json"
+        if tools := self._prepare_tools(options):
+            kwargs["tools"] = tools
+        if tool_config := self._prepare_tool_config(options.get("tool_choice")):
+            kwargs["tool_config"] = tool_config
+        # Gemini-specific fields
+        if schema := options.get("response_schema"):
+            kwargs["response_mime_type"] = "application/json"
+            kwargs["response_schema"] = schema
         if (v := options.get("top_k")) is not None:
             kwargs["top_k"] = v
         if thinking_config := options.get("thinking_config"):
             thinking_config_kwargs = {k: v for k, v in thinking_config.items() if v is not None}
             if thinking_config_kwargs:
                 kwargs["thinking_config"] = types.ThinkingConfig(**thinking_config_kwargs)
-        if options.get("response_format") or options.get("response_schema"):
-            kwargs["response_mime_type"] = "application/json"
-            if schema := options.get("response_schema"):
-                kwargs["response_schema"] = schema
-        if tools := self._prepare_tools(options):
-            kwargs["tools"] = tools
-        if tool_config := self._prepare_tool_config(options.get("tool_choice")):
-            kwargs["tool_config"] = tool_config
 
         return types.GenerateContentConfig(**kwargs)
 
