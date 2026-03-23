@@ -4092,7 +4092,7 @@ async def test_mcp_streamable_http_tool_header_provider_with_user_httpx_client()
 
 
 async def test_mcp_streamable_http_tool_header_provider_via_invoke_with_context():
-    """Test that header_provider receives kwargs when invoked through FunctionTool.invoke with FunctionInvocationContext.
+    """Test that header_provider receives kwargs via FunctionTool.invoke with FunctionInvocationContext.
 
     This exercises the full pipeline: FunctionInvocationContext.kwargs -> FunctionTool.invoke
     -> MCPStreamableHTTPTool.call_tool -> header_provider.
