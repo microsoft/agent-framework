@@ -383,7 +383,7 @@ class TestToEvalItem:
         # query_messages: just the first user message
         assert len(d["query_messages"]) == 1
         assert d["query_messages"][0]["role"] == "user"
-        assert d["query_messages"][0]["content"] == [{"type": "text", "text": "What's the weather?"}]
+        assert d["query_messages"][0]["content"] == "What's the weather?"
         # response_messages: everything after the first user message
         assert len(d["response_messages"]) == 3
         assert d["response_messages"][0]["role"] == "assistant"
@@ -575,7 +575,7 @@ class TestToEvalItem:
         # to_dict() with no split arg should use item.split_strategy
         d = item.to_eval_data()
         assert len(d["query_messages"]) == 1  # FULL: just first user msg
-        assert d["query_messages"][0]["content"] == [{"type": "text", "text": "First"}]
+        assert d["query_messages"][0]["content"] == "First"
         assert len(d["response_messages"]) == 3
 
     def test_explicit_split_overrides_item_split_strategy(self) -> None:
@@ -593,7 +593,7 @@ class TestToEvalItem:
         # Explicit split= should override split_strategy
         d = item.to_eval_data(split=ConversationSplit.LAST_TURN)
         assert len(d["query_messages"]) == 3  # LAST_TURN: up to last user
-        assert d["query_messages"][-1]["content"] == [{"type": "text", "text": "Second"}]
+        assert d["query_messages"][-1]["content"] == "Second"
         assert len(d["response_messages"]) == 1
 
     def test_no_split_defaults_to_last_turn(self) -> None:
@@ -750,6 +750,18 @@ class TestFoundryEvals:
         mock_completed.report_url = "https://portal.azure.com/eval/run_456"
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        # Mock output_items.list so _fetch_output_items exercises the full flow
+        mock_output_item = MagicMock()
+        mock_output_item.status = "pass"
+        mock_output_item.sample = {"query": "Hello", "response": "Hi there!"}
+        mock_output_item.results = [
+            MagicMock(name="relevance", status="pass", score=5, reason="Relevant response"),
+        ]
+        mock_page = MagicMock()
+        mock_page.__iter__ = MagicMock(return_value=iter([mock_output_item]))
+        mock_page.has_more = False
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
 
         items = [
             EvalItem(conversation=[Message("user", ["Hello"]), Message("assistant", ["Hi there!"])]),

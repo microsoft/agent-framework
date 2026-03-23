@@ -331,12 +331,11 @@ class TestDecoratorVariants:
 class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_unknown_required_param_raises(self):
-        @evaluator
-        def bad_params(query: str, unknown_param: str) -> bool:
-            return True
-
         with pytest.raises(TypeError, match="unknown required parameter"):
-            await bad_params(_make_item())
+
+            @evaluator
+            def bad_params(query: str, unknown_param: str) -> bool:
+                return True
 
     @pytest.mark.asyncio
     async def test_unknown_optional_param_ok(self):
@@ -772,3 +771,101 @@ class TestNumRepetitions:
         # 2 queries × 2 reps = 4 items
         assert results[0].total == 4
         assert mock_agent.run.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_num_repetitions_with_expected_output(self):
+        """num_repetitions > 1 correctly stamps expected_output via modulo."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_agent
+        from agent_framework._types import AgentResponse, Message
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
+        )
+
+        @evaluator
+        def check_expected(response: str, expected_output: str) -> dict:
+            return {"passed": expected_output in ("A", "B"), "reason": f"expected={expected_output}"}
+
+        results = await evaluate_agent(
+            agent=mock_agent,
+            queries=["Q1", "Q2"],
+            expected_output=["A", "B"],
+            evaluators=LocalEvaluator(check_expected),
+            num_repetitions=2,
+        )
+        # 2 queries × 2 reps = 4 items, all should pass
+        assert results[0].total == 4
+        assert results[0].passed == 4
+
+    @pytest.mark.asyncio
+    async def test_num_repetitions_with_expected_tool_calls(self):
+        """num_repetitions > 1 correctly stamps expected_tool_calls via modulo."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_agent
+        from agent_framework._types import AgentResponse, Content, Message
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(
+                messages=[
+                    Message(
+                        "assistant",
+                        [Content.from_function_call("c1", "get_weather", arguments={"location": "NYC"})],
+                    ),
+                    Message("tool", [Content.from_function_result("c1", result="Sunny")]),
+                    Message("assistant", ["It's sunny"]),
+                ]
+            )
+        )
+
+        results = await evaluate_agent(
+            agent=mock_agent,
+            queries=["Q1"],
+            expected_tool_calls=[[ExpectedToolCall("get_weather")]],
+            evaluators=LocalEvaluator(tool_calls_present),
+            num_repetitions=2,
+        )
+        # 1 query × 2 reps = 2 items
+        assert results[0].total == 2
+        assert results[0].passed == 2
+
+    @pytest.mark.asyncio
+    async def test_evaluate_response_deprecation_warning(self):
+        """evaluate_response() emits DeprecationWarning and delegates."""
+        import warnings
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_response
+        from agent_framework._types import AgentResponse, Message
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+
+        response = AgentResponse(messages=[Message("assistant", ["reply"])])
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            results = await evaluate_response(
+                response=response,
+                query="test query",
+                agent=mock_agent,
+                evaluators=LocalEvaluator(keyword_check("reply")),
+            )
+            # Check deprecation warning was emitted
+            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
+            assert len(deprecation_warnings) == 1
+            assert "evaluate_response" in str(deprecation_warnings[0].message)
+
+        # Check delegation to evaluate_agent worked
+        assert len(results) == 1
+        assert results[0].total == 1
+        assert results[0].passed == 1

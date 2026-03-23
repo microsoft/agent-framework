@@ -196,6 +196,11 @@ class EvalItem:
 
         When *split* is ``None`` (the default), uses ``self.split_strategy``
         if set, otherwise ``ConversationSplit.LAST_TURN``.
+
+        The returned ``query_messages`` and ``response_messages`` are plain
+        ``{"role": ..., "content": ...}`` dicts.  Provider-specific formats
+        (e.g. Foundry typed-content) should be applied by the provider before
+        API submission.
         """
         effective_split = split or self.split_strategy or ConversationSplit.LAST_TURN
         query_msgs, response_msgs = self._split_conversation(effective_split)
@@ -206,8 +211,8 @@ class EvalItem:
         item: dict[str, Any] = {
             "query": query_text,
             "response": response_text,
-            "query_messages": AgentEvalConverter.convert_messages(query_msgs),
-            "response_messages": AgentEvalConverter.convert_messages(response_msgs),
+            "query_messages": [{"role": m.role, "content": m.text or ""} for m in query_msgs],
+            "response_messages": [{"role": m.role, "content": m.text or ""} for m in response_msgs],
         }
         if self.tools:
             item["tool_definitions"] = [
@@ -750,9 +755,7 @@ def _extract_agent_eval_data(
             executor_id = event.executor_id
 
             # Skip internal framework executors
-            if executor_id.startswith("_") or any(
-                kw in executor_id.lower() for kw in ("input-conversation", "end-conversation", "end")
-            ):
+            if executor_id.startswith("_") or executor_id.lower() in {"input-conversation", "end-conversation", "end"}:
                 continue
 
             completion_data: Any = event.data
@@ -1061,7 +1064,12 @@ _KNOWN_PARAMS = frozenset({
 })
 
 
-def _resolve_function_args(fn: Callable[..., Any], item: EvalItem) -> dict[str, Any]:
+def _resolve_function_args(
+    fn: Callable[..., Any],
+    item: EvalItem,
+    *,
+    _param_names: frozenset[str] | set[str] | None = None,
+) -> dict[str, Any]:
     """Build a kwargs dict for *fn* based on its signature and the EvalItem.
 
     Supported parameter names:
@@ -1080,10 +1088,10 @@ def _resolve_function_args(fn: Callable[..., Any], item: EvalItem) -> dict[str, 
 
     Parameters with default values are only supplied when their name is
     recognised.  Unknown required parameters raise ``TypeError``.
-    """
-    sig = inspect.signature(fn)
-    kwargs: dict[str, Any] = {}
 
+    When called from the ``@evaluator`` wrapper the pre-computed
+    *_param_names* set avoids repeated ``inspect.signature`` calls.
+    """
     field_map: dict[str, Any] = {
         "query": item.query,
         "response": item.response,
@@ -1093,6 +1101,13 @@ def _resolve_function_args(fn: Callable[..., Any], item: EvalItem) -> dict[str, 
         "tools": item.tools,
         "context": item.context,
     }
+
+    if _param_names is not None:
+        return {k: field_map[k] for k in _param_names if k in field_map}
+
+    # Fallback: introspect at call time (for direct callers)
+    sig = inspect.signature(fn)
+    kwargs: dict[str, Any] = {}
 
     for name, param in sig.parameters.items():
         if name in field_map:
@@ -1218,9 +1233,24 @@ def evaluator(
 
     def _wrap(func: Callable[..., Any]) -> EvalCheck:
         check_name: str = name or getattr(func, "__name__", None) or "evaluator"
+        # Cache signature introspection once per wrapped function
+        sig = inspect.signature(func)
+        param_names = {
+            n for n, p in sig.parameters.items() if n in _KNOWN_PARAMS or p.default is inspect.Parameter.empty
+        }
+        required_unknown = {
+            n
+            for n, p in sig.parameters.items()
+            if n not in _KNOWN_PARAMS and p.default is inspect.Parameter.empty
+        }
+        if required_unknown:
+            raise TypeError(
+                f"Function evaluator '{func.__name__}' has unknown required parameter(s) "
+                f"{sorted(required_unknown)}.  Supported: {sorted(_KNOWN_PARAMS)}"
+            )
 
         async def _check(item: EvalItem) -> CheckResult:
-            kwargs = _resolve_function_args(func, item)
+            kwargs = _resolve_function_args(func, item, _param_names=param_names)
             result = func(**kwargs)
             if inspect.isawaitable(result):
                 result = await result
@@ -1617,6 +1647,8 @@ async def evaluate_workflow(
             Ignored when ``workflow_result`` is provided.
 
     Returns:
+        A list of ``EvalResults``, one per evaluator provider.
+
     Example::
 
         from agent_framework_azure_ai import FoundryEvals
@@ -1761,9 +1793,9 @@ def _normalize_queries(
 ) -> list[str | Message | Sequence[Message]]:
     """Normalize query input to a list matching the expected count."""
     if isinstance(query, (str, Message)):
-        queries: list[str | Message | Sequence[Message]] = [query] * expected_count if expected_count == 1 else [query]  # type: ignore[list-item]
+        queries: list[str | Message | Sequence[Message]] = [query] * expected_count  # type: ignore[list-item]
     elif isinstance(query, list) and len(query) > 0 and isinstance(query[0], Message):
-        queries = [query] * expected_count if expected_count == 1 else [query]  # type: ignore[list-item]
+        queries = [query] * expected_count  # type: ignore[list-item]
     else:
         queries = list(query)  # type: ignore[arg-type]
 

@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from agent_framework._evaluation import (
+    AgentEvalConverter,
     ConversationSplit,
     ConversationSplitter,
     EvalItem,
@@ -446,8 +447,55 @@ def _resolve_openai_client(
     if openai_client is not None:
         return openai_client
     if project_client is not None:
-        return project_client.get_openai_client()
+        client = project_client.get_openai_client()
+        if client is None:
+            raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
+        return client
     raise ValueError("Provide either 'openai_client' or 'project_client'.")
+
+
+async def _evaluate_via_responses_impl(
+    *,
+    client: AsyncOpenAI,
+    response_ids: Sequence[str],
+    evaluators: list[str],
+    model_deployment: str,
+    eval_name: str,
+    poll_interval: float,
+    timeout: float,
+    provider: str = "foundry",
+) -> EvalResults:
+    """Evaluate using Foundry's Responses API retrieval path.
+
+    Module-level helper used by both ``FoundryEvals`` and ``evaluate_traces``.
+    """
+    eval_obj = await _ensure_async_result(
+        client.evals.create,
+        name=eval_name,
+        data_source_config={"type": "azure_ai_source", "scenario": "responses"},
+        testing_criteria=_build_testing_criteria(evaluators, model_deployment),
+    )
+
+    data_source = {
+        "type": "azure_ai_responses",
+        "item_generation_params": {
+            "type": "response_retrieval",
+            "data_mapping": {"response_id": "{{item.resp_id}}"},
+            "source": {
+                "type": "file_content",
+                "content": [{"item": {"resp_id": rid}} for rid in response_ids],
+            },
+        },
+    }
+
+    run = await _ensure_async_result(
+        client.evals.runs.create,
+        eval_id=eval_obj.id,
+        name=f"{eval_name} Run",
+        data_source=data_source,
+    )
+
+    return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout, provider=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -589,38 +637,14 @@ class FoundryEvals:
         eval_name: str,
     ) -> EvalResults:
         """Evaluate using Foundry's Responses API retrieval path."""
-        eval_obj = await _ensure_async_result(
-            self._client.evals.create,
-            name=eval_name,
-            data_source_config={"type": "azure_ai_source", "scenario": "responses"},
-            testing_criteria=_build_testing_criteria(evaluators, self._model_deployment),
-        )
-
-        data_source = {
-            "type": "azure_ai_responses",
-            "item_generation_params": {
-                "type": "response_retrieval",
-                "data_mapping": {"response_id": "{{item.resp_id}}"},
-                "source": {
-                    "type": "file_content",
-                    "content": [{"item": {"resp_id": rid}} for rid in response_ids],
-                },
-            },
-        }
-
-        run = await _ensure_async_result(
-            self._client.evals.runs.create,
-            eval_id=eval_obj.id,
-            name=f"{eval_name} Run",
-            data_source=data_source,
-        )
-
-        return await _poll_eval_run(
-            self._client,
-            eval_obj.id,
-            run.id,
-            self._poll_interval,
-            self._timeout,
+        return await _evaluate_via_responses_impl(
+            client=self._client,
+            response_ids=response_ids,
+            evaluators=evaluators,
+            model_deployment=self._model_deployment,
+            eval_name=eval_name,
+            poll_interval=self._poll_interval,
+            timeout=self._timeout,
             provider=self.name,
         )
 
@@ -632,6 +656,14 @@ class FoundryEvals:
     ) -> EvalResults:
         """Evaluate using JSONL dataset upload path."""
         dicts = [item.to_eval_data(split=item.split_strategy or self._conversation_split) for item in items]
+
+        # Apply Foundry-specific typed-content conversion to messages
+        for d, item in zip(dicts, items):
+            effective_split = item.split_strategy or self._conversation_split or ConversationSplit.LAST_TURN
+            query_msgs, response_msgs = item._split_conversation(effective_split)  # noqa: SLF001
+            d["query_messages"] = AgentEvalConverter.convert_messages(query_msgs)
+            d["response_messages"] = AgentEvalConverter.convert_messages(response_msgs)
+
         has_context = any("context" in d for d in dicts)
         has_tools = any("tool_definitions" in d for d in dicts)
 
@@ -731,17 +763,14 @@ async def evaluate_traces(
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     if response_ids:
-        foundry = FoundryEvals(
-            openai_client=client,
-            model_deployment=model_deployment,
+        return await _evaluate_via_responses_impl(
+            client=client,
+            response_ids=response_ids,
             evaluators=resolved_evaluators,
+            model_deployment=model_deployment,
+            eval_name=eval_name,
             poll_interval=poll_interval,
             timeout=timeout,
-        )
-        return await foundry._evaluate_via_responses(  # pyright: ignore[reportPrivateUsage]
-            response_ids,
-            resolved_evaluators,
-            eval_name,
         )
 
     if not trace_ids and not agent_id:

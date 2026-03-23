@@ -172,18 +172,14 @@ def mentions_expected_city(response: str, expected_output: str) -> bool:
 
 
 @evaluator
-def used_available_tools(conversation: list, tool_definitions: list) -> dict:
+def used_available_tools(conversation: list, tools: list) -> dict:
     """Check that the agent actually called at least one of its tools."""
-    available = {t.get("name", "") for t in (tool_definitions or [])}
+    available = {t.name for t in (tools or []) if hasattr(t, "name")}
     called = set()
     for msg in conversation:
-        for tc in msg.get("tool_calls", []):
-            name = tc.get("function", {}).get("name", "")
-            if name:
-                called.add(name)
-        for ci in msg.get("content", []):
-            if isinstance(ci, dict) and ci.get("type") == "tool_call":
-                called.add(ci.get("name", ""))
+        for c in getattr(msg, "contents", []) or []:
+            if getattr(c, "type", None) == "function_call" and getattr(c, "name", None):
+                called.add(c.name)
     used = called & available
     return {
         "passed": len(used) > 0,
