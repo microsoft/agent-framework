@@ -7,7 +7,7 @@ Components used in this sample:
 - AgentFunctionApp with Durable orchestration, activity, and HTTP triggers.
 - Pydantic models that validate payloads and agent JSON responses.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`,
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`,
 and either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running the
 Functions host."""
 

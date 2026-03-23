@@ -111,13 +111,13 @@ def _should_skip_azure_functions_integration_tests() -> tuple[bool, str]:
             f"Durable Task Scheduler emulator not running on port {_DTS_EMULATOR_PORT}. Start with: docker run -d -p 8080:8080 -p 8082:8082 mcr.microsoft.com/dts/dts-emulator:latest",  # noqa: E501
         )
 
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
-    if not endpoint or endpoint == "https://your-resource.openai.azure.com/":
-        return True, "No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests."
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT", "").strip()
+    if not project_endpoint:
+        return True, "No real FOUNDRY_PROJECT_ENDPOINT provided; skipping integration tests."
 
-    deployment_name = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "").strip()
-    if not deployment_name or deployment_name == "your-deployment-name":
-        return True, "No real AZURE_OPENAI_CHAT_DEPLOYMENT_NAME provided; skipping integration tests."
+    deployment_name = os.getenv("FOUNDRY_MODEL", "").strip()
+    if not deployment_name:
+        return True, "No real FOUNDRY_MODEL provided; skipping integration tests."
 
     return False, "Integration tests enabled."
 
@@ -328,12 +328,10 @@ def _load_and_validate_env() -> None:
     Raises pytest.fail if required environment variables are missing.
     """
     _load_env_file_if_present()
-
     # Required environment variables for Azure Functions samples
-    # These match the variables defined in .env.example
     required_env_vars = [
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "FOUNDRY_MODEL",
         "AzureWebJobsStorage",
         "DURABLE_TASK_SCHEDULER_CONNECTION_STRING",
         "FUNCTIONS_WORKER_RUNTIME",

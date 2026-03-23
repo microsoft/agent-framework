@@ -5,7 +5,7 @@ This sample demonstrates running both the worker and client in a single process
 for multiple agents with different tools. The worker registers two agents
 (WeatherAgent and MathAgent), each with their own specialized capabilities.
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 To run this sample:

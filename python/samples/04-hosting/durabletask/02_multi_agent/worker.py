@@ -7,7 +7,7 @@ with their own specialized tools. This demonstrates how to host multiple agents
 with different capabilities in a single worker process.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """

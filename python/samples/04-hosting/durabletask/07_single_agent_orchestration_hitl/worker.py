@@ -7,7 +7,7 @@ a human-in-the-loop review workflow. The orchestration pauses for external event
 (human approval/rejection) with timeout handling, and iterates based on feedback.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """

@@ -5,7 +5,7 @@ This sample demonstrates running both the worker and client in a single process.
 The worker is started first to register the agent, then client operations are
 performed against the running worker.
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Durable Task Scheduler must be running (e.g., using Docker)
 To run this sample:

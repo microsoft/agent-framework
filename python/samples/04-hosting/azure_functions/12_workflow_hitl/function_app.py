@@ -50,7 +50,7 @@ from typing_extensions import Never
 logger = logging.getLogger(__name__)
 
 # Environment variable names
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
+FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
 AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
@@ -309,9 +309,9 @@ class PublishExecutor(Executor):
 
 def _build_client_kwargs() -> dict[str, Any]:
     """Build Azure OpenAI client configuration from environment variables."""
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
+    endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
     if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
+        raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
 
     deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
     if not deployment:

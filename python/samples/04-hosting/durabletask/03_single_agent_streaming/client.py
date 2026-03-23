@@ -9,7 +9,7 @@ This client demonstrates:
 
 Prerequisites:
 - The worker must be running with the TravelPlanner agent registered
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
 - Redis must be running
 - Durable Task Scheduler must be running
 """

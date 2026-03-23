@@ -7,7 +7,7 @@ function that runs them concurrently. The orchestration uses OrchestrationAgentE
 to execute agents in parallel and aggregate their responses.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """

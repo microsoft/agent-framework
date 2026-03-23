@@ -6,7 +6,7 @@ Components used in this sample:
 - FoundryChatClient to call the Azure OpenAI chat deployment.
 - AgentFunctionApp to expose HTTP endpoints via the Durable Functions extension.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `FOUNDRY_MODEL` (plus `AZURE_OPENAI_API_KEY` or Azure CLI authentication) before starting the Functions host."""
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` (plus `AZURE_OPENAI_API_KEY` or Azure CLI authentication) before starting the Functions host."""
 
 from typing import Any
 

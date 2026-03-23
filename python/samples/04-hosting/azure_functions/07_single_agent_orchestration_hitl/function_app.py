@@ -7,7 +7,7 @@ Components used in this sample:
 - AgentFunctionApp with Durable orchestration, HTTP triggers, and activity triggers.
 - External events that pause the workflow until a human decision arrives or times out.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`, and
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and
 either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func start`."""
 
 import json

@@ -7,7 +7,7 @@ Components used in this sample:
 - AgentFunctionApp to register multiple agents and expose dedicated HTTP endpoints.
 - Custom tool functions to demonstrate tool invocation from different agents.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `FOUNDRY_MODEL`, plus either
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, plus either
 `AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
 
 import logging

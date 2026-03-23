@@ -289,12 +289,9 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip tests based on markers and environment availability."""
-    # Check Azure OpenAI environment variables
-    azure_openai_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    azure_openai_available = all(os.getenv(var) for var in azure_openai_vars)
-    skip_azure_openai = pytest.mark.skip(
-        reason=f"Missing required environment variables: {', '.join(azure_openai_vars)}"
-    )
+    foundry_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
+    foundry_available = all(os.getenv(var) for var in foundry_vars)
+    skip_foundry = pytest.mark.skip(reason=f"Missing required environment variables: {', '.join(foundry_vars)}")
 
     # Check DTS availability
     dts_available = _check_dts_available()
@@ -305,8 +302,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_redis = pytest.mark.skip(reason="Redis is not available at redis://localhost:6379")
 
     for item in items:
-        if "requires_azure_openai" in item.keywords and not azure_openai_available:
-            item.add_marker(skip_azure_openai)
+        if "requires_azure_openai" in item.keywords and not foundry_available:
+            item.add_marker(skip_foundry)
         if "requires_dts" in item.keywords and not dts_available:
             item.add_marker(skip_dts)
         if "requires_redis" in item.keywords and not redis_available:
@@ -334,9 +331,9 @@ def dts_available(dts_endpoint: str) -> bool:
 
 
 @pytest.fixture(scope="session")
-def check_azure_openai_env() -> None:
-    """Verify Azure OpenAI environment variables are set."""
-    required_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+def check_foundry_env() -> None:
+    """Verify Foundry environment variables are set."""
+    required_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
     missing = [var for var in required_vars if not os.getenv(var)]
 
     if missing:
@@ -353,7 +350,7 @@ def unique_taskhub() -> str:
 @pytest.fixture(scope="module")
 def worker_process(
     dts_available: bool,
-    check_azure_openai_env: None,
+    check_foundry_env: None,
     dts_endpoint: str,
     unique_taskhub: str,
     request: pytest.FixtureRequest,

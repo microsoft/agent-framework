@@ -7,7 +7,7 @@ Components used in this sample:
 - AgentFunctionApp to expose orchestration and HTTP triggers.
 - Durable Functions orchestration that executes agent calls in parallel and aggregates results.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `FOUNDRY_MODEL`, and either
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and either
 `AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
 
 import json

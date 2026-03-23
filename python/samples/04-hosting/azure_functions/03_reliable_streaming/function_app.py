@@ -10,7 +10,7 @@ Components used in this sample:
 - Custom HTTP endpoint to resume streaming from any point using cursor-based pagination.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
 - Redis running (docker run -d --name redis -p 6379:6379 redis:latest)
 - DTS and Azurite running (see parent README)
 """

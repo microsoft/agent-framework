@@ -6,7 +6,7 @@ This worker registers agents as durable entities and continuously listens for re
 The worker should run as a background service, processing incoming agent requests.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 """

@@ -6,7 +6,7 @@ This worker registers the TravelPlanner agent with the Durable Task Scheduler
 and uses RedisStreamCallback to persist streaming responses to Redis for reliable delivery.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
   (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
 - Start a Durable Task Scheduler (e.g., using Docker)
 - Start Redis (e.g., docker run -d --name redis -p 6379:6379 redis:latest)

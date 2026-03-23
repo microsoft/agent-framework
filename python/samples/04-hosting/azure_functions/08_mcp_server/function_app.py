@@ -18,7 +18,7 @@ This sample creates three agents with different trigger configurations:
 - PlantAdvisor: Both HTTP and MCP tool triggers enabled
 
 Required environment variables:
-- AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
+- FOUNDRY_PROJECT_ENDPOINT: Your Azure OpenAI endpoint
 - FOUNDRY_MODEL: Your Azure OpenAI deployment name
 
 Authentication uses AzureCliCredential (Azure Identity).
