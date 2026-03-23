@@ -158,12 +158,7 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     """Not supported in the Gemini API."""
 
 
-GeminiChatOptionsT = TypeVar(
-    "GeminiChatOptionsT",
-    bound=TypedDict,  # type: ignore[misc]
-    default="GeminiChatOptions",
-    covariant=True,  # type: ignore[valid-type]
-)
+GeminiChatOptionsT = TypeVar("GeminiChatOptionsT", bound=TypedDict, default="GeminiChatOptions", covariant=True)  # type: ignore[valid-type]
 
 
 class GeminiSettings(TypedDict, total=False):
