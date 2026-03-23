@@ -15,8 +15,11 @@ AIAgent agent =
     new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(model: deploymentName, instructions: "You are good at telling jokes.", name: "JokerAgent");
 
-var projectResponsesClient = new ProjectResponsesClient(new Uri(endpoint), new DefaultAzureCredential());
-AIAgent agent2 = new ChatClientAgent(projectResponsesClient.AsIChatClient());
+ProjectResponsesClient projectResponsesClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .GetProjectOpenAIClient()
+    .GetProjectResponsesClientForModel(deploymentName);
+
+AIAgent agent2 = new ChatClientAgent(chatClient: projectResponsesClient.AsIChatClient(deploymentName), instructions: "You are good at telling jokes.", name: "JokerAgent2");
 
 // Once you have the agent, you can invoke it like any other AIAgent.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
