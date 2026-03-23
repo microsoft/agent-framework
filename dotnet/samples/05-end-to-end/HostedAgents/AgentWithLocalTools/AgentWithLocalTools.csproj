@@ -36,11 +36,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.AI.AgentServer.AgentFramework" Version="1.0.0-beta.9" />
-    <PackageReference Include="Azure.AI.Projects" Version="1.2.0-beta.5" />
+    <PackageReference Include="Azure.AI.AgentServer.AgentFramework" Version="1.0.0-beta.11" />
+    <PackageReference Include="Azure.AI.Projects" Version="2.0.0-beta.1" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
     <PackageReference Include="Azure.Identity" Version="1.17.1" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc1" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.0.0-rc4" />
   </ItemGroup>
 
   <!-- Add analyzers with compatible versions -->
