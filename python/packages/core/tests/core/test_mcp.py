@@ -1565,13 +1565,13 @@ async def test_mcp_tool_message_handler_does_not_block_receive_loop():
 
     # Unblock the reload so the background task finishes cleanly.
     release.set()
-    await asyncio.sleep(0)
-    # Give the done-callback a chance to fire.
-    await asyncio.sleep(0)
+    # Wait for the pending reload task(s) to complete so their done-callbacks
+    # have a chance to remove them from _pending_reload_tasks.
+    await asyncio.wait_for(asyncio.gather(*tool._pending_reload_tasks), timeout=1)
     assert len(tool._pending_reload_tasks) == 0
 
 
-async def test_mcp_tool_message_handler_reload_failure_is_logged():
+async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.LogCaptureFixture):
     """Background reload errors are logged, not raised into the receive loop."""
     tool = MCPStdioTool(name="test_tool", command="python")
     tool.load_tools = AsyncMock(side_effect=RuntimeError("connection lost"))
@@ -1582,8 +1582,18 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged():
 
     await tool.message_handler(tools_notification)
     # Let the background task run — it should not propagate the exception.
-    await asyncio.sleep(0)
+    # Snapshot tasks and await them to ensure done-callbacks fire.
+    pending = list(tool._pending_reload_tasks)
+    if pending:
+        await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=1)
     tool.load_tools.assert_called_once()
+    assert len(tool._pending_reload_tasks) == 0
+
+    # Verify the warning was actually logged with exception info.
+    reload_warnings = [r for r in caplog.records if "Background MCP reload failed" in r.message]
+    assert len(reload_warnings) == 1
+    assert reload_warnings[0].levelname == "WARNING"
+    assert reload_warnings[0].exc_info is not None
 
 
 async def test_mcp_tool_sampling_callback_no_client():

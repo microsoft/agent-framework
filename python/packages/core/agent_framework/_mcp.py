@@ -9,7 +9,7 @@ import logging
 import re
 import sys
 from abc import abstractmethod
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Coroutine, Sequence
 from contextlib import AsyncExitStack, _AsyncGeneratorContextManager  # type: ignore
 from datetime import timedelta
 from functools import partial
@@ -800,7 +800,7 @@ class MCPTool:
             message: The message from the MCP server (request responder, notification, or exception).
         """
         if isinstance(message, Exception):
-            logger.error("Error from MCP server: %s", message, exc_info=message)
+            logger.error("Error from MCP server: %s", message, exc_info=True)
             return
         if isinstance(message, types.ServerNotification):
             match message.root.method:
@@ -811,7 +811,7 @@ class MCPTool:
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
 
-    def _schedule_reload(self, coro: Any) -> None:
+    def _schedule_reload(self, coro: Coroutine[Any, Any, None]) -> None:
         """Schedule a reload coroutine as a background task.
 
         Reloads (load_tools / load_prompts) triggered by MCP server
@@ -823,16 +823,25 @@ class MCPTool:
 
         Instead we fire the reload as an independent ``asyncio.Task`` and keep
         a strong reference in ``_pending_reload_tasks`` so it is not garbage-
-        collected before completion.
+        collected before completion.  Only one reload per kind (tools / prompts)
+        is kept in flight; a new notification cancels the previous pending task
+        for the same coroutine name to avoid unbounded growth.
         """
+        # Cancel-and-replace: only one reload per kind should be in flight.
+        reload_name = f"mcp-reload:{self.name}:{coro.__qualname__}"
+        for existing in list(self._pending_reload_tasks):
+            if existing.get_name() == reload_name and not existing.done():
+                existing.cancel()
 
         async def _safe_reload() -> None:
             try:
                 await coro
-            except Exception as exc:
-                logger.warning("Background MCP reload failed: %s", exc, exc_info=exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Background MCP reload failed", exc_info=True)
 
-        task = asyncio.create_task(_safe_reload(), name=f"mcp-reload:{self.name}")
+        task = asyncio.create_task(_safe_reload(), name=reload_name)
         self._pending_reload_tasks.add(task)
         task.add_done_callback(self._pending_reload_tasks.discard)
 
@@ -957,6 +966,11 @@ class MCPTool:
             params = types.PaginatedRequestParams(cursor=tool_list.nextCursor)
 
     async def _close_on_owner(self) -> None:
+        # Cancel any pending reload tasks before tearing down the session.
+        for task in list(self._pending_reload_tasks):
+            task.cancel()
+        self._pending_reload_tasks.clear()
+
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()
         self.session = None
