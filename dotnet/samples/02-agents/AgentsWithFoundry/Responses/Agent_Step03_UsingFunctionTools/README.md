@@ -32,6 +32,6 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 Navigate to the ChatClientAgents sample directory and run:
 
 ```powershell
-cd dotnet/samples/02-agents/ChatClientAgents
-dotnet run --project .\ChatClientAgents_Step03_UsingFunctionTools
+cd dotnet/samples/02-agents/AgentsWithFoundry/Responses
+dotnet run --project .\Agent_Step03_UsingFunctionTools
 ```

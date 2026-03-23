@@ -26,6 +26,6 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ## Run the sample
 
 ```powershell
-cd dotnet/samples/02-agents/ChatClientAgents
-dotnet run --project .\ChatClientAgents_Step12_Middleware
+cd dotnet/samples/02-agents/AgentsWithFoundry/Responses
+dotnet run --project .\Agent_Step12_Middleware
 ```
