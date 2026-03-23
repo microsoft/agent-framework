@@ -1526,7 +1526,6 @@ def test_text_reasoning_content_iadd_coverage():
     assert t1.text == "Thinking 1 Thinking 2"
 
 
-
 def test_text_reasoning_content_add_preserves_id():
     """Test that coalescing text_reasoning Content preserves the id field."""
 
