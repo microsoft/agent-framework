@@ -138,7 +138,7 @@ async def main() -> int:
         print(f"   JSON: {json_path}")
 
     # Return appropriate exit code
-    failed = report.failure_count + report.timeout_count + report.error_count
+    failed = report.failure_count + report.missing_setup_count
     return 1 if failed > 0 else 0
 
 

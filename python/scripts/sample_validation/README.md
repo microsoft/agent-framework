@@ -165,12 +165,11 @@ Produces:
 
 ## Report Status Codes
 
-| Status  | Label     | Description                               |
-| ------- | --------- | ----------------------------------------- |
-| SUCCESS | [PASS]    | Sample ran to completion with exit code 0 |
-| FAILURE | [FAIL]    | Sample exited with non-zero code          |
-| TIMEOUT | [TIMEOUT] | Sample exceeded timeout limit             |
-| ERROR   | [ERROR]   | Exception during execution                |
+| Status        | Label           | Description                               |
+| ------------- | --------------- | ----------------------------------------- |
+| SUCCESS       | [PASS]          | Sample ran to completion with exit code 0 |
+| FAILURE       | [FAIL]          | Sample did not complete successfully (non-zero exit code) |
+| MISSING_SETUP | [MISSING_SETUP] | Sample skipped due to missing setup       |
 
 ## Troubleshooting
 

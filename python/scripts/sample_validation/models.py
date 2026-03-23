@@ -60,8 +60,7 @@ class RunStatus(Enum):
 
     SUCCESS = "success"
     FAILURE = "failure"
-    TIMEOUT = "timeout"
-    ERROR = "error"
+    MISSING_SETUP = "missing_setup"
 
 
 @dataclass
@@ -89,8 +88,7 @@ class Report:
     total_samples: int
     success_count: int
     failure_count: int
-    timeout_count: int
-    error_count: int
+    missing_setup_count: int
     results: list[RunResult] = field(default_factory=list)  # type: ignore
 
     def to_markdown(self) -> str:
@@ -107,15 +105,14 @@ class Report:
             f"| Total Samples | {self.total_samples} |",
             f"| [PASS] Success | {self.success_count} |",
             f"| [FAIL] Failure | {self.failure_count} |",
-            f"| [TIMEOUT] Timeout | {self.timeout_count} |",
-            f"| [ERROR] Error | {self.error_count} |",
+            f"| [MISSING_SETUP] Missing Setup | {self.missing_setup_count} |",
             "",
             "## Detailed Results",
             "",
         ]
 
         # Group by status
-        for status in [RunStatus.FAILURE, RunStatus.TIMEOUT, RunStatus.ERROR, RunStatus.SUCCESS]:
+        for status in [RunStatus.FAILURE, RunStatus.MISSING_SETUP, RunStatus.SUCCESS]:
             status_results = [r for r in self.results if r.status == status]
             if not status_results:
                 continue
@@ -123,8 +120,7 @@ class Report:
             status_label = {
                 RunStatus.SUCCESS: "[PASS]",
                 RunStatus.FAILURE: "[FAIL]",
-                RunStatus.TIMEOUT: "[TIMEOUT]",
-                RunStatus.ERROR: "[ERROR]",
+                RunStatus.MISSING_SETUP: "[MISSING_SETUP]",
             }
 
             lines.append(f"### {status_label[status]} {status.value.title()} ({len(status_results)})")
@@ -148,8 +144,7 @@ class Report:
                 "total_samples": self.total_samples,
                 "success_count": self.success_count,
                 "failure_count": self.failure_count,
-                "timeout_count": self.timeout_count,
-                "error_count": self.error_count,
+                "missing_setup_count": self.missing_setup_count,
             },
             "results": [
                 {
