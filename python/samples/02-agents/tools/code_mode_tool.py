@@ -1,3 +1,24 @@
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#     "hyperlight-sandbox",
+#     "hyperlight-sandbox-backend-wasm",
+#     "hyperlight-sandbox-python-guest",
+# ]
+# [tool.uv.sources]
+# hyperlight-sandbox = { index = "testpypi" }
+# hyperlight-sandbox-backend-wasm = { index = "testpypi" }
+# hyperlight-sandbox-python-guest = { index = "testpypi" }
+# [[tool.uv.index]]
+# name = "testpypi"
+# url = "https://test.pypi.org/simple/"
+# explicit = true
+# ///
+# Bootstrap manually with:
+#   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
+#     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
+# Run with: uv run --python 3.12 samples/02-agents/tools/code_mode_tool.py
+#
 # Copyright (c) Microsoft. All rights reserved.
 
 from __future__ import annotations
@@ -7,7 +28,6 @@ import json
 import logging
 import os
 from collections.abc import Sequence
-from pathlib import Path
 from textwrap import indent
 from typing import Annotated, Any
 
@@ -16,7 +36,17 @@ from agent_framework._tools import normalize_tools
 from agent_framework.azure import AzureOpenAIResponsesClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from pydantic import Field
+
+try:
+    from hyperlight_sandbox import Sandbox
+except ModuleNotFoundError as exc:
+    raise RuntimeError(
+        "This prototype expects an upstream `hyperlight_sandbox.Sandbox` "
+        "implementation. Install the provisional Hyperlight packages from TestPyPI, "
+        "or update this sample to match the final import path."
+    ) from exc
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -45,17 +75,7 @@ _SIMULATED_DATA: dict[str, list[dict[str, Any]]] = {
     ],
 }
 
-
-def _repo_root() -> Path:
-    """Return the Python repo root used to resolve the default sandbox module path."""
-
-    return Path(__file__).resolve().parents[3]
-
-
-def _default_module_path() -> Path:
-    """Return the provisional default path for the Hyperlight AOT module."""
-
-    return _repo_root() / "src/python_sandbox/python-sandbox.aot"
+DEFAULT_HYPERLIGHT_MODULE = "python_guest.path"
 
 
 def collect_tools(*tool_groups: Any) -> list[FunctionTool]:
@@ -145,28 +165,19 @@ Always include the complete stdout from execute_code in your final answer.
 """
 
 
-def _create_wasm_sandbox(*, module_path: Path) -> Any:
+def _create_wasm_sandbox(*, module_ref: str) -> Sandbox:
     """Create the provisional Hyperlight Wasm sandbox instance."""
 
-    try:
-        from hyperlight_sandbox import WasmSandbox
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "This prototype expects an upstream `hyperlight_sandbox.WasmSandbox` "
-            "implementation. Install the provisional Hyperlight package once it "
-            "is available, or update this sample to match the final import path."
-        ) from exc
-
-    return WasmSandbox(module_path=str(module_path))
+    return Sandbox(backend="wasm", module=module_ref)
 
 
 class CodeModeSandboxManager:
     """Manage the provisional Hyperlight sandbox lifecycle for this sample."""
 
-    def __init__(self, *, module_path: Path | None = None) -> None:
+    def __init__(self, *, module_ref: str | None = None) -> None:
         """Initialize the sandbox manager."""
 
-        self._module_path = module_path or Path(os.environ.get("HYPERLIGHT_MODULE", str(_default_module_path())))
+        self._module_ref = module_ref or os.environ.get("HYPERLIGHT_MODULE", DEFAULT_HYPERLIGHT_MODULE)
         self._tools: list[FunctionTool] = []
         self._callback_signature: tuple[tuple[str, int], ...] = ()
         self._sandbox: Any = None
@@ -190,15 +201,7 @@ class CodeModeSandboxManager:
         if self._sandbox is not None and self._snapshot is not None:
             return
 
-        if not self._module_path.exists():
-            raise RuntimeError(
-                "Hyperlight Wasm module not found.\n"
-                f"  module: {self._module_path} (MISSING)\n"
-                "Build the provisional python-sandbox AOT module first, or set "
-                "HYPERLIGHT_MODULE to the correct path."
-            )
-
-        self._sandbox = _create_wasm_sandbox(module_path=self._module_path)
+        self._sandbox = _create_wasm_sandbox(module_ref=self._module_ref)
 
         for tool_obj in self._tools:
             self._sandbox.register_tool(tool_obj.name, tool_obj.invoke)
@@ -274,8 +277,6 @@ def fetch_data(
 async def main() -> None:
     """Run the direct-tool code-mode sample."""
 
-    load_dotenv()
-
     runtime_tools: list[Any] = []
     sandbox_manager = CodeModeSandboxManager()
 
@@ -283,11 +284,9 @@ async def main() -> None:
     async def execute_code(
         code: Annotated[
             str,
-            Field(
-                description=(
-                    "Python code to execute in an isolated Hyperlight Wasm sandbox. "
-                    "Use call_tool(...) inside the code to access registered host callbacks."
-                )
+            (
+                "Python code to execute in an isolated Hyperlight Wasm sandbox. "
+                "Use call_tool(...) inside the code to access registered host callbacks."
             ),
         ],
     ) -> list[Content]:
@@ -314,13 +313,13 @@ async def main() -> None:
         tools_visible_to_model=True,
     )
 
-    logger.debug("%s", "=" * 60)
-    logger.debug("Direct tool sample")
-    logger.debug("%s", "=" * 60)
-    logger.debug("runtime_tool_count=%s", len(runtime_tools))
-    logger.debug("User: %s", DEFAULT_PROMPT)
+    print("=" * 60)
+    print("Direct tool sample")
+    print("=" * 60)
+    print(f"runtime_tool_count={len(runtime_tools)}")
+    print(f"User: {DEFAULT_PROMPT}")
     result = await agent.run(DEFAULT_PROMPT, tools=runtime_tools)
-    logger.debug("Agent: %s\n", result)
+    print(f"Agent: {result.text}")
 
 
 """

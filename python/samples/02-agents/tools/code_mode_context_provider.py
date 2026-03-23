@@ -1,3 +1,24 @@
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#     "hyperlight-sandbox",
+#     "hyperlight-sandbox-backend-wasm",
+#     "hyperlight-sandbox-python-guest",
+# ]
+# [tool.uv.sources]
+# hyperlight-sandbox = { index = "testpypi" }
+# hyperlight-sandbox-backend-wasm = { index = "testpypi" }
+# hyperlight-sandbox-python-guest = { index = "testpypi" }
+# [[tool.uv.index]]
+# name = "testpypi"
+# url = "https://test.pypi.org/simple/"
+# explicit = true
+# ///
+# Bootstrap manually with:
+#   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
+#     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
+# Run with: uv run --python 3.12 samples/02-agents/tools/code_mode_context_provider.py
+#
 # Copyright (c) Microsoft. All rights reserved.
 
 from __future__ import annotations
@@ -18,10 +39,10 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 try:
-    from hyperlight_sandbox import WasmSandbox
+    from hyperlight_sandbox import Sandbox
 except ModuleNotFoundError as exc:
     raise RuntimeError(
-        "This prototype expects an upstream `hyperlight_sandbox.WasmSandbox` "
+        "This prototype expects an upstream `hyperlight_sandbox.Sandbox` "
         "implementation. Install the provisional Hyperlight package once it "
         "is available, or update this sample to match the final import path."
     ) from exc
@@ -156,10 +177,10 @@ def _create_wasm_sandbox(*, module_path: Path) -> Any:
     """Create the provisional Hyperlight Wasm sandbox instance."""
 
     try:
-        from hyperlight_sandbox import WasmSandbox
+        from hyperlight_sandbox import Sandbox
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            "This prototype expects an upstream `hyperlight_sandbox.WasmSandbox` "
+            "This prototype expects an upstream `hyperlight_sandbox.Sandbox` "
             "implementation. Install the provisional Hyperlight package once it "
             "is available, or update this sample to match the final import path."
         ) from exc
@@ -171,7 +192,7 @@ def _create_wasm_sandbox(*, module_path: Path) -> Any:
             "HYPERLIGHT_MODULE to the correct path."
         )
 
-    return WasmSandbox(module_path=str(module_path))
+    return Sandbox(backend="wasm", module_path=str(module_path))
 
 
 @tool(approval_mode="never_require")
@@ -250,23 +271,12 @@ class CodeModeContextProvider(BaseContextProvider):
         self._managed_tools: list[FunctionTool] = []
         self._base_signature: tuple[tuple[str, int], ...] = ()
         self._runtime_signature: tuple[tuple[str, int], ...] = ()
-        self._module_path = Path(
-            os.environ.get(
-                "HYPERLIGHT_MODULE", str(Path(__file__).resolve().parents[3] / "src/python_sandbox/python-sandbox.aot")
-            )
-        )
-        if not self._module_path.exists():
-            raise RuntimeError(
-                "Hyperlight Wasm module not found.\n"
-                f"  module: {self._module_path} (MISSING)\n"
-                "Build the provisional python-sandbox AOT module first, or set "
-                "HYPERLIGHT_MODULE to the correct path."
-            )
-        self._base_sandbox: Any = None
+        self._module_path = "python_guest.path"
+        self._base_sandbox: Sandbox | None = None
         self._base_snapshot: Any = None
-        self._runtime_sandbox: Any = None
+        self._runtime_sandbox: Sandbox | None = None
         self._runtime_snapshot: Any = None
-        self._sandbox: Any = None
+        self._sandbox: Sandbox | None = None
         self._snapshot: Any = None
 
         self._execute_code_tool = FunctionTool(
@@ -293,9 +303,9 @@ class CodeModeContextProvider(BaseContextProvider):
         )
 
     @staticmethod
-    def _build_sandbox_and_snapshot(*, tools: Sequence[FunctionTool], module_path: Path) -> tuple[Any, Any]:
+    def _build_sandbox_and_snapshot(*, tools: Sequence[FunctionTool], module_path: str) -> tuple[Sandbox, Any]:
         """Build a sandbox and clean snapshot for the given tool set."""
-        sandbox = WasmSandbox(module_path=str(module_path))
+        sandbox = Sandbox(backend="wasm", module_path=module_path)
 
         for tool_obj in tools:
             sandbox.register_tool(tool_obj.name, tool_obj.invoke)
@@ -361,26 +371,22 @@ class CodeModeContextProvider(BaseContextProvider):
         self._sandbox.restore(self._snapshot)
         result = self._sandbox.run(code=code)
 
-        success = bool(getattr(result, "success", False))
-        stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n")
-        stderr = str(getattr(result, "stderr", "") or "")
-
-        if success:
+        if result.success:
             logger.debug("execute_code completed.")
             contents: list[Content] = []
-            if stdout:
-                contents.append(Content.from_text(stdout))
-            if stderr:
+            if result.stdout:
+                contents.append(Content.from_text(result.stdout))
+            if result.stderr:
                 contents.append(
                     Content.from_text(
-                        f"stderr:\n{stderr}",
+                        f"stderr:\n{result.stderr}",
                         additional_properties={"stream": "stderr"},
                     )
                 )
             return contents or [Content.from_text("Code executed successfully without output.")]
 
         logger.debug("execute_code failed.")
-        error_details = stderr or "Unknown sandbox error"
+        error_details = result.stderr or "Unknown sandbox error"
         return [
             Content.from_text(f"Execution error:\n{error_details}"),
             Content.from_error(message="Execution error", error_details=error_details),
