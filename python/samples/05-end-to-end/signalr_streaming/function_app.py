@@ -53,7 +53,8 @@ from tools import get_local_events, get_weather_forecast
 load_dotenv()
 
 # Configuration
-SIGNALR_CONNECTION_STRING = os.environ.get("AzureSignalRConnectionString", "")
+# AzureSignalRConnectionString is the standard Azure Functions setting name for SignalR Service.
+SIGNALR_CONNECTION_STRING = os.environ.get("AzureSignalRConnectionString", "")  # noqa: SIM112
 SIGNALR_HUB_NAME = os.environ.get("SIGNALR_HUB_NAME", "travel")
 
 logging.basicConfig(
