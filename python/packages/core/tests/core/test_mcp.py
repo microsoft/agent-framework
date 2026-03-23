@@ -2042,6 +2042,100 @@ async def test_load_tools_with_pagination():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
 
 
+async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
+    """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
+
+    Some MCP servers (e.g. matlab-mcp-core-server) declare zero-argument tools
+    with inputSchema={"type": "object"} and no "properties" key.  OpenAI's API
+    requires "properties" to be present on object schemas, so load_tools must
+    inject an empty "properties" dict when it is missing.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    original_zero_arg_schema = {"type": "object"}
+    original_string_schema = {"type": "string"}
+    original_empty_schema: dict[str, object] = {}
+
+    page = MagicMock()
+    page.tools = [
+        types.Tool(
+            name="zero_arg_tool",
+            description="A tool with no parameters",
+            inputSchema=original_zero_arg_schema,
+        ),
+        types.Tool(
+            name="normal_tool",
+            description="A tool with parameters",
+            inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        ),
+        types.Tool(
+            name="string_schema_tool",
+            description="A tool with a non-object schema",
+            inputSchema=original_string_schema,
+        ),
+        types.Tool(
+            name="empty_schema_tool",
+            description="A tool with an empty schema",
+            inputSchema=original_empty_schema,
+        ),
+    ]
+
+    # Simulate a non-conforming MCP server that sends inputSchema=None.
+    # types.Tool requires inputSchema to be a dict, so we use a MagicMock.
+    none_schema_tool = MagicMock()
+    none_schema_tool.name = "none_schema_tool"
+    none_schema_tool.description = "A tool with None inputSchema"
+    none_schema_tool.inputSchema = None
+    page.tools.append(none_schema_tool)
+    page.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert len(tool._functions) == 5
+
+    funcs_by_name = {f.name: f for f in tool._functions}
+
+    # Zero-arg tool must have "properties" injected
+    zero_params = funcs_by_name["zero_arg_tool"].parameters()
+    assert "properties" in zero_params
+    assert zero_params["properties"] == {}
+    assert zero_params["type"] == "object"
+
+    # Normal tool must retain its existing properties
+    normal_params = funcs_by_name["normal_tool"].parameters()
+    assert "properties" in normal_params
+    assert "x" in normal_params["properties"]
+    assert normal_params["required"] == ["x"]
+
+    # Non-object schema must NOT have "properties" injected
+    string_params = funcs_by_name["string_schema_tool"].parameters()
+    assert "properties" not in string_params
+    assert string_params["type"] == "string"
+
+    # Empty schema (no "type" key) must NOT have "properties" injected
+    empty_params = funcs_by_name["empty_schema_tool"].parameters()
+    assert "properties" not in empty_params
+
+    # None inputSchema must produce an empty dict (guard against non-conforming servers)
+    none_params = funcs_by_name["none_schema_tool"].parameters()
+    assert none_params == {}
+
+    # Original inputSchema dicts must not be mutated
+    assert "properties" not in original_zero_arg_schema
+    assert "properties" not in original_string_schema
+    assert "properties" not in original_empty_schema
+
+
 async def test_load_prompts_with_pagination():
     """Test that load_prompts handles pagination correctly."""
     from unittest.mock import AsyncMock, MagicMock
