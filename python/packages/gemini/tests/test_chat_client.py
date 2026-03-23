@@ -905,6 +905,47 @@ async def test_streaming_get_final_response() -> None:
     assert final.usage_details["output_token_count"] == 5
 
 
+# The Gemini API returns a list of candidates, each representing a possible response from the model.
+# In practice only one candidate is returned, but the list can be empty or None if the request
+# was blocked by safety filters or the API returned an unexpected response.
+
+
+@pytest.mark.parametrize("candidates", [None, []])
+async def test_empty_candidates_returns_empty_message(candidates: list | None) -> None:
+    """An API response with no candidates must not raise and must return an empty assistant message."""
+    client, mock = _make_gemini_client()
+    response = _make_response([])
+    response.candidates = candidates
+    mock.aio.models.generate_content = AsyncMock(return_value=response)
+
+    result = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert result.messages[0].role == "assistant"
+    assert result.messages[0].contents == []
+    assert result.finish_reason is None
+
+
+@pytest.mark.parametrize("candidates", [None, []])
+async def test_empty_candidates_in_stream_does_not_raise(candidates: list | None) -> None:
+    """A streaming chunk with no candidates must not raise and must yield an empty update."""
+    client, mock = _make_gemini_client()
+    chunk = _make_response([], finish_reason=None, prompt_tokens=None, output_tokens=None)
+    chunk.candidates = candidates
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    updates = [
+        update
+        async for update in client.get_response(
+            messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+            stream=True,
+        )
+    ]
+
+    assert len(updates) == 1
+    assert updates[0].contents == []
+    assert updates[0].finish_reason is None
+
+
 # service_url
 
 
