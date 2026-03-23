@@ -1,5 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Evaluate a multi-agent workflow using Azure AI Foundry evaluators.
+
+This sample demonstrates two patterns:
+1. Post-hoc: Run the workflow, then evaluate the result you already have.
+2. Run + evaluate: Pass queries and let evaluate_workflow() run the workflow for you.
+
+Both patterns return a list of results (one per provider), each with a per-agent
+breakdown in sub_results so you can identify which agent is underperforming.
+
+Prerequisites:
+- An Azure AI Foundry project with a deployed model
+- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+"""
+
 import asyncio
 import os
 
@@ -12,21 +26,6 @@ from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
 load_dotenv()
-
-"""
-This sample demonstrates evaluating a multi-agent workflow using Azure AI Foundry evaluators.
-
-It shows two patterns:
-1. Post-hoc: Run the workflow, then evaluate the result you already have.
-2. Run + evaluate: Pass queries and let evaluate_workflow() run the workflow for you.
-
-Both patterns return a list of results (one per provider), each with a per-agent
-breakdown in sub_results so you can identify which agent is underperforming.
-
-Prerequisites:
-- An Azure AI Foundry project with a deployed model
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
-"""
 
 
 # Simple tools for the agents
@@ -45,7 +44,7 @@ def get_flight_price(origin: str, destination: str) -> str:
     return f"Flights from {origin} to {destination}: $450 round-trip"
 
 
-async def main():
+async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],

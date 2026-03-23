@@ -1,19 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-import os
+"""Evaluate agent responses that already exist in Foundry (zero-code-change).
 
-from agent_framework_azure_ai import FoundryEvals, evaluate_traces
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
-
-load_dotenv()
-
-"""
-This sample demonstrates evaluating agent responses that already exist in Foundry.
-
-It shows two patterns:
+This sample demonstrates two patterns:
 1. evaluate_traces(response_ids=...) — Evaluate specific Responses API responses by ID.
 2. evaluate_traces(agent_id=...) — Evaluate agent behavior from OTel traces in App Insights.
 
@@ -27,8 +16,18 @@ Prerequisites:
 - Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
+import asyncio
+import os
 
-async def main():
+from agent_framework_azure_ai import FoundryEvals, evaluate_traces
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],

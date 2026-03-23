@@ -30,7 +30,7 @@ def is_helpful(response: str) -> bool:
     return len(response) > 10 and not any(r in response.lower() for r in refusals)
 
 
-async def main():
+async def main() -> None:
     agent = Agent(
         model="gpt-4o-mini",
         instructions="You are a helpful weather assistant.",

@@ -1,5 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Evaluate an agent using Azure AI Foundry's built-in evaluators.
+
+This sample demonstrates three patterns:
+1. evaluate_agent(responses=...) — Evaluate a response you already have.
+2. evaluate_agent(queries=...) — Run the agent against test queries and evaluate in one call.
+3. FoundryEvals.evaluate() — Full control with direct evaluator access.
+
+Prerequisites:
+- An Azure AI Foundry project with a deployed model
+- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+"""
+
 import asyncio
 import os
 
@@ -11,23 +23,6 @@ from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 
 load_dotenv()
-
-"""
-This sample demonstrates evaluating an agent using Azure AI Foundry's built-in evaluators.
-
-It shows three patterns:
-1. evaluate_agent(responses=...) — Evaluate a response you already have.
-2. evaluate_agent(queries=...) — Run the agent against test queries and evaluate in one call.
-3. FoundryEvals.evaluate() — Full control with direct evaluator access.
-
-Prerequisites:
-- An Azure AI Foundry project with a deployed model
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
-
-Required components:
-- An Agent with tools (the agent to evaluate)
-- A FoundryEvals instance (the evaluator)
-"""
 
 
 # Define a simple tool for the agent
@@ -46,7 +41,7 @@ def get_flight_price(origin: str, destination: str) -> str:
     return f"Flights from {origin} to {destination}: $450 round-trip"
 
 
-async def main():
+async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],

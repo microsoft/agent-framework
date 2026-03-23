@@ -31,6 +31,7 @@ from agent_framework import (
     Agent,
     LocalEvaluator,
     Message,
+    Workflow,
     evaluate_agent,
     evaluate_workflow,
     evaluator,
@@ -65,7 +66,7 @@ def get_flight_price(origin: str, destination: str) -> str:
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 
-def print_workflow_results(results):
+def print_workflow_results(results) -> None:
     """Print workflow eval results with clear provider → overall → per-agent hierarchy."""
     for r in results:
         status = "✓" if r.all_passed else "✗"
@@ -83,7 +84,7 @@ def print_workflow_results(results):
 # ── Agent setup ───────────────────────────────────────────────────────────────
 
 
-def create_agent(project_client, deployment):
+def create_agent(project_client, deployment) -> Agent:
     """Create a travel assistant agent."""
     return Agent(
         client=AzureOpenAIResponsesClient(
@@ -96,7 +97,7 @@ def create_agent(project_client, deployment):
     )
 
 
-def create_workflow(project_client, deployment):
+def create_workflow(project_client, deployment) -> Workflow:
     """Create a researcher → planner sequential workflow."""
     client = AzureOpenAIResponsesClient(
         project_client=project_client,
@@ -190,7 +191,7 @@ def used_available_tools(conversation: list, tool_definitions: list) -> dict:
     }
 
 
-async def demo_evaluators(project_client, deployment):
+async def demo_evaluators(project_client, deployment) -> None:
     """Evaluate an agent with custom function evaluators."""
     print()
     print("═" * 60)
@@ -227,7 +228,7 @@ async def demo_evaluators(project_client, deployment):
 #
 
 
-async def demo_builtin_checks(project_client, deployment):
+async def demo_builtin_checks(project_client, deployment) -> None:
     """Evaluate with built-in keyword and tool checks."""
     print()
     print("═" * 60)
@@ -263,7 +264,7 @@ async def demo_builtin_checks(project_client, deployment):
 #
 
 
-async def demo_foundry_agent(project_client, deployment):
+async def demo_foundry_agent(project_client, deployment) -> None:
     """Evaluate a single agent with Foundry."""
     print()
     print("═" * 60)
@@ -285,7 +286,7 @@ async def demo_foundry_agent(project_client, deployment):
         print(f"  Portal: {r.report_url}")
 
 
-async def demo_foundry_response(project_client, deployment):
+async def demo_foundry_response(project_client, deployment) -> None:
     """Evaluate a response you already have."""
     print()
     print("═" * 60)
@@ -315,7 +316,7 @@ async def demo_foundry_response(project_client, deployment):
         print(f"\n  {r.provider}: {r.passed}/{r.total} passed")
 
 
-async def demo_foundry_workflow(project_client, deployment):
+async def demo_foundry_workflow(project_client, deployment) -> None:
     """Evaluate a multi-agent workflow with per-agent breakdown."""
     print()
     print("═" * 60)
@@ -335,7 +336,7 @@ async def demo_foundry_workflow(project_client, deployment):
     print_workflow_results(results)
 
 
-async def demo_foundry_select(project_client, deployment):
+async def demo_foundry_select(project_client, deployment) -> None:
     """Choose specific Foundry evaluators."""
     print()
     print("═" * 60)
@@ -375,7 +376,7 @@ async def demo_foundry_select(project_client, deployment):
 #
 
 
-async def demo_mixed(project_client, deployment):
+async def demo_mixed(project_client, deployment) -> None:
     """Combine custom functions, built-in checks, and Foundry in one call."""
     print()
     print("═" * 60)
@@ -426,7 +427,7 @@ async def demo_mixed(project_client, deployment):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def demo_workflow_mixed(project_client, deployment):
+async def demo_workflow_mixed(project_client, deployment) -> None:
     """Evaluate a workflow with both local and Foundry evaluators."""
     print()
     print("═" * 60)
@@ -457,7 +458,7 @@ async def demo_workflow_mixed(project_client, deployment):
 #
 
 
-def create_iterative_workflow(project_client, deployment):
+def create_iterative_workflow(project_client, deployment) -> Workflow:
     """Create a group chat where a writer and reviewer iterate.
 
     The writer drafts a response, the reviewer critiques it, and the
@@ -496,7 +497,7 @@ def create_iterative_workflow(project_client, deployment):
     ).build()
 
 
-async def demo_iterative_workflow(project_client, deployment):
+async def demo_iterative_workflow(project_client, deployment) -> None:
     """Evaluate a workflow where agents run multiple times."""
     print()
     print("═" * 60)
@@ -521,7 +522,7 @@ async def demo_iterative_workflow(project_client, deployment):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def main():
+async def main() -> None:
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         credential=DefaultAzureCredential(),

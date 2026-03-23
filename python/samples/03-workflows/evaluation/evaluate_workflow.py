@@ -29,7 +29,7 @@ def is_nonempty(response: str) -> bool:
     return len(response.strip()) > 5
 
 
-async def main():
+async def main() -> None:
     # Build a simple planner → executor workflow
     planner = Agent(model="gpt-4o-mini", instructions="You plan trips. Output a bullet-point plan.")
     executor_agent = Agent(model="gpt-4o-mini", instructions="You execute travel plans. Book the items listed.")

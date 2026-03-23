@@ -1,5 +1,21 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Mix local and cloud evaluation providers in a single evaluate_agent() call.
+
+This sample demonstrates three patterns:
+1. Local-only: Fast, API-free checks for inner-loop development.
+2. Cloud-only: Full Foundry evaluators for comprehensive quality assessment.
+3. Mixed: Local + Foundry evaluators in a single evaluate_agent() call.
+
+Mixing lets you get instant local feedback (keyword presence, tool usage)
+alongside deeper cloud-based quality evaluation (relevance, coherence)
+in one call.
+
+Prerequisites:
+- An Azure AI Foundry project with a deployed model
+- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+"""
+
 import asyncio
 import os
 
@@ -18,23 +34,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-"""
-This sample demonstrates mixing local and cloud evaluation providers.
-
-It shows three patterns:
-1. Local-only: Fast, API-free checks for inner-loop development.
-2. Cloud-only: Full Foundry evaluators for comprehensive quality assessment.
-3. Mixed: Local + Foundry evaluators in a single evaluate_agent() call.
-
-Mixing lets you get instant local feedback (keyword presence, tool usage)
-alongside deeper cloud-based quality evaluation (relevance, coherence)
-in one call.
-
-Prerequisites:
-- An Azure AI Foundry project with a deployed model
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
-"""
-
 
 # Define a simple tool for the agent
 def get_weather(location: str) -> str:
@@ -47,7 +46,7 @@ def get_weather(location: str) -> str:
     return weather_data.get(location.lower(), f"Weather data not available for {location}")
 
 
-async def main():
+async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],

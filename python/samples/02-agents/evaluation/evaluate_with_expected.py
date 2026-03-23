@@ -32,7 +32,7 @@ def response_matches_expected(response: str, expected_output: str) -> float:
     return len(response_words & expected_words) / max(len(expected_words), 1)
 
 
-async def main():
+async def main() -> None:
     agent = Agent(
         model="gpt-4o-mini",
         instructions="You are a math tutor. Answer concisely.",

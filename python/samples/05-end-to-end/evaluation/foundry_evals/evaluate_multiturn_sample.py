@@ -1,18 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import asyncio
-import os
-
-from agent_framework import ConversationSplit, EvalItem
-from agent_framework_azure_ai import FoundryEvals
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
-
-load_dotenv()
-
-"""
-This sample demonstrates how conversation split strategies affect evaluation.
+"""Evaluate multi-turn conversations with different split strategies.
 
 The same multi-turn conversation can be split different ways, each evaluating
 a different aspect of agent behavior:
@@ -25,6 +13,17 @@ Prerequisites:
 - An Azure AI Foundry project with a deployed model
 - Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
+
+import asyncio
+import os
+
+from agent_framework import ConversationSplit, EvalItem
+from agent_framework_azure_ai import FoundryEvals
+from azure.ai.projects.aio import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # A multi-turn conversation with tool calls that we'll evaluate three ways.
 CONVERSATION = [
@@ -60,7 +59,10 @@ CONVERSATION = [
     {"role": "user", "content": "Can you compare them?"},
     {
         "role": "assistant",
-        "content": "Seattle is cooler at 62°F with rain likely, while Paris is warmer at 68°F and partly sunny. Paris is the better choice for outdoor activities.",
+        "content": (
+            "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
+            "at 68°F and partly sunny. Paris is the better choice for outdoor activities."
+        ),
     },
 ]
 
@@ -73,7 +75,7 @@ TOOL_DEFINITIONS = [
 ]
 
 
-def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAST_TURN):
+def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAST_TURN) -> None:
     """Print the query/response split for an EvalItem."""
     d = item.to_eval_data(split=split)
     print(f"  query_messages ({len(d['query_messages'])}):")
@@ -90,7 +92,7 @@ def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAS
         print(f"    {m['role']}: {str(content)[:70]}")
 
 
-async def main():
+async def main() -> None:
     project_client = AIProjectClient(
         endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         credential=DefaultAzureCredential(),
@@ -107,7 +109,10 @@ async def main():
 
     item = EvalItem(
         query="Can you compare them?",
-        response="Seattle is cooler at 62°F with rain likely, while Paris is warmer at 68°F and partly sunny. Paris is the better choice for outdoor activities.",
+        response=(
+            "Seattle is cooler at 62°F with rain likely, while Paris is warmer "
+            "at 68°F and partly sunny. Paris is the better choice for outdoor activities."
+        ),
         conversation=CONVERSATION,
         tool_definitions=TOOL_DEFINITIONS,
     )
