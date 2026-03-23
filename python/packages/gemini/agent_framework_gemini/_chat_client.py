@@ -127,7 +127,7 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
 
     # Tool options
     code_execution: bool
-    """Allow the model to write and run Python code in a sandboxed environment."""
+    """Allow the model to write and run code in a sandboxed environment."""
 
     google_search_grounding: bool | types.GoogleSearch
     """Ground responses with live Google Search results. Pass ``True`` to use default settings,
