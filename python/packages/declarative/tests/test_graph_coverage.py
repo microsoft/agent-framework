@@ -21,6 +21,15 @@ from agent_framework_declarative._workflows._declarative_base import (
     LoopIterationResult,
 )
 
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+_requires_powerfx = pytest.mark.skipif(not _powerfx_available, reason="PowerFx engine not available")
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -250,6 +259,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval([1, 2, 3])  # type: ignore[arg-type]
         assert result == [1, 2, 3]
 
+    @_requires_powerfx
     async def test_eval_simple_and_operator(self, mock_state):
         """Test simple And operator evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -264,6 +274,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Local.a And Local.b")
         assert result is True
 
+    @_requires_powerfx
     async def test_eval_simple_or_operator(self, mock_state):
         """Test simple Or operator evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -278,6 +289,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Local.a Or Local.b")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_negation(self, mock_state):
         """Test negation (!) evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -287,6 +299,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=!Local.flag")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_not_function(self, mock_state):
         """Test Not() function evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -296,6 +309,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Not(Local.flag)")
         assert result is False
 
+    @_requires_powerfx
     async def test_eval_comparison_operators(self, mock_state):
         """Test comparison operators."""
         state = DeclarativeWorkflowState(mock_state)
@@ -310,6 +324,7 @@ class TestDeclarativeWorkflowStateExtended:
         assert state.eval("=Local.x <> Local.y") is True
         assert state.eval("=Local.x = 5") is True
 
+    @_requires_powerfx
     async def test_eval_arithmetic_operators(self, mock_state):
         """Test arithmetic operators."""
         state = DeclarativeWorkflowState(mock_state)
@@ -322,6 +337,7 @@ class TestDeclarativeWorkflowStateExtended:
         assert state.eval("=Local.x * Local.y") == 30
         assert state.eval("=Local.x / Local.y") == pytest.approx(3.333, rel=0.01)
 
+    @_requires_powerfx
     async def test_eval_string_literal(self, mock_state):
         """Test string literal evaluation."""
         state = DeclarativeWorkflowState(mock_state)
@@ -330,6 +346,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval('="hello world"')
         assert result == "hello world"
 
+    @_requires_powerfx
     async def test_eval_float_literal(self, mock_state):
         """Test float literal evaluation."""
         from decimal import Decimal
@@ -341,6 +358,7 @@ class TestDeclarativeWorkflowStateExtended:
         # Accepts both float (Python fallback) and Decimal (pythonnet/PowerFx)
         assert result == 3.14 or result == Decimal("3.14")
 
+    @_requires_powerfx
     async def test_eval_variable_reference_with_namespace_mappings(self, mock_state):
         """Test variable reference with PowerFx symbols."""
         state = DeclarativeWorkflowState(mock_state)
@@ -355,6 +373,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval("=Workflow.Inputs.query")
         assert result == "test"
 
+    @_requires_powerfx
     async def test_eval_if_expression_with_dict(self, mock_state):
         """Test eval_if_expression recursively evaluates dicts."""
         state = DeclarativeWorkflowState(mock_state)
@@ -364,6 +383,7 @@ class TestDeclarativeWorkflowStateExtended:
         result = state.eval_if_expression({"greeting": "=Local.name", "static": "hello"})
         assert result == {"greeting": "Alice", "static": "hello"}
 
+    @_requires_powerfx
     async def test_eval_if_expression_with_list(self, mock_state):
         """Test eval_if_expression recursively evaluates lists."""
         state = DeclarativeWorkflowState(mock_state)
@@ -449,6 +469,7 @@ class TestBasicExecutorsCoverage:
         result = state.get("Local.nested")
         assert result == 42
 
+    @_requires_powerfx
     async def test_set_text_variable_executor(self, mock_context, mock_state):
         """Test SetTextVariableExecutor."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -591,6 +612,7 @@ class TestBasicExecutorsCoverage:
 
         mock_context.yield_output.assert_called_once_with("Plain text message")
 
+    @_requires_powerfx
     async def test_send_activity_with_expression(self, mock_context, mock_state):
         """Test SendActivityExecutor evaluates expressions."""
         from agent_framework_declarative._workflows._executors_basic import (
@@ -740,6 +762,90 @@ class TestAgentExecutorsCoverage:
         name = executor._get_agent_name(state)
         assert name == "LegacyAgent"
 
+    async def test_agent_executor_get_agent_name_string_expression(self, mock_context, mock_state):
+        """Test agent name extraction from simple string expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": "=Local.SelectedAgent",
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="DynamicAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "DynamicAgent"
+
+    async def test_agent_executor_get_agent_name_dict_expression(self, mock_context, mock_state):
+        """Test agent name extraction from nested dict with expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": {"name": "=Local.ManagerResult.next_speaker.answer"},
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="WeatherAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "WeatherAgent"
+
+    async def test_agent_executor_get_agent_name_legacy_expression(self, mock_context, mock_state):
+        """Test agent name extraction from legacy agentName with expression."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agentName": "=Local.NextAgent",
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value="ResolvedAgent"):
+            name = executor._get_agent_name(state)
+        assert name == "ResolvedAgent"
+
+    async def test_agent_executor_get_agent_name_expression_returns_none(self, mock_context, mock_state):
+        """Test agent name returns None when expression evaluates to None."""
+        from unittest.mock import patch
+
+        from agent_framework_declarative._workflows._executors_agents import (
+            InvokeAzureAgentExecutor,
+        )
+
+        action_def = {
+            "kind": "InvokeAzureAgent",
+            "agent": {"name": "=Local.UndefinedVar"},
+        }
+        executor = InvokeAzureAgentExecutor(action_def)
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        with patch.object(state, "eval_if_expression", return_value=None):
+            name = executor._get_agent_name(state)
+        assert name is None
+
     async def test_agent_executor_get_input_config_simple(self, mock_context, mock_state):
         """Test input config parsing with simple non-dict input."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -825,6 +931,7 @@ class TestAgentExecutorsCoverage:
         assert result_prop == "Local.result"
         assert auto_send is False
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_string_messages(self, mock_context, mock_state):
         """Test _build_input_text with string messages expression."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -841,6 +948,7 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, "=Local.userInput")
         assert input_text == "Hello agent!"
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_message_list(self, mock_context, mock_state):
         """Test _build_input_text extracts text from message list."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -864,6 +972,7 @@ class TestAgentExecutorsCoverage:
         input_text = await executor._build_input_text(state, {}, "=Conversation.messages")
         assert input_text == "Last message"
 
+    @_requires_powerfx
     async def test_agent_executor_build_input_text_from_message_with_text_attr(self, mock_context, mock_state):
         """Test _build_input_text extracts text from message with text attribute."""
         from agent_framework_declarative._workflows._executors_agents import (
@@ -1036,83 +1145,6 @@ class TestAgentExecutorsCoverage:
         parsed = state.get("Local.Parsed")
         assert parsed == {"status": "ok", "count": 42}
 
-    async def test_invoke_tool_executor_not_found(self, mock_context, mock_state):
-        """Test InvokeToolExecutor when tool not found."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            InvokeToolExecutor,
-        )
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "MissingTool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool 'MissingTool' not found in registry"}
-
-    async def test_invoke_tool_executor_sync_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with synchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def my_tool(x: int, y: int) -> int:
-            return x + y
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"add": my_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "add",
-            "parameters": {"x": 5, "y": 3},
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == 8
-
-    async def test_invoke_tool_executor_async_tool(self, mock_context, mock_state):
-        """Test InvokeToolExecutor with asynchronous tool."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        async def my_async_tool(input: str) -> str:
-            return f"Processed: {input}"
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"process": my_async_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "process",
-            "input": "test data",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == "Processed: test data"
-
 
 # ---------------------------------------------------------------------------
 # Control Flow Executors Tests - Additional coverage
@@ -1122,6 +1154,7 @@ class TestAgentExecutorsCoverage:
 class TestControlFlowCoverage:
     """Tests for control flow executors covering uncovered code paths."""
 
+    @_requires_powerfx
     async def test_foreach_with_source_alias(self, mock_context, mock_state):
         """Test ForeachInitExecutor with 'source' alias (interpreter mode)."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1184,6 +1217,7 @@ class TestControlFlowCoverage:
         assert msg.current_index == 1
         assert msg.current_item == "b"
 
+    @_requires_powerfx
     async def test_switch_evaluator_with_value_cases(self, mock_context, mock_state):
         """Test SwitchEvaluatorExecutor with value/cases schema."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1211,6 +1245,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1  # Second case matched
 
+    @_requires_powerfx
     async def test_switch_evaluator_default_case(self, mock_context, mock_state):
         """Test SwitchEvaluatorExecutor falls through to default."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1470,6 +1505,7 @@ class TestControlFlowCoverage:
         # Should NOT send any message
         mock_context.send_message.assert_not_called()
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_first_match(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor returns first match."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1495,6 +1531,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1  # Second condition (x > 5) is first match
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_no_match(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor with no matches."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1519,6 +1556,7 @@ class TestControlFlowCoverage:
         assert msg.matched is False
         assert msg.branch_index == -1
 
+    @_requires_powerfx
     async def test_condition_group_evaluator_boolean_true_condition(self, mock_context, mock_state):
         """Test ConditionGroupEvaluatorExecutor with boolean True condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1542,6 +1580,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 1
 
+    @_requires_powerfx
     async def test_if_condition_evaluator_true(self, mock_context, mock_state):
         """Test IfConditionEvaluatorExecutor with true condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1562,6 +1601,7 @@ class TestControlFlowCoverage:
         assert msg.matched is True
         assert msg.branch_index == 0  # Then branch
 
+    @_requires_powerfx
     async def test_if_condition_evaluator_false(self, mock_context, mock_state):
         """Test IfConditionEvaluatorExecutor with false condition."""
         from agent_framework_declarative._workflows._executors_control_flow import (
@@ -1810,6 +1850,7 @@ class TestHumanInputExecutorsCoverage:
 class TestAgentExternalLoopCoverage:
     """Tests for agent executor external loop handling."""
 
+    @_requires_powerfx
     async def test_agent_executor_with_external_loop(self, mock_context, mock_state):
         """Test agent executor with external loop that triggers."""
         from unittest.mock import patch
@@ -1912,39 +1953,13 @@ class TestAgentExternalLoopCoverage:
         result = state.get("Local.result")
         assert result == "Direct string response"
 
-    async def test_invoke_tool_with_error(self, mock_context, mock_state):
-        """Test InvokeToolExecutor handles tool errors."""
-        from agent_framework_declarative._workflows._executors_agents import (
-            TOOL_REGISTRY_KEY,
-            InvokeToolExecutor,
-        )
-
-        def failing_tool(**kwargs):
-            raise ValueError("Tool error")
-
-        mock_state._data[TOOL_REGISTRY_KEY] = {"bad_tool": failing_tool}
-
-        state = DeclarativeWorkflowState(mock_state)
-        state.initialize()
-
-        action_def = {
-            "kind": "InvokeTool",
-            "tool": "bad_tool",
-            "resultProperty": "Local.result",
-        }
-        executor = InvokeToolExecutor(action_def)
-
-        await executor.handle_action(ActionTrigger(), mock_context)
-
-        result = state.get("Local.result")
-        assert result == {"error": "Tool error"}
-
 
 # ---------------------------------------------------------------------------
 # PowerFx Functions Coverage
 # ---------------------------------------------------------------------------
 
 
+@_requires_powerfx
 class TestPowerFxFunctionsCoverage:
     """Tests for PowerFx function evaluation coverage."""
 
@@ -2337,6 +2352,89 @@ class TestBuilderEdgeWiring:
         exit_exec = graph_builder._get_branch_exit(None)
         assert exit_exec is None
 
+    def test_get_branch_exit_returns_none_for_goto_terminator(self):
+        """Test that _get_branch_exit returns None when branch ends with GotoAction.
+
+        GotoAction is a terminator that handles its own control flow (jumping to
+        the target action). It should NOT be returned as a branch exit, because
+        that would cause the parent ConditionGroup to wire it to the next
+        sequential action, creating a dual-edge where both the goto target and
+        the next action receive messages.
+        """
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        # GotoAction executor is a JoinExecutor with a GotoAction action_def
+        goto_executor = JoinExecutor(
+            {"kind": "GotoAction", "id": "goto_summary", "actionId": "invoke_summary"},
+            id="goto_summary",
+        )
+
+        # Simulate a single-action branch chain
+        goto_executor._chain_executors = [goto_executor]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(goto_executor)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_none_for_end_workflow_terminator(self):
+        """Test that _get_branch_exit returns None when branch ends with EndWorkflow."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        end_executor = JoinExecutor(
+            {"kind": "EndWorkflow", "id": "end"},
+            id="end",
+        )
+        end_executor._chain_executors = [end_executor]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(end_executor)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_none_for_goto_in_chain(self):
+        """Test that _get_branch_exit returns None when chain ends with GotoAction.
+
+        Even when a branch has multiple actions before the GotoAction,
+        the branch exit should be None because the last action is a terminator.
+        """
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_basic import SendActivityExecutor
+        from agent_framework_declarative._workflows._executors_control_flow import JoinExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        # A branch with: SendActivity -> GotoAction
+        activity = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "msg"}}, id="msg")
+        goto = JoinExecutor(
+            {"kind": "GotoAction", "id": "goto_target", "actionId": "some_target"},
+            id="goto_target",
+        )
+        activity._chain_executors = [activity, goto]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(activity)
+        assert exit_exec is None
+
+    def test_get_branch_exit_returns_executor_for_non_terminator(self):
+        """Test that _get_branch_exit still returns the exit for non-terminator branches."""
+        from agent_framework_declarative._workflows._declarative_builder import DeclarativeWorkflowBuilder
+        from agent_framework_declarative._workflows._executors_basic import SendActivityExecutor
+
+        yaml_def = {"name": "test_workflow", "actions": []}
+        graph_builder = DeclarativeWorkflowBuilder(yaml_def)
+
+        exec1 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "1"}}, id="e1")
+        exec2 = SendActivityExecutor({"kind": "SendActivity", "activity": {"text": "2"}}, id="e2")
+        exec1._chain_executors = [exec1, exec2]  # type: ignore[attr-defined]
+
+        exit_exec = graph_builder._get_branch_exit(exec1)
+        assert exit_exec == exec2
+
 
 # ---------------------------------------------------------------------------
 # Agent executor external loop response handler tests
@@ -2617,6 +2715,7 @@ class TestBuilderValidation:
         assert "activity" in str(exc_info.value)
 
 
+@_requires_powerfx
 class TestExpressionEdgeCases:
     """Tests for expression evaluation edge cases."""
 
@@ -2641,6 +2740,7 @@ class TestExpressionEdgeCases:
         assert result == 42
 
 
+@_requires_powerfx
 class TestLongMessageTextHandling:
     """Tests for handling long MessageText results that exceed PowerFx limits."""
 
@@ -2702,3 +2802,133 @@ class TestLongMessageTextHandling:
 
         result = state.eval('=!IsBlank(Find("CONGRATULATIONS", Upper(MessageText(Local.Messages))))')
         assert result is False
+
+
+class TestCreateConversationExecutor:
+    """Tests for CreateConversationExecutor."""
+
+    async def test_basic_creation(self, mock_context, mock_state):
+        """Test that a UUID is generated, stored at conversationId path, and conversation entry created."""
+        from agent_framework_declarative._workflows._executors_basic import (
+            CreateConversationExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "CreateConversation",
+            "conversationId": "Local.myConvId",
+        }
+        executor = CreateConversationExecutor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        # A UUID should be stored at the requested path
+        conv_id = state.get("Local.myConvId")
+        assert conv_id is not None
+        assert isinstance(conv_id, str)
+        assert len(conv_id) == 36  # UUID format
+
+        # Conversation entry should exist in System.conversations
+        conversations = state.get("System.conversations")
+        assert conversations is not None
+        assert conv_id in conversations
+        assert conversations[conv_id]["id"] == conv_id
+        assert conversations[conv_id]["messages"] == []
+
+    async def test_no_conversation_id_param(self, mock_context, mock_state):
+        """Test that conversation is still created even without a conversationId param."""
+        from agent_framework_declarative._workflows._executors_basic import (
+            CreateConversationExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def = {
+            "kind": "CreateConversation",
+        }
+        executor = CreateConversationExecutor(action_def)
+        await executor.handle_action(ActionTrigger(), mock_context)
+
+        # Conversation entry should still exist in System.conversations
+        # (initialize() seeds one default conversation, plus the one just created)
+        conversations = state.get("System.conversations")
+        assert conversations is not None
+        assert len(conversations) == 2
+
+    async def test_multiple_conversations(self, mock_context, mock_state):
+        """Test creating multiple conversations produces distinct IDs."""
+        from agent_framework_declarative._workflows._executors_basic import (
+            CreateConversationExecutor,
+        )
+
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        action_def1 = {
+            "kind": "CreateConversation",
+            "conversationId": "Local.conv1",
+        }
+        action_def2 = {
+            "kind": "CreateConversation",
+            "conversationId": "Local.conv2",
+        }
+
+        executor1 = CreateConversationExecutor(action_def1)
+        await executor1.handle_action(ActionTrigger(), mock_context)
+
+        executor2 = CreateConversationExecutor(action_def2)
+        await executor2.handle_action(ActionTrigger(), mock_context)
+
+        conv1 = state.get("Local.conv1")
+        conv2 = state.get("Local.conv2")
+
+        assert conv1 != conv2
+
+        # initialize() seeds one default conversation, plus the two just created
+        conversations = state.get("System.conversations")
+        assert len(conversations) == 3
+        assert conv1 in conversations
+        assert conv2 in conversations
+
+
+class TestDeclarativeWorkflowStateConversationIdInit:
+    """Tests that DeclarativeWorkflowState.initialize() generates a real UUID for ConversationId."""
+
+    async def test_conversation_id_is_not_default(self, mock_state):
+        """System.ConversationId should be a UUID, not 'default'."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        conv_id = state.get("System.ConversationId")
+        assert conv_id is not None
+        assert conv_id != "default"
+        # Validate it looks like a UUID
+        import uuid
+
+        uuid.UUID(conv_id)  # Raises ValueError if not a valid UUID
+
+    async def test_conversations_dict_initialized(self, mock_state):
+        """System.conversations should contain an entry matching ConversationId."""
+        state = DeclarativeWorkflowState(mock_state)
+        state.initialize()
+
+        conv_id = state.get("System.ConversationId")
+        conversations = state.get("System.conversations")
+        assert conversations is not None
+        assert conv_id in conversations
+        assert conversations[conv_id]["id"] == conv_id
+        assert conversations[conv_id]["messages"] == []
+
+    async def test_each_initialize_generates_unique_id(self, mock_state):
+        """Each call to initialize() should produce a different ConversationId."""
+        state = DeclarativeWorkflowState(mock_state)
+
+        state.initialize()
+        id1 = state.get("System.ConversationId")
+
+        state.initialize()
+        id2 = state.get("System.ConversationId")
+
+        assert id1 != id2

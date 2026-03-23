@@ -229,7 +229,7 @@ public class AIAgentHostExecutorTests
                     responses = ExtractAndValidateRequestContents<FunctionCallContent>();
                     break;
                 case TestAgentRequestType.UserInputRequest:
-                    responses = ExtractAndValidateRequestContents<UserInputRequestContent>();
+                    responses = ExtractAndValidateRequestContents<ToolApprovalRequestContent>();
                     break;
                 default:
                     throw new NotSupportedException();

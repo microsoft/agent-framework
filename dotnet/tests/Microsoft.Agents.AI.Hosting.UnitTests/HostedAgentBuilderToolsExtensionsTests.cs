@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 
 namespace Microsoft.Agents.AI.Hosting.UnitTests;
 
@@ -248,6 +249,179 @@ public sealed class HostedAgentBuilderToolsExtensionsTests
         var agentTools = ResolveToolsFromAgent(serviceProvider, "test-agent");
 
         Assert.Contains(factoryTool, agentTools);
+    }
+
+    /// <summary>
+    /// Verifies that WithAITool factory method defaults to the agent's lifetime when no explicit lifetime is specified.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public void WithAIToolFactory_DefaultsToAgentLifetime(ServiceLifetime agentLifetime)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, agentLifetime);
+
+        // Act
+        builder.WithAITool(_ => new DummyAITool());
+
+        // Assert
+        var toolDescriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "test-agent" &&
+                 d.ServiceType == typeof(AITool));
+
+        Assert.NotNull(toolDescriptor);
+        Assert.Equal(agentLifetime, toolDescriptor.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that WithAITool factory method accepts an explicit lifetime override.
+    /// </summary>
+    [Fact]
+    public void WithAIToolFactory_ExplicitLifetimeOverridesDefault()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, ServiceLifetime.Transient);
+
+        // Act - Transient agent with Singleton tool is valid (longer-lived dependency)
+        builder.WithAITool(_ => new DummyAITool(), ServiceLifetime.Singleton);
+
+        // Assert
+        var toolDescriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "test-agent" &&
+                 d.ServiceType == typeof(AITool));
+
+        Assert.NotNull(toolDescriptor);
+        Assert.Equal(ServiceLifetime.Singleton, toolDescriptor.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that WithAITool factory throws for singleton agent with scoped tool (captive dependency).
+    /// </summary>
+    [Fact]
+    public void WithAIToolFactory_SingletonAgentWithScopedTool_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, ServiceLifetime.Singleton);
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() =>
+            builder.WithAITool(_ => new DummyAITool(), ServiceLifetime.Scoped));
+    }
+
+    /// <summary>
+    /// Verifies that WithAITool factory throws for singleton agent with transient tool (captive dependency).
+    /// </summary>
+    [Fact]
+    public void WithAIToolFactory_SingletonAgentWithTransientTool_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, ServiceLifetime.Singleton);
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() =>
+            builder.WithAITool(_ => new DummyAITool(), ServiceLifetime.Transient));
+    }
+
+    /// <summary>
+    /// Verifies that WithAITool factory throws for scoped agent with transient tool (captive dependency).
+    /// </summary>
+    [Fact]
+    public void WithAIToolFactory_ScopedAgentWithTransientTool_ThrowsInvalidOperationException()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, ServiceLifetime.Scoped);
+
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() =>
+            builder.WithAITool(_ => new DummyAITool(), ServiceLifetime.Transient));
+    }
+
+    /// <summary>
+    /// Verifies all valid tool lifetime combinations do not throw.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient, ServiceLifetime.Transient)]
+    public void WithAIToolFactory_ValidLifetimeCombinations_DoNotThrow(ServiceLifetime agentLifetime, ServiceLifetime toolLifetime)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, agentLifetime);
+
+        // Act & Assert - should not throw
+        builder.WithAITool(_ => new DummyAITool(), toolLifetime);
+    }
+
+    /// <summary>
+    /// Verifies that ValidateToolLifetime correctly identifies all invalid combinations.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Singleton, ServiceLifetime.Transient)]
+    [InlineData(ServiceLifetime.Scoped, ServiceLifetime.Transient)]
+    public void ValidateToolLifetime_InvalidCombinations_Throw(ServiceLifetime agentLifetime, ServiceLifetime toolLifetime)
+    {
+        // Act & Assert
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedAgentBuilderExtensions.ValidateToolLifetime(agentLifetime, toolLifetime));
+    }
+
+    /// <summary>
+    /// Verifies that the WithSessionStore factory method defaults to Singleton regardless of agent lifetime.
+    /// </summary>
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public void WithSessionStoreFactory_DefaultsToSingleton(ServiceLifetime agentLifetime)
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, agentLifetime);
+
+        // Act
+        builder.WithSessionStore((sp, name) => new InMemoryAgentSessionStore());
+
+        // Assert
+        var storeDescriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "test-agent" &&
+                 d.ServiceType == typeof(AgentSessionStore));
+
+        Assert.NotNull(storeDescriptor);
+        Assert.Equal(ServiceLifetime.Singleton, storeDescriptor.Lifetime);
+    }
+
+    /// <summary>
+    /// Verifies that the WithSessionStore factory method accepts an explicit lifetime override.
+    /// </summary>
+    [Fact]
+    public void WithSessionStoreFactory_ExplicitLifetimeOverridesDefault()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var builder = services.AddAIAgent("test-agent", (sp, key) => new Mock<AIAgent>().Object, ServiceLifetime.Transient);
+
+        // Act
+        builder.WithSessionStore((sp, name) => new InMemoryAgentSessionStore(), ServiceLifetime.Singleton);
+
+        // Assert
+        var storeDescriptor = services.FirstOrDefault(
+            d => (d.ServiceKey as string) == "test-agent" &&
+                 d.ServiceType == typeof(AgentSessionStore));
+
+        Assert.NotNull(storeDescriptor);
+        Assert.Equal(ServiceLifetime.Singleton, storeDescriptor.Lifetime);
     }
 
     /// <summary>

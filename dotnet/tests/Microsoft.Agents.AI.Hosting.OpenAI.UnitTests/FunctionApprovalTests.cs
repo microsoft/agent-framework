@@ -20,7 +20,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
     // Streaming request JSON for OpenAI Responses API
     private const string StreamingRequestJson = @"{""model"":""gpt-4o-mini"",""input"":""test"",""stream"":true}";
 
-    #region FunctionApprovalRequestContent Tests
+    #region ToolApprovalRequestContent Tests
 
     [Fact]
     public async Task FunctionApprovalRequest_GeneratesCorrectEvent_SuccessAsync()
@@ -34,7 +34,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalRequestContent approvalRequest = new(RequestId, functionCall);
+        ToolApprovalRequestContent approvalRequest = new(RequestId, functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -81,7 +81,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalRequestContent approvalRequest = new(RequestId, functionCall);
+        ToolApprovalRequestContent approvalRequest = new(RequestId, functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -114,7 +114,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test_function", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-1", functionCall);
+        ToolApprovalRequestContent approvalRequest = new("req-1", functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -150,7 +150,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-1", functionCall);
+        ToolApprovalRequestContent approvalRequest = new("req-1", functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -173,7 +173,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
     #endregion
 
-    #region FunctionApprovalResponseContent Tests
+    #region ToolApprovalResponseContent Tests
 
     [Fact]
     public async Task FunctionApprovalResponse_Approved_GeneratesCorrectEvent_SuccessAsync()
@@ -187,7 +187,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, arguments);
-        FunctionApprovalResponseContent approvalResponse = new(RequestId, approved: true, functionCall);
+        ToolApprovalResponseContent approvalResponse = new(RequestId, approved: true, functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -221,7 +221,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new(FunctionId, FunctionName, new Dictionary<string, object?> { ["path"] = "/important.txt" });
-        FunctionApprovalResponseContent approvalResponse = new(RequestId, approved: false, functionCall);
+        ToolApprovalResponseContent approvalResponse = new(RequestId, approved: false, functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -249,7 +249,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-1", "test_function", new Dictionary<string, object?>());
-        FunctionApprovalResponseContent approvalResponse = new("req-1", approved: true, functionCall);
+        ToolApprovalResponseContent approvalResponse = new("req-1", approved: true, functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -279,7 +279,7 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall = new("call-mixed-1", "test", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest = new("req-mixed-1", functionCall);
+        ToolApprovalRequestContent approvalRequest = new("req-mixed-1", functionCall);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>
@@ -308,10 +308,10 @@ public sealed class FunctionApprovalTests : ConformanceTestBase
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates
         FunctionCallContent functionCall1 = new("call-multi-1", "function1", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest1 = new("req-multi-1", functionCall1);
+        ToolApprovalRequestContent approvalRequest1 = new("req-multi-1", functionCall1);
 
         FunctionCallContent functionCall2 = new("call-multi-2", "function2", new Dictionary<string, object?>());
-        FunctionApprovalRequestContent approvalRequest2 = new("req-multi-2", functionCall2);
+        ToolApprovalRequestContent approvalRequest2 = new("req-multi-2", functionCall2);
 #pragma warning restore MEAI001
 
         HttpClient client = await this.CreateTestServerAsync(AgentName, "You are a test agent.", string.Empty, (msg) =>

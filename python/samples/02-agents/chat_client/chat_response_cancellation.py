@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import Message
 from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
@@ -28,7 +29,9 @@ async def main() -> None:
     client = OpenAIChatClient()
 
     try:
-        task = asyncio.create_task(client.get_response(messages=["Tell me a fantasy story."]))
+        task = asyncio.create_task(
+            client.get_response(messages=[Message(role="user", text="Tell me a fantasy story.")])
+        )
         await asyncio.sleep(1)
         task.cancel()
         await task

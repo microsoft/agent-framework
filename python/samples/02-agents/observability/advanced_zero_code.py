@@ -71,10 +71,12 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         stream: Whether to use streaming for the plugin
 
     Remarks:
-        When function calling is outside the open telemetry loop
-        each of the call to the model is handled as a separate span,
-        while when the open telemetry is put last, a single span
-        is shown, which might include one or more rounds of function calling.
+        When `FunctionInvocationLayer` is outside `ChatTelemetryLayer`,
+        each call to the model is handled as a separate span.
+        If `ChatMiddlewareLayer` is present, keep it outside telemetry
+        so middleware latency does not skew those timings.
+        By contrast, when telemetry is placed outside the function loop,
+        a single span can cover one or more rounds of function calling.
 
         So for the scenario below, you should see the following:
 

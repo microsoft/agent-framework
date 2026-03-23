@@ -3,10 +3,10 @@
 using System;
 using System.Collections.Generic;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
-using Azure.Identity;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
+using Shared.IntegrationTests;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests.Agents;
 
@@ -14,7 +14,7 @@ internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentP
 {
     protected override async IAsyncEnumerable<AgentVersion> CreateAgentsAsync(Uri foundryEndpoint)
     {
-        AIProjectClient aiProjectClient = new(foundryEndpoint, new AzureCliCredential());
+        AIProjectClient aiProjectClient = new(foundryEndpoint, TestAzureCliCredentials.CreateAzureCliCredential());
 
         yield return
             await aiProjectClient.CreateAgentAsync(
@@ -24,7 +24,7 @@ internal sealed class VisionAgentProvider(IConfiguration configuration) : AgentP
     }
 
     private PromptAgentDefinition DefineVisionAgent() =>
-        new(this.GetSetting(Settings.FoundryModelFull))
+        new(this.GetSetting(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions =
                 """

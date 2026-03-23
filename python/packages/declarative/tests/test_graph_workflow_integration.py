@@ -9,13 +9,27 @@ These tests verify:
 - Pause/resume capabilities
 """
 
+import sys
+
 import pytest
 
-from agent_framework_declarative._workflows import (
+try:
+    import powerfx  # noqa: F401
+
+    _powerfx_available = True
+except (ImportError, RuntimeError):
+    _powerfx_available = False
+
+pytestmark = pytest.mark.skipif(
+    not _powerfx_available or sys.version_info >= (3, 14),
+    reason="PowerFx engine not available (requires dotnet runtime)",
+)
+
+from agent_framework_declarative._workflows import (  # noqa: E402
     ActionTrigger,
     DeclarativeWorkflowBuilder,
 )
-from agent_framework_declarative._workflows._factory import WorkflowFactory
+from agent_framework_declarative._workflows._factory import WorkflowFactory  # noqa: E402
 
 
 class TestGraphBasedWorkflowExecution:

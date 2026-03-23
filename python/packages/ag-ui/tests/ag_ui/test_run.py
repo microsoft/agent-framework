@@ -1,25 +1,44 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Tests for _run.py helper functions and FlowState."""
+"""Tests for _agent_run.py helper functions and FlowState."""
 
 import pytest
 from ag_ui.core import (
+    CustomEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
+    ToolCallArgsEvent,
 )
 from agent_framework import AgentResponseUpdate, Content, Message, ResponseStream
 from agent_framework.exceptions import AgentInvalidResponseException
 
-from agent_framework_ag_ui._run import (
-    FlowState,
+from agent_framework_ag_ui._agent_run import (
     _build_safe_metadata,
     _create_state_context_message,
-    _emit_content,
-    _emit_tool_result,
-    _has_only_tool_calls,
     _inject_state_context,
     _normalize_response_stream,
+    _resume_to_tool_messages,
     _should_suppress_intermediate_snapshot,
+)
+from agent_framework_ag_ui._run_common import (
+    FlowState,
+    _build_run_finished_event,
+    _emit_approval_request,
+    _emit_content,
+    _emit_mcp_tool_call,
+    _emit_mcp_tool_result,
+    _emit_text,
+    _emit_text_reasoning,
+    _emit_tool_call,
+    _emit_tool_result,
+    _extract_resume_payload,
+    _has_only_tool_calls,
 )
 
 
@@ -150,6 +169,7 @@ class TestFlowState:
         assert flow.tool_calls_by_id == {}
         assert flow.tool_results == []
         assert flow.tool_calls_ended == set()
+        assert flow.interrupts == []
 
     def test_get_tool_name(self):
         """Tests get_tool_name method."""
@@ -308,13 +328,11 @@ class TestInjectStateContext:
         assert "Hello" in result[2].contents[0].text
 
 
-# Additional tests for _run.py functions
+# Additional tests for _agent_run.py functions
 
 
 def test_emit_text_basic():
     """Test _emit_text emits correct events."""
-    from agent_framework_ag_ui._run import _emit_text
-
     flow = FlowState()
     content = Content.from_text("Hello world")
 
@@ -327,8 +345,6 @@ def test_emit_text_basic():
 
 def test_emit_text_skip_empty():
     """Test _emit_text skips empty text."""
-    from agent_framework_ag_ui._run import _emit_text
-
     flow = FlowState()
     content = Content.from_text("")
 
@@ -339,8 +355,6 @@ def test_emit_text_skip_empty():
 
 def test_emit_text_continues_existing_message():
     """Test _emit_text continues existing message."""
-    from agent_framework_ag_ui._run import _emit_text
-
     flow = FlowState()
     flow.message_id = "existing-id"
     content = Content.from_text("more text")
@@ -351,10 +365,21 @@ def test_emit_text_continues_existing_message():
     assert flow.message_id == "existing-id"
 
 
+def test_emit_text_skips_duplicate_full_message_delta():
+    """Test _emit_text skips replayed full-message chunks on an open message."""
+    flow = FlowState()
+    flow.message_id = "existing-id"
+    flow.accumulated_text = "Case complete."
+    content = Content.from_text("Case complete.")
+
+    events = _emit_text(content, flow)
+
+    assert events == []
+    assert flow.accumulated_text == "Case complete."
+
+
 def test_emit_text_skips_when_waiting_for_approval():
     """Test _emit_text skips when waiting for approval."""
-    from agent_framework_ag_ui._run import _emit_text
-
     flow = FlowState()
     flow.waiting_for_approval = True
     content = Content.from_text("should skip")
@@ -366,8 +391,6 @@ def test_emit_text_skips_when_waiting_for_approval():
 
 def test_emit_text_skips_when_skip_text_flag():
     """Test _emit_text skips with skip_text flag."""
-    from agent_framework_ag_ui._run import _emit_text
-
     flow = FlowState()
     content = Content.from_text("should skip")
 
@@ -378,8 +401,6 @@ def test_emit_text_skips_when_skip_text_flag():
 
 def test_emit_tool_call_basic():
     """Test _emit_tool_call emits correct events."""
-    from agent_framework_ag_ui._run import _emit_tool_call
-
     flow = FlowState()
     content = Content.from_function_call(
         call_id="call_123",
@@ -396,8 +417,6 @@ def test_emit_tool_call_basic():
 
 def test_emit_tool_call_generates_id():
     """Test _emit_tool_call generates ID when not provided."""
-    from agent_framework_ag_ui._run import _emit_tool_call
-
     flow = FlowState()
     # Create content without call_id
     content = Content(type="function_call", name="test_tool", arguments="{}")
@@ -406,6 +425,42 @@ def test_emit_tool_call_generates_id():
 
     assert len(events) >= 1
     assert flow.tool_call_id is not None  # ID should be generated
+
+
+def test_emit_tool_call_skips_duplicate_full_arguments_replay():
+    """Test _emit_tool_call skips replayed full-arguments on an existing tool call.
+
+    This is a regression test for issue #4194 where some streaming providers
+    send the full arguments string again after streaming deltas, causing the
+    arguments to be doubled in MESSAGES_SNAPSHOT events.
+
+    Mirrors test_emit_text_skips_duplicate_full_message_delta for consistency.
+    """
+    flow = FlowState()
+    full_args = '{"city": "Seattle"}'
+
+    # Step 1: Initial tool call with name + arguments (normal start)
+    content_start = Content.from_function_call(
+        call_id="call_dup",
+        name="get_weather",
+        arguments=full_args,
+    )
+    events_start = _emit_tool_call(content_start, flow)
+
+    # Should emit ToolCallStartEvent + ToolCallArgsEvent
+    assert any(isinstance(e, ToolCallArgsEvent) for e in events_start)
+    assert flow.tool_calls_by_id["call_dup"]["function"]["arguments"] == full_args
+
+    # Step 2: Provider replays the full arguments (duplicate)
+    content_replay = Content(type="function_call", call_id="call_dup", arguments=full_args)
+    events_replay = _emit_tool_call(content_replay, flow)
+
+    # Should NOT emit any ToolCallArgsEvent (early return on replay)
+    args_events = [e for e in events_replay if isinstance(e, ToolCallArgsEvent)]
+    assert args_events == [], "Duplicate full-arguments replay should not emit ToolCallArgsEvent"
+
+    # Accumulated arguments should remain unchanged
+    assert flow.tool_calls_by_id["call_dup"]["function"]["arguments"] == full_args
 
 
 def test_emit_tool_result_closes_open_message():
@@ -452,9 +507,121 @@ def test_emit_tool_result_no_open_message():
     assert len(text_end_events) == 0
 
 
+def test_emit_tool_result_serializes_non_string_result():
+    """Non-string tool results should be serialized before emitting TOOL_CALL_RESULT."""
+    flow = FlowState()
+    content = Content.from_function_result(call_id="call_789", result={"ok": True, "items": [1, 2]})
+
+    events = _emit_tool_result(content, flow, predictive_handler=None)
+    result_event = next(event for event in events if getattr(event, "type", None) == "TOOL_CALL_RESULT")
+
+    assert isinstance(result_event.content, str)
+    assert '"ok": true' in result_event.content
+    assert flow.tool_results[0]["content"] == result_event.content
+
+
+def test_emit_content_usage_emits_custom_usage_event():
+    """Usage content should be emitted as a custom usage event."""
+    flow = FlowState()
+    content = Content.from_usage({"input_token_count": 3, "output_token_count": 2, "total_token_count": 5})
+
+    events = _emit_content(content, flow)
+
+    assert len(events) == 1
+    assert events[0].type == "CUSTOM"
+    assert events[0].name == "usage"
+    assert events[0].value["total_token_count"] == 5
+
+
+def test_emit_approval_request_populates_interrupt_metadata():
+    """Approval requests should populate FlowState interrupts for RUN_FINISHED metadata."""
+    flow = FlowState(message_id="msg-1")
+    function_call = Content.from_function_call(call_id="call_123", name="write_doc", arguments={"content": "x"})
+    approval_content = Content.from_function_approval_request(id="approval_1", function_call=function_call)
+
+    _emit_approval_request(approval_content, flow)
+
+    assert flow.waiting_for_approval is True
+    assert len(flow.interrupts) == 1
+    assert flow.interrupts[0]["id"] == "call_123"
+    assert flow.interrupts[0]["value"]["type"] == "function_approval_request"
+
+
+def test_emit_approval_request_accumulates_multiple_interrupts():
+    """Multiple approval requests in the same turn should accumulate in flow.interrupts."""
+    flow = FlowState(message_id="msg-1")
+
+    for i in range(1, 4):
+        function_call = Content.from_function_call(
+            call_id=f"call_{i}",
+            name=f"tool_{i}",
+            arguments={"arg": f"value_{i}"},
+        )
+        approval_content = Content.from_function_approval_request(
+            id=f"approval_{i}",
+            function_call=function_call,
+        )
+        _emit_approval_request(approval_content, flow)
+
+    assert len(flow.interrupts) == 3
+    interrupt_ids = {intr["id"] for intr in flow.interrupts}
+    assert interrupt_ids == {"call_1", "call_2", "call_3"}
+
+
+def test_resume_to_tool_messages_from_interrupts_payload():
+    """Resume payload interrupt responses map to tool messages."""
+    resume = {
+        "interrupts": [
+            {"id": "req_1", "value": {"accepted": True, "steps": []}},
+            {"id": "req_2", "value": "plain value"},
+        ]
+    }
+
+    messages = _resume_to_tool_messages(resume)
+    assert len(messages) == 2
+    assert messages[0]["role"] == "tool"
+    assert messages[0]["toolCallId"] == "req_1"
+    assert '"accepted": true' in messages[0]["content"]
+    assert messages[1]["content"] == "plain value"
+
+
+def test_extract_resume_payload_prefers_top_level_resume():
+    """Top-level resume should take precedence over forwarded props."""
+    payload = {
+        "resume": {"interrupts": [{"id": "req_1", "value": "approved"}]},
+        "forwarded_props": {"command": {"resume": "ignored"}},
+    }
+
+    result = _extract_resume_payload(payload)
+    assert result == {"interrupts": [{"id": "req_1", "value": "approved"}]}
+
+
+def test_extract_resume_payload_reads_forwarded_command_resume():
+    """Forwarded command.resume should be treated as a resume payload."""
+    payload = {
+        "forwarded_props": {
+            "command": {"resume": '{"airline":"KLM","departure":"Amsterdam (AMS)","arrival":"San Francisco (SFO)"}'}
+        }
+    }
+
+    result = _extract_resume_payload(payload)
+    assert isinstance(result, str)
+    assert "KLM" in result
+
+
+def test_build_run_finished_event_with_interrupt():
+    """RUN_FINISHED helper should preserve interrupt payloads."""
+    event = _build_run_finished_event("run-1", "thread-1", interrupts=[{"id": "req_1", "value": {"x": 1}}])
+    dumped = event.model_dump()
+
+    assert dumped["run_id"] == "run-1"
+    assert dumped["thread_id"] == "thread-1"
+    assert dumped["interrupt"] == [{"id": "req_1", "value": {"x": 1}}]
+
+
 def test_extract_approved_state_updates_no_handler():
     """Test _extract_approved_state_updates returns empty with no handler."""
-    from agent_framework_ag_ui._run import _extract_approved_state_updates
+    from agent_framework_ag_ui._agent_run import _extract_approved_state_updates
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     result = _extract_approved_state_updates(messages, None)
@@ -463,8 +630,8 @@ def test_extract_approved_state_updates_no_handler():
 
 def test_extract_approved_state_updates_no_approval():
     """Test _extract_approved_state_updates returns empty when no approval content."""
+    from agent_framework_ag_ui._agent_run import _extract_approved_state_updates
     from agent_framework_ag_ui._orchestration._predictive_state import PredictiveStateHandler
-    from agent_framework_ag_ui._run import _extract_approved_state_updates
 
     handler = PredictiveStateHandler(predict_state_config={"doc": {"tool": "write", "tool_argument": "content"}})
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
@@ -481,7 +648,7 @@ class TestBuildMessagesSnapshot:
         This is a regression test for issue #3619 where tool calls and content
         were incorrectly merged into a single assistant message.
         """
-        from agent_framework_ag_ui._run import FlowState, _build_messages_snapshot
+        from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
 
         flow = FlowState()
         flow.message_id = "msg-123"
@@ -518,7 +685,7 @@ class TestBuildMessagesSnapshot:
 
     def test_only_tool_calls_no_text(self):
         """Test snapshot with only tool calls and no accumulated text."""
-        from agent_framework_ag_ui._run import FlowState, _build_messages_snapshot
+        from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
 
         flow = FlowState()
         flow.message_id = "msg-123"
@@ -538,7 +705,7 @@ class TestBuildMessagesSnapshot:
 
     def test_only_text_no_tool_calls(self):
         """Test snapshot with only text and no tool calls."""
-        from agent_framework_ag_ui._run import FlowState, _build_messages_snapshot
+        from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
 
         flow = FlowState()
         flow.message_id = "msg-123"
@@ -558,7 +725,7 @@ class TestBuildMessagesSnapshot:
 
     def test_preserves_snapshot_messages(self):
         """Test that existing snapshot messages are preserved."""
-        from agent_framework_ag_ui._run import FlowState, _build_messages_snapshot
+        from agent_framework_ag_ui._agent_run import FlowState, _build_messages_snapshot
 
         flow = FlowState()
         flow.pending_tool_calls = []
@@ -735,3 +902,447 @@ class TestTextMessageEventBalancing:
 
         assert len(start_events) == 2
         assert len(end_events) == 2
+
+
+async def test_run_agent_stream_accumulates_multiple_confirm_interrupts():
+    """Multiple predictive tool calls in a single streaming run should accumulate interrupts.
+
+    This exercises the confirm_changes path in run_agent_stream (_agent_run.py),
+    ensuring that flow.interrupts.append() works correctly for multiple tool calls
+    and all interrupts appear in the RUN_FINISHED event.
+    """
+    import json
+
+    from conftest import StubAgent
+
+    from agent_framework_ag_ui import AgentFrameworkAgent
+
+    predict_config = {
+        "tasks": {"tool": "generate_tasks", "tool_argument": "steps"},
+        "notes": {"tool": "generate_notes", "tool_argument": "items"},
+    }
+    state_schema = {
+        "tasks": {"type": "array", "items": {"type": "object"}},
+        "notes": {"type": "array", "items": {"type": "object"}},
+    }
+
+    updates = [
+        AgentResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    name="generate_tasks",
+                    call_id="call-tasks",
+                    arguments=json.dumps({"steps": [{"description": "Task 1"}]}),
+                ),
+                Content.from_function_call(
+                    name="generate_notes",
+                    call_id="call-notes",
+                    arguments=json.dumps({"items": [{"description": "Note 1"}]}),
+                ),
+            ],
+            role="assistant",
+        ),
+    ]
+
+    stub = StubAgent(updates=updates)
+    agent = AgentFrameworkAgent(
+        agent=stub,
+        state_schema=state_schema,
+        predict_state_config=predict_config,
+        require_confirmation=True,
+    )
+
+    payload = {
+        "thread_id": "thread-multi",
+        "run_id": "run-multi",
+        "messages": [{"role": "user", "content": "Generate tasks and notes"}],
+        "state": {"tasks": [], "notes": []},
+    }
+
+    events = [event async for event in agent.run(payload)]
+
+    # Find RUN_FINISHED event and verify multiple interrupts
+    finished_events = [
+        e
+        for e in events
+        if getattr(e, "type", None) == "RUN_FINISHED"
+        or getattr(getattr(e, "type", None), "value", None) == "RUN_FINISHED"
+    ]
+    assert finished_events, f"Expected RUN_FINISHED event. Types: {[getattr(e, 'type', None) for e in events]}"
+    finished = finished_events[-1]
+    interrupt = getattr(finished, "interrupt", None)
+    assert interrupt is not None, "Expected interrupt metadata in RUN_FINISHED"
+    assert len(interrupt) == 2, f"Expected 2 interrupts (one per tool), got {len(interrupt)}"
+
+    # Verify both tool calls are represented in interrupt metadata
+    interrupt_tool_names = {i["value"]["function_call"]["name"] for i in interrupt}
+    assert interrupt_tool_names == {"generate_tasks", "generate_notes"}
+
+
+def test_emit_oauth_consent_request():
+    """Test that oauth_consent_request content emits a CustomEvent."""
+    content = Content.from_oauth_consent_request(
+        consent_link="https://login.microsoftonline.com/consent",
+    )
+    flow = FlowState()
+    events = _emit_content(content, flow)
+
+    assert len(events) == 1
+    assert isinstance(events[0], CustomEvent)
+    assert events[0].name == "oauth_consent_request"
+    assert events[0].value == {"consent_link": "https://login.microsoftonline.com/consent"}
+
+
+def test_emit_oauth_consent_request_no_link():
+    """Test that oauth_consent_request without a consent_link emits no events."""
+    content = Content("oauth_consent_request")
+    flow = FlowState()
+    events = _emit_content(content, flow)
+
+    assert len(events) == 0
+
+
+# ============================================================================
+# Tests for MCP tool call, MCP tool result, and text reasoning event emission
+# ============================================================================
+
+
+class TestEmitMcpToolCall:
+    """Tests for _emit_mcp_tool_call function."""
+
+    def test_produces_start_and_args_events(self):
+        """MCP tool call emits ToolCallStart + ToolCallArgs events."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_1",
+            tool_name="search",
+            server_name="brave",
+            arguments={"query": "weather"},
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_START"
+        assert events[0].tool_call_id == "mcp_call_1"
+        assert events[0].tool_call_name == "search"
+        assert events[1].type == "TOOL_CALL_ARGS"
+        assert events[1].tool_call_id == "mcp_call_1"
+        assert "weather" in events[1].delta
+
+    def test_tracks_in_flow_state(self):
+        """MCP tool call is tracked in flow.pending_tool_calls and tool_calls_by_id."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_2",
+            tool_name="get_file",
+            arguments='{"path": "/tmp/test.txt"}',
+        )
+
+        _emit_mcp_tool_call(content, flow)
+
+        assert len(flow.pending_tool_calls) == 1
+        assert flow.pending_tool_calls[0]["id"] == "mcp_call_2"
+        assert "mcp_call_2" in flow.tool_calls_by_id
+        assert flow.tool_calls_by_id["mcp_call_2"]["function"]["name"] == "get_file"
+        assert flow.tool_calls_by_id["mcp_call_2"]["function"]["arguments"] == '{"path": "/tmp/test.txt"}'
+
+    def test_no_server_name_uses_tool_name_only(self):
+        """Without server_name, display name is just tool_name."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_3",
+            tool_name="list_files",
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert events[0].tool_call_name == "list_files"
+
+    def test_no_arguments_skips_args_event(self):
+        """No arguments produces only ToolCallStart, no ToolCallArgs."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="mcp_call_4",
+            tool_name="ping",
+        )
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) == 1
+        assert events[0].type == "TOOL_CALL_START"
+
+    def test_generates_id_when_missing(self):
+        """A tool_call_id is generated when call_id is None."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_call", tool_name="test_tool")
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].tool_call_id is not None
+        assert events[0].tool_call_id != ""
+        assert events[0].tool_call_name == "test_tool"
+
+    def test_missing_tool_name_falls_back_to_mcp_tool(self):
+        """When tool_name is None, the fallback 'mcp_tool' is used."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_call")
+
+        events = _emit_mcp_tool_call(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].tool_call_name == "mcp_tool"
+
+
+class TestEmitMcpToolResult:
+    """Tests for _emit_mcp_tool_result function."""
+
+    def test_produces_end_and_result_events(self):
+        """MCP tool result emits ToolCallEnd + ToolCallResult events."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_1",
+            output={"results": [{"title": "Weather", "url": "https://example.com"}]},
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_END"
+        assert events[0].tool_call_id == "mcp_call_1"
+        assert events[1].type == "TOOL_CALL_RESULT"
+        assert events[1].tool_call_id == "mcp_call_1"
+        assert "Weather" in events[1].content
+
+    def test_tracks_in_flow_state(self):
+        """MCP tool result is tracked in flow.tool_results and tool_calls_ended."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_5",
+            output="Success",
+        )
+
+        _emit_mcp_tool_result(content, flow)
+
+        assert "mcp_call_5" in flow.tool_calls_ended
+        assert len(flow.tool_results) == 1
+        assert flow.tool_results[0]["toolCallId"] == "mcp_call_5"
+        assert flow.tool_results[0]["content"] == "Success"
+
+    def test_no_call_id_returns_empty(self):
+        """Missing call_id returns empty events list with a warning."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_result", output="data")
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert events == []
+
+    def test_serializes_non_string_output(self):
+        """Non-string output is serialized to JSON."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_6",
+            output={"key": "value", "count": 42},
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        result_event = events[1]
+        assert isinstance(result_event.content, str)
+        assert '"key": "value"' in result_event.content
+
+    def test_output_none_falls_back_to_empty_string(self):
+        """When output is None (default), the result content is an empty string."""
+        flow = FlowState()
+        content = Content(type="mcp_server_tool_result", call_id="mcp_call_none")
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert len(events) == 2
+        assert events[1].type == "TOOL_CALL_RESULT"
+        assert events[1].content == ""
+
+    def test_resets_flow_state_like_emit_tool_result(self):
+        """MCP tool result performs same FlowState cleanup as _emit_tool_result."""
+        flow = FlowState()
+        flow.tool_call_id = "mcp_call_7"
+        flow.tool_call_name = "brave/search"
+        flow.message_id = "open-msg-456"
+        flow.accumulated_text = "Let me search for that..."
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_7",
+            output="search results",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        assert flow.tool_call_id is None
+        assert flow.tool_call_name is None
+        assert flow.message_id is None
+        assert flow.accumulated_text == ""
+
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 1
+        assert text_end_events[0].message_id == "open-msg-456"
+
+    def test_no_open_message_skips_text_end(self):
+        """MCP tool result without open text message skips TextMessageEndEvent."""
+        flow = FlowState()
+        flow.message_id = None
+
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_8",
+            output="result",
+        )
+
+        events = _emit_mcp_tool_result(content, flow)
+
+        text_end_events = [e for e in events if isinstance(e, TextMessageEndEvent)]
+        assert len(text_end_events) == 0
+
+    def test_predictive_handler_emits_state_snapshot(self):
+        """MCP tool result applies pending updates and emits StateSnapshotEvent when predictive_handler is set."""
+        from unittest.mock import MagicMock
+
+        from ag_ui.core import StateSnapshotEvent
+
+        flow = FlowState()
+        flow.current_state = {"doc": "hello"}
+        content = Content.from_mcp_server_tool_result(
+            call_id="mcp_call_9",
+            output="done",
+        )
+
+        handler = MagicMock()
+        events = _emit_mcp_tool_result(content, flow, predictive_handler=handler)
+
+        handler.apply_pending_updates.assert_called_once()
+        snapshot_events = [e for e in events if isinstance(e, StateSnapshotEvent)]
+        assert len(snapshot_events) == 1
+        assert snapshot_events[0].snapshot == {"doc": "hello"}
+
+
+class TestEmitTextReasoning:
+    """Tests for _emit_text_reasoning function."""
+
+    def test_produces_reasoning_events(self):
+        """Text reasoning emits the full reasoning event sequence."""
+        content = Content.from_text_reasoning(
+            id="reason_1",
+            text="The user is asking about weather, so I should call the weather tool.",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert events[0].message_id == "reason_1"
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert events[1].message_id == "reason_1"
+        assert events[1].role == "assistant"
+        assert isinstance(events[2], ReasoningMessageContentEvent)
+        assert events[2].message_id == "reason_1"
+        assert events[2].delta == "The user is asking about weather, so I should call the weather tool."
+        assert isinstance(events[3], ReasoningMessageEndEvent)
+        assert events[3].message_id == "reason_1"
+        assert isinstance(events[4], ReasoningEndEvent)
+        assert events[4].message_id == "reason_1"
+
+    def test_protected_data_emits_encrypted_value_event(self):
+        """protected_data is emitted as a ReasoningEncryptedValueEvent."""
+        content = Content.from_text_reasoning(
+            id="reason_2",
+            text="visible reasoning",
+            protected_data="encrypted metadata",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        encrypted_events = [e for e in events if isinstance(e, ReasoningEncryptedValueEvent)]
+        assert len(encrypted_events) == 1
+        assert encrypted_events[0].subtype == "message"
+        assert encrypted_events[0].entity_id == "reason_2"
+        assert encrypted_events[0].encrypted_value == "encrypted metadata"
+
+    def test_protected_data_only_emits_event(self):
+        """Content with only protected_data (no text) still emits reasoning events."""
+        content = Content.from_text_reasoning(
+            protected_data="encrypted reasoning content",
+        )
+
+        events = _emit_text_reasoning(content)
+
+        # Should have start, msg_start, msg_end, encrypted_value, end (no content event)
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+        assert isinstance(events[1], ReasoningMessageStartEvent)
+        assert isinstance(events[2], ReasoningMessageEndEvent)
+        assert isinstance(events[3], ReasoningEncryptedValueEvent)
+        assert events[3].encrypted_value == "encrypted reasoning content"
+        assert isinstance(events[4], ReasoningEndEvent)
+
+    def test_empty_text_and_no_protected_data_returns_empty(self):
+        """Empty text and no protected_data returns no events."""
+        content = Content.from_text_reasoning()
+
+        events = _emit_text_reasoning(content)
+
+        assert events == []
+
+    def test_generates_message_id_when_missing(self):
+        """When id is None, a message_id is generated."""
+        content = Content.from_text_reasoning(text="thinking...")
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert events[0].message_id is not None
+        assert events[0].message_id != ""
+        # All events share the same message_id
+        assert events[1].message_id == events[0].message_id
+
+
+class TestEmitContentMcpRouting:
+    """Tests that _emit_content correctly routes MCP and reasoning types."""
+
+    def test_routes_mcp_server_tool_call(self):
+        """_emit_content dispatches mcp_server_tool_call to _emit_mcp_tool_call."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_call(
+            call_id="route_test_1",
+            tool_name="test_tool",
+            server_name="test_server",
+        )
+
+        events = _emit_content(content, flow)
+
+        assert len(events) >= 1
+        assert events[0].type == "TOOL_CALL_START"
+        assert events[0].tool_call_name == "test_tool"
+
+    def test_routes_mcp_server_tool_result(self):
+        """_emit_content dispatches mcp_server_tool_result to _emit_mcp_tool_result."""
+        flow = FlowState()
+        content = Content.from_mcp_server_tool_result(
+            call_id="route_test_2",
+            output="result data",
+        )
+
+        events = _emit_content(content, flow)
+
+        assert len(events) == 2
+        assert events[0].type == "TOOL_CALL_END"
+        assert events[1].type == "TOOL_CALL_RESULT"
+
+    def test_routes_text_reasoning(self):
+        """_emit_content dispatches text_reasoning to _emit_text_reasoning."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(text="I need to think about this...")
+
+        events = _emit_content(content, flow)
+
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)

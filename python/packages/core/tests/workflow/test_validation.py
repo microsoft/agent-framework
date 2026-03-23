@@ -484,8 +484,8 @@ def test_handler_ctx_missing_annotation_raises() -> None:
     # Validation now happens at handler registration time, not workflow build time
     with pytest.raises(ValueError) as exc:
 
-        class BadExecutor(Executor):
-            @handler
+        class BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+            @handler  # pyright: ignore[reportUnknownArgumentType]
             async def handle(self, message: str, ctx) -> None:  # type: ignore[no-untyped-def]
                 pass
 
@@ -496,8 +496,8 @@ def test_handler_ctx_invalid_t_out_entries_raises() -> None:
     # Validation now happens at handler registration time, not workflow build time
     with pytest.raises(ValueError) as exc:
 
-        class BadExecutor(Executor):
-            @handler
+        class BadExecutor(Executor):  # pyright: ignore[reportUnusedClass]
+            @handler  # pyright: ignore[reportUnknownArgumentType]
             async def handle(self, message: str, ctx: WorkflowContext[123]) -> None:  # type: ignore[valid-type]
                 pass
 
@@ -555,7 +555,7 @@ def test_output_validation_with_valid_output_executors():
     )
 
     assert workflow is not None
-    assert workflow._output_executors == ["executor2"]
+    assert workflow._output_executors == ["executor2"]  # pyright: ignore[reportPrivateUsage]
 
 
 def test_output_validation_with_multiple_valid_output_executors():
@@ -572,7 +572,7 @@ def test_output_validation_with_multiple_valid_output_executors():
     )
 
     assert workflow is not None
-    assert set(workflow._output_executors) == {"executor1", "executor3"}
+    assert set(workflow._output_executors) == {"executor1", "executor3"}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_output_validation_fails_for_nonexistent_executor():

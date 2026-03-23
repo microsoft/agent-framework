@@ -8,6 +8,9 @@
   <ItemGroup Condition="'$(InjectSharedIntegrationTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTests\*.cs" LinkBase="Shared\IntegrationTests" />
   </ItemGroup>
+  <ItemGroup Condition="'$(InjectSharedIntegrationTestAzureCredentialsCode)' == 'true'">
+    <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\IntegrationTestsAzureCredentials\*.cs" LinkBase="Shared\IntegrationTestsAzureCredentials" />
+  </ItemGroup>
   <ItemGroup Condition="'$(InjectSharedBuildTestCode)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)\..\..\src\Shared\CodeTests\*.cs" LinkBase="Shared\CodeTests" />
   </ItemGroup>

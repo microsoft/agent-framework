@@ -6,11 +6,8 @@ import json
 import logging
 import sys
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any, Generic, cast
 
-from openai.lib.azure import AsyncAzureOpenAI
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from pydantic import BaseModel
 
 from agent_framework import (
@@ -23,15 +20,14 @@ from agent_framework import (
     FunctionInvocationLayer,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai import OpenAIChatOptions
-from agent_framework.openai._chat_client import RawOpenAIChatClient
+from agent_framework.openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 
 from .._settings import load_settings
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import (
     AzureOpenAIConfigMixin,
     AzureOpenAISettings,
-    _apply_azure_defaults,
+    _apply_azure_defaults,  # pyright: ignore[reportPrivateUsage]
 )
 
 if sys.version_info >= (3, 13):
@@ -48,6 +44,10 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
+    from openai.lib.azure import AsyncAzureOpenAI
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
+
     from agent_framework._middleware import MiddlewareTypes
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -152,8 +152,8 @@ AzureOpenAIChatClientT = TypeVar("AzureOpenAIChatClientT", bound="AzureOpenAICha
 
 class AzureOpenAIChatClient(  # type: ignore[misc]
     AzureOpenAIConfigMixin,
-    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     FunctionInvocationLayer[AzureOpenAIChatOptionsT],
+    ChatMiddlewareLayer[AzureOpenAIChatOptionsT],
     ChatTelemetryLayer[AzureOpenAIChatOptionsT],
     RawOpenAIChatClient[AzureOpenAIChatOptionsT],
     Generic[AzureOpenAIChatOptionsT],
@@ -172,12 +172,12 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure OpenAI Chat completion client.
 
@@ -205,13 +205,13 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             default_headers: The default headers mapping of string keys to
                 string values for HTTP requests.
             async_client: An existing client to use.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Use the environment settings file as a fallback to using env vars.
             env_file_encoding: The encoding of the environment settings file, defaults to 'utf-8'.
             instruction_role: The role to use for 'instruction' messages, for example, summarization
                 prompts could use `developer` or `system`.
             middleware: Optional sequence of middleware to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation behavior.
-            kwargs: Other keyword parameters.
 
         Examples:
             .. code-block:: python
@@ -260,26 +260,33 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         )
         _apply_azure_defaults(azure_openai_settings)
 
-        if not azure_openai_settings["chat_deployment_name"]:
+        chat_deployment_name = azure_openai_settings.get("chat_deployment_name")
+        if not chat_deployment_name:
             raise ValueError(
                 "Azure OpenAI deployment name is required. Set via 'deployment_name' parameter "
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
+        endpoint_value = azure_openai_settings.get("endpoint")
+        base_url_value = azure_openai_settings.get("base_url")
+        api_version_value = cast(str, azure_openai_settings.get("api_version"))
+        api_key_value = azure_openai_settings.get("api_key")
+        token_endpoint_value = azure_openai_settings.get("token_endpoint")
+
         super().__init__(
-            deployment_name=azure_openai_settings["chat_deployment_name"],
-            endpoint=azure_openai_settings["endpoint"],
-            base_url=azure_openai_settings["base_url"],
-            api_version=azure_openai_settings["api_version"],  # type: ignore
-            api_key=azure_openai_settings["api_key"].get_secret_value() if azure_openai_settings["api_key"] else None,
-            token_endpoint=azure_openai_settings["token_endpoint"],
+            deployment_name=chat_deployment_name,
+            endpoint=endpoint_value,
+            base_url=base_url_value,
+            api_version=api_version_value,
+            api_key=api_key_value.get_secret_value() if api_key_value else None,
+            token_endpoint=token_endpoint_value,
             credential=credential,
             default_headers=default_headers,
             client=async_client,
+            additional_properties=additional_properties,
             instruction_role=instruction_role,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
     @override
@@ -290,7 +297,9 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         For docs see:
         https://learn.microsoft.com/en-us/azure/ai-foundry/openai/references/on-your-data?tabs=python#context
         """
-        message = choice.message if isinstance(choice, Choice) else choice.delta
+        message = getattr(choice, "message", None)
+        if message is None:
+            message = getattr(choice, "delta", None)
         # When you enable asynchronous content filtering in Azure OpenAI, you may receive empty deltas
         if message is None:  # type: ignore
             return None
@@ -302,24 +311,29 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         if not message.model_extra or "context" not in message.model_extra:
             return text_content
 
-        context: dict[str, Any] | str = message.context  # type: ignore[assignment, union-attr]
-        if isinstance(context, str):
+        context_raw: object = cast(object, message.context)  # type: ignore[union-attr]
+        if isinstance(context_raw, str):
             try:
-                context = json.loads(context)
+                context_raw = json.loads(context_raw)
             except json.JSONDecodeError:
                 logger.warning("Context is not a valid JSON string, ignoring context.")
                 return text_content
-        if not isinstance(context, dict):
+        if not isinstance(context_raw, dict):
             logger.warning("Context is not a valid dictionary, ignoring context.")
             return text_content
+        context = cast(dict[str, Any], context_raw)
         # `all_retrieved_documents` is currently not used, but can be retrieved
         # through the raw_representation in the text content.
         if intent := context.get("intent"):
             text_content.additional_properties = {"intent": intent}
-        if citations := context.get("citations"):
-            text_content.annotations = []
-            for citation in citations:
-                text_content.annotations.append(
+        citations = context.get("citations")
+        if isinstance(citations, list) and citations:
+            annotations: list[Annotation] = []
+            for citation_raw in cast(list[object], citations):
+                if not isinstance(citation_raw, dict):
+                    continue
+                citation = cast(dict[str, Any], citation_raw)
+                annotations.append(
                     Annotation(
                         type="citation",
                         title=citation.get("title", ""),
@@ -331,4 +345,5 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
                         raw_representation=citation,
                     )
                 )
+            text_content.annotations = annotations
         return text_content

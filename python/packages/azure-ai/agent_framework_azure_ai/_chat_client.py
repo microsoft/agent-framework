@@ -8,8 +8,9 @@ import logging
 import os
 import re
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import Any, ClassVar, Generic, TypedDict, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -77,9 +78,9 @@ from azure.ai.agents.models import (
     RunStatus,
     RunStep,
     RunStepDeltaChunk,
-    RunStepDeltaCodeInterpreterDetailItemObject,
     RunStepDeltaCodeInterpreterImageOutput,
     RunStepDeltaCodeInterpreterLogOutput,
+    RunStepDeltaToolCall,
     SubmitToolApprovalAction,
     SubmitToolOutputsAction,
     ThreadMessageOptions,
@@ -87,10 +88,11 @@ from azure.ai.agents.models import (
     ToolApproval,
     ToolDefinition,
     ToolOutput,
+    VectorStoreDataSource,
 )
 from pydantic import BaseModel
 
-from ._shared import AzureAISettings, to_azure_ai_agent_tools
+from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -116,6 +118,10 @@ __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 
 class AzureAIAgentOptions(ChatOptions, total=False):
     """Azure AI Foundry Agent Service-specific options dict.
+
+    .. deprecated::
+        AzureAIAgentOptions is deprecated and will be removed in a future release.
+        Use :class:`AzureAIProjectAgentOptions` instead for the V2 (Projects/Responses) API.
 
     Extends base ChatOptions with Azure AI Agent Service parameters.
     Azure AI Agents provides a managed agent runtime with built-in
@@ -205,13 +211,18 @@ AzureAIAgentOptionsT = TypeVar(
 
 
 class AzureAIAgentClient(
-    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     FunctionInvocationLayer[AzureAIAgentOptionsT],
+    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     ChatTelemetryLayer[AzureAIAgentOptionsT],
     BaseChatClient[AzureAIAgentOptionsT],
     Generic[AzureAIAgentOptionsT],
 ):
-    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
+    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support.
+
+    .. deprecated::
+        AzureAIAgentClient is deprecated and will be removed in a future release.
+        Use :class:`AzureAIClient` instead for the V2 (Projects/Responses) API.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -219,8 +230,24 @@ class AzureAIAgentClient(
     # region Hosted Tool Factory Methods
 
     @staticmethod
-    def get_code_interpreter_tool() -> CodeInterpreterTool:
+    def get_code_interpreter_tool(
+        *,
+        file_ids: list[str | Content] | None = None,
+        data_sources: list[VectorStoreDataSource] | None = None,
+    ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_code_interpreter_tool` instead.
+
+        Keyword Args:
+            file_ids: List of uploaded file IDs or Content objects to make available to
+                the code interpreter. Accepts plain strings or Content.from_hosted_file()
+                instances. The underlying SDK raises ValueError if both file_ids and
+                data_sources are provided.
+            data_sources: List of vector store data sources for enterprise file search.
+                Mutually exclusive with file_ids.
 
         Returns:
             A CodeInterpreterTool instance ready to pass to ChatAgent.
@@ -230,10 +257,27 @@ class AzureAIAgentClient(
 
                 from agent_framework.azure import AzureAIAgentClient
 
+                # Basic code interpreter
                 tool = AzureAIAgentClient.get_code_interpreter_tool()
+
+                # With uploaded file IDs
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=["file-abc123"])
+
+                # With Content objects
+                from agent_framework import Content
+
+                tool = AzureAIAgentClient.get_code_interpreter_tool(file_ids=[Content.from_hosted_file("file-abc123")])
+
                 agent = ChatAgent(client, tools=[tool])
         """
-        return CodeInterpreterTool()
+        warnings.warn(
+            "AzureAIAgentClient.get_code_interpreter_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_code_interpreter_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        resolved = resolve_file_ids(file_ids)
+        return CodeInterpreterTool(file_ids=resolved, data_sources=data_sources)
 
     @staticmethod
     def get_file_search_tool(
@@ -241,6 +285,10 @@ class AzureAIAgentClient(
         vector_store_ids: list[str],
     ) -> FileSearchTool:
         """Create a file search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_file_search_tool` instead.
 
         Keyword Args:
             vector_store_ids: List of vector store IDs to search within.
@@ -258,6 +306,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_file_search_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_file_search_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return FileSearchTool(vector_store_ids=vector_store_ids)
 
     @staticmethod
@@ -268,6 +322,10 @@ class AzureAIAgentClient(
         bing_custom_instance_id: str | None = None,
     ) -> BingGroundingTool | BingCustomSearchTool:
         """Create a web search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_web_search_tool` instead.
 
         For Azure AI Agents, web search uses Bing Grounding or Bing Custom Search.
         If no arguments are provided, attempts to read from environment variables.
@@ -309,6 +367,12 @@ class AzureAIAgentClient(
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_web_search_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_web_search_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Try explicit Bing Custom Search parameters first, then environment variables
         resolved_custom_connection = bing_custom_connection_id or os.environ.get("BING_CUSTOM_CONNECTION_ID")
         resolved_custom_instance = bing_custom_instance_id or os.environ.get("BING_CUSTOM_INSTANCE_NAME")
@@ -344,6 +408,10 @@ class AzureAIAgentClient(
     ) -> McpTool:
         """Create a hosted MCP tool configuration for Azure AI Agents.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_mcp_tool` instead.
+
         This configures an MCP (Model Context Protocol) server that will be called
         by Azure AI's service. The tools from this MCP server are executed remotely
         by Azure AI, not locally by your application.
@@ -376,6 +444,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_mcp_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_mcp_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         mcp_tool = McpTool(
             server_label=name.replace(" ", "_"),
             server_url=url or "",
@@ -420,11 +494,11 @@ class AzureAIAgentClient(
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         should_cleanup_agent: bool = True,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure AI Agent client.
 
@@ -447,11 +521,11 @@ class AzureAIAgentClient(
             should_cleanup_agent: Whether to cleanup (delete) agents created by this client when
                 the client is closed or context is exited. Defaults to True. Only affects agents
                 created by this client instance; existing agents passed via agent_id are never deleted.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -487,6 +561,12 @@ class AzureAIAgentClient(
                 client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
+        warnings.warn(
+            "AzureAIAgentClient is deprecated and will be removed in a future release; "
+            "use AzureAIClient instead for the V2 (Projects/Responses) API.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         azure_ai_settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",
@@ -524,9 +604,9 @@ class AzureAIAgentClient(
 
         # Initialize parent
         super().__init__(
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
         # Initialize instance variables
@@ -680,7 +760,7 @@ class AzureAIAgentClient(
                 args["tool_approvals"] = tool_approvals
             await self.agents_client.runs.submit_tool_outputs_stream(**args)  # type: ignore[reportUnknownMemberType]
             # Pass the handler to the stream to continue processing
-            stream = handler  # type: ignore
+            stream = handler
             final_thread_id = thread_run.thread_id
         else:
             # Handle thread creation or cancellation
@@ -857,7 +937,7 @@ class AzureAIAgentClient(
         azure_search_tool_calls: list[dict[str, Any]] = []
         response_stream = await stream.__aenter__() if isinstance(stream, AsyncAgentRunStream) else stream  # type: ignore[no-untyped-call]
         try:
-            async for event_type, event_data, _ in response_stream:  # type: ignore
+            async for event_type, event_data, _ in response_stream:
                 match event_data:
                     case MessageDeltaChunk():
                         # only one event_type: AgentStreamEvent.THREAD_MESSAGE_DELTA
@@ -973,21 +1053,16 @@ class AzureAIAgentClient(
                                     role="assistant",
                                 )
                     case RunStepDeltaChunk():  # type: ignore
-                        if (
-                            event_data.delta.step_details is not None
-                            and event_data.delta.step_details.type == "tool_calls"
-                            and event_data.delta.step_details.tool_calls is not None  # type: ignore[attr-defined]
-                        ):
-                            for tool_call in event_data.delta.step_details.tool_calls:  # type: ignore[attr-defined]
-                                if tool_call.type == "code_interpreter" and isinstance(
-                                    tool_call.code_interpreter,
-                                    RunStepDeltaCodeInterpreterDetailItemObject,
-                                ):
+                        step_details = event_data.delta.step_details
+                        if step_details is not None and step_details.type == "tool_calls":
+                            tool_calls = cast(list[RunStepDeltaToolCall], step_details.tool_calls)  # type: ignore
+                            for tool_call in tool_calls:
+                                if tool_call.type == "code_interpreter" and tool_call.code_interpreter is not None:  # type: ignore[attr-defined, reportUnknownMemberType]
                                     code_contents: list[Content] = []
-                                    if tool_call.code_interpreter.input is not None:
-                                        logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")
-                                    if tool_call.code_interpreter.outputs is not None:
-                                        for output in tool_call.code_interpreter.outputs:
+                                    if tool_call.code_interpreter.input is not None:  # type: ignore[attr-defined, reportUnknownMemberType]
+                                        logger.debug(f"Code Interpreter Input: {tool_call.code_interpreter.input}")  # type: ignore[attr-defined, reportUnknownMemberType]
+                                    if tool_call.code_interpreter.outputs is not None:  # type: ignore[attr-defined, reportUnknownMemberType]
+                                        for output in tool_call.code_interpreter.outputs:  # type: ignore[attr-defined, reportUnknownMemberType]
                                             if isinstance(output, RunStepDeltaCodeInterpreterLogOutput) and output.logs:
                                                 code_contents.append(Content.from_text(text=output.logs))
                                             if (
@@ -1003,7 +1078,7 @@ class AzureAIAgentClient(
                                         contents=code_contents,
                                         conversation_id=thread_id,
                                         message_id=response_id,
-                                        raw_representation=tool_call.code_interpreter,
+                                        raw_representation=tool_call.code_interpreter,  # type: ignore[attr-defined, reportUnknownMemberType]
                                         response_id=response_id,
                                     )
                     case _:  # ThreadMessage or string
@@ -1032,17 +1107,15 @@ class AzureAIAgentClient(
     ) -> None:
         """Capture Azure AI Search tool call data from completed steps."""
         try:
-            if (
-                hasattr(step_data, "step_details")
-                and hasattr(step_data.step_details, "tool_calls")
-                and step_data.step_details.tool_calls
-            ):
-                for tool_call in step_data.step_details.tool_calls:
-                    if hasattr(tool_call, "type") and tool_call.type == "azure_ai_search":
+            step_details = getattr(step_data, "step_details", None)
+            tool_calls = getattr(step_details, "tool_calls", None) if step_details is not None else None
+            if isinstance(tool_calls, list):
+                for tool_call in cast(list[object], tool_calls):
+                    if getattr(tool_call, "type", None) == "azure_ai_search":
                         # Store the complete tool call as a dictionary
                         tool_call_dict = {
                             "id": getattr(tool_call, "id", None),
-                            "type": tool_call.type,
+                            "type": getattr(tool_call, "type", None),
                             "azure_ai_search": getattr(tool_call, "azure_ai_search", None),
                         }
                         azure_search_tool_calls.append(tool_call_dict)
@@ -1195,19 +1268,18 @@ class AzureAIAgentClient(
         self, options: Mapping[str, Any]
     ) -> AgentsToolChoiceOptionMode | AgentsNamedToolChoice | None:
         """Prepare the tool choice mode for Azure AI Agents API."""
-        tool_choice = options.get("tool_choice")
+        tool_choice = cast(str | dict[str, str] | None, options.get("tool_choice"))
         if tool_choice is None:
             return None
-        if tool_choice == "none":
-            return AgentsToolChoiceOptionMode.NONE
-        if tool_choice == "auto":
-            return AgentsToolChoiceOptionMode.AUTO
-        if isinstance(tool_choice, Mapping) and tool_choice.get("mode") == "required":
+        if isinstance(tool_choice, str) and tool_choice in {"none", "auto"}:
+            return AgentsToolChoiceOptionMode(tool_choice)
+        if isinstance(tool_choice, dict):
+            mode = tool_choice.get("mode")
             req_fn = tool_choice.get("required_function_name")
-            if req_fn:
+            if mode == "required" and req_fn is not None:
                 return AgentsNamedToolChoice(
                     type=AgentsNamedToolChoiceType.FUNCTION,
-                    function=FunctionName(name=str(req_fn)),
+                    function=FunctionName(name=req_fn),
                 )
         return None
 
@@ -1345,14 +1417,9 @@ class AzureAIAgentClient(
                 # SDK Tool wrappers (McpTool, FileSearchTool, BingGroundingTool, etc.)
                 tool_definitions.extend(tool.definitions)
                 # Handle tool resources (MCP resources handled separately by _prepare_mcp_resources)
-                if (
-                    run_options is not None
-                    and hasattr(tool, "resources")
-                    and tool.resources
-                    and "mcp" not in tool.resources
-                ):
-                    if "tool_resources" not in run_options:
-                        run_options["tool_resources"] = {}
+                resources = getattr(tool, "resources", None)
+                if run_options is not None and resources and isinstance(resources, Mapping) and "mcp" not in resources:
+                    run_options.setdefault("tool_resources", {})
                     run_options["tool_resources"].update(tool.resources)
             else:
                 # Pass through ToolDefinition, dict, and other types unchanged
@@ -1391,11 +1458,20 @@ class AzureAIAgentClient(
                 call_id = run_and_call_ids[1]
 
                 if content.type == "function_result":
+                    if content.items:
+                        text_parts = [item.text or "" for item in content.items if item.type == "text"]
+                        rich_items = [item for item in content.items if item.type in ("data", "uri")]
+                        if rich_items:
+                            logger.warning(
+                                "Azure AI Agents does not support rich content (images, audio) in tool results. "
+                                "Rich content items will be omitted."
+                            )
+                        output_text = "\n".join(text_parts) if text_parts else ""
+                    else:
+                        output_text = content.result if content.result is not None else ""
                     if tool_outputs is None:
                         tool_outputs = []
-                    tool_outputs.append(
-                        ToolOutput(tool_call_id=call_id, output=content.result if content.result is not None else "")
-                    )
+                    tool_outputs.append(ToolOutput(tool_call_id=call_id, output=output_text))
                 elif content.type == "function_approval_response":
                     if tool_approvals is None:
                         tool_approvals = []
@@ -1450,8 +1526,9 @@ class AzureAIAgentClient(
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
-            name: The name of the agent.
-            description: A brief description of the agent's purpose.
+            name: The name of the agent. Defaults to the client's ``agent_name`` when None.
+            description: A brief description of the agent's purpose. Defaults to the client's
+                ``agent_description`` when None.
             instructions: Optional instructions for the agent.
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options.
@@ -1464,8 +1541,8 @@ class AzureAIAgentClient(
         """
         return super().as_agent(
             id=id,
-            name=name,
-            description=description,
+            name=self.agent_name if name is None else name,
+            description=self.agent_description if description is None else description,
             instructions=instructions,
             tools=tools,
             default_options=default_options,
