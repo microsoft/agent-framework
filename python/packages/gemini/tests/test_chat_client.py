@@ -862,6 +862,40 @@ async def test_google_maps_grounding_injects_tool() -> None:
     assert any(t.google_maps for t in config.tools)
 
 
+async def test_google_search_grounding_with_config_uses_provided_instance() -> None:
+    """Passing a types.GoogleSearch instance forwards it directly rather than constructing a default."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
+    search_config = types.GoogleSearch(exclude_domains=["example.com"])
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Search")])],
+        options={"google_search_grounding": search_config},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.tools is not None
+    injected = next((t.google_search for t in config.tools if t.google_search is not None), None)  # type: ignore[union-attr]
+    assert injected is search_config
+
+
+async def test_google_maps_grounding_with_config_uses_provided_instance() -> None:
+    """Passing a types.GoogleMaps instance forwards it directly rather than constructing a default."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
+    maps_config = types.GoogleMaps(enable_widget=True)
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Map")])],
+        options={"google_maps_grounding": maps_config},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.tools is not None
+    injected = next((t.google_maps for t in config.tools if t.google_maps is not None), None)  # type: ignore[union-attr]
+    assert injected is maps_config
+
+
 async def test_code_execution_injects_tool() -> None:
     client, mock = _make_gemini_client()
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Result")]))
