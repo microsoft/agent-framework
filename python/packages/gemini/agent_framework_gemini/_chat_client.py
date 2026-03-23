@@ -286,6 +286,17 @@ class GeminiChatClient(
 
         return _get_response()
 
+    @override
+    def service_url(self) -> str:
+        """Return the base URL of the Gemini API service.
+
+        Returns:
+            The Gemini API base URL.
+        """
+        return _GEMINI_SERVICE_URL
+
+    # region Request preparation
+
     def _prepare_request(
         self,
         messages: Sequence[Message],
@@ -319,8 +330,6 @@ class GeminiChatClient(
             )
 
         return model_id, contents, self._prepare_config(options, system_instruction)
-
-    # region Message preparation
 
     def _prepare_gemini_messages(self, messages: Sequence[Message]) -> tuple[str | None, list[types.Content]]:
         """Convert framework messages to Gemini contents and extract system instruction.
@@ -467,10 +476,6 @@ class GeminiChatClient(
         if value is None:
             return {"result": ""}
         return {"result": str(value)}
-
-    # endregion
-
-    # region Config preparation
 
     def _prepare_config(
         self,
@@ -735,15 +740,6 @@ class GeminiChatClient(
         return _FINISH_REASON_MAP.get(reason)
 
     # endregion
-
-    @override
-    def service_url(self) -> str:
-        """Return the base URL of the Gemini API service.
-
-        Returns:
-            The Gemini API base URL.
-        """
-        return _GEMINI_SERVICE_URL
 
     @staticmethod
     def _generate_tool_call_id() -> str:
