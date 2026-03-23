@@ -1573,19 +1573,21 @@ class AgentTelemetryLayer:
             super().run,  # type: ignore[misc]
         )
         provider_name = str(self.otel_provider_name)
+        super_run_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "stream": stream,
+            "session": session,
+            "tools": tools,
+            "options": options,
+            "compaction_strategy": compaction_strategy,
+            "tokenizer": tokenizer,
+            "function_invocation_kwargs": function_invocation_kwargs,
+            "client_kwargs": client_kwargs,
+        }
+        if middleware is not None:
+            super_run_kwargs["middleware"] = middleware
         if not OBSERVABILITY_SETTINGS.ENABLED:
-            return super_run(  # type: ignore[no-any-return]
-                messages=messages,
-                stream=stream,
-                session=session,
-                middleware=middleware,
-                tools=tools,
-                options=options,
-                compaction_strategy=compaction_strategy,
-                tokenizer=tokenizer,
-                function_invocation_kwargs=function_invocation_kwargs,
-                client_kwargs=client_kwargs,
-            )
+            return super_run(**super_run_kwargs)  # type: ignore[no-any-return]
 
         default_options = dict(getattr(self, "default_options", {}))
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
@@ -1611,18 +1613,7 @@ class AgentTelemetryLayer:
 
         if stream:
             try:
-                run_result: object = super_run(
-                    messages=messages,
-                    stream=True,
-                    session=session,
-                    middleware=middleware,
-                    tools=tools,
-                    options=options,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                )
+                run_result: object = super_run(**super_run_kwargs)
                 if isinstance(run_result, ResponseStream):
                     result_stream: ResponseStream[AgentResponseUpdate, AgentResponse[Any]] = run_result  # pyright: ignore[reportUnknownVariableType]
                 elif isinstance(run_result, Awaitable):
@@ -1716,18 +1707,7 @@ class AgentTelemetryLayer:
                         )
                     start_time_stamp = perf_counter()
                     try:
-                        response: AgentResponse[Any] = await super_run(
-                            messages=messages,
-                            stream=False,
-                            session=session,
-                            middleware=middleware,
-                            tools=tools,
-                            options=options,
-                            compaction_strategy=compaction_strategy,
-                            tokenizer=tokenizer,
-                            function_invocation_kwargs=function_invocation_kwargs,
-                            client_kwargs=client_kwargs,
-                        )
+                        response: AgentResponse[Any] = await super_run(**super_run_kwargs)
                     except Exception as exception:
                         capture_exception(span=span, exception=exception, timestamp=time_ns())
                         raise

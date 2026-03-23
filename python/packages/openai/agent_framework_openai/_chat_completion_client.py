@@ -1254,16 +1254,17 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
             super().get_response,  # type: ignore[misc]
         )
+        effective_options = dict(options) if options is not None else {}
+        effective_options.update(kwargs)
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             effective_client_kwargs["middleware"] = middleware
         return super_get_response(  # type: ignore[no-any-return]
             messages=messages,
             stream=stream,
-            options=options,
+            options=effective_options,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=effective_client_kwargs,
-            **kwargs,
         )
 
 
