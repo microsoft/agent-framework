@@ -990,9 +990,7 @@ class TestEvaluateAgentModuloWrapping:
         mock_agent = MagicMock()
         mock_agent.name = "test"
         mock_agent.default_options = {}
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message("assistant", ["reply"])]))
 
         # Track which expected_output each item gets
         seen_expected: list[str] = []

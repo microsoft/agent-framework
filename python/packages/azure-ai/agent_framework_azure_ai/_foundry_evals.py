@@ -106,14 +106,17 @@ _DEFAULT_TOOL_EVALUATORS: list[str] = [
 ]
 
 # Catch drift between evaluator sets at import time
-assert _AGENT_EVALUATORS.issubset(_BUILTIN_EVALUATORS.values()), (
-    "_AGENT_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: "
-    f"{_AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())}"
-)
-assert _TOOL_EVALUATORS.issubset(_BUILTIN_EVALUATORS.values()), (
-    "_TOOL_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: "
-    f"{_TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())}"
-)
+_agent_diff = _AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
+if _agent_diff:
+    raise RuntimeError(
+        f"_AGENT_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: {_agent_diff}"
+    )
+_tool_diff = _TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
+if _tool_diff:
+    raise RuntimeError(
+        f"_TOOL_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: {_tool_diff}"
+    )
+del _agent_diff, _tool_diff  # clean up module namespace
 
 
 def _resolve_evaluator(name: str) -> str:
@@ -251,8 +254,6 @@ def _filter_tool_evaluators(
         removed = [e for e in evaluators if _resolve_evaluator(e) in _TOOL_EVALUATORS]
         logger.info("Removed tool evaluators %s (no items have tools)", removed)
     return filtered
-
-
 
 
 async def _poll_eval_run(
@@ -478,8 +479,8 @@ async def _evaluate_via_responses_impl(
     """
     eval_obj = await client.evals.create(
         name=eval_name,
-        data_source_config={"type": "azure_ai_source", "scenario": "responses"},
-        testing_criteria=_build_testing_criteria(evaluators, model_deployment),
+        data_source_config={"type": "azure_ai_source", "scenario": "responses"},  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        testing_criteria=_build_testing_criteria(evaluators, model_deployment),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     data_source = {
@@ -497,7 +498,7 @@ async def _evaluate_via_responses_impl(
     run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
-        data_source=data_source,
+        data_source=data_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout, provider=provider)
@@ -675,12 +676,12 @@ class FoundryEvals:
 
         eval_obj = await self._client.evals.create(
             name=eval_name,
-            data_source_config={
+            data_source_config={  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
                 "type": "custom",
                 "item_schema": _build_item_schema(has_context=has_context, has_tools=has_tools),
                 "include_sample_schema": True,
             },
-            testing_criteria=_build_testing_criteria(
+            testing_criteria=_build_testing_criteria(  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
                 evaluators,
                 self._model_deployment,
                 include_data_mapping=True,
@@ -698,7 +699,7 @@ class FoundryEvals:
         run = await self._client.evals.runs.create(
             eval_id=eval_obj.id,
             name=f"{eval_name} Run",
-            data_source=data_source,
+            data_source=data_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         )
 
         return await _poll_eval_run(
@@ -791,14 +792,14 @@ async def evaluate_traces(
 
     eval_obj = await client.evals.create(
         name=eval_name,
-        data_source_config={"type": "azure_ai_source", "scenario": "traces"},
-        testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),
+        data_source_config={"type": "azure_ai_source", "scenario": "traces"},  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
-        data_source=trace_source,
+        data_source=trace_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout)
@@ -849,11 +850,11 @@ async def evaluate_foundry_target(
 
     eval_obj = await client.evals.create(
         name=eval_name,
-        data_source_config={
+        data_source_config={  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             "type": "azure_ai_source",
             "scenario": "target_completions",
         },
-        testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),
+        testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     data_source: dict[str, Any] = {
@@ -868,7 +869,7 @@ async def evaluate_foundry_target(
     run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
-        data_source=data_source,
+        data_source=data_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
     return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout)
