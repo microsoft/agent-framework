@@ -1547,7 +1547,8 @@ async def _try_execute_function_calls(
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
     configured_additional_tools = config.get("additional_tools") or []
     additional_tool_names = [tool.name for tool in configured_additional_tools]
-    # Check which function calls need approval, are declaration-only, or are unknown
+    # Check which function calls need approval, are declaration-only, or are unknown.
+    # Scan the entire batch so every call is validated regardless of ordering.
     approval_needed = False
     declaration_only_flag = False
     for fcc in function_calls:
@@ -1561,11 +1562,9 @@ async def _try_execute_function_calls(
         if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
             logger.debug("Approval needed for function: %s", fcc.name)
             approval_needed = True
-            break
-        if fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
+        elif fcc.type == "function_call" and (fcc.name in declaration_only or fcc.name in additional_tool_names):  # type: ignore[attr-defined]
             declaration_only_flag = True
-            break
-        if (
+        elif (
             config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
         ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
@@ -1648,13 +1647,20 @@ async def _try_execute_function_calls(
                 non_approval_calls.append(fcc)
 
         if non_approval_calls:
+            non_approval_set = {id(fc) for fc in non_approval_calls}
             execution_results = await asyncio.gather(*[
-                invoke_with_termination_handling(fc, seq_idx) for seq_idx, fc in enumerate(non_approval_calls)
+                invoke_with_termination_handling(fc, orig_idx)
+                for orig_idx, fc in enumerate(function_calls)
+                if id(fc) in non_approval_set
             ])
             approval_results.extend(result[0] for result in execution_results)
             approval_results.extend(extra_user_input_contents)
+            # If any non-approval tool requested termination, propagate that signal
+            should_terminate = any(result[1] for result in execution_results)
+        else:
+            should_terminate = False
 
-        return (approval_results, False)
+        return (approval_results, should_terminate)
 
     execution_results = await asyncio.gather(*[
         invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
