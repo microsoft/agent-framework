@@ -57,7 +57,7 @@ jobs:
         if: always()
         with:
           name: validation-report-01-get-started
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents:
     name: Validate 02-agents
@@ -111,7 +111,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-openai:
     name: Validate 02-agents/providers/openai
@@ -150,7 +150,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-openai
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-azure-openai:
     name: Validate 02-agents/providers/azure_openai
@@ -189,7 +189,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-azure-openai
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-azure-ai:
     name: Validate 02-agents/providers/azure_ai
@@ -226,7 +226,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-azure-ai
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-azure-ai-agent:
     name: Validate 02-agents/providers/azure_ai_agent
@@ -263,7 +263,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-azure-ai-agent
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-anthropic:
     name: Validate 02-agents/providers/anthropic
@@ -300,7 +300,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-anthropic
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-github-copilot:
     name: Validate 02-agents/providers/github_copilot
@@ -329,7 +329,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-github-copilot
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-amazon:
     name: Validate 02-agents/providers/amazon
@@ -361,7 +361,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-amazon
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-ollama:
     name: Validate 02-agents/providers/ollama
@@ -393,7 +393,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-ollama
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-foundry-local:
     name: Validate 02-agents/providers/foundry_local
@@ -423,7 +423,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-foundry-local
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-copilotstudio:
     name: Validate 02-agents/providers/copilotstudio
@@ -465,7 +465,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-copilotstudio
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-02-agents-custom:
     name: Validate 02-agents/providers/custom
@@ -494,7 +494,7 @@ jobs:
         if: always()
         with:
           name: validation-report-02-agents-custom
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-03-workflows:
     name: Validate 03-workflows
@@ -539,7 +539,7 @@ jobs:
         if: always()
         with:
           name: validation-report-03-workflows
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-04-hosting:
     name: Validate 04-hosting
@@ -578,7 +578,7 @@ jobs:
         if: always()
         with:
           name: validation-report-04-hosting
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-05-end-to-end:
     name: Validate 05-end-to-end
@@ -622,7 +622,7 @@ jobs:
         if: always()
         with:
           name: validation-report-05-end-to-end
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-autogen-migration:
     name: Validate autogen-migration
@@ -672,7 +672,7 @@ jobs:
         if: always()
         with:
           name: validation-report-autogen-migration
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
 
   validate-semantic-kernel-migration:
     name: Validate semantic-kernel-migration
@@ -733,4 +733,69 @@ jobs:
         if: always()
         with:
           name: validation-report-semantic-kernel-migration
-          path: python/scripts/sample_validation/reports/
+          path: python/samples/sample_validation/reports/
+
+  aggregate-results:
+    name: Aggregate Results
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - validate-01-get-started
+      - validate-02-agents
+      - validate-02-agents-openai
+      - validate-02-agents-azure-openai
+      - validate-02-agents-azure-ai
+      - validate-02-agents-azure-ai-agent
+      - validate-02-agents-anthropic
+      - validate-02-agents-github-copilot
+      - validate-02-agents-amazon
+      - validate-02-agents-ollama
+      - validate-02-agents-foundry-local
+      - validate-02-agents-copilotstudio
+      - validate-02-agents-custom
+      - validate-03-workflows
+      - validate-04-hosting
+      - validate-05-end-to-end
+      - validate-autogen-migration
+      - validate-semantic-kernel-migration
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all validation reports
+        uses: actions/download-artifact@v7
+        with:
+          pattern: validation-report-*
+          path: reports/
+          merge-multiple: true
+
+      - name: Restore validation history
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: validation-history/
+          key: validation-history-${{ github.run_id }}
+          restore-keys: |
+            validation-history-
+
+      - name: Aggregate results and generate trend report
+        run: |
+          python3 python/scripts/sample_validation/aggregate.py \
+            reports/ \
+            validation-history/history.json \
+            trend-report.md
+
+      - name: Write trend report to job summary
+        run: cat trend-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save validation history
+        uses: actions/cache/save@v4
+        with:
+          path: validation-history/
+          key: validation-history-${{ github.run_id }}
+
+      - name: Upload trend report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-trend-report
+          path: trend-report.md
