@@ -78,7 +78,8 @@ jobs:
               - 'python/packages/durabletask/**'
             azure-ai:
               - 'python/packages/azure-ai/**'
-              - 'python/samples/**/providers/azure/foundry*.py'
+              - 'python/packages/foundry/**'
+              - 'python/samples/**/providers/foundry/**'
             cosmos:
               - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
@@ -394,6 +395,8 @@ jobs:
     env:
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -415,7 +418,9 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 15
-        run: uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+        run: |
+          uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+          uv run --directory packages/foundry poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10
