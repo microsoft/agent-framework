@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from .._clients import BaseChatClient
 from .._docstrings import apply_layered_docstring
-from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer, FunctionMiddlewareTypes
+from .._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from .._settings import load_settings
 from .._tools import (
     FunctionInvocationConfiguration,
@@ -156,9 +156,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         you should consider which additional layers to apply. There is a defined ordering that
         you should follow:
 
-        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
-        2. **FunctionInvocationLayer** - Handles tool/function calling loop
-        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
 
         Use ``OpenAIChatClient`` instead for a fully-featured client with all layers applied.
     """
@@ -713,9 +713,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                     "content": content.result if content.result is not None else "",
                 }
             case "data" | "uri" if content.has_top_level_media_type("image"):
+                image_url_obj: dict[str, Any] = {"url": content.uri}
+                detail = content.additional_properties.get("detail")
+                if isinstance(detail, str):
+                    image_url_obj["detail"] = detail
                 return {
                     "type": "image_url",
-                    "image_url": {"url": content.uri},
+                    "image_url": image_url_obj,
                 }
             case "data" | "uri" if content.has_top_level_media_type("audio"):
                 if content.media_type and "wav" in content.media_type:
@@ -772,8 +776,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
 class OpenAIChatClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[OpenAIChatOptionsT],
     FunctionInvocationLayer[OpenAIChatOptionsT],
+    ChatMiddlewareLayer[OpenAIChatOptionsT],
     ChatTelemetryLayer[OpenAIChatOptionsT],
     RawOpenAIChatClient[OpenAIChatOptionsT],
     Generic[OpenAIChatOptionsT],
@@ -787,7 +791,6 @@ class OpenAIChatClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -801,7 +804,6 @@ class OpenAIChatClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: OpenAIChatOptionsT | ChatOptions[None] | None = None,
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -815,7 +817,6 @@ class OpenAIChatClient(  # type: ignore[misc]
         *,
         stream: Literal[True],
         options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -829,7 +830,6 @@ class OpenAIChatClient(  # type: ignore[misc]
         *,
         stream: bool = False,
         options: OpenAIChatOptionsT | ChatOptions[Any] | None = None,
-        function_middleware: Sequence[FunctionMiddlewareTypes] | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -840,14 +840,15 @@ class OpenAIChatClient(  # type: ignore[misc]
             "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
             super().get_response,  # type: ignore[misc]
         )
+        effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        if middleware is not None:
+            effective_client_kwargs["middleware"] = middleware
         return super_get_response(  # type: ignore[no-any-return]
             messages=messages,
             stream=stream,
             options=options,
-            function_middleware=function_middleware,
             function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-            middleware=middleware,
+            client_kwargs=effective_client_kwargs,
             **kwargs,
         )
 
@@ -963,10 +964,6 @@ def _apply_openai_chat_client_docstrings() -> None:
         OpenAIChatClient.get_response,
         RawOpenAIChatClient.get_response,
         extra_keyword_args={
-            "function_middleware": """
-                Optional per-call function middleware.
-                When omitted, middleware configured on the client or forwarded from higher layers is used.
-            """,
             "middleware": """
                 Optional per-call chat and function middleware.
                 This is merged with any middleware configured on the client for the current request.

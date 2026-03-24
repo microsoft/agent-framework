@@ -46,14 +46,14 @@ These are the normal user-facing entrypoints:
 uv run poe upgrade-dev-dependency-pins
 uv run poe upgrade-dev-dependencies
 uv run poe validate-dependency-bounds-test
-uv run poe validate-dependency-bounds-test --project <workspace-package-name>
-uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"
+uv run poe validate-dependency-bounds-test --package core
+uv run poe validate-dependency-bounds-project --mode both --package core --dependency "<dependency-name>"
 ```
 
 - `upgrade-dev-dependency-pins` only refreshes exact dev pins in `pyproject.toml` files.
 - `upgrade-dev-dependencies` refreshes dev pins (using task above), runs `uv lock --upgrade`, reinstalls from the frozen lockfile, then runs `check`, `typing`, and `test`.
 - `validate-dependency-bounds-test` runs the repo-wide lower/upper smoke gate.
-- `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair. Its `--project` argument defaults to `*`, and `--dependency` is optional, so automation can also use it for repo-wide upper-bound runs.
+- `validate-dependency-bounds-project` is the single package-scoped task; use `--mode lower`, `--mode upper`, or `--mode both` for the target package/dependency pair. Its `--package` argument defaults to `*`, and `--dependency` is optional, so automation can also use it for repo-wide upper-bound runs.
 
 ### GitHub Actions workflows
 
@@ -61,7 +61,7 @@ These workflows call the Poe tasks:
 
 - `.github/workflows/python-dependency-range-validation.yml`
   - Trigger: `workflow_dispatch`
-  - Runs `uv run poe validate-dependency-bounds-project --mode upper --project "*"`
+  - Runs `uv run poe validate-dependency-bounds-project --mode upper --package "*"`
   - Uploads `python/scripts/dependencies/dependency-range-results.json`
   - Creates issues for failing candidate versions and opens/updates a PR for passing range updates
 
@@ -76,10 +76,10 @@ These are useful for debugging or targeted manual runs:
 
 ```bash
 python -m scripts.dependencies.upgrade_dev_dependencies --dry-run --version-source lock
-python -m scripts.dependencies.validate_dependency_bounds --mode test --package packages/core --dry-run
-python -m scripts.dependencies.validate_dependency_bounds --mode both --package packages/core --dependencies openai --dry-run
-python -m scripts.dependencies._dependency_bounds_lower_impl --packages packages/core --dependencies openai --dry-run
-python -m scripts.dependencies._dependency_bounds_upper_impl --packages packages/core --dependencies openai --dry-run
+python -m scripts.dependencies.validate_dependency_bounds --mode test --package core --dry-run
+python -m scripts.dependencies.validate_dependency_bounds --mode both --package core --dependencies openai --dry-run
+python -m scripts.dependencies._dependency_bounds_lower_impl --packages core --dependencies openai --dry-run
+python -m scripts.dependencies._dependency_bounds_upper_impl --packages core --dependencies openai --dry-run
 ```
 
 Use the direct lower/upper implementation modules mainly for debugging or development of the optimizers themselves. For normal usage, prefer the Poe tasks or `validate_dependency_bounds.py`.

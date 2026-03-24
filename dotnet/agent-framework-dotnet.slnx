@@ -311,7 +311,6 @@
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithLocalTools/AgentWithLocalTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTools/AgentWithTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundryMultiAgent/FoundryMultiAgent.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>
@@ -454,6 +453,10 @@
     <File Path="src/Shared/Samples/TestConfiguration.cs" />
     <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
     <File Path="src/Shared/Samples/XunitLogger.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Redaction/">
+    <File Path="src/Shared/Redaction/README.md" />
+    <File Path="src/Shared/Redaction/ReplacingRedactor.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />

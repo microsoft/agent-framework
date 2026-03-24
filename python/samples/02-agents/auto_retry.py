@@ -114,10 +114,11 @@ class RetryingAzureOpenAIChatClient(AzureOpenAIChatClient):
 
 
 class RateLimitRetryMiddleware(ChatMiddleware):
-    """Chat middleware that retries the full request pipeline on rate limit errors.
+    """Chat middleware that retries a single model-call pipeline on rate limit errors.
 
     Register this middleware on an agent (or at the run level) to automatically
-    retry any call_next() invocation that raises RateLimitError.
+    retry any chat-model call that raises RateLimitError. In tool-loop scenarios,
+    the middleware applies independently to each inner model call.
     """
 
     def __init__(self, *, max_attempts: int = RETRY_ATTEMPTS) -> None:
@@ -154,8 +155,9 @@ async def rate_limit_retry_middleware(
     """Function-based chat middleware that retries on rate limit errors.
 
     Wrap call_next() with a tenacity @retry decorator so any RateLimitError
-    raised during model inference triggers an automatic retry with exponential
-    back-off.
+    raised during a single model call triggers an automatic retry with exponential
+    back-off. In tool-loop scenarios, the middleware applies independently to
+    each inner model call.
     """
 
     @retry(

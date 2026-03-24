@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict, cast
 
@@ -118,6 +119,10 @@ __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 class AzureAIAgentOptions(ChatOptions, total=False):
     """Azure AI Foundry Agent Service-specific options dict.
 
+    .. deprecated::
+        AzureAIAgentOptions is deprecated and will be removed in a future release.
+        Use :class:`AzureAIProjectAgentOptions` instead for the V2 (Projects/Responses) API.
+
     Extends base ChatOptions with Azure AI Agent Service parameters.
     Azure AI Agents provides a managed agent runtime with built-in
     tools for code interpreter, file search, and web search.
@@ -206,13 +211,18 @@ AzureAIAgentOptionsT = TypeVar(
 
 
 class AzureAIAgentClient(
-    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     FunctionInvocationLayer[AzureAIAgentOptionsT],
+    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     ChatTelemetryLayer[AzureAIAgentOptionsT],
     BaseChatClient[AzureAIAgentOptionsT],
     Generic[AzureAIAgentOptionsT],
 ):
-    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
+    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support.
+
+    .. deprecated::
+        AzureAIAgentClient is deprecated and will be removed in a future release.
+        Use :class:`AzureAIClient` instead for the V2 (Projects/Responses) API.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -226,6 +236,10 @@ class AzureAIAgentClient(
         data_sources: list[VectorStoreDataSource] | None = None,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_code_interpreter_tool` instead.
 
         Keyword Args:
             file_ids: List of uploaded file IDs or Content objects to make available to
@@ -256,6 +270,12 @@ class AzureAIAgentClient(
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_code_interpreter_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_code_interpreter_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         resolved = resolve_file_ids(file_ids)
         return CodeInterpreterTool(file_ids=resolved, data_sources=data_sources)
 
@@ -265,6 +285,10 @@ class AzureAIAgentClient(
         vector_store_ids: list[str],
     ) -> FileSearchTool:
         """Create a file search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_file_search_tool` instead.
 
         Keyword Args:
             vector_store_ids: List of vector store IDs to search within.
@@ -282,6 +306,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_file_search_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_file_search_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return FileSearchTool(vector_store_ids=vector_store_ids)
 
     @staticmethod
@@ -292,6 +322,10 @@ class AzureAIAgentClient(
         bing_custom_instance_id: str | None = None,
     ) -> BingGroundingTool | BingCustomSearchTool:
         """Create a web search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_web_search_tool` instead.
 
         For Azure AI Agents, web search uses Bing Grounding or Bing Custom Search.
         If no arguments are provided, attempts to read from environment variables.
@@ -333,6 +367,12 @@ class AzureAIAgentClient(
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_web_search_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_web_search_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Try explicit Bing Custom Search parameters first, then environment variables
         resolved_custom_connection = bing_custom_connection_id or os.environ.get("BING_CUSTOM_CONNECTION_ID")
         resolved_custom_instance = bing_custom_instance_id or os.environ.get("BING_CUSTOM_INSTANCE_NAME")
@@ -368,6 +408,10 @@ class AzureAIAgentClient(
     ) -> McpTool:
         """Create a hosted MCP tool configuration for Azure AI Agents.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIClient.get_mcp_tool` instead.
+
         This configures an MCP (Model Context Protocol) server that will be called
         by Azure AI's service. The tools from this MCP server are executed remotely
         by Azure AI, not locally by your application.
@@ -400,6 +444,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_mcp_tool() is deprecated and will be removed in a future release; "
+            "use AzureAIClient.get_mcp_tool() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         mcp_tool = McpTool(
             server_label=name.replace(" ", "_"),
             server_url=url or "",
@@ -511,6 +561,12 @@ class AzureAIAgentClient(
                 client: AzureAIAgentClient[MyOptions] = AzureAIAgentClient(credential=credential)
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
+        warnings.warn(
+            "AzureAIAgentClient is deprecated and will be removed in a future release; "
+            "use AzureAIClient instead for the V2 (Projects/Responses) API.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         azure_ai_settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",

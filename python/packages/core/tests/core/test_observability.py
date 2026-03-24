@@ -11,12 +11,14 @@ from opentelemetry.trace import StatusCode
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
+    Agent,
     AgentResponse,
     BaseChatClient,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
+    RawAgent,
     ResponseStream,
     SupportsAgentRun,
     UsageDetails,
@@ -472,10 +474,10 @@ def mock_chat_agent():
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
-async def test_agent_instrumentation_enabled(
+async def test_agent_span_captures_response_telemetry_without_inner_chat_span(
     mock_chat_agent: SupportsAgentRun, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
-    """Test that when agent diagnostics are enabled, telemetry is applied."""
+    """Agent spans should retain response telemetry when no inner chat span owns it."""
 
     agent = mock_chat_agent()
 
@@ -491,6 +493,7 @@ async def test_agent_instrumentation_enabled(
     assert span.attributes[OtelAttr.AGENT_NAME] == "test_agent"
     assert span.attributes[OtelAttr.AGENT_DESCRIPTION] == "Test agent description"
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "TestModel"
+    assert span.attributes[OtelAttr.RESPONSE_ID] == "test_response_id"
     assert span.attributes[OtelAttr.INPUT_TOKENS] == 15
     assert span.attributes[OtelAttr.OUTPUT_TOKENS] == 25
     if enable_sensitive_data:
@@ -1699,6 +1702,24 @@ def test_get_response_attributes_capture_usage_false():
     assert OtelAttr.OUTPUT_TOKENS not in result
 
 
+def test_get_response_attributes_capture_response_id_false():
+    """Test _get_response_attributes skips response_id when capture_response_id is False."""
+    from unittest.mock import Mock
+
+    from agent_framework.observability import OtelAttr, _get_response_attributes
+
+    response = Mock()
+    response.response_id = "resp_123"
+    response.finish_reason = None
+    response.raw_representation = None
+    response.usage_details = None
+
+    attrs = {}
+    result = _get_response_attributes(attrs, response, capture_response_id=False)
+
+    assert OtelAttr.RESPONSE_ID not in result
+
+
 # region Test _get_exporters_from_env
 
 
@@ -2436,7 +2457,7 @@ def test_capture_response(span_exporter: InMemorySpanExporter):
 async def test_layer_ordering_span_sequence_with_function_calling(span_exporter: InMemorySpanExporter):
     """Test that with correct layer ordering, spans appear in the expected sequence.
 
-    When using the correct layer ordering (ChatMiddlewareLayer, FunctionInvocationLayer,
+    When using the correct layer ordering (FunctionInvocationLayer, ChatMiddlewareLayer,
     ChatTelemetryLayer, BaseChatClient), the spans should appear in this order:
     1. First 'chat' span (initial LLM call that returns function call)
     2. 'execute_tool' span (function invocation)
@@ -2453,11 +2474,11 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
     def get_weather(location: str) -> str:
         return f"The weather in {location} is sunny."
 
-    # Correct layer ordering: FunctionInvocationLayer BEFORE ChatTelemetryLayer
-    # This ensures each inner LLM call gets its own telemetry span
+    # Correct layer ordering: FunctionInvocationLayer BEFORE ChatMiddlewareLayer BEFORE ChatTelemetryLayer
+    # This ensures each inner LLM call traverses chat middleware and still gets its own telemetry span
     class MockChatClientWithLayers(
-        ChatMiddlewareLayer,
         FunctionInvocationLayer,
+        ChatMiddlewareLayer,
         ChatTelemetryLayer,
         BaseChatClient,
     ):
@@ -2527,6 +2548,82 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
 
     # Third span: second chat (LLM call with function result)
     assert sorted_spans[2].name.startswith("chat"), f"Third span should be 'chat', got '{sorted_spans[2].name}'"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
+    span_exporter: InMemorySpanExporter, stream: bool
+):
+    """The inner chat span owns response-id; usage is aggregated on the agent span."""
+
+    class NestedTelemetryChatClient(ChatTelemetryLayer, BaseChatClient[Any]):
+        def service_url(self):
+            return "https://test.example.com"
+
+        def _inner_get_response(
+            self, *, messages: MutableSequence[Message], stream: bool, options: dict[str, Any], **kwargs: Any
+        ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
+            if stream:
+
+                async def _stream() -> AsyncIterable[ChatResponseUpdate]:
+                    yield ChatResponseUpdate(contents=[Content.from_text("Nested")], role="assistant")
+                    yield ChatResponseUpdate(contents=[Content.from_text(" response")], role="assistant")
+
+                def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
+                    return ChatResponse(
+                        messages=[Message(role="assistant", text="Nested response")],
+                        response_id="nested_resp_123",
+                        usage_details=UsageDetails(input_token_count=11, output_token_count=22),
+                        finish_reason="stop",
+                    )
+
+                return ResponseStream(_stream(), finalizer=_finalize)
+
+            async def _get() -> ChatResponse:
+                return ChatResponse(
+                    messages=[Message(role="assistant", text="Nested response")],
+                    response_id="nested_resp_123",
+                    usage_details=UsageDetails(input_token_count=11, output_token_count=22),
+                    finish_reason="stop",
+                )
+
+            return _get()
+
+    agent = Agent(
+        client=NestedTelemetryChatClient(),
+        id="nested_agent_id",
+        name="nested_agent",
+        description="Nested telemetry agent",
+        default_options={"model_id": "NestedModel"},
+    )
+
+    span_exporter.clear()
+
+    if stream:
+        result_stream = agent.run("Test message", stream=True)
+        async for _ in result_stream:
+            pass
+        response = await result_stream.get_final_response()
+    else:
+        response = await agent.run("Test message")
+
+    assert response is not None
+
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 2
+
+    span_by_operation = {span.attributes[OtelAttr.OPERATION.value]: span for span in spans}
+    agent_span = span_by_operation[OtelAttr.AGENT_INVOKE_OPERATION]
+    chat_span = span_by_operation[OtelAttr.CHAT_COMPLETION_OPERATION]
+
+    assert chat_span.attributes[OtelAttr.RESPONSE_ID] == "nested_resp_123"
+    assert chat_span.attributes[OtelAttr.INPUT_TOKENS] == 11
+    assert chat_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
+
+    assert OtelAttr.RESPONSE_ID not in agent_span.attributes
+    # The agent span carries the aggregated usage from all inner chat completions
+    assert agent_span.attributes[OtelAttr.INPUT_TOKENS] == 11
+    assert agent_span.attributes[OtelAttr.OUTPUT_TOKENS] == 22
 
 
 # region Test non-ASCII character handling in JSON serialization
@@ -3047,3 +3144,143 @@ def test_get_meter_typeerror_fallback():
         meter = get_meter(name="test", attributes={"key": "val"})
         assert meter is not None
         assert call_count == 2
+
+
+# region Agent token usage aggregation
+
+
+@tool(name="get_weather", description="Get weather for a city", approval_mode="never_require")
+def _get_weather(city: str) -> str:
+    """Get weather for a city."""
+    return "Sunny, 72°F"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_aggregates_usage_across_tool_calls(span_exporter: InMemorySpanExporter):
+    """The invoke_agent span should sum token usage from all chat completions in the function invocation loop."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient()
+    client.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "Seattle"}')
+                ],
+            ),
+            usage_details=UsageDetails(input_token_count=2239, output_token_count=192),
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", text="The weather in Seattle is sunny."),
+            usage_details=UsageDetails(input_token_count=2569, output_token_count=99),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(
+        messages="What is the weather in Seattle?",
+        options={"tools": [_get_weather], "tool_choice": "auto"},
+    )
+
+    spans = span_exporter.get_finished_spans()
+
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+    agent_span = invoke_spans[0]
+
+    chat_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.CHAT_COMPLETION_OPERATION]
+    assert len(chat_spans) == 2
+
+    # Individual chat spans retain their own usage
+    assert chat_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 2239
+    assert chat_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 192
+    assert chat_spans[1].attributes.get(OtelAttr.INPUT_TOKENS) == 2569
+    assert chat_spans[1].attributes.get(OtelAttr.OUTPUT_TOKENS) == 99
+
+    # The invoke_agent span must report the aggregate across all LLM round-trips
+    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 2239 + 2569
+    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 192 + 99
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_usage_single_call(span_exporter: InMemorySpanExporter):
+    """When only one chat completion occurs, the invoke_agent span usage equals that single call."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient()
+    client.run_responses = [
+        ChatResponse(
+            messages=Message(role="assistant", text="Hello!"),
+            usage_details=UsageDetails(input_token_count=100, output_token_count=50),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(messages="Hi")
+
+    spans = span_exporter.get_finished_spans()
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+
+    assert invoke_spans[0].attributes.get(OtelAttr.INPUT_TOKENS) == 100
+    assert invoke_spans[0].attributes.get(OtelAttr.OUTPUT_TOKENS) == 50
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [False], indirect=True)
+async def test_agent_invoke_span_aggregates_usage_on_max_iterations_exhaustion(span_exporter: InMemorySpanExporter):
+    """When the function invocation loop exhausts max_iterations, the final response aggregates usage
+    from all rounds."""
+    from tests.core.conftest import MockBaseChatClient
+
+    class _InstrumentedAgent(AgentTelemetryLayer, RawAgent):
+        pass
+
+    client = MockBaseChatClient(
+        function_invocation_configuration={"max_iterations": 1},
+    )
+    client.run_responses = [
+        # Iteration 0: model returns a tool call
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(call_id="call_1", name="get_weather", arguments='{"city": "Seattle"}')
+                ],
+            ),
+            usage_details=UsageDetails(input_token_count=500, output_token_count=100),
+        ),
+        # Exhaustion path: consumed by tool_choice="none" final call (mock ignores usage)
+        ChatResponse(
+            messages=Message(role="assistant", text="placeholder"),
+            usage_details=UsageDetails(input_token_count=300, output_token_count=60),
+        ),
+    ]
+
+    agent = _InstrumentedAgent(client=client, name="test_agent", id="test_agent_id")
+
+    span_exporter.clear()
+    await agent.run(
+        messages="What is the weather in Seattle?",
+        options={"tools": [_get_weather], "tool_choice": "auto"},
+    )
+
+    spans = span_exporter.get_finished_spans()
+
+    invoke_spans = [s for s in spans if s.attributes.get(OtelAttr.OPERATION.value) == OtelAttr.AGENT_INVOKE_OPERATION]
+    assert len(invoke_spans) == 1
+    agent_span = invoke_spans[0]
+
+    # The invoke_agent span must aggregate usage from the in-loop call and the final exhaustion call
+    assert agent_span.attributes.get(OtelAttr.INPUT_TOKENS) == 500
+    assert agent_span.attributes.get(OtelAttr.OUTPUT_TOKENS) == 100

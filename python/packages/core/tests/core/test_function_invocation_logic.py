@@ -3226,7 +3226,7 @@ async def test_terminate_loop_single_function_call(chat_client_base: SupportsCha
     response = await chat_client_base.get_response(
         "hello",
         options={"tool_choice": "auto", "tools": [ai_func]},
-        middleware=[TerminateLoopMiddleware()],
+        client_kwargs={"middleware": [TerminateLoopMiddleware()]},
     )
 
     # Function should NOT have been executed - middleware intercepted it
@@ -3292,7 +3292,7 @@ async def test_terminate_loop_multiple_function_calls_one_terminates(chat_client
     response = await chat_client_base.get_response(
         "hello",
         options={"tool_choice": "auto", "tools": [normal_func, terminating_func]},
-        middleware=[SelectiveTerminateMiddleware()],
+        client_kwargs={"middleware": [SelectiveTerminateMiddleware()]},
     )
 
     # normal_function should have executed (middleware calls next_handler)
@@ -3345,7 +3345,7 @@ async def test_terminate_loop_streaming_single_function_call(chat_client_base: S
     async for update in chat_client_base.get_response(
         "hello",
         options={"tool_choice": "auto", "tools": [ai_func]},
-        middleware=[TerminateLoopMiddleware()],
+        client_kwargs={"middleware": [TerminateLoopMiddleware()]},
         stream=True,
     ):
         updates.append(update)
@@ -3389,12 +3389,12 @@ async def test_conversation_id_updated_in_options_between_tool_iterations():
     conversation_ids_received: list[str | None] = []
 
     class TrackingChatClient(
-        ChatMiddlewareLayer,
         FunctionInvocationLayer,
+        ChatMiddlewareLayer,
         BaseChatClient,
     ):
         def __init__(self) -> None:
-            super().__init__(function_middleware=[])
+            super().__init__(middleware=[])
             self.run_responses: list[ChatResponse] = []
             self.streaming_responses: list[list[ChatResponseUpdate]] = []
             self.call_count: int = 0

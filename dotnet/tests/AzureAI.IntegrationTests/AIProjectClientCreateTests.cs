@@ -5,7 +5,7 @@ using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
@@ -56,8 +56,8 @@ public class AIProjectClientCreateTests
             var agentRecord = await this._client.Agents.GetAgentAsync(agent.Name);
             Assert.NotNull(agentRecord);
             Assert.Equal(AgentName, agentRecord.Value.Name);
-            var definition = Assert.IsType<PromptAgentDefinition>(agentRecord.Value.Versions.Latest.Definition);
-            Assert.Equal(AgentDescription, agentRecord.Value.Versions.Latest.Description);
+            var definition = Assert.IsType<PromptAgentDefinition>(agentRecord.Value.GetLatestVersion().Definition);
+            Assert.Equal(AgentDescription, agentRecord.Value.GetLatestVersion().Description);
             Assert.Equal(AgentInstructions, definition.Instructions);
         }
         finally

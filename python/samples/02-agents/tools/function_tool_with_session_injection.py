@@ -47,12 +47,8 @@ async def main() -> None:
     session = agent.create_session()
 
     # Run the agent with the session; tools receive it via ctx.session.
-    print(
-        f"Agent: {await agent.run('What is the weather in London?', session=session)}"
-    )
-    print(
-        f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}"
-    )
+    print(f"Agent: {await agent.run('What is the weather in London?', session=session)}")
+    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}")
     print(f"Agent: {await agent.run('What cities did I ask about?', session=session)}")
 
 

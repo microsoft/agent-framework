@@ -100,24 +100,21 @@ class _AggregateAgentConversations(Executor):
         assistant_replies: list[Message] = []
 
         for r in results:
-            resp_messages = list(getattr(r.agent_response, "messages", []) or [])
-            conv = r.full_conversation if r.full_conversation is not None else resp_messages
+            resp_messages = list(r.agent_response.messages)
 
             logger.debug(
                 f"Aggregating executor {getattr(r, 'executor_id', '<unknown>')}: "
-                f"{len(resp_messages)} response msgs, {len(conv)} conversation msgs"
+                f"{len(resp_messages)} response msgs, {len(r.full_conversation)} conversation msgs"
             )
 
             # Capture a single user prompt (first encountered across any conversation)
             if prompt_message is None:
-                found_user = next((m for m in conv if _is_role(m, "user")), None)
-                if found_user is not None:
-                    prompt_message = found_user
+                prompt_message = next((m for m in r.full_conversation if _is_role(m, "user")), None)
 
             # Pick the final assistant message from the response; fallback to conversation search
             final_assistant = next((m for m in reversed(resp_messages) if _is_role(m, "assistant")), None)
             if final_assistant is None:
-                final_assistant = next((m for m in reversed(conv) if _is_role(m, "assistant")), None)
+                final_assistant = next((m for m in reversed(r.full_conversation) if _is_role(m, "assistant")), None)
 
             if final_assistant is not None:
                 assistant_replies.append(final_assistant)

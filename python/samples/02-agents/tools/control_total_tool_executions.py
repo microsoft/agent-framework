@@ -135,8 +135,7 @@ async def scenario_max_function_calls():
     )
 
     response = await agent.run(
-        "Search for the weather in Paris, London, Tokyo, "
-        "New York, and Sydney, and also search for best travel tips."
+        "Search for the weather in Paris, London, Tokyo, New York, and Sydney, and also search for best travel tips."
     )
     print(f"  Response: {response.text[:200]}...")
     print()
@@ -236,8 +235,12 @@ async def scenario_per_agent_tool_limits():
     session_b = agent_b.create_session()
     await agent_b.run("Look up quantum computing", session=session_b)
 
-    print(f"  agent_a_lookup.invocation_count = {agent_a_lookup.invocation_count}  (limit {agent_a_lookup.max_invocations})")
-    print(f"  agent_b_lookup.invocation_count = {agent_b_lookup.invocation_count}  (limit {agent_b_lookup.max_invocations})")
+    print(
+        f"  agent_a_lookup.invocation_count = {agent_a_lookup.invocation_count}  (limit {agent_a_lookup.max_invocations})"
+    )
+    print(
+        f"  agent_b_lookup.invocation_count = {agent_b_lookup.invocation_count}  (limit {agent_b_lookup.max_invocations})"
+    )
     print("  → Agent A hit its limit; Agent B used 1 of 5.")
     print()
 
@@ -254,8 +257,8 @@ async def scenario_combined():
     client = OpenAIResponsesClient()
 
     # 1. Configure the client with both iteration and function call limits.
-    client.function_invocation_configuration["max_iterations"] = 5       # max 5 LLM roundtrips
-    client.function_invocation_configuration["max_function_calls"] = 8   # max 8 total tool calls
+    client.function_invocation_configuration["max_iterations"] = 5  # max 5 LLM roundtrips
+    client.function_invocation_configuration["max_function_calls"] = 8  # max 8 total tool calls
     print(f"  max_iterations     = {client.function_invocation_configuration['max_iterations']}")
     print(f"  max_function_calls = {client.function_invocation_configuration['max_function_calls']}")
 
