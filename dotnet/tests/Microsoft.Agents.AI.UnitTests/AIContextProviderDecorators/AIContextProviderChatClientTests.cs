@@ -308,6 +308,8 @@ public class AIContextProviderChatClientTests
         // Assert: the original list should still contain only the baseline tool
         Assert.Single(originalTools);
         Assert.Same(baselineTool, originalTools[0]);
+        Assert.Same(originalTools, sharedOptions.Tools);
+        Assert.Same(baselineTool, originalTools[0]);
     }
 
     [Fact]
@@ -341,6 +343,30 @@ public class AIContextProviderChatClientTests
         // Assert: each call should see exactly 2 tools (1 baseline + 1 injected)
         Assert.Equal(3, toolCountsSeenByInner.Count);
         Assert.All(toolCountsSeenByInner, count => Assert.Equal(2, count));
+    [Fact]
+    public async Task GetStreamingResponseAsync_SharedOptions_OriginalToolsNotMutatedAsync()
+    {
+        // Arrange
+        var innerClient = CreateMockStreamingChatClient(
+            onGetStreamingResponse: (_, _, _) => ToAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "Response")));
+
+        var provider = new TestAIContextProvider("key1", provideTools: [new TestAITool()]);
+        var chatClient = new AIContextProviderChatClient(innerClient, [provider]);
+
+        var baselineTool = new TestAITool();
+        var originalTools = new List<AITool> { baselineTool };
+        var sharedOptions = new ChatOptions
+        {
+            Tools = originalTools
+        };
+
+        // Act
+        await RunStreamingWithAgentContextAsync(chatClient, [], sharedOptions);
+
+        // Assert: the original list should still contain only the baseline tool
+        Assert.Single(originalTools);
+        Assert.Same(baselineTool, originalTools[0]);
     }
 
     #endregion
