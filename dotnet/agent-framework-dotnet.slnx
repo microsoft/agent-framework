@@ -199,7 +199,6 @@
     <Project Path="samples/03-workflows/Declarative/ExecuteCode/ExecuteCode.csproj" />
     <Project Path="samples/03-workflows/Declarative/ExecuteWorkflow/ExecuteWorkflow.csproj" />
     <Project Path="samples/03-workflows/Declarative/FunctionTools/FunctionTools.csproj" />
-    <Project Path="samples/03-workflows/Declarative/GenerateCode/GenerateCode.csproj" />
     <Project Path="samples/03-workflows/Declarative/HostedWorkflow/HostedWorkflow.csproj" />
     <Project Path="samples/03-workflows/Declarative/InputArguments/InputArguments.csproj" />
     <Project Path="samples/03-workflows/Declarative/InvokeFunctionTool/InvokeFunctionTool.csproj" />
