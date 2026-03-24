@@ -9,7 +9,6 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.models import AnalysisResult
@@ -99,7 +98,7 @@ class TestInit:
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
-        assert provider.analyzer_id == "prebuilt-documentSearch"
+        assert provider.analyzer_id is None
         assert provider.max_wait == 5.0
         assert provider.output_sections == [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
         assert provider.content_limits is not None
@@ -712,12 +711,13 @@ class TestErrorHandling:
         assert state["documents"]["error.pdf"]["status"] == "failed"
         assert "Service unavailable" in (state["documents"]["error.pdf"]["error"] or "")
 
-    async def test_not_initialized_raises(self) -> None:
+    async def test_lazy_initialization_on_before_run(self) -> None:
+        """before_run lazily initializes _client instead of raising."""
         provider = ContentUnderstandingContextProvider(
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
-        # provider._client is None since we never called __aenter__
+        assert provider._client is None
 
         msg = Message(
             role="user",
@@ -730,8 +730,10 @@ class TestErrorHandling:
         state: dict[str, Any] = {}
         session = AgentSession()
 
-        with pytest.raises(RuntimeError, match="not initialized"):
-            await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        # before_run will lazily initialize; the CU call itself may fail
+        # (mock credential) but _client should no longer be None
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        assert provider._client is not None
 
 
 class TestMultiModalFixtures:
@@ -802,6 +804,40 @@ class TestSupportedMediaTypes:
 
     def test_zip_not_supported(self) -> None:
         assert "application/zip" not in SUPPORTED_MEDIA_TYPES
+
+
+class TestAnalyzerAutoDetection:
+    """Verify _resolve_analyzer_id auto-selects the right analyzer by media type."""
+
+    def test_explicit_analyzer_always_wins(self) -> None:
+        provider = _make_provider(analyzer_id="prebuilt-invoice")
+        assert provider._resolve_analyzer_id("audio/mp3") == "prebuilt-invoice"
+        assert provider._resolve_analyzer_id("video/mp4") == "prebuilt-invoice"
+        assert provider._resolve_analyzer_id("application/pdf") == "prebuilt-invoice"
+
+    def test_auto_detect_pdf(self) -> None:
+        provider = _make_provider()  # analyzer_id=None
+        assert provider._resolve_analyzer_id("application/pdf") == "prebuilt-documentSearch"
+
+    def test_auto_detect_image(self) -> None:
+        provider = _make_provider()
+        assert provider._resolve_analyzer_id("image/jpeg") == "prebuilt-documentSearch"
+        assert provider._resolve_analyzer_id("image/png") == "prebuilt-documentSearch"
+
+    def test_auto_detect_audio(self) -> None:
+        provider = _make_provider()
+        assert provider._resolve_analyzer_id("audio/mp3") == "prebuilt-audioSearch"
+        assert provider._resolve_analyzer_id("audio/wav") == "prebuilt-audioSearch"
+        assert provider._resolve_analyzer_id("audio/mpeg") == "prebuilt-audioSearch"
+
+    def test_auto_detect_video(self) -> None:
+        provider = _make_provider()
+        assert provider._resolve_analyzer_id("video/mp4") == "prebuilt-videoSearch"
+        assert provider._resolve_analyzer_id("video/webm") == "prebuilt-videoSearch"
+
+    def test_auto_detect_unknown_falls_back_to_document(self) -> None:
+        provider = _make_provider()
+        assert provider._resolve_analyzer_id("application/octet-stream") == "prebuilt-documentSearch"
 
 
 class TestFileSearchIntegration:
@@ -985,3 +1021,298 @@ class TestFileSearchIntegration:
                 if "Document Content" in m.text or "Contoso" in m.text:
                     found_content = True
         assert found_content
+
+    async def test_file_search_multiple_files(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+        audio_analysis_result: AnalysisResult,
+    ) -> None:
+        """Multiple files should each be uploaded to the vector store."""
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            side_effect=[
+                _make_mock_poller(pdf_analysis_result),
+                _make_mock_poller(audio_analysis_result),
+            ],
+        )
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Compare these"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+                _make_content_from_data(b"\x00audio-fake", "audio/mp3", "call.mp3"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Vector store created once, but two files uploaded
+        mock_oai.vector_stores.create.assert_called_once()
+        assert mock_oai.files.create.call_count == 2
+        assert mock_oai.vector_stores.files.create.call_count == 2
+
+    async def test_file_search_skips_empty_markdown(
+        self,
+        mock_cu_client: AsyncMock,
+    ) -> None:
+        """Upload should be skipped when CU returns no markdown content."""
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+
+        # Create a result with empty markdown
+        empty_result = AnalysisResult({"contents": [{"markdown": "", "fields": {}}]})
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(empty_result),
+        )
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "empty.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # No file should be uploaded (empty markdown)
+        mock_oai.files.create.assert_not_called()
+
+    async def test_pending_resolution_uploads_to_vector_store(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """When a background task completes in file_search mode, content should be
+        uploaded to the vector store — NOT injected into context messages."""
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        mock_oai = self._make_mock_openai_client()
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            file_search=FileSearchConfig(openai_client=mock_oai),
+        )
+
+        # Simulate a completed background task
+        async def return_result() -> AnalysisResult:
+            return pdf_analysis_result
+
+        task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
+        await asyncio.sleep(0.01)
+        provider._pending_tasks["report.pdf"] = task
+
+        state: dict[str, Any] = {
+            "documents": {
+                "report.pdf": {
+                    "status": "pending",
+                    "filename": "report.pdf",
+                    "media_type": "application/pdf",
+                    "analyzer_id": "prebuilt-documentSearch",
+                    "analyzed_at": None,
+                    "result": None,
+                    "error": None,
+                },
+            },
+        }
+
+        msg = Message(role="user", contents=[Content.from_text("Is the report ready?")])
+        context = _make_context([msg])
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Document should be ready
+        assert state["documents"]["report.pdf"]["status"] == "ready"
+
+        # Content should NOT be injected into context messages
+        for msgs in context.context_messages.values():
+            for m in msgs:
+                assert "Document Content" not in m.text
+
+        # Should be uploaded to vector store instead
+        mock_oai.files.create.assert_called_once()
+        mock_oai.vector_stores.files.create.assert_called_once()
+
+        # Instructions should mention file_search, not "provided above"
+        assert any("file_search" in instr for instr in context.instructions)
+        assert not any("provided above" in instr for instr in context.instructions)
+
+
+class TestEnsureInitialized:
+    async def test_idempotent_initialization(self) -> None:
+        """Calling _ensure_initialized twice should not re-create the client."""
+        provider = ContentUnderstandingContextProvider(
+            endpoint="https://test.cognitiveservices.azure.com/",
+            credential=AsyncMock(),
+        )
+        assert provider._client is None
+
+        with patch(
+            "agent_framework_azure_ai_contentunderstanding._context_provider.ContentUnderstandingClient",
+        ) as mock_cls:
+            mock_instance = AsyncMock()
+            mock_cls.return_value = mock_instance
+
+            await provider._ensure_initialized()
+            assert provider._client is mock_instance
+
+            await provider._ensure_initialized()
+            # Should only be constructed once
+            assert mock_cls.call_count == 1
+
+
+class TestCloseCancel:
+    async def test_close_cancels_pending_tasks(self) -> None:
+        """close() should cancel any pending background analysis tasks."""
+        provider = _make_provider(mock_client=AsyncMock())
+
+        # Simulate a long-running pending task
+        async def slow() -> None:
+            await asyncio.sleep(100)
+
+        task = asyncio.create_task(slow())
+        provider._pending_tasks["big_file.pdf"] = task  # type: ignore[assignment]
+
+        await provider.close()
+
+        # Allow the cancellation to propagate
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert task.cancelled()
+        assert len(provider._pending_tasks) == 0
+        assert provider._client is None
+
+
+class TestAnalyzerAutoDetectionE2E:
+    """End-to-end: verify _analyze_file stores the resolved analyzer in DocumentEntry."""
+
+    async def test_audio_file_uses_audio_analyzer(
+        self,
+        mock_cu_client: AsyncMock,
+        audio_analysis_result: AnalysisResult,
+    ) -> None:
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(audio_analysis_result),
+        )
+        provider = _make_provider(mock_client=mock_cu_client)  # analyzer_id=None
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Transcribe this"),
+                _make_content_from_data(b"\x00audio", "audio/mp3", "call.mp3"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert state["documents"]["call.mp3"]["analyzer_id"] == "prebuilt-audioSearch"
+        # CU client should have been called with the audio analyzer
+        mock_cu_client.begin_analyze_binary.assert_called_once()
+        call_args = mock_cu_client.begin_analyze_binary.call_args
+        assert call_args[0][0] == "prebuilt-audioSearch"
+
+    async def test_video_file_uses_video_analyzer(
+        self,
+        mock_cu_client: AsyncMock,
+        video_analysis_result: AnalysisResult,
+    ) -> None:
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(video_analysis_result),
+        )
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this video"),
+                _make_content_from_data(b"\x00video", "video/mp4", "demo.mp4"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert state["documents"]["demo.mp4"]["analyzer_id"] == "prebuilt-videoSearch"
+        call_args = mock_cu_client.begin_analyze_binary.call_args
+        assert call_args[0][0] == "prebuilt-videoSearch"
+
+    async def test_pdf_file_uses_document_analyzer(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Read this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "report.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert state["documents"]["report.pdf"]["analyzer_id"] == "prebuilt-documentSearch"
+        call_args = mock_cu_client.begin_analyze_binary.call_args
+        assert call_args[0][0] == "prebuilt-documentSearch"
+
+    async def test_explicit_override_ignores_media_type(
+        self,
+        mock_cu_client: AsyncMock,
+        audio_analysis_result: AnalysisResult,
+    ) -> None:
+        """Explicit analyzer_id should override auto-detection even for audio."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(audio_analysis_result),
+        )
+        provider = _make_provider(mock_client=mock_cu_client, analyzer_id="prebuilt-invoice")
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze"),
+                _make_content_from_data(b"\x00audio", "audio/mp3", "call.mp3"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert state["documents"]["call.mp3"]["analyzer_id"] == "prebuilt-invoice"
+        call_args = mock_cu_client.begin_analyze_binary.call_args
+        assert call_args[0][0] == "prebuilt-invoice"

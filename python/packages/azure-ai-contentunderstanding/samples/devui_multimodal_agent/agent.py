@@ -38,7 +38,6 @@ _cu_credential = AzureKeyCredential(_cu_key) if _cu_key else _credential
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
-    analyzer_id="prebuilt-documentSearch",
     max_wait=5.0,
 )
 

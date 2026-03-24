@@ -53,6 +53,14 @@ SUPPORTED_MEDIA_TYPES: frozenset[str] = frozenset({
     "video/webm",
 })
 
+# Mapping from media type prefix to the appropriate prebuilt CU analyzer.
+# Used when analyzer_id is None (auto-detect mode).
+_MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
+    "audio/": "prebuilt-audioSearch",
+    "video/": "prebuilt-videoSearch",
+}
+_DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
+
 
 class ContentUnderstandingContextProvider(BaseContextProvider):
     """Context provider that analyzes file attachments using Azure Content Understanding.
@@ -65,7 +73,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     Args:
         endpoint: Azure Content Understanding endpoint URL.
         credential: Azure credential for authentication.
-        analyzer_id: CU analyzer to use.
+        analyzer_id: CU analyzer to use. When ``None`` (default), the analyzer
+            is auto-selected based on the file's media type:
+            audio → ``prebuilt-audioSearch``, video → ``prebuilt-videoSearch``,
+            documents/images → ``prebuilt-documentSearch``.
         max_wait: Max seconds to wait for analysis before deferring to background.
             ``None`` waits until complete.
         output_sections: Which CU output sections to pass to LLM.
@@ -82,7 +93,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         endpoint: str,
         credential: AzureCredentialTypes,
         *,
-        analyzer_id: str = "prebuilt-documentSearch",
+        analyzer_id: str | None = None,
         max_wait: float | None = DEFAULT_MAX_WAIT,
         output_sections: list[AnalysisSection] | None = None,
         content_limits: ContentLimits | None = DEFAULT_CONTENT_LIMITS,
@@ -99,6 +110,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self.file_search = file_search
         self._client: ContentUnderstandingClient | None = None
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
+        self._pending_uploads: list[tuple[str, DocumentEntry]] = []
         self._vector_store_id: str | None = None
         self._uploaded_file_ids: list[str] = []
 
@@ -122,6 +134,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             await self._client.close()
             self._client = None
 
+    async def _ensure_initialized(self) -> None:
+        """Lazily initialize the CU client if not already done."""
+        if self._client is None:
+            await self.__aenter__()
+
     async def before_run(
         self,
         *,
@@ -134,10 +151,17 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         This method is called automatically by the framework before each LLM invocation.
         """
+        await self._ensure_initialized()
         documents: dict[str, DocumentEntry] = state.setdefault("documents", {})
 
         # 1. Resolve pending background tasks
         self._resolve_pending_tasks(documents, context)
+
+        # 1b. Upload any documents that completed in the background (file_search mode)
+        if self._pending_uploads:
+            for upload_key, upload_entry in self._pending_uploads:
+                await self._upload_to_vector_store(upload_key, upload_entry)
+            self._pending_uploads.clear()
 
         # 2. Detect and strip supported file attachments from input
         new_files = self._detect_and_strip_files(context)
@@ -165,12 +189,19 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                             Message(role="user", text=self._format_result(entry["filename"], entry["result"])),
                         ],
                     )
-                context.extend_instructions(
-                    self.source_id,
-                    "A document has been analyzed using Azure Content Understanding. "
-                    "The document content (markdown) and extracted fields (JSON) are provided above. "
-                    "Use specific field values and cite page numbers when answering.",
-                )
+                if self.file_search:
+                    context.extend_instructions(
+                        self.source_id,
+                        "A document has been analyzed using Azure Content Understanding "
+                        "and indexed in a vector store. Use file_search to retrieve relevant sections.",
+                    )
+                else:
+                    context.extend_instructions(
+                        self.source_id,
+                        "A document has been analyzed using Azure Content Understanding. "
+                        "The document content (markdown) and extracted fields (JSON) are provided above. "
+                        "Use specific field values and cite page numbers when answering.",
+                    )
 
         # 6. Register file_search tool if vector store exists
         if self.file_search and self._vector_store_id:
@@ -282,6 +313,24 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         return None
 
     # ------------------------------------------------------------------
+    # Analyzer Resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_analyzer_id(self, media_type: str) -> str:
+        """Return the analyzer ID to use for the given media type.
+
+        When ``self.analyzer_id`` is set, it is always returned (explicit
+        override).  Otherwise the media type prefix is matched against the
+        known mapping, falling back to ``prebuilt-documentSearch``.
+        """
+        if self.analyzer_id is not None:
+            return self.analyzer_id
+        for prefix, analyzer in _MEDIA_TYPE_ANALYZER_MAP.items():
+            if media_type.startswith(prefix):
+                return analyzer
+        return _DEFAULT_ANALYZER
+
+    # ------------------------------------------------------------------
     # Analysis
     # ------------------------------------------------------------------
 
@@ -300,6 +349,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         media_type = content.media_type or "application/octet-stream"
         filename = doc_key
+        resolved_analyzer = self._resolve_analyzer_id(media_type)
 
         # Check content limits
         limit_error = self._check_content_limits(content, binary_data)
@@ -308,7 +358,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 status="failed",
                 filename=filename,
                 media_type=media_type,
-                analyzer_id=self.analyzer_id,
+                analyzer_id=resolved_analyzer,
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
                 result=None,
                 error=limit_error,
@@ -323,12 +373,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             # Start CU analysis
             if content.type == "uri" and content.uri and not content.uri.startswith("data:"):
                 poller = await self._client.begin_analyze(
-                    self.analyzer_id,
+                    resolved_analyzer,
                     body={"inputs": [{"url": content.uri}]},
                 )
             elif binary_data:
                 poller = await self._client.begin_analyze_binary(
-                    self.analyzer_id,
+                    resolved_analyzer,
                     binary_input=binary_data,
                     content_type=media_type,
                 )
@@ -351,7 +401,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                         status="pending",
                         filename=filename,
                         media_type=media_type,
-                        analyzer_id=self.analyzer_id,
+                        analyzer_id=resolved_analyzer,
                         analyzed_at=None,
                         result=None,
                         error=None,
@@ -370,12 +420,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 status="ready",
                 filename=filename,
                 media_type=media_type,
-                analyzer_id=self.analyzer_id,
+                analyzer_id=resolved_analyzer,
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
                 result=extracted,
                 error=None,
             )
-            logger.info("Analyzed '%s' successfully.", filename)
+            logger.info("Analyzed '%s' with analyzer '%s' successfully.", filename, resolved_analyzer)
 
         except asyncio.TimeoutError:
             raise
@@ -385,7 +435,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 status="failed",
                 filename=filename,
                 media_type=media_type,
-                analyzer_id=self.analyzer_id,
+                analyzer_id=resolved_analyzer,
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
                 result=None,
                 error=str(e),
@@ -430,15 +480,25 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
                 # Inject newly ready content
-                context.extend_messages(
-                    self,
-                    [
-                        Message(role="user", text=self._format_result(entry["filename"], extracted)),
-                    ],
-                )
+                if self.file_search:
+                    # Upload to vector store — do NOT inject markdown into messages
+                    # (this is a sync context; schedule the upload as a task)
+                    self._pending_uploads.append((doc_key, entry))
+                else:
+                    context.extend_messages(
+                        self,
+                        [
+                            Message(role="user", text=self._format_result(entry["filename"], extracted)),
+                        ],
+                    )
                 context.extend_instructions(
                     self.source_id,
-                    f"Document '{entry['filename']}' analysis is now complete. The content is provided above.",
+                    f"Document '{entry['filename']}' analysis is now complete."
+                    + (
+                        " Use file_search to retrieve relevant sections."
+                        if self.file_search
+                        else " The content is provided above."
+                    ),
                 )
 
             except Exception as e:

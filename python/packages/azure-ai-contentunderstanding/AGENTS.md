@@ -13,13 +13,24 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 | `ContentUnderstandingContextProvider` | class | Main context provider — extends `BaseContextProvider` |
 | `AnalysisSection` | enum | Output section selector (MARKDOWN, FIELDS, etc.) |
 | `ContentLimits` | dataclass | Configurable file size/page/duration limits |
+| `FileSearchConfig` | dataclass | Configuration for CU + OpenAI vector store RAG mode |
 
 ## Architecture
 
 - **`_context_provider.py`** — Main provider implementation. Overrides `before_run()` to detect
   file attachments, call the CU API, manage session state with multi-document tracking,
   and auto-register retrieval tools for follow-up turns.
-- **`_models.py`** — `AnalysisSection` enum, `ContentLimits` dataclass, `DocumentEntry` TypedDict.
+  - **Lazy initialization** — `_ensure_initialized()` creates the CU client on first `before_run()`
+    call, so the provider works with frameworks (e.g. DevUI) that don't call `__aenter__`.
+  - **Analyzer auto-detection** — When `analyzer_id=None` (default), `_resolve_analyzer_id()`
+    selects the CU analyzer based on media type prefix: `audio/` → `prebuilt-audioSearch`,
+    `video/` → `prebuilt-videoSearch`, everything else → `prebuilt-documentSearch`.
+  - **file_search RAG** — When `FileSearchConfig` is provided, CU-extracted markdown is
+    uploaded to an OpenAI vector store and a `file_search` tool is registered on the context
+    instead of injecting the full document content. This enables token-efficient retrieval
+    for large documents.
+- **`_models.py`** — `AnalysisSection` enum, `ContentLimits` dataclass, `DocumentEntry` TypedDict,
+  `FileSearchConfig` dataclass.
 
 ## Key Patterns
 
@@ -28,6 +39,19 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 - Auto-registers `list_documents()` and `get_analyzed_document()` tools via `context.extend_tools()`.
 - Configurable timeout (`max_wait`) with `asyncio.create_task()` background fallback.
 - Strips supported binary attachments from `input_messages` to prevent LLM API errors.
+- Explicit `analyzer_id` always overrides auto-detection (user preference wins).
+- Vector store resources are cleaned up in `close()` / `__aexit__`.
+
+## Samples
+
+| Sample | Description |
+|--------|-------------|
+| `devui_multimodal_agent/` | DevUI web UI for CU-powered chat with auto-detect analyzer |
+| `devui_file_search_agent/` | DevUI web UI combining CU + file_search RAG |
+| `document_qa.py` | Upload a PDF, ask questions, follow-up with cached results |
+| `multimodal_chat.py` | Multi-file session with background processing |
+| `large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |
+| `invoice_processing.py` | Structured field extraction with `prebuilt-invoice` analyzer |
 
 ## Running Tests
 

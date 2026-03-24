@@ -25,7 +25,6 @@ credential = DefaultAzureCredential()
 cu = ContentUnderstandingContextProvider(
     endpoint="https://my-resource.cognitiveservices.azure.com/",
     credential=credential,
-    analyzer_id="prebuilt-documentSearch",
 )
 
 async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
@@ -69,7 +68,7 @@ from agent_framework_azure_ai_contentunderstanding import (
 cu = ContentUnderstandingContextProvider(
     endpoint="https://my-resource.cognitiveservices.azure.com/",
     credential=credential,
-    analyzer_id="my-custom-analyzer",     # default: "prebuilt-documentSearch"
+    analyzer_id="my-custom-analyzer",     # default: auto-detect by media type
     max_wait=10.0,                        # default: 5.0 seconds
     output_sections=[                     # default: MARKDOWN + FIELDS
         AnalysisSection.MARKDOWN,
@@ -113,6 +112,7 @@ uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
 | [document_qa.py](samples/document_qa.py) | Upload a PDF, ask questions, follow-up with cached results |
 | [multimodal_chat.py](samples/multimodal_chat.py) | Multi-file session with status tracking |
 | [devui_multimodal_agent/](samples/devui_multimodal_agent/) | Web UI for file upload + CU-powered chat |
+| [devui_file_search_agent/](samples/devui_file_search_agent/) | Web UI combining CU + file_search RAG for large documents |
 | [large_doc_file_search.py](samples/large_doc_file_search.py) | CU extraction + OpenAI vector store RAG |
 | [invoice_processing.py](samples/invoice_processing.py) | Structured field extraction with `prebuilt-invoice` analyzer |
 

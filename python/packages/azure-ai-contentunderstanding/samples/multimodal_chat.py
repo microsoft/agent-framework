@@ -53,7 +53,6 @@ async def main() -> None:
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=cu_credential,
-        analyzer_id="prebuilt-documentSearch",
         max_wait=5.0,  # 5 seconds — audio/video will defer to background
     )
 

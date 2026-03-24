@@ -57,7 +57,6 @@ async def main() -> None:
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=credential,
-        analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,  # generous timeout for large documents
     )
 
