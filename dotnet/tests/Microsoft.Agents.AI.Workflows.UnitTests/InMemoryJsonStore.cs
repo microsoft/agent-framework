@@ -9,35 +9,35 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
 internal sealed class InMemoryJsonStore : JsonCheckpointStore
 {
-    private readonly Dictionary<string, RunCheckpointCache<JsonElement>> _store = [];
+    private readonly Dictionary<string, SessionCheckpointCache<JsonElement>> _store = [];
 
-    private RunCheckpointCache<JsonElement> EnsureRunStore(string runId)
+    private SessionCheckpointCache<JsonElement> EnsureSessionStore(string sessionId)
     {
-        if (!this._store.TryGetValue(runId, out RunCheckpointCache<JsonElement>? runStore))
+        if (!this._store.TryGetValue(sessionId, out SessionCheckpointCache<JsonElement>? runStore))
         {
-            runStore = this._store[runId] = new();
+            runStore = this._store[sessionId] = new();
         }
 
         return runStore;
     }
 
-    public override ValueTask<CheckpointInfo> CreateCheckpointAsync(string runId, JsonElement value, CheckpointInfo? parent = null)
+    public override ValueTask<CheckpointInfo> CreateCheckpointAsync(string sessionId, JsonElement value, CheckpointInfo? parent = null)
     {
-        return new(this.EnsureRunStore(runId).Add(runId, value));
+        return new(this.EnsureSessionStore(sessionId).Add(sessionId, value));
     }
 
-    public override ValueTask<JsonElement> RetrieveCheckpointAsync(string runId, CheckpointInfo key)
+    public override ValueTask<JsonElement> RetrieveCheckpointAsync(string sessionId, CheckpointInfo key)
     {
-        if (!this.EnsureRunStore(runId).TryGet(key, out JsonElement result))
+        if (!this.EnsureSessionStore(sessionId).TryGet(key, out JsonElement result))
         {
-            throw new KeyNotFoundException("Could not retrieve checkpoint with id {key.CheckpointId} for run {runId}");
+            throw new KeyNotFoundException($"Could not retrieve checkpoint with id {key.CheckpointId} for session {sessionId}");
         }
 
         return new(result);
     }
 
-    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string runId, CheckpointInfo? withParent = null)
+    public override ValueTask<IEnumerable<CheckpointInfo>> RetrieveIndexAsync(string sessionId, CheckpointInfo? withParent = null)
     {
-        return new(this.EnsureRunStore(runId).Index);
+        return new(this.EnsureSessionStore(sessionId).Index);
     }
 }

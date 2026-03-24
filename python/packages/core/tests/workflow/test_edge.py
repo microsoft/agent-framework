@@ -5,13 +5,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from agent_framework import (
     Executor,
     InProcRunnerContext,
-    Message,
-    SharedState,
     WorkflowContext,
+    WorkflowMessage,
     handler,
 )
 from agent_framework._workflows._edge import (
@@ -24,9 +24,8 @@ from agent_framework._workflows._edge import (
     SwitchCaseEdgeGroupDefault,
 )
 from agent_framework._workflows._edge_runner import create_edge_runner
+from agent_framework._workflows._state import State
 from agent_framework.observability import EdgeGroupDeliveryStatus
-
-# Add for test
 
 
 @dataclass
@@ -137,9 +136,17 @@ def test_edge_can_handle():
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
 
+    _ = Edge(source_id=source.id, target_id=target.id)
+
+
+async def test_edge_should_route():
+    """Test edge should_route with no condition."""
+    source = MockExecutor(id="source_executor")
+    target = MockExecutor(id="target_executor")
+
     edge = Edge(source_id=source.id, target_id=target.id)
 
-    assert edge.should_route(MockMessage(data="test"))
+    assert await edge.should_route(MockMessage(data="test"))
 
 
 # endregion Edge
@@ -183,13 +190,13 @@ async def test_single_edge_group_send_message() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
 
@@ -202,13 +209,13 @@ async def test_single_edge_group_send_message_with_target() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
 
@@ -221,13 +228,13 @@ async def test_single_edge_group_send_message_with_invalid_target() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -240,13 +247,13 @@ async def test_single_edge_group_send_message_with_invalid_data() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -260,15 +267,16 @@ async def test_single_edge_group_send_message_with_condition_pass() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=lambda x: x.data == "test")
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
     assert target.call_count == 1
+    assert target.last_message is not None
     assert target.last_message.data == "test"
 
 
@@ -282,20 +290,20 @@ async def test_single_edge_group_send_message_with_condition_fail() -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=lambda x: x.data == "test")
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="different")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     # Should return True because message was processed, but condition failed
     assert success is True
     # Target should not be called because condition failed
     assert target.call_count == 0
 
 
-async def test_single_edge_group_tracing_success(span_exporter) -> None:
+async def test_single_edge_group_tracing_success(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper success spans."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -304,7 +312,7 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     # Create trace context and span IDs to simulate a message with tracing information
@@ -312,21 +320,24 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process SingleEdgeGroup"
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
@@ -343,7 +354,7 @@ async def test_single_edge_group_tracing_success(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
-async def test_single_edge_group_tracing_condition_failure(span_exporter) -> None:
+async def test_single_edge_group_tracing_condition_failure(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for condition failures."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -352,31 +363,32 @@ async def test_single_edge_group_tracing_condition_failure(span_exporter) -> Non
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id, condition=lambda x: x.data == "pass")
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="fail")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True  # Returns True but condition failed
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process SingleEdgeGroup"
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_CONDITION_FALSE.value
 
 
-async def test_single_edge_group_tracing_type_mismatch(span_exporter) -> None:
+async def test_single_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for type mismatches."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -385,32 +397,33 @@ async def test_single_edge_group_tracing_type_mismatch(span_exporter) -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     # Send incompatible data type
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process SingleEdgeGroup"
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value
 
 
-async def test_single_edge_group_tracing_target_mismatch(span_exporter) -> None:
+async def test_single_edge_group_tracing_target_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that single edge group processing creates proper spans for target mismatches."""
     source = MockExecutor(id="source_executor")
     target = MockExecutor(id="target_executor")
@@ -419,25 +432,26 @@ async def test_single_edge_group_tracing_target_mismatch(span_exporter) -> None:
     edge_group = SingleEdgeGroup(source_id=source.id, target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="wrong_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="wrong_target")
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process SingleEdgeGroup"
     assert span.attributes.get("edge_group.type") == "SingleEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TARGET_MISMATCH.value
@@ -486,13 +500,13 @@ async def test_source_edge_group_send_message() -> None:
     edge_group = FanOutEdgeGroup(source_id=source.id, target_ids=[target1.id, target2.id])
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
 
     assert success is True
     assert target1.call_count == 1
@@ -509,13 +523,13 @@ async def test_source_edge_group_send_message_with_target() -> None:
 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
 
     assert success is True
     assert target1.call_count == 1
@@ -532,13 +546,13 @@ async def test_source_edge_group_send_message_with_invalid_target() -> None:
 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -552,13 +566,13 @@ async def test_source_edge_group_send_message_with_invalid_data() -> None:
 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -572,13 +586,13 @@ async def test_source_edge_group_send_message_only_one_successful_send() -> None
 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
 
     assert success is True
     assert target1.call_count == 1  # target1 can handle MockMessage
@@ -621,14 +635,14 @@ async def test_source_edge_group_with_selection_func_send_message() -> None:
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+        success = await edge_runner.send_message(message, state, ctx)
 
         assert success is True
 
@@ -649,14 +663,14 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_s
 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with pytest.raises(RuntimeError):
-        await edge_runner.send_message(message, shared_state, ctx)
+        await edge_runner.send_message(message, state, ctx)
 
 
 async def test_source_edge_group_with_selection_func_send_message_with_target() -> None:
@@ -674,14 +688,14 @@ async def test_source_edge_group_with_selection_func_send_message_with_target() 
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+        success = await edge_runner.send_message(message, state, ctx)
 
         assert success is True
         assert mock_send.call_count == 1
@@ -703,13 +717,13 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_no
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, target_id=target2.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target2.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -728,13 +742,13 @@ async def test_source_edge_group_with_selection_func_send_message_with_invalid_d
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -753,17 +767,17 @@ async def test_source_edge_group_with_selection_func_send_message_with_target_in
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
-async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
+async def test_fan_out_edge_group_tracing_success(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-out edge group processing creates proper success spans."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
@@ -773,7 +787,7 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     edge_group = FanOutEdgeGroup(source_id=source.id, target_ids=[target1.id, target2.id])
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     # Create trace context and span IDs to simulate a message with tracing information
@@ -781,21 +795,24 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids)
+    message = WorkflowMessage(
+        data=data, source_id=source.id, trace_contexts=trace_contexts, source_span_ids=source_span_ids
+    )
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process FanOutEdgeGroup"
     assert span.attributes.get("edge_group.type") == "FanOutEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
@@ -812,7 +829,7 @@ async def test_fan_out_edge_group_tracing_success(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b7", 16)
 
 
-async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
+async def test_fan_out_edge_group_tracing_with_target(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-out edge group processing creates proper spans for targeted messages."""
     source = MockExecutor(id="source_executor")
     target1 = MockExecutor(id="target_executor_1")
@@ -822,7 +839,7 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     edge_group = FanOutEdgeGroup(source_id=source.id, target_ids=[target1.id, target2.id])
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     # Create trace context and span IDs to simulate a message with tracing information
@@ -830,7 +847,7 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     source_span_ids = ["00f067aa0ba902b7"]
 
     data = MockMessage(data="test")
-    message = Message(
+    message = WorkflowMessage(
         data=data,
         source_id=source.id,
         target_id=target1.id,
@@ -841,16 +858,17 @@ async def test_fan_out_edge_group_tracing_with_target(span_exporter) -> None:
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process FanOutEdgeGroup"
     assert span.attributes.get("edge_group.type") == "FanOutEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
@@ -908,15 +926,15 @@ async def test_target_edge_group_send_message_buffer() -> None:
     executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
         success = await edge_runner.send_message(
-            Message(data=data, source_id=source1.id),
-            shared_state,
+            WorkflowMessage(data=data, source_id=source1.id),
+            state,
             ctx,
         )
 
@@ -925,8 +943,8 @@ async def test_target_edge_group_send_message_buffer() -> None:
         assert len(edge_runner._buffer[source1.id]) == 1  # type: ignore
 
         success = await edge_runner.send_message(
-            Message(data=data, source_id=source2.id),
-            shared_state,
+            WorkflowMessage(data=data, source_id=source2.id),
+            state,
             ctx,
         )
         assert success is True
@@ -947,13 +965,13 @@ async def test_target_edge_group_send_message_with_invalid_target() -> None:
     executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
-    message = Message(data=data, source_id=source1.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source1.id, target_id="invalid_target")
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -968,17 +986,17 @@ async def test_target_edge_group_send_message_with_invalid_data() -> None:
     executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source1.id)
+    message = WorkflowMessage(data=data, source_id=source1.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
-async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
+async def test_fan_in_edge_group_tracing_buffered(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-in edge group processing creates proper spans for buffered messages."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
@@ -988,7 +1006,7 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
@@ -1005,19 +1023,22 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
 
     # Send first message (should be buffered)
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1),
-        shared_state,
+        WorkflowMessage(
+            data=data, source_id=source1.id, trace_contexts=trace_contexts1, source_span_ids=source_span_ids1
+        ),
+        state,
         ctx,
     )
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process FanInEdgeGroup"
     assert span.attributes.get("edge_group.type") == "FanInEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.BUFFERED.value
@@ -1036,19 +1057,22 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     span_exporter.clear()
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2),
-        shared_state,
+        WorkflowMessage(
+            data=data, source_id=source2.id, trace_contexts=trace_contexts2, source_span_ids=source_span_ids2
+        ),
+        state,
         ctx,
     )
     assert success is True
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process FanInEdgeGroup"
     assert span.attributes.get("edge_group.type") == "FanInEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is True
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DELIVERED.value
@@ -1064,7 +1088,7 @@ async def test_fan_in_edge_group_tracing_buffered(span_exporter) -> None:
     assert link.context.span_id == int("00f067aa0ba902b8", 16)
 
 
-async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
+async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter: InMemorySpanExporter) -> None:
     """Test that fan-in edge group processing creates proper spans for type mismatches."""
     source1 = MockExecutor(id="source_executor_1")
     source2 = MockExecutor(id="source_executor_2")
@@ -1074,26 +1098,27 @@ async def test_fan_in_edge_group_tracing_type_mismatch(span_exporter) -> None:
     edge_group = FanInEdgeGroup(source_ids=[source1.id, source2.id], target_id=target.id)
 
     edge_runner = create_edge_runner(edge_group, executors)
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     # Send incompatible data type
     data = "invalid_data"
-    message = Message(data=data, source_id=source1.id)
+    message = WorkflowMessage(data=data, source_id=source1.id)
 
     # Clear any build spans
     span_exporter.clear()
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
     spans = span_exporter.get_finished_spans()
-    edge_group_spans = [s for s in spans if s.name == "edge_group.process"]
+    edge_group_spans = [s for s in spans if s.attributes and s.attributes.get("edge_group.type") is not None]
 
     assert len(edge_group_spans) == 1
 
     span = edge_group_spans[0]
     assert span.attributes is not None
+    assert span.name == "edge_group.process FanInEdgeGroup"
     assert span.attributes.get("edge_group.type") == "FanInEdgeGroup"
     assert span.attributes.get("edge_group.delivered") is False
     assert span.attributes.get("edge_group.delivery_status") == EdgeGroupDeliveryStatus.DROPPED_TYPE_MISMATCH.value
@@ -1109,22 +1134,22 @@ async def test_fan_in_edge_group_with_multiple_message_types() -> None:
     executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id),
-        shared_state,
+        WorkflowMessage(data=data, source_id=source1.id),
+        state,
         ctx,
     )
     assert success
 
     data2 = MockMessageSecondary(data="test")
     success = await edge_runner.send_message(
-        Message(data=data2, source_id=source2.id),
-        shared_state,
+        WorkflowMessage(data=data2, source_id=source2.id),
+        state,
         ctx,
     )
     assert success
@@ -1140,14 +1165,14 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
     executors: dict[str, Executor] = {source1.id: source1, source2.id: source2, target.id: target}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data="test")
 
     success = await edge_runner.send_message(
-        Message(data=data, source_id=source1.id),
-        shared_state,
+        WorkflowMessage(data=data, source_id=source1.id),
+        state,
         ctx,
     )
     assert success
@@ -1160,8 +1185,8 @@ async def test_fan_in_edge_group_with_multiple_message_types_failed() -> None:
         # source executors as a union.
         data2 = MockMessageSecondary(data="test")
         _ = await edge_runner.send_message(
-            Message(data=data2, source_id=source2.id),
-            shared_state,
+            WorkflowMessage(data=data2, source_id=source2.id),
+            state,
             ctx,
         )
 
@@ -1256,23 +1281,23 @@ async def test_switch_case_edge_group_send_message() -> None:
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=-1)
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+        success = await edge_runner.send_message(message, state, ctx)
 
         assert success is True
         assert mock_send.call_count == 1
 
     # Default condition should
     data = MockMessage(data=1)
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
     with patch("agent_framework._workflows._edge_runner.EdgeRunner._execute_on_target") as mock_send:
-        success = await edge_runner.send_message(message, shared_state, ctx)
+        success = await edge_runner.send_message(message, state, ctx)
 
         assert success is True
         assert mock_send.call_count == 1
@@ -1295,13 +1320,13 @@ async def test_switch_case_edge_group_send_message_with_invalid_target() -> None
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=-1)
-    message = Message(data=data, source_id=source.id, target_id="invalid_target")
+    message = WorkflowMessage(data=data, source_id=source.id, target_id="invalid_target")
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 
@@ -1322,18 +1347,18 @@ async def test_switch_case_edge_group_send_message_with_valid_target() -> None:
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = MockMessage(data=1)  # Condition will fail
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
     data = MockMessage(data=-1)  # Condition will pass
-    message = Message(data=data, source_id=source.id, target_id=target1.id)
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    message = WorkflowMessage(data=data, source_id=source.id, target_id=target1.id)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is True
 
 
@@ -1354,13 +1379,13 @@ async def test_switch_case_edge_group_send_message_with_invalid_data() -> None:
     executors: dict[str, Executor] = {source.id: source, target1.id: target1, target2.id: target2}
     edge_runner = create_edge_runner(edge_group, executors)
 
-    shared_state = SharedState()
+    state = State()
     ctx = InProcRunnerContext()
 
     data = "invalid_data"
-    message = Message(data=data, source_id=source.id)
+    message = WorkflowMessage(data=data, source_id=source.id)
 
-    success = await edge_runner.send_message(message, shared_state, ctx)
+    success = await edge_runner.send_message(message, state, ctx)
     assert success is False
 
 

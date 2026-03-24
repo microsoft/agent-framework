@@ -25,7 +25,7 @@ internal static class TextMessageStreamingExtensions
         return splits.Select(text => (AIContent)new TextContent(text) { RawRepresentation = text });
     }
 
-    public static AgentRunResponseUpdate ToResponseUpdate(this AIContent content, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? agentId = null, string? authorName = null) =>
+    public static AgentResponseUpdate ToResponseUpdate(this AIContent content, string? messageId = null, DateTimeOffset? createdAt = null, string? responseId = null, string? agentId = null, string? authorName = null) =>
         new()
         {
             Role = ChatRole.Assistant,
@@ -37,7 +37,7 @@ internal static class TextMessageStreamingExtensions
             Contents = [content],
         };
 
-    public static IEnumerable<AgentRunResponseUpdate> ToAgentRunStream(this string message, DateTimeOffset? createdAt = null, string? messageId = null, string? responseId = null, string? agentId = null, string? authorName = null)
+    public static IEnumerable<AgentResponseUpdate> ToAgentRunStream(this string message, DateTimeOffset? createdAt = null, string? messageId = null, string? responseId = null, string? agentId = null, string? authorName = null)
     {
         messageId ??= Guid.NewGuid().ToString("N");
 
@@ -54,7 +54,7 @@ internal static class TextMessageStreamingExtensions
             RawRepresentation = rawRepresentation,
         };
 
-    public static IEnumerable<AgentRunResponseUpdate> StreamMessage(this ChatMessage message, string? responseId = null, string? agentId = null)
+    public static IEnumerable<AgentResponseUpdate> StreamMessage(this ChatMessage message, string? responseId = null, string? agentId = null)
     {
         responseId ??= Guid.NewGuid().ToString("N");
         string messageId = message.MessageId ?? Guid.NewGuid().ToString("N");
@@ -62,7 +62,7 @@ internal static class TextMessageStreamingExtensions
         return message.Contents.Select(content => content.ToResponseUpdate(messageId, message.CreatedAt, responseId: responseId, agentId: agentId, authorName: message.AuthorName));
     }
 
-    public static IEnumerable<AgentRunResponseUpdate> StreamMessages(this List<ChatMessage> messages, string? agentId = null) =>
+    public static IEnumerable<AgentResponseUpdate> StreamMessages(this List<ChatMessage> messages, string? agentId = null) =>
         messages.SelectMany(message => message.StreamMessage(agentId));
 
     public static List<ChatMessage> ToChatMessages(this IEnumerable<string> messages, string? authorName = null)

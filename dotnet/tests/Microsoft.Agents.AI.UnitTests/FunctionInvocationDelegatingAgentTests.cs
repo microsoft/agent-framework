@@ -524,8 +524,15 @@ public sealed class FunctionInvocationDelegatingAgentTests
     {
         // Arrange
         var testFunction = AIFunctionFactory.Create(() => "Function result", "TestFunction", "A test function");
-        var functionCall = new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>());
-        var mockChatClient = CreateMockChatClientWithFunctionCalls(functionCall);
+        var mockChatClient = new Mock<IChatClient>();
+
+        mockChatClient.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new ChatResponse([
+                new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_123", "TestFunction", new Dictionary<string, object?>())])
+            ]));
 
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
@@ -717,10 +724,10 @@ public sealed class FunctionInvocationDelegatingAgentTests
         var innerAgent = new ChatClientAgent(mockChatClient.Object);
         var messages = new List<ChatMessage> { new(ChatRole.User, "Test message") };
 
-        async Task<AgentRunResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentThread? thread, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
+        async Task<AgentResponse> RunningMiddlewareCallbackAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, AIAgent innerAgent, CancellationToken cancellationToken)
         {
             executionOrder.Add("Running-Pre");
-            var result = await innerAgent.RunAsync(messages, thread, options, cancellationToken);
+            var result = await innerAgent.RunAsync(messages, session, options, cancellationToken);
             executionOrder.Add("Running-Post");
             return result;
         }
@@ -800,7 +807,7 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
         // Act
         var options = new ChatClientAgentRunOptions(new ChatOptions { Tools = [testFunction] });
-        var responseUpdates = new List<AgentRunResponseUpdate>();
+        var responseUpdates = new List<AgentResponseUpdate>();
         await foreach (var update in middleware.RunStreamingAsync(messages, null, options, CancellationToken.None))
         {
             responseUpdates.Add(update);
@@ -924,6 +931,60 @@ public sealed class FunctionInvocationDelegatingAgentTests
 
         Assert.NotNull(functionResultContent);
         Assert.Equal("Blocked by middleware", functionResultContent.Result);
+    }
+
+    #endregion
+
+    #region Options Preservation Tests
+
+    /// <summary>
+    /// Tests that FunctionInvocationDelegatingAgent preserves all original AgentRunOptions properties
+    /// when converting base AgentRunOptions to ChatClientAgentRunOptions.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_WithBaseAgentRunOptions_PreservesAllOriginalOptionsAsync()
+    {
+        // Arrange
+        AgentRunOptions? capturedOptions = null;
+        var responseFormat = ChatResponseFormat.Json;
+        var additionalProperties = new AdditionalPropertiesDictionary { ["key1"] = "value1" };
+
+        Mock<IChatClient> mockChatClient = new();
+        var chatClientAgent = new ChatClientAgent(mockChatClient.Object);
+
+        // Wrap the inner agent in a spy that captures the converted options and returns a dummy response
+        var spyAgent = new AnonymousDelegatingAIAgent(
+            chatClientAgent,
+            runFunc: (messages, session, options, innerAgent, ct) =>
+            {
+                capturedOptions = options;
+                return Task.FromResult(new AgentResponse(new ChatResponse(new ChatMessage(ChatRole.Assistant, "test")) { ResponseId = "test" }));
+            },
+            runStreamingFunc: null);
+
+        static ValueTask<object?> MiddlewareCallbackAsync(AIAgent agent, FunctionInvocationContext context, Func<FunctionInvocationContext, CancellationToken, ValueTask<object?>> next, CancellationToken cancellationToken)
+            => next(context, cancellationToken);
+
+        var middleware = new FunctionInvocationDelegatingAgent(spyAgent, MiddlewareCallbackAsync);
+
+        var originalOptions = new AgentRunOptions
+        {
+            ResponseFormat = responseFormat,
+            AllowBackgroundResponses = true,
+            ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
+            AdditionalProperties = additionalProperties,
+        };
+
+        // Act
+        await middleware.RunAsync([new(ChatRole.User, "Test")], null, originalOptions, CancellationToken.None);
+
+        // Assert - All original properties were preserved on the converted options
+        Assert.NotNull(capturedOptions);
+        Assert.IsType<ChatClientAgentRunOptions>(capturedOptions);
+        Assert.Same(responseFormat, capturedOptions.ResponseFormat);
+        Assert.True(capturedOptions.AllowBackgroundResponses);
+        Assert.Same(originalOptions.ContinuationToken, capturedOptions.ContinuationToken);
+        Assert.Same(additionalProperties, capturedOptions.AdditionalProperties);
     }
 
     #endregion

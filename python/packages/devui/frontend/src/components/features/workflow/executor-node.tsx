@@ -1,9 +1,11 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import {
   Workflow,
   Home,
   Loader2,
+  ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { truncateText } from "@/utils/workflow-utils";
@@ -70,8 +72,9 @@ const getExecutorStateConfig = (state: ExecutorState) => {
 export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
   const nodeData = data as ExecutorNodeData;
   const config = getExecutorStateConfig(nodeData.state);
+  const [isOutputExpanded, setIsOutputExpanded] = useState(false);
 
-  const hasData = nodeData.inputData || nodeData.outputData || nodeData.error;
+  const hasOutput = nodeData.outputData || nodeData.error;
   const isRunning = nodeData.state === "running";
   const shouldAnimate = isRunning && (nodeData.isStreaming ?? true); // Default to true for backwards compatibility
 
@@ -80,19 +83,13 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
   const targetPosition = isVertical ? Position.Top : Position.Left;
   const sourcePosition = isVertical ? Position.Bottom : Position.Right;
 
-  // Helper to safely render data with full details
+  // Helper to render output/error details when expanded
   const renderDataDetails = () => {
-    const details = [];
-
     if (nodeData.error && typeof nodeData.error === "string") {
-      // Truncate error to first 150 characters for node display
-      const truncatedError = truncateText(nodeData.error, 150);
-      details.push(
-        <div key="error" className="mb-2">
-          <div className="text-xs font-medium text-red-600 dark:text-red-400 mb-1">Error:</div>
-          <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800 break-words">
-            {truncatedError}
-          </div>
+      const truncatedError = truncateText(nodeData.error, 200);
+      return (
+        <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/20 p-2 rounded border border-red-200 dark:border-red-800 break-words max-h-32 overflow-auto">
+          {truncatedError}
         </div>
       );
     }
@@ -103,53 +100,21 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
           typeof nodeData.outputData === "string"
             ? nodeData.outputData
             : JSON.stringify(nodeData.outputData, null, 2);
-        details.push(
-          <div key="output" className="mb-2">
-            <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">Output:</div>
-            <div className="text-xs text-gray-700 dark:text-gray-300 bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-800 max-h-20 overflow-auto">
-              <pre className="whitespace-pre-wrap font-mono">{outputStr}</pre>
-            </div>
+        return (
+          <div className="text-xs text-gray-700 dark:text-gray-300 bg-muted/50 p-2 rounded border max-h-32 overflow-auto">
+            <pre className="whitespace-pre-wrap font-mono">{outputStr}</pre>
           </div>
         );
       } catch {
-        details.push(
-          <div key="output" className="mb-2">
-            <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-1">Output:</div>
-            <div className="text-xs text-gray-600 dark:text-gray-400 bg-green-50 dark:bg-green-950/20 p-2 rounded border border-green-200 dark:border-green-800">
-              [Unable to display output data]
-            </div>
+        return (
+          <div className="text-xs text-gray-600 dark:text-gray-400 bg-muted/50 p-2 rounded border">
+            [Unable to display output]
           </div>
         );
       }
     }
 
-    if (nodeData.inputData) {
-      try {
-        const inputStr =
-          typeof nodeData.inputData === "string"
-            ? nodeData.inputData
-            : JSON.stringify(nodeData.inputData, null, 2);
-        details.push(
-          <div key="input" className="mb-2">
-            <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">Input:</div>
-            <div className="text-xs text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-950/20 p-2 rounded border border-blue-200 dark:border-blue-800 max-h-20 overflow-auto">
-              <pre className="whitespace-pre-wrap font-mono">{inputStr}</pre>
-            </div>
-          </div>
-        );
-      } catch {
-        details.push(
-          <div key="input" className="mb-2">
-            <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-1">Input:</div>
-            <div className="text-xs text-gray-600 dark:text-gray-400 bg-blue-50 dark:bg-blue-950/20 p-2 rounded border border-blue-200 dark:border-blue-800">
-              [Unable to display input data]
-            </div>
-          </div>
-        );
-      }
-    }
-
-    return details.length > 0 ? details : null;
+    return null;
   };
 
   return (
@@ -218,10 +183,28 @@ export const ExecutorNode = memo(({ data, selected }: NodeProps) => {
           </div>
         </div>
 
-        {/* Data details */}
-        {hasData && (
-          <div className="mt-3">
-            {renderDataDetails()}
+        {/* Collapsible output section */}
+        {hasOutput && (
+          <div className="mt-2 border-t border-border/50 pt-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsOutputExpanded(!isOutputExpanded);
+              }}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+            >
+              {isOutputExpanded ? (
+                <ChevronDown className="w-3 h-3" />
+              ) : (
+                <ChevronRight className="w-3 h-3" />
+              )}
+              <span>{nodeData.error ? "Show error" : "Show output"}</span>
+            </button>
+            {isOutputExpanded && (
+              <div className="mt-2">
+                {renderDataDetails()}
+              </div>
+            )}
           </div>
         )}
 

@@ -2,9 +2,8 @@
 
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -92,7 +91,6 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(true));
-        this.State.Bind();
 
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
@@ -109,7 +107,6 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New(321));
-        this.State.Bind();
 
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
@@ -126,7 +123,6 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
     {
         // Arrange
         this.State.Set("Source", FormulaValue.New("Test"));
-        this.State.Bind();
 
         ValueExpression.Builder expressionBuilder = new(ValueExpression.Variable(PropertyPath.TopicVariable("Source")));
 
@@ -196,7 +192,7 @@ public sealed class SetVariableExecutorTest(ITestOutputHelper output) : Workflow
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(variablePath),
                 Value = valueExpression,
             };
 

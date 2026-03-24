@@ -7,7 +7,7 @@
 All DevUI samples are now located at:
 
 ```
-python/samples/getting_started/devui/
+python/samples/02-agents/devui/
 ```
 
 ## Available Samples
@@ -22,17 +22,17 @@ python/samples/getting_started/devui/
 ## Quick Start
 
 ```bash
-cd ../../samples/getting_started/devui
+cd ../../samples/02-agents/devui
 python in_memory_mode.py
 ```
 
 Or for directory discovery:
 
 ```bash
-cd ../../samples/getting_started/devui
+cd ../../samples/02-agents/devui
 devui
 ```
 
 ## Learn More
 
-See the [DevUI samples README](../../../samples/getting_started/devui/README.md) for detailed documentation.
+See the [DevUI samples README](../../../samples/02-agents/devui/README.md) for detailed documentation.

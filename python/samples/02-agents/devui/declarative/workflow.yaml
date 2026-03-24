@@ -1,0 +1,64 @@
+name: conditional-workflow
+description: Demonstrates conditional branching based on user input
+
+inputs:
+  age:
+    type: integer
+    description: The user's age in years
+
+actions:
+  - kind: SetValue
+    id: get_age
+    displayName: Get user age
+    path: turn.age
+    value: =inputs.age
+
+  - kind: If
+    id: check_age
+    displayName: Check age category
+    condition: =turn.age < 13
+    then:
+      - kind: SetValue
+        path: turn.category
+        value: child
+      - kind: SendActivity
+        activity:
+          text: "Welcome, young one! Here are some fun activities for kids."
+    else:
+      - kind: If
+        condition: =turn.age < 20
+        then:
+          - kind: SetValue
+            path: turn.category
+            value: teenager
+          - kind: SendActivity
+            activity:
+              text: "Hey there! Check out these cool things for teens."
+        else:
+          - kind: If
+            condition: =turn.age < 65
+            then:
+              - kind: SetValue
+                path: turn.category
+                value: adult
+              - kind: SendActivity
+                activity:
+                  text: "Welcome! Here are our professional services."
+            else:
+              - kind: SetValue
+                path: turn.category
+                value: senior
+              - kind: SendActivity
+                activity:
+                  text: "Welcome! Enjoy our senior member benefits."
+
+  - kind: SendActivity
+    id: summary
+    displayName: Send category summary
+    activity:
+      text: '=Concat("You have been categorized as: ", turn.category)'
+
+  - kind: SetValue
+    id: set_output
+    path: workflow.outputs.category
+    value: =turn.category

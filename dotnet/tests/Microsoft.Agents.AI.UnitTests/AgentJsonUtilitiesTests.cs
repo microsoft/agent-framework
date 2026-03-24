@@ -79,9 +79,9 @@ public class AgentJsonUtilitiesTests
 #endif
 
     [Fact]
-    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentRunResponse()
+    public void DefaultOptions_UsesCamelCasePropertyNames_ForAgentResponse()
     {
-        var response = new AgentRunResponse(new ChatMessage(ChatRole.Assistant, "Hello"));
+        var response = new AgentResponse(new ChatMessage(ChatRole.Assistant, "Hello"));
         string json = JsonSerializer.Serialize(response, AgentJsonUtilities.DefaultOptions);
         Assert.Contains("\"messages\"", json);
         Assert.DoesNotContain("\"Messages\"", json);

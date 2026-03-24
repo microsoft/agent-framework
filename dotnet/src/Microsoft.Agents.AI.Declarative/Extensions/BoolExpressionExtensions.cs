@@ -3,7 +3,7 @@
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="BoolExpression"/>.

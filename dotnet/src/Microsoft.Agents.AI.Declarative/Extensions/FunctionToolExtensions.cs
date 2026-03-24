@@ -6,7 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="InvokeClientTaskAction"/>.

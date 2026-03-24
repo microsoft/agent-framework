@@ -6,7 +6,7 @@ using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.Kit;
 

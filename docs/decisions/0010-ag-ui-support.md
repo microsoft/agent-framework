@@ -36,7 +36,7 @@ Chosen option: "Current approach with internal event types and framework-native 
 
 - Protects consumers from protocol changes by keeping AG-UI events internal
 - Maintains framework abstractions through conversion at boundaries
-- Uses existing framework types (AgentRunResponseUpdate, ChatMessage) for public API
+- Uses existing framework types (AgentResponseUpdate, ChatMessage) for public API
 - Focuses on core text streaming functionality
 - Leverages existing properties (ConversationId, ResponseId, ErrorContent) instead of custom types
 - Provides bidirectional client and server support
@@ -69,7 +69,7 @@ Chosen option: "Current approach with internal event types and framework-native 
 
 3. **Agent Factory Pattern** - `MapAGUIAgent` uses factory function `(messages) => AIAgent` to allow request-specific agent configuration supporting multi-tenancy
 
-4. **Bidirectional Conversion Architecture** - Symmetric conversion logic in shared namespace compiled into both packages for server (`AgentRunResponseUpdate` → AG-UI events) and client (AG-UI events → `AgentRunResponseUpdate`)
+4. **Bidirectional Conversion Architecture** - Symmetric conversion logic in shared namespace compiled into both packages for server (`AgentResponseUpdate` → AG-UI events) and client (AG-UI events → `AgentResponseUpdate`)
 
 5. **Thread Management** - `AGUIAgentThread` stores only `ThreadId` with thread ID communicated via `ConversationId`; applications manage persistence for parity with other implementations and to be compliant with the protocol. Future extensions will support having the server manage the conversation.
 

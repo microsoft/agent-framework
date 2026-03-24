@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="RecordDataValue"/>.

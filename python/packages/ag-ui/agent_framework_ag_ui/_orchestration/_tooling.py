@@ -2,79 +2,125 @@
 
 """Tool handling helpers."""
 
-import logging
-from typing import Any
+from __future__ import annotations
 
-from agent_framework import BaseChatClient, ChatAgent
+import logging
+from typing import TYPE_CHECKING, Any
+
+from agent_framework import BaseChatClient
+from agent_framework._tools import _append_unique_tools  # pyright: ignore[reportPrivateUsage]
+
+if TYPE_CHECKING:
+    from agent_framework import SupportsAgentRun
 
 logger = logging.getLogger(__name__)
 
 
-def collect_server_tools(agent: Any) -> list[Any]:
-    """Collect server tools from ChatAgent or duck-typed agent."""
-    if isinstance(agent, ChatAgent):
-        tools_from_agent = agent.chat_options.tools
-        server_tools = list(tools_from_agent) if tools_from_agent else []
-        logger.info(f"[TOOLS] Agent has {len(server_tools)} configured tools")
-        for tool in server_tools:
-            tool_name = getattr(tool, "name", "unknown")
-            approval_mode = getattr(tool, "approval_mode", None)
-            logger.info(f"[TOOLS]   - {tool_name}: approval_mode={approval_mode}")
-        return server_tools
+def _collect_mcp_tool_functions(mcp_tools: list[Any]) -> list[Any]:
+    """Extract functions from connected MCP tools.
 
-    try:
-        chat_options_attr = getattr(agent, "chat_options", None)
-        if chat_options_attr is not None:
-            return getattr(chat_options_attr, "tools", None) or []
-    except AttributeError:
+    Args:
+        mcp_tools: List of MCP tool instances.
+
+    Returns:
+        Functions from connected MCP tools.
+    """
+    functions: list[Any] = []
+    for mcp_tool in mcp_tools:
+        if getattr(mcp_tool, "is_connected", False) and hasattr(mcp_tool, "functions"):
+            functions.extend(mcp_tool.functions)
+    return functions
+
+
+def collect_server_tools(agent: SupportsAgentRun) -> list[Any]:
+    """Collect server tools from an agent.
+
+    This includes both regular tools from default_options and MCP tools.
+    MCP tools are stored separately for lifecycle management but their
+    functions need to be included for tool execution during approval flows.
+
+    Args:
+        agent: Agent instance to collect tools from. Works with Agent
+            or any agent with default_options and optional mcp_tools attributes.
+
+    Returns:
+        List of tools including both regular tools and connected MCP tool functions.
+    """
+    # Get tools from default_options
+    default_options = getattr(agent, "default_options", None)
+    if default_options is None:
         return []
-    return []
+
+    tools_from_agent = default_options.get("tools") if isinstance(default_options, dict) else None
+    server_tools = list(tools_from_agent) if tools_from_agent else []
+
+    # Include functions from connected MCP tools (only available on Agent)
+    mcp_tools = getattr(agent, "mcp_tools", None)
+    if mcp_tools:
+        _append_unique_tools(
+            server_tools,
+            _collect_mcp_tool_functions(mcp_tools),
+            duplicate_error_message="Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool.",
+        )
+
+    logger.info(f"[TOOLS] Agent has {len(server_tools)} configured tools")
+    for tool in server_tools:
+        tool_name = getattr(tool, "name", "unknown")
+        approval_mode = getattr(tool, "approval_mode", None)
+        logger.info(f"[TOOLS]   - {tool_name}: approval_mode={approval_mode}")
+    return server_tools
 
 
-def register_additional_client_tools(agent: Any, client_tools: list[Any] | None) -> None:
-    """Register client tools as additional declaration-only tools to avoid server execution."""
+def register_additional_client_tools(agent: SupportsAgentRun, client_tools: list[Any] | None) -> None:
+    """Register client tools as additional declaration-only tools to avoid server execution.
+
+    Args:
+        agent: Agent instance to register tools on. Works with Agent
+            or any agent with a client attribute.
+        client_tools: List of client tools to register.
+    """
     if not client_tools:
         return
 
-    if isinstance(agent, ChatAgent):
-        chat_client = agent.chat_client
-        if isinstance(chat_client, BaseChatClient) and chat_client.function_invocation_configuration is not None:
-            chat_client.function_invocation_configuration.additional_tools = client_tools
-            logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
+    client = getattr(agent, "client", None)
+    if client is None:
         return
 
-    try:
-        chat_client_attr = getattr(agent, "chat_client", None)
-        if chat_client_attr is not None:
-            fic = getattr(chat_client_attr, "function_invocation_configuration", None)
-            if fic is not None:
-                fic.additional_tools = client_tools  # type: ignore[attr-defined]
-                logger.debug(
-                    f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)"
-                )
-    except AttributeError:
-        return
+    if isinstance(client, BaseChatClient) and client.function_invocation_configuration is not None:  # type: ignore[attr-defined]
+        client.function_invocation_configuration["additional_tools"] = client_tools  # type: ignore[attr-defined]
+        logger.debug(f"[TOOLS] Registered {len(client_tools)} client tools as additional_tools (declaration-only)")
+
+
+def _has_approval_tools(tools: list[Any]) -> bool:
+    """Check if any tools require approval."""
+    return any(getattr(tool, "approval_mode", None) == "always_require" for tool in tools)
 
 
 def merge_tools(server_tools: list[Any], client_tools: list[Any] | None) -> list[Any] | None:
-    """Combine server and client tools without overriding server metadata."""
+    """Combine server and client tools without overriding server metadata.
+
+    IMPORTANT: When server tools have approval_mode="always_require", we MUST return
+    them so they get passed to the streaming response handler. Otherwise, the approval
+    check in _try_execute_function_calls won't find the tool and won't trigger approval.
+    """
     if not client_tools:
+        # Even without client tools, we must pass server tools if any require approval
+        if server_tools and _has_approval_tools(server_tools):
+            logger.info(
+                f"[TOOLS] No client tools but server has approval tools - "
+                f"passing {len(server_tools)} server tools for approval mode"
+            )
+            return server_tools
         logger.info("[TOOLS] No client tools - not passing tools= parameter (using agent's configured tools)")
         return None
 
-    server_tool_names = {getattr(tool, "name", None) for tool in server_tools}
-    unique_client_tools = [tool for tool in client_tools if getattr(tool, "name", None) not in server_tool_names]
-
-    if not unique_client_tools:
-        logger.info("[TOOLS] All client tools duplicate server tools - not passing tools= parameter")
-        return None
-
-    combined_tools: list[Any] = []
-    if server_tools:
-        combined_tools.extend(server_tools)
-    combined_tools.extend(unique_client_tools)
+    combined_tools = _append_unique_tools(
+        list(server_tools),
+        client_tools,
+        duplicate_error_message="Tool names must be unique.",
+    )
     logger.info(
         f"[TOOLS] Passing tools= parameter with {len(combined_tools)} tools "
-        f"({len(server_tools)} server + {len(unique_client_tools)} unique client)"
+        f"({len(server_tools)} server + {len(client_tools)} client)"
     )
     return combined_tools

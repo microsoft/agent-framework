@@ -7,7 +7,6 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
-using OpenAI;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.OpenAI.UnitTests.Extensions;
@@ -56,9 +55,9 @@ public sealed class OpenAIResponseClientExtensionsTests
     }
 
     /// <summary>
-    /// Creates a test OpenAIResponseClient implementation for testing.
+    /// Creates a test ResponsesClient implementation for testing.
     /// </summary>
-    private sealed class TestOpenAIResponseClient : OpenAIResponseClient
+    private sealed class TestOpenAIResponseClient : ResponsesClient
     {
         public TestOpenAIResponseClient()
         {
@@ -76,7 +75,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var testChatClient = new TestChatClient(responseClient.AsIChatClient());
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             description: "Test description",
@@ -103,7 +102,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var responseClient = new TestOpenAIResponseClient();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent");
 
@@ -126,7 +125,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var responseClient = new TestOpenAIResponseClient();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             clientFactory: null);
@@ -148,7 +147,7 @@ public sealed class OpenAIResponseClientExtensionsTests
     {
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            ((OpenAIResponseClient)null!).CreateAIAgent());
+            ((ResponsesClient)null!).AsAIAgent());
 
         Assert.Equal("client", exception.ParamName);
     }
@@ -164,7 +163,7 @@ public sealed class OpenAIResponseClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            responseClient.CreateAIAgent((ChatClientAgentOptions)null!));
+            responseClient.AsAIAgent((ChatClientAgentOptions)null!));
 
         Assert.Equal("options", exception.ParamName);
     }
@@ -180,7 +179,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var serviceProvider = new TestServiceProvider();
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             services: serviceProvider);
@@ -212,7 +211,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         };
 
         // Act
-        var agent = responseClient.CreateAIAgent(options, services: serviceProvider);
+        var agent = responseClient.AsAIAgent(options, services: serviceProvider);
 
         // Assert
         Assert.NotNull(agent);
@@ -238,7 +237,7 @@ public sealed class OpenAIResponseClientExtensionsTests
         var testChatClient = new TestChatClient(responseClient.AsIChatClient());
 
         // Act
-        var agent = responseClient.CreateAIAgent(
+        var agent = responseClient.AsAIAgent(
             instructions: "Test instructions",
             name: "Test Agent",
             clientFactory: (innerClient) => testChatClient,
@@ -261,6 +260,117 @@ public sealed class OpenAIResponseClientExtensionsTests
     }
 
     /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled throws ArgumentNullException when client is null.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Act & Assert
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            ((ResponsesClient)null!).AsIChatClientWithStoredOutputDisabled());
+
+        Assert.Equal("responseClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled wraps the original ResponsesClient,
+    /// which remains accessible via the service chain.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_InnerResponsesClientIsAccessible()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Assert - the inner ResponsesClient should be accessible via GetService
+        var innerClient = chatClient.GetService<ResponsesClient>();
+        Assert.NotNull(innerClient);
+        Assert.Same(responseClient, innerClient);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent false
+    /// wraps the original ResponsesClient, which remains accessible via the service chain.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningFalse_InnerResponsesClientIsAccessible()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: false);
+
+        // Assert - the inner ResponsesClient should be accessible via GetService
+        var innerClient = chatClient.GetService<ResponsesClient>();
+        Assert.NotNull(innerClient);
+        Assert.Same(responseClient, innerClient);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with default parameter (includeReasoningEncryptedContent = true)
+    /// configures StoredOutputEnabled to false and includes ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_Default_ConfiguresStoredOutputDisabledWithReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled();
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.Contains(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent explicitly set to true
+    /// configures StoredOutputEnabled to false and includes ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningTrue_ConfiguresStoredOutputDisabledWithReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: true);
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.Contains(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
+    /// Verify that AsIChatClientWithStoredOutputDisabled with includeReasoningEncryptedContent set to false
+    /// configures StoredOutputEnabled to false and does not include ReasoningEncryptedContent in IncludedProperties.
+    /// </summary>
+    [Fact]
+    public void AsIChatClientWithStoredOutputDisabled_WithIncludeReasoningFalse_ConfiguresStoredOutputDisabledWithoutReasoningEncryptedContent()
+    {
+        // Arrange
+        var responseClient = new TestOpenAIResponseClient();
+
+        // Act
+        var chatClient = responseClient.AsIChatClientWithStoredOutputDisabled(includeReasoningEncryptedContent: false);
+
+        // Assert
+        var createResponseOptions = GetCreateResponseOptionsFromPipeline(chatClient);
+        Assert.NotNull(createResponseOptions);
+        Assert.False(createResponseOptions.StoredOutputEnabled);
+        Assert.DoesNotContain(IncludedResponseProperty.ReasoningEncryptedContent, createResponseOptions.IncludedProperties);
+    }
+
+    /// <summary>
     /// A simple test IServiceProvider implementation for testing.
     /// </summary>
     private sealed class TestServiceProvider : IServiceProvider
@@ -277,5 +387,25 @@ public sealed class OpenAIResponseClientExtensionsTests
             "FunctionInvocationServices",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         return property?.GetValue(client) as IServiceProvider;
+    }
+
+    /// <summary>
+    /// Extracts the <see cref="CreateResponseOptions"/> produced by the ConfigureOptions pipeline
+    /// by using reflection to access the configure action and invoking it on a test <see cref="ChatOptions"/>.
+    /// </summary>
+    private static CreateResponseOptions? GetCreateResponseOptionsFromPipeline(IChatClient chatClient)
+    {
+        // The ConfigureOptionsChatClient stores the configure action in a private field.
+        var configureField = chatClient.GetType().GetField("_configureOptions", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(configureField);
+
+        var configureAction = configureField.GetValue(chatClient) as Action<ChatOptions>;
+        Assert.NotNull(configureAction);
+
+        var options = new ChatOptions();
+        configureAction(options);
+
+        Assert.NotNull(options.RawRepresentationFactory);
+        return options.RawRepresentationFactory(chatClient) as CreateResponseOptions;
     }
 }

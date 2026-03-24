@@ -73,7 +73,10 @@ internal class ChannelHandler : IChannelHandler
         }
         catch (Exception e) when (this._purviewSettings.IgnoreExceptions)
         {
-            this._logger.LogError(e, "Error queuing job: {ExceptionMessage}", e.Message);
+            if (this._logger.IsEnabled(LogLevel.Error))
+            {
+                this._logger.LogError(e, "Error queuing job: {ExceptionMessage}", e.Message);
+            }
         }
     }
 

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Generator tests need to reference Roslyn which requires newer TFMs -->
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <!-- Suppress "mark as const" warnings for test source strings -->
+    <NoWarn>$(NoWarn);RCS1118</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
+    <!-- Generator builds as netstandard2.0, reference it with special handling -->
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.Workflows.Generators\Microsoft.Agents.AI.Workflows.Generators.csproj"
+                      PrivateAssets="all"
+                      GlobalPropertiesToRemove="TargetFramework" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+</Project>

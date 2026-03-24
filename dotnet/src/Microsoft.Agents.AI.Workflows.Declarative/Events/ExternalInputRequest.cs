@@ -13,21 +13,21 @@ public sealed class ExternalInputRequest
     /// <summary>
     /// The source message that triggered the request for external input.
     /// </summary>
-    public AgentRunResponse AgentResponse { get; }
+    public AgentResponse AgentResponse { get; }
 
     [JsonConstructor]
-    internal ExternalInputRequest(AgentRunResponse agentResponse)
+    internal ExternalInputRequest(AgentResponse agentResponse)
     {
         this.AgentResponse = agentResponse;
     }
 
     internal ExternalInputRequest(ChatMessage message)
     {
-        this.AgentResponse = new AgentRunResponse(message);
+        this.AgentResponse = new AgentResponse(message);
     }
 
     internal ExternalInputRequest(string text)
     {
-        this.AgentResponse = new AgentRunResponse(new ChatMessage(ChatRole.User, text));
+        this.AgentResponse = new AgentResponse(new ChatMessage(ChatRole.User, text));
     }
 }

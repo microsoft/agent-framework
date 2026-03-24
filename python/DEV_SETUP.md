@@ -4,6 +4,8 @@ This document describes how to setup your environment with Python and uv,
 if you're working on new features or a bug fix for Agent Framework, or simply
 want to run the tests included.
 
+For coding standards and conventions, see [CODING_STANDARD.md](CODING_STANDARD.md).
+
 ## System setup
 
 We are using a tool called [poethepoet](https://github.com/nat-n/poethepoet) for task management and [uv](https://github.com/astral-sh/uv) for dependency management. At the [end of this document](#available-poe-tasks), you will find the available Poe tasks.
@@ -62,11 +64,11 @@ uv venv --python $PYTHON_VERSION
 uv sync --dev
 # Install all the tools and dependencies
 uv run poe install
-# Install pre-commit hooks
-uv run poe pre-commit-install
+# Install prek hooks
+uv run poe prek-install
 ```
 
-Alternatively, you can reinstall the venv, pacakges, dependencies and pre-commit hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
+Alternatively, you can reinstall the venv, pacakges, dependencies and prek hooks with a single command (but this requires poe in the current env), this is especially useful if you want to switch python versions:
 
 ```bash
 uv run poe setup -p 3.13
@@ -114,320 +116,46 @@ You will then configure the ChatClient class with the keyword argument `env_file
 ```python
 from agent_framework.openai import OpenAIChatClient
 
-chat_client = OpenAIChatClient(env_file_path="openai.env")
-```
-
-
-## Coding Standards
-
-### Code Style and Formatting
-
-We use [ruff](https://github.com/astral-sh/ruff) for both linting and formatting with the following configuration:
-
-- **Line length**: 120 characters
-- **Target Python version**: 3.10+
-- **Google-style docstrings**: All public functions, classes, and modules should have docstrings following Google conventions
-
-### Function Parameter Guidelines
-
-To make the code easier to use and maintain:
-
-- **Positional parameters**: Only use for up to 3 fully expected parameters
-- **Keyword parameters**: Use for all other parameters, especially when there are multiple required parameters without obvious ordering
-- **Avoid additional imports**: Do not require the user to import additional modules to use the function, so provide string based overrides when applicable, for instance:
-```python
-def create_agent(name: str, tool_mode: ChatToolMode) -> Agent:
-    # Implementation here
-```
-Should be:
-```python
-def create_agent(name: str, tool_mode: Literal['auto', 'required', 'none'] | ChatToolMode) -> Agent:
-    # Implementation here
-    if isinstance(tool_mode, str):
-        tool_mode = ChatToolMode(tool_mode)
-```
-- **Document kwargs**: Always document how `kwargs` are used, either by referencing external documentation or explaining their purpose
-- **Separate kwargs**: When combining kwargs for multiple purposes, use specific parameters like `client_kwargs: dict[str, Any]` instead of mixing everything in `**kwargs`
-
-Example:
-```python
-chat_completion = OpenAIChatClient(env_file_path="openai.env")
+client = OpenAIChatClient(env_file_path="openai.env")
 ```
 
 ## Tests
 
-All the tests are located in the `tests` folder of each package. There are tests that are marked with a `@skip_if_..._integration_tests_disabled` decorator, these are integration tests that require an external service to be running, like OpenAI or Azure OpenAI.
+All the tests are located in the `tests` folder of each package. Tests marked with `@pytest.mark.integration` and `@skip_if_..._integration_tests_disabled` are integration tests that require external services (e.g., OpenAI, Azure OpenAI). They are automatically skipped when the required API keys or service endpoints are not configured in your environment or `.env` file.
 
-If you want to run these tests, you need to set the environment variable `RUN_INTEGRATION_TESTS` to `true` and have the appropriate key per services set in your environment or in a `.env` file.
+The root `test` command now supports both project-scoped fan-out and a single aggregate sweep:
+
+```bash
+# Run package-local tests across all workspace packages
+uv run poe test
+
+# Run tests for one workspace package
+uv run poe test -P core
+
+# Run an aggregate pytest sweep across the selected packages
+uv run poe test -A
+
+# Run only unit tests in aggregate mode
+uv run poe test -A -m "not integration"
+
+# Run only integration tests in aggregate mode
+uv run poe test -A -m integration
+
+# Run tests with coverage for one package or an aggregate sweep
+uv run poe test -P core -C
+uv run poe test -A -C
+```
 
 Alternatively, you can run them using VSCode Tasks. Open the command palette
 (`Ctrl+Shift+P`) and type `Tasks: Run Task`. Select `Test` from the list.
 
-If you want to run the tests for a single package, you can use the `uv run poe test` command with the package name as an argument. For example, to run the tests for the `agent_framework` package, you can use:
+Direct package execution still works when you need it:
 
 ```bash
 uv run poe --directory packages/core test
 ```
 
-These commands also output the coverage report.
-
-## Implementation Decisions
-
-### Asynchronous programming
-
-It's important to note that most of this library is written with asynchronous in mind. The
-developer should always assume everything is asynchronous. One can use the function signature
-with either `async def` or `def` to understand if something is asynchronous or not.
-
-### Documentation
-
-Each file should have a single first line containing: # Copyright (c) Microsoft. All rights reserved.
-
-We follow the [Google Docstring](https://github.com/google/styleguide/blob/gh-pages/pyguide.md#383-functions-and-methods) style guide for functions and methods.
-They are currently not checked for private functions (functions starting with '_').
-
-They should contain:
-
-- Single line explaining what the function does, ending with a period.
-- If necessary to further explain the logic a newline follows the first line and then the explanation is given.
-- The following three sections are optional, and if used should be separated by a single empty line.
-- Arguments are then specified after a header called `Args:`, with each argument being specified in the following format:
-  - `arg_name`: Explanation of the argument.
-    - if a longer explanation is needed for a argument, it should be placed on the next line, indented by 4 spaces.
-    - Type and default values do not have to be specified, they will be pulled from the definition.
-- Returns are specified after a header called `Returns:` or `Yields:`, with the return type and explanation of the return value.
-- Finally, a header for exceptions can be added, called `Raises:`, with each exception being specified in the following format:
-  - `ExceptionType`: Explanation of the exception.
-  - if a longer explanation is needed for a exception, it should be placed on the next line, indented by 4 spaces.
-
-Putting them all together, gives you at minimum this:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same."""
-    ...
-```
-
-Or a complete version of this:
-
-```python
-def equal(arg1: str, arg2: str) -> bool:
-    """Compares two strings and returns True if they are the same.
-
-    Here is extra explanation of the logic involved.
-
-    Args:
-        arg1: The first string to compare.
-        arg2: The second string to compare.
-
-    Returns:
-        True if the strings are the same, False otherwise.
-    """
-```
-
-### Attributes vs Inheritance
-
-Prefer attributes over inheritance when parameters are mostly the same:
-
-```python
-# ✅ Preferred - using attributes
-from agent_framework import ChatMessage
-
-user_msg = ChatMessage(role="user", content="Hello, world!")
-asst_msg = ChatMessage(role="assistant", content="Hello, world!")
-
-# ❌ Not preferred - unnecessary inheritance
-from agent_framework import UserMessage, AssistantMessage
-
-user_msg = UserMessage(content="Hello, world!")
-asst_msg = AssistantMessage(content="Hello, world!")
-```
-
-### Logging
-
-Use the centralized logging system:
-
-```python
-from agent_framework import get_logger
-
-# For main package
-logger = get_logger()
-
-# For subpackages
-logger = get_logger('agent_framework.azure')
-```
-
-**Do not use** direct logging module imports:
-```python
-# ❌ Avoid this
-import logging
-logger = logging.getLogger(__name__)
-```
-
-### Import Structure
-
-The package follows a flat import structure:
-
-- **Core**: Import directly from `agent_framework`
-  ```python
-  from agent_framework import ChatAgent, ai_function
-  ```
-
-- **Components**: Import from `agent_framework.<component>`
-  ```python
-  from agent_framework.vector_data import VectorStoreModel
-  from agent_framework.guardrails import ContentFilter
-  ```
-
-- **Connectors**: Import from `agent_framework.<vendor/platform>`
-  ```python
-  from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureOpenAIChatClient
-  ```
-
-## Testing
-
-### Running Tests
-
-```bash
-# Run all tests with coverage
-uv run poe test
-
-# Run specific test file
-uv run pytest tests/test_agents.py
-
-# Run with verbose output
-uv run pytest -v
-```
-
-### Test Coverage
-
-- Target: Minimum 80% test coverage for all packages
-- Coverage reports are generated automatically during test runs
-- Tests should be in corresponding `test_*.py` files in the `tests/` directory
-
-## Documentation
-
-### Building Documentation
-
-```bash
-# Build documentation
-uv run poe docs-build
-
-# Serve documentation locally with auto-reload
-uv run poe docs-serve
-
-# Check documentation for warnings
-uv run poe docs-check
-```
-
-### Docstring Style
-
-Use Google-style docstrings for all public APIs:
-
-```python
-def create_agent(name: str, chat_client: ChatClientProtocol) -> Agent:
-    """Create a new agent with the specified configuration.
-
-    Args:
-        name: The name of the agent.
-        chat_client: The chat client to use for communication.
-
-    Returns:
-        True if the strings are the same, False otherwise.
-
-    Raises:
-        ValueError: If one of the strings is empty.
-    """
-    ...
-```
-
-If in doubt, use the link above to read much more considerations of what to do and when, or use common sense.
-
-## Coding standards
-
-```plaintext
-agent_framework/
-├── __init__.py              # Tier 0: Core components
-├── _agents.py              # Agent implementations
-├── _tools.py               # Tool definitions
-├── _models.py              # Type definitions
-├── _logging.py             # Logging utilities
-├── context_providers.py    # Tier 1: Context providers
-├── guardrails.py          # Tier 1: Guardrails and filters
-├── vector_data.py         # Tier 1: Vector stores
-├── workflows.py           # Tier 1: Multi-agent orchestration
-└── azure/                 # Tier 2: Azure connectors (lazy loaded)
-    └── __init__.py        # Imports from agent-framework-azure
-```
-
-### Pydantic and Serialization
-
-This section describes how one can enable serialization for their class using Pydantic.
-For more info you can refer to the [Pydantic Documentation](https://docs.pydantic.dev/latest/).
-
-#### Upgrading existing classes to use Pydantic
-
-Let's take the following example:
-
-```python
-class A:
-    def __init__(self, a: int, b: float, c: List[float], d: dict[str, tuple[float, str]] = {}):
-        self.a = a
-        self.b = b
-        self.c = c
-        self.d = d
-```
-
-You would convert this to a Pydantic class by sub-classing from the `AFBaseModel` class.
-
-```python
-from pydantic import Field
-from ._pydantic import AFBaseModel
-
-class A(AFBaseModel):
-    # The notation for the fields is similar to dataclasses.
-    a: int
-    b: float
-    c: list[float]
-    # Only, instead of using dataclasses.field, you would use pydantic.Field
-    d: dict[str, tuple[float, str]] = Field(default_factory=dict)
-```
-
-#### Classes with data that need to be serialized, and some of them are Generic types
-
-Let's take the following example:
-
-```python
-from typing import TypeVar
-
-T1 = TypeVar("T1")
-T2 = TypeVar("T2", bound=<some class>)
-
-class A:
-    def __init__(a: int, b: T1, c: T2):
-        self.a = a
-        self.b = b
-        self.c = c
-```
-
-You can use the `AFBaseModel` to convert these to pydantic serializable classes.
-
-```python
-from typing import Generic, TypeVar
-
-from ._pydantic import AFBaseModel
-
-T1 = TypeVar("T1")
-T2 = TypeVar("T2", bound=<some class>)
-
-class A(AFBaseModel, Generic[T1, T2]):
-    # T1 and T2 must be specified in the Generic argument otherwise, pydantic will
-    # NOT be able to serialize this class
-    a: int
-    b: T1
-    c: T2
-```
+Large packages (core, ag-ui, orchestrations, anthropic) use `pytest-xdist` for parallel test execution within the package. The aggregate `test -A` sweep also uses `pytest-xdist` across the selected packages.
 
 ## Code quality checks
 
@@ -437,14 +165,15 @@ To run the same checks that run during a commit and the GitHub Action `Python Co
     uv run poe check
 ```
 
-Ideally you should run these checks before committing any changes, when you install using the instructions above the pre-commit hooks should be installed already.
+Ideally you should run these checks before committing any changes, when you install using the instructions above the prek hooks should be installed already.
 
 ## Code Coverage
 
-We try to maintain a high code coverage for the project. To run the code coverage on the unit tests, you can use the following command:
+We try to maintain a high code coverage for the project. To review coverage locally, use either a package-scoped run or the aggregate sweep:
 
 ```bash
-    uv run poe test
+uv run poe test -P core -C
+uv run poe test -A -C
 ```
 
 This will show you which files are not covered by the tests, including the specific lines not covered. Make sure to consider the untested lines from the code you are working on, but feel free to add other tests as well, that is always welcome!
@@ -489,123 +218,122 @@ and then you can run the following tasks:
 uv sync --all-extras --dev
 ```
 
-After this initial setup, you can use the following tasks to manage your development environment, it is adviced to use the following setup command since that also installs the pre-commit hooks.
+After this initial setup, you can use the following tasks to manage your development environment. It is advised to use the following setup command since that also installs the prek hooks.
 
 #### `setup`
-Set up the development environment with a virtual environment, install dependencies and pre-commit hooks:
+Set up the development environment with a virtual environment, install dependencies and prek hooks:
 ```bash
 uv run poe setup
 # or with specific Python version
-uv run poe setup --python 3.12
+uv run poe setup -P 3.12
 ```
 
 #### `install`
-Install all dependencies including extras and dev dependencies, including updates:
+Install all dependencies (including extras and dev dependencies) from the lockfile using frozen resolution:
 ```bash
 uv run poe install
 ```
+For intentional dependency upgrades, run `uv lock --upgrade-package <dependency-name>` and then run `uv run poe install`.
+
+For repo-wide dev tooling refreshes, run `uv run poe upgrade-dev-dependencies` to repin dev dependencies, refresh `uv.lock`, and rerun validation, typing, and tests.
 
 #### `venv`
 Create a virtual environment with specified Python version or switch python version:
 ```bash
 uv run poe venv
 # or with specific Python version
-uv run poe venv --python 3.12
+uv run poe venv -P 3.12
 ```
 
-#### `pre-commit-install`
-Install pre-commit hooks:
+#### `prek-install`
+Install prek hooks:
 ```bash
-uv run poe pre-commit-install
+uv run poe prek-install
 ```
 
-### Code Quality and Formatting
+### Project-scoped command families
 
-Each of the following tasks are designed to run against both the main `agent-framework` package and the extension packages, ensuring consistent code quality across the project.
+These commands default to `--package "*"`, so they run across all workspace packages unless you narrow them with `-P/--package`:
 
-#### `fmt` (format)
-Format code using ruff:
+#### `syntax`
+Run Ruff formatting plus Ruff lint checks by default:
 ```bash
-uv run poe fmt
+uv run poe syntax
+uv run poe syntax -P core
+uv run poe syntax -F        # format only
+uv run poe syntax -C        # lint/check only
 ```
 
-#### `lint`
-Run linting checks and fix issues:
+#### `build`
+Build workspace packages and the root meta package:
 ```bash
-uv run poe lint
+uv run poe build
+uv run poe build -P core
+```
+
+#### `clean-dist`
+Clean generated dist artifacts:
+```bash
+uv run poe clean-dist
+uv run poe clean-dist -P core
+```
+
+### Dual-mode validation and test commands
+
+These command families share the same selector model:
+
+```bash
+uv run poe <command>              # project fan-out over --package "*"
+uv run poe <command> -P core      # one-project fan-out
+uv run poe <command> -A           # aggregate sweep where supported
 ```
 
 #### `pyright`
 Run Pyright type checking:
 ```bash
 uv run poe pyright
+uv run poe pyright -P core
+uv run poe pyright -A
 ```
 
 #### `mypy`
 Run MyPy type checking:
 ```bash
 uv run poe mypy
+uv run poe mypy -P core
+uv run poe mypy -A
 ```
 
-### Testing
+#### `typing`
+Run both Pyright and MyPy:
+```bash
+uv run poe typing
+uv run poe typing -P core
+uv run poe typing -A
+```
 
 #### `test`
-Run unit tests with coverage:
+Run package-local tests in fan-out mode, or switch to one aggregate pytest sweep with `-A`:
 ```bash
 uv run poe test
+uv run poe test -P core
+uv run poe test -P core -C
+uv run poe test -A
+uv run poe test -A -C
 ```
 
-### Documentation
+### Sample-target variants
 
-#### `docs-install`
-Install including the documentation tools:
+Use `-S/--samples` for sample-only validation instead of separate top-level commands:
+
 ```bash
-uv run poe docs-install
+uv run poe syntax -S
+uv run poe syntax -S -C
+uv run poe pyright -S
+uv run poe check -S
 ```
 
-#### `docs-clean`
-Remove the docs build directory:
-```bash
-uv run poe docs-clean
-```
-
-#### `docs-build`
-Build the documentation:
-```bash
-uv run poe docs-build
-```
-
-#### `docs-full`
-Build the packages, clean and build the documentation:
-```bash
-uv run poe docs-full
-```
-
-#### `docs-rebuild`
-Clean and build the documentation:
-```bash
-uv run poe docs-rebuild
-```
-
-#### `docs-full-install`
-Install the docs dependencies, build the packages, clean and build the documentation:
-```bash
-uv run poe docs-full-install
-```
-
-#### `docs-debug`
-Build the documentation with debug information:
-```bash
-uv run poe docs-debug
-```
-
-#### `docs-rebuild-debug`
-Clean and build the documentation with debug information:
-```bash
-uv run poe docs-rebuild-debug
-```
-
-### Code Validation
+### Workspace validation and dependency commands
 
 #### `markdown-code-lint`
 Lint markdown code blocks:
@@ -613,38 +341,85 @@ Lint markdown code blocks:
 uv run poe markdown-code-lint
 ```
 
-#### `samples-code-check`
-Run type checking on samples:
+#### `check-packages`
+Run the package-level syntax sweep (`syntax`) plus `pyright` across the selected projects:
 ```bash
-uv run poe samples-code-check
+uv run poe check-packages
+uv run poe check-packages -P core
 ```
-
-### Comprehensive Checks
 
 #### `check`
-Run all quality checks (format, lint, pyright, mypy, test, markdown lint, samples check):
+Run package syntax, pyright, and tests for the selected project set. Without `-P/--package`, it also includes sample checks and markdown lint:
 ```bash
 uv run poe check
+uv run poe check -P core
+uv run poe check -S
 ```
 
-#### `pre-commit-check`
-Run pre-commit specific checks (all of the above, excluding `mypy`):
+#### `validate-dependency-bounds-test`
+Run workspace-wide dependency compatibility gates at lower and upper resolutions. This runs test + pyright across all packages and stops on first failure:
 ```bash
-uv run poe pre-commit-check
+uv run poe validate-dependency-bounds-test
+# Defaults to --package "*"; pass a package to scope test mode
+uv run poe validate-dependency-bounds-test -P core
 ```
 
-### Building
-
-#### `build`
-Build the package:
+#### `validate-dependency-bounds-project`
+Validate and extend dependency bounds for a single dependency in a single package. Use `--mode lower`, `--mode upper`, or the default `--mode both`:
 ```bash
-uv run poe build
+uv run poe validate-dependency-bounds-project -M both -P core -D "<dependency-name>"
+```
+`--package` defaults to `*`, and `--dependency` is optional. Automation can use `--mode upper --package "*"` to run the upper-bound pass across the workspace.
+For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may still be a single patch or minor line, but multi-minor ranges are fine when the package's checks/tests prove they work.
+
+#### `add-dependency-and-validate-bounds`
+Add an external dependency to a workspace project and run both validators for that same project/dependency:
+```bash
+uv run poe add-dependency-and-validate-bounds -P core -D "<dependency-spec>"
 ```
 
-## Pre-commit Hooks
+#### `upgrade-dev-dependencies`
+Refresh exact dev dependency pins across the workspace, run `uv lock --upgrade`, reinstall from the frozen lockfile, then rerun validation, typing, and tests:
+```bash
+uv run poe upgrade-dev-dependencies
+```
+Use this for repo-wide dev tooling refreshes. For targeted runtime dependency upgrades, prefer `uv lock --upgrade-package <dependency-name>` plus the package-scoped bound validation tasks above.
 
-You can also run all checks using pre-commit directly:
+### Building and Publishing
+
+#### `publish`
+Publish packages to PyPI:
+```bash
+uv run poe publish
+```
+
+### Compatibility aliases
+
+These legacy commands still work during the transition, but prefer the newer forms above:
 
 ```bash
-uv run pre-commit run -a
+uv run poe fmt             # prefer: uv run poe syntax -F
+uv run poe format          # prefer: uv run poe syntax -F
+uv run poe lint            # prefer: uv run poe syntax -C
+uv run poe all-tests       # prefer: uv run poe test -A
+uv run poe all-tests-cov   # prefer: uv run poe test -A -C
+uv run poe samples-lint    # prefer: uv run poe syntax -S -C
+uv run poe samples-syntax  # prefer: uv run poe pyright -S
+```
+
+## Prek Hooks
+
+Prek hooks run automatically on commit and stay intentionally lightweight:
+
+- changed-package syntax formatting
+- changed-package syntax lint/check
+- markdown code lint only when markdown files change
+- sample lint + sample pyright only when files under `samples/` change
+
+They do **not** run workspace `pyright` or `mypy` by default. Use `uv run poe pyright`, `uv run poe mypy`, `uv run poe typing`, `uv run poe check-packages`, or `uv run poe check` when you want deeper validation.
+
+You can run the installed hooks directly with:
+
+```bash
+uv run prek run -a
 ```

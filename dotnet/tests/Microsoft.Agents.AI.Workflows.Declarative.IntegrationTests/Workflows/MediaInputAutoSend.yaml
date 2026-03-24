@@ -1,0 +1,15 @@
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_test
+  actions:
+
+    - kind: InvokeAzureAgent
+      id: invoke_vision
+      agent:
+        name: VisionAgent
+      input:
+        messages: =System.LastMessage
+      output:
+        autoSend: true

@@ -40,14 +40,17 @@ class TestMultiAgentInit:
         assert len(app.agents) == 0
 
     def test_init_with_duplicate_agent_names(self) -> None:
-        """Test initialization with agents having the same name raises error."""
+        """Test initialization with duplicate agent names deduplicates with warning."""
         agent1 = Mock()
         agent1.name = "TestAgent"
         agent2 = Mock()
         agent2.name = "TestAgent"
 
-        with pytest.raises(ValueError, match="already registered"):
-            AgentFunctionApp(agents=[agent1, agent2])
+        app = AgentFunctionApp(agents=[agent1, agent2])
+
+        # Duplicate is skipped, only the first agent is registered
+        assert len(app.agents) == 1
+        assert "TestAgent" in app.agents
 
     def test_init_with_agent_without_name(self) -> None:
         """Test initialization with agent missing name attribute raises error."""
@@ -91,8 +94,8 @@ class TestAddAgentMethod:
         assert "Agent1" in app.agents
         assert "Agent2" in app.agents
 
-    def test_add_agent_with_duplicate_name_raises_error(self) -> None:
-        """Test that adding agent with duplicate name raises ValueError."""
+    def test_add_agent_with_duplicate_name_skips(self) -> None:
+        """Test that adding agent with duplicate name logs warning and skips."""
         agent1 = Mock()
         agent1.name = "MyAgent"
         agent2 = Mock()
@@ -100,9 +103,11 @@ class TestAddAgentMethod:
 
         app = AgentFunctionApp(agents=[agent1])
 
-        # Try to add another agent with the same name
-        with pytest.raises(ValueError, match="already registered"):
-            app.add_agent(agent2)
+        # Duplicate is silently skipped with a warning
+        app.add_agent(agent2)
+
+        # Only the original agent remains
+        assert len(app.agents) == 1
 
     def test_add_agent_to_app_with_existing_agents(self) -> None:
         """Test adding agent to app that already has agents."""

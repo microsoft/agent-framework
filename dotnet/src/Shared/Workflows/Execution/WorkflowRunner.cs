@@ -68,7 +68,7 @@ internal sealed class WorkflowRunner
             checkpointManager = CheckpointManager.CreateInMemory();
         }
 
-        Checkpointed<StreamingRun> run = await InProcessExecution.StreamAsync(workflow, input, checkpointManager).ConfigureAwait(false);
+        StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, input, checkpointManager).ConfigureAwait(false);
 
         bool isComplete = false;
         ExternalResponse? requestResponse = null;
@@ -95,7 +95,7 @@ internal sealed class WorkflowRunner
                 Debug.WriteLine($"RESTORE #{this.LastCheckpoint.CheckpointId}");
                 Notify("WORKFLOW: Restore", ConsoleColor.DarkYellow);
 
-                run = await InProcessExecution.ResumeStreamAsync(workflow, this.LastCheckpoint, checkpointManager, run.Run.RunId).ConfigureAwait(false);
+                run = await InProcessExecution.ResumeStreamingAsync(workflow, this.LastCheckpoint, checkpointManager).ConfigureAwait(false);
             }
             else
             {
@@ -107,7 +107,7 @@ internal sealed class WorkflowRunner
         Notify("\nWORKFLOW: Done!\n");
     }
 
-    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(Checkpointed<StreamingRun> run, ExternalResponse? response = null)
+    public async Task<ExternalRequest?> MonitorAndDisposeWorkflowRunAsync(StreamingRun run, ExternalResponse? response = null)
     {
 #pragma warning disable CA2007 // Consider calling ConfigureAwait on the awaited task
         await using IAsyncDisposable disposeRun = run;
@@ -121,10 +121,10 @@ internal sealed class WorkflowRunner
 
         if (response is not null)
         {
-            await run.Run.SendResponseAsync(response).ConfigureAwait(false);
+            await run.SendResponseAsync(response).ConfigureAwait(false);
         }
 
-        await foreach (WorkflowEvent workflowEvent in run.Run.WatchStreamAsync().ConfigureAwait(false))
+        await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync().ConfigureAwait(false))
         {
             switch (workflowEvent)
             {
@@ -174,9 +174,10 @@ internal sealed class WorkflowRunner
                     Console.WriteLine("\nACTIVITY:");
                     Console.ForegroundColor = ConsoleColor.Yellow;
                     Console.WriteLine(activityEvent.Message.Trim());
+                    Console.ResetColor();
                     break;
 
-                case AgentRunUpdateEvent streamEvent:
+                case AgentResponseUpdateEvent streamEvent:
                     if (!string.Equals(messageId, streamEvent.Update.MessageId, StringComparison.Ordinal))
                     {
                         hasStreamed = false;
@@ -189,6 +190,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"\n{agentName.ToUpperInvariant()}:");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{messageId}]");
+                            Console.ResetColor();
                         }
                     }
 
@@ -204,6 +206,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.FunctionName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.CallId}]");
+                            Console.ResetColor();
                             break;
 
                         case McpToolCallItem actionUpdate:
@@ -211,6 +214,7 @@ internal sealed class WorkflowRunner
                             Console.Write($"Calling tool: {actionUpdate.ToolName}");
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($" [{actionUpdate.Id}]");
+                            Console.ResetColor();
                             break;
                     }
 
@@ -226,7 +230,7 @@ internal sealed class WorkflowRunner
                     }
                     break;
 
-                case AgentRunResponseEvent messageEvent:
+                case AgentResponseEvent messageEvent:
                     try
                     {
                         if (hasStreamed)
@@ -238,6 +242,7 @@ internal sealed class WorkflowRunner
                         {
                             Console.ForegroundColor = ConsoleColor.DarkGray;
                             Console.WriteLine($"[Tokens Total: {messageEvent.Response.Usage.TotalTokenCount}, Input: {messageEvent.Response.Usage.InputTokenCount}, Output: {messageEvent.Response.Usage.OutputTokenCount}]");
+                            Console.ResetColor();
                         }
                     }
                     finally
@@ -267,9 +272,10 @@ internal sealed class WorkflowRunner
     /// </summary>
     private async ValueTask<ExternalInputResponse> HandleExternalRequestAsync(ExternalRequest request)
     {
-        ExternalInputRequest inputRequest =
-            request.DataAs<ExternalInputRequest>() ??
-            throw new InvalidOperationException($"Expected external request type: {request.GetType().Name}.");
+        if (!request.TryGetDataAs<ExternalInputRequest>(out var inputRequest))
+        {
+            throw new InvalidOperationException($"Expected external request type: {request.PortInfo.RequestType}.");
+        }
 
         List<ChatMessage> responseMessages = [];
 
@@ -299,9 +305,8 @@ internal sealed class WorkflowRunner
             ChatMessage? responseMessage =
                 requestItem switch
                 {
-                    FunctionCallContent functionCall => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
-                    FunctionApprovalRequestContent functionApprovalRequest => ApproveFunction(functionApprovalRequest),
-                    McpServerToolApprovalRequestContent mcpApprovalRequest => ApproveMCP(mcpApprovalRequest),
+                    FunctionCallContent functionCall when !functionCall.InformationalOnly => await InvokeFunctionAsync(functionCall).ConfigureAwait(false),
+                    ToolApprovalRequestContent approvalRequest => ApproveToolCall(approvalRequest),
                     _ => HandleUnknown(requestItem),
                 };
 
@@ -319,16 +324,16 @@ internal sealed class WorkflowRunner
             return null;
         }
 
-        ChatMessage ApproveFunction(FunctionApprovalRequestContent functionApprovalRequest)
+        ChatMessage ApproveToolCall(ToolApprovalRequestContent approvalRequest)
         {
-            Notify($"INPUT - Approving Function: {functionApprovalRequest.FunctionCall.Name}");
-            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved: true)]);
-        }
-
-        ChatMessage ApproveMCP(McpServerToolApprovalRequestContent mcpApprovalRequest)
-        {
-            Notify($"INPUT - Approving MCP: {mcpApprovalRequest.ToolCall.ToolName}");
-            return new ChatMessage(ChatRole.User, [mcpApprovalRequest.CreateResponse(approved: true)]);
+            string toolName = approvalRequest.ToolCall switch
+            {
+                McpServerToolCallContent mcp => mcp.Name,
+                FunctionCallContent f => f.Name,
+                _ => approvalRequest.ToolCall!.CallId
+            };
+            Notify($"INPUT - Approving: {toolName}");
+            return new ChatMessage(ChatRole.User, [approvalRequest.CreateResponse(approved: true)]);
         }
 
         async Task<ChatMessage> InvokeFunctionAsync(FunctionCallContent functionCall)

@@ -3,7 +3,7 @@
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.CodeGen;
 

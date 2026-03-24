@@ -2,9 +2,8 @@
 
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
-using Microsoft.Bot.ObjectModel;
+using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
-using Xunit.Abstractions;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
 
@@ -63,7 +62,7 @@ public sealed class ResetVariableExecutorTest(ITestOutputHelper output) : Workfl
             {
                 Id = this.CreateActionId(),
                 DisplayName = this.FormatDisplayName(displayName),
-                Variable = InitializablePropertyPath.Create(variablePath),
+                Variable = PropertyPath.Create(variablePath),
             };
 
         return AssignParent<ResetVariable>(actionBuilder);

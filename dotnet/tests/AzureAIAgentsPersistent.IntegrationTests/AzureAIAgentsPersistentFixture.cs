@@ -1,12 +1,12 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Azure;
 using Azure.AI.Agents.Persistent;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
@@ -15,8 +15,6 @@ namespace AzureAIAgentsPersistent.IntegrationTests;
 
 public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 {
-    private static readonly AzureAIConfiguration s_config = TestConfiguration.LoadSection<AzureAIConfiguration>();
-
     private ChatClientAgent _agent = null!;
     private PersistentAgentsClient _persistentAgentsClient = null!;
 
@@ -24,13 +22,13 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
 
     public AIAgent Agent => this._agent;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
         List<ChatMessage> messages = [];
-        var typedThread = (ChatClientAgentThread)thread;
+        var typedSession = (ChatClientAgentSession)session;
 
         await foreach (var threadMessage in (AsyncPageable<PersistentThreadMessage>)this._persistentAgentsClient.Messages.GetMessagesAsync(
-            threadId: typedThread.ConversationId, order: ListSortOrder.Ascending))
+            threadId: typedSession.ConversationId, order: ListSortOrder.Ascending))
         {
             var message = new ChatMessage
             {
@@ -57,7 +55,7 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
         IList<AITool>? aiTools = null)
     {
         var persistentAgentResponse = await this._persistentAgentsClient.Administration.CreateAgentAsync(
-            model: s_config.DeploymentName,
+            model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
             name: name,
             instructions: instructions);
 
@@ -75,30 +73,32 @@ public class AzureAIAgentsPersistentFixture : IChatClientAgentFixture
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
         this._persistentAgentsClient.Administration.DeleteAgentAsync(agent.Id);
 
-    public Task DeleteThreadAsync(AgentThread thread)
+    public Task DeleteSessionAsync(AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
-        if (typedThread?.ConversationId is not null)
+        var typedSession = (ChatClientAgentSession)session;
+        if (typedSession?.ConversationId is not null)
         {
-            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedThread.ConversationId);
+            return this._persistentAgentsClient.Threads.DeleteThreadAsync(typedSession.ConversationId);
         }
 
         return Task.CompletedTask;
     }
 
-    public Task DisposeAsync()
+    public ValueTask DisposeAsync()
     {
+        GC.SuppressFinalize(this);
+
         if (this._persistentAgentsClient is not null && this._agent is not null)
         {
-            return this._persistentAgentsClient.Administration.DeleteAgentAsync(this._agent.Id);
+            return new ValueTask(this._persistentAgentsClient.Administration.DeleteAgentAsync(this._agent.Id));
         }
 
-        return Task.CompletedTask;
+        return default;
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
-        this._persistentAgentsClient = new(s_config.Endpoint, new AzureCliCredential());
+        this._persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
         this._agent = await this.CreateChatClientAgentAsync();
     }
 }

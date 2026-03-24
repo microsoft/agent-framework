@@ -1,17 +1,29 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework_declarative import (
+    AgentExternalInputRequest,
+    AgentExternalInputResponse,
     AgentFactory,
     DeclarativeLoaderError,
+    DeclarativeWorkflowError,
+    ExternalInputRequest,
+    ExternalInputResponse,
     ProviderLookupError,
     ProviderTypeMapping,
-    __version__,
+    WorkflowFactory,
+    WorkflowState,
 )
 
 __all__ = [
+    "AgentExternalInputRequest",
+    "AgentExternalInputResponse",
     "AgentFactory",
     "DeclarativeLoaderError",
+    "DeclarativeWorkflowError",
+    "ExternalInputRequest",
+    "ExternalInputResponse",
     "ProviderLookupError",
     "ProviderTypeMapping",
-    "__version__",
+    "WorkflowFactory",
+    "WorkflowState",
 ]

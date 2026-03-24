@@ -19,5 +19,13 @@ export default tseslint.config([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Allow exporting constants alongside components in specific patterns
+      // This is common for shadcn/ui components (buttonVariants) and form utilities
+      'react-refresh/only-export-components': [
+        'warn',
+        { allowConstantExport: true }
+      ],
+    },
   },
 ])

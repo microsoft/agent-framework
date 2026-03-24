@@ -687,7 +687,7 @@ This section considers different options for exposing the `RunId`, `Status`, and
 #### 4.1. As AIContent
 
 The `AsyncRunContent` class will represent a long-running operation initiated and managed by an agent/LLM.
-Items of this content type will be returned in a chat message as part of the `AgentRunResponse` or `ChatResponse`
+Items of this content type will be returned in a chat message as part of the `AgentResponse` or `ChatResponse`
 response to represent the long-running operation.
 
 The `AsyncRunContent` class has two properties: `RunId` and `Status`. The `RunId` identifies the 
@@ -1162,29 +1162,29 @@ For cancellation and deletion of long-running operations, new methods will be ad
 public abstract class AIAgent
 {
     // Existing methods...
-    public Task<AgentRunResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
-    public IAsyncEnumerable<AgentRunResponseUpdate> RunStreamingAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
+    public Task<AgentResponse> RunAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
+    public IAsyncEnumerable<AgentResponseUpdate> RunStreamingAsync(string message, AgentThread? thread = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default) { ... }
 
     // New methods for uncommon operations
-    public virtual Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual Task<AgentResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<AgentRunResponse?>(null);
+        return Task.FromResult<AgentResponse?>(null);
     }
 
-    public virtual Task<AgentRunResponse?> DeleteRunAsync(string id, AgentDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
+    public virtual Task<AgentResponse?> DeleteRunAsync(string id, AgentDeleteRunOptions? options = null, CancellationToken cancellationToken = default)
     {
-        return Task.FromResult<AgentRunResponse?>(null);
+        return Task.FromResult<AgentResponse?>(null);
     }
 }
 
 // Agent that supports update and cancellation
 public class CustomAgent : AIAgent
 {
-    public override async Task<AgentRunResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
+    public override async Task<AgentResponse?> CancelRunAsync(string id, AgentCancelRunOptions? options = null, CancellationToken cancellationToken = default)
     {
         var response = await this._client.CancelRunAsync(id, options?.Thread?.ConversationId);
 
-        return ConvertToAgentRunResponse(response); 
+        return ConvertToAgentResponse(response); 
     }
 
     // No overload for DeleteRunAsync as it's not supported by the underlying API
@@ -1195,7 +1195,7 @@ AIAgent agent = new CustomAgent();
 
 AgentThread thread = agent.GetNewThread();
 
-AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+AgentResponse response = await agent.RunAsync("What is the capital of France?");
 
 response = await agent.CancelRunAsync(response.ResponseId, new AgentCancelRunOptions { Thread = thread });
 ```
@@ -1251,10 +1251,10 @@ public class AgentRunOptions
 AIAgent agent = ...; // Get an instance of an AIAgent
 
 // Start a long-running execution for the prompt if supported by the underlying API
-AgentRunResponse response = await agent.RunAsync("<prompt>", new AgentRunOptions { AllowLongRunningResponses = true });
+AgentResponse response = await agent.RunAsync("<prompt>", new AgentRunOptions { AllowLongRunningResponses = true });
 
 // Start a quick prompt
-AgentRunResponse response = await agent.RunAsync("<prompt>");
+AgentResponse response = await agent.RunAsync("<prompt>");
 ```
 
 **Pros:** 
@@ -1279,7 +1279,7 @@ Below are the details of the option selected for chat clients that is also selec
 #### 3.1 Continuation Token of a Custom Type
 
 This option suggests using `ContinuationToken` to encapsulate all properties representing a long-running operation. The continuation token will be returned by agents in the 
-`ContinuationToken` property of the `AgentRunResponse` and `AgentRunResponseUpdate` responses to indicate that the response is part of a long-running operation. A null value 
+`ContinuationToken` property of the `AgentResponse` and `AgentResponseUpdate` responses to indicate that the response is part of a long-running operation. A null value 
 of the property will indicate that the response is not part of a long-running operation or the long-running operation has been completed. Callers will set the token in the
 `ContinuationToken` property of the `AgentRunOptions` class in follow-up calls to the `Run{Streaming}Async` methods to indicate that they want to "continue" the long-running
 operation identified by the token.
@@ -1313,18 +1313,18 @@ public class AgentRunOptions
     public ResponseContinuationToken? ContinuationToken { get; set; }
 }
 
-public class AgentRunResponse
+public class AgentResponse
 {
     public ResponseContinuationToken? ContinuationToken { get; }
 }
  
-public class AgentRunResponseUpdate
+public class AgentResponseUpdate
 {
     public ResponseContinuationToken? ContinuationToken { get; }
 }
 
 // Usage example
-AgentRunResponse response = await agent.RunAsync("What is the capital of France?");
+AgentResponse response = await agent.RunAsync("What is the capital of France?");
 
 AgentRunOptions options = new() { ContinuationToken = response.ContinuationToken };
 

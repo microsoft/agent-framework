@@ -1,6 +1,7 @@
 # Suppressing errors for Sample projects under dotnet/samples folder
 [*.cs]
 dotnet_diagnostic.CA1716.severity = none # Add summary to documentation comment.
+dotnet_diagnostic.CA1873.severity = none # Evaluation of logging arguments may be expensive
 dotnet_diagnostic.CA2000.severity = none # Call System.IDisposable.Dispose on object before all references to it are out of scope
 dotnet_diagnostic.CA2007.severity = none # Do not directly await a Task
 

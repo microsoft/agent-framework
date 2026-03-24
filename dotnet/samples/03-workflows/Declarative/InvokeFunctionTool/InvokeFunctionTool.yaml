@@ -1,0 +1,55 @@
+#
+# This workflow demonstrates using InvokeFunctionTool to call functions directly
+# from the workflow without going through an AI agent first.
+#
+# InvokeFunctionTool allows workflows to:
+# - Pre-fetch data before calling an AI agent
+# - Execute operations directly without AI involvement
+# - Store function results in workflow variables for later use
+#
+# Example input: 
+# What are the specials in the menu?
+#
+kind: Workflow
+trigger:
+
+  kind: OnConversationStart
+  id: workflow_invoke_function_tool_demo
+  actions:
+
+    # Invoke GetSpecials function to get today's specials directly from the workflow
+    - kind: InvokeFunctionTool
+      id: invoke_get_specials
+      conversationId: =System.ConversationId
+      requireApproval: true
+      functionName: GetSpecials
+      output:
+        autoSend: true
+        result: Local.Specials
+        messages: Local.FunctionMessage
+
+    # Display a message showing we retrieved the specials
+    - kind: SendMessage
+      id: show_specials_intro
+      message: "Today's specials have been retrieved. Here they are: {Local.Specials}"
+
+    # Now use an agent to format and present the specials to the user
+    - kind: InvokeAzureAgent
+      id: invoke_menu_agent
+      conversationId: =System.ConversationId
+      agent:
+        name: FunctionMenuAgent
+      input:
+        messages: =UserMessage("Please describe today's specials in an appealing way.")
+      output:
+        messages: Local.AgentResponse
+
+    # Allow the user to ask follow-up questions in a loop
+    - kind: InvokeAzureAgent
+      id: invoke_followup
+      conversationId: =System.ConversationId
+      agent:
+        name: FunctionMenuAgent
+      input:
+        externalLoop:
+          when: =Upper(System.LastMessage.Text) <> "EXIT"

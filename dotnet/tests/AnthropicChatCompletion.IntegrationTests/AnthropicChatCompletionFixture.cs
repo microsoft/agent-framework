@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -19,7 +20,6 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
     // All tests for Anthropic are intended to be ran locally as the CI pipeline for Anthropic is not setup.
     internal const string SkipReason = "Integrations tests for local execution only";
 
-    private static readonly AnthropicConfiguration s_config = TestConfiguration.LoadSection<AnthropicConfiguration>();
     private readonly bool _useReasoningModel;
     private readonly bool _useBeta;
 
@@ -35,11 +35,16 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
 
     public IChatClient ChatClient => this._agent.ChatClient;
 
-    public async Task<List<ChatMessage>> GetChatHistoryAsync(AgentThread thread)
+    public async Task<List<ChatMessage>> GetChatHistoryAsync(AIAgent agent, AgentSession session)
     {
-        var typedThread = (ChatClientAgentThread)thread;
+        var chatHistoryProvider = agent.GetService<ChatHistoryProvider>();
 
-        return typedThread.MessageStore is null ? [] : (await typedThread.MessageStore.GetMessagesAsync()).ToList();
+        if (chatHistoryProvider is null)
+        {
+            return [];
+        }
+
+        return (await chatHistoryProvider.InvokingAsync(new(agent, session, []))).ToList();
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(
@@ -47,7 +52,9 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var anthropicClient = new AnthropicClient() { APIKey = s_config.ApiKey };
+        var anthropicClient = new AnthropicClient() { ApiKey = TestConfiguration.GetRequiredValue(TestSettings.AnthropicApiKey) };
+        var chatModelName = TestConfiguration.GetRequiredValue(TestSettings.AnthropicChatModelName);
+        var reasoningModelName = TestConfiguration.GetRequiredValue(TestSettings.AnthropicReasoningModelName);
 
         IChatClient? chatClient = this._useBeta
             ? anthropicClient
@@ -58,7 +65,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
                      => options.RawRepresentationFactory = _
                      => new Anthropic.Models.Beta.Messages.MessageCreateParams()
                      {
-                         Model = options.ModelId ?? (this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId),
+                         Model = options.ModelId ?? (this._useReasoningModel ? reasoningModelName : chatModelName),
                          MaxTokens = options.MaxOutputTokens ?? 4096,
                          Messages = [],
                          Thinking = this._useReasoningModel
@@ -73,7 +80,7 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
                      => options.RawRepresentationFactory = _
                      => new Anthropic.Models.Messages.MessageCreateParams()
                      {
-                         Model = options.ModelId ?? (this._useReasoningModel ? s_config.ChatReasoningModelId : s_config.ChatModelId),
+                         Model = options.ModelId ?? (this._useReasoningModel ? reasoningModelName : chatModelName),
                          MaxTokens = options.MaxOutputTokens ?? 4096,
                          Messages = [],
                          Thinking = this._useReasoningModel
@@ -92,13 +99,19 @@ public class AnthropicChatCompletionFixture : IChatClientAgentFixture
         // Chat Completion does not require/support deleting agents, so this is a no-op.
         Task.CompletedTask;
 
-    public Task DeleteThreadAsync(AgentThread thread) =>
-        // Chat Completion does not require/support deleting threads, so this is a no-op.
+    public Task DeleteSessionAsync(AgentSession session) =>
+        // Chat Completion does not require/support deleting sessions, so this is a no-op.
         Task.CompletedTask;
 
-    public async Task InitializeAsync() =>
+    public async ValueTask InitializeAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
         this._agent = await this.CreateChatClientAgentAsync();
+    }
 
-    public Task DisposeAsync() =>
-        Task.CompletedTask;
+    public ValueTask DisposeAsync()
+    {
+        GC.SuppressFinalize(this);
+        return default;
+    }
 }

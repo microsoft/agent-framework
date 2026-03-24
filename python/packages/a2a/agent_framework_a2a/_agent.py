@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import base64
 import json
 import re
 import uuid
-from collections.abc import AsyncIterable, Sequence
-from typing import Any, cast
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
+from typing import Any, Final, Literal, TypeAlias, overload
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory, minimal_agent_card
@@ -16,9 +18,12 @@ from a2a.types import (
     FilePart,
     FileWithBytes,
     FileWithUri,
-    Message,
     Task,
+    TaskArtifactUpdateEvent,
+    TaskIdParams,
+    TaskQueryParams,
     TaskState,
+    TaskStatusUpdateEvent,
     TextPart,
     TransportProtocol,
 )
@@ -26,28 +31,51 @@ from a2a.types import Message as A2AMessage
 from a2a.types import Part as A2APart
 from a2a.types import Role as A2ARole
 from agent_framework import (
-    AgentRunResponse,
-    AgentRunResponseUpdate,
-    AgentThread,
+    AgentResponse,
+    AgentResponseUpdate,
+    AgentSession,
     BaseAgent,
-    ChatMessage,
-    Contents,
-    DataContent,
-    Role,
-    TextContent,
-    UriContent,
+    BaseHistoryProvider,
+    Content,
+    ContinuationToken,
+    Message,
+    ResponseStream,
+    SessionContext,
+    normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
+from agent_framework._types import AgentRunInputs
+from agent_framework.observability import AgentTelemetryLayer
 
-__all__ = ["A2AAgent"]
+__all__ = ["A2AAgent", "A2AContinuationToken"]
 
 URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;]+);base64,(?P<base64_data>[A-Za-z0-9+/=]+)$")
+
+
+class A2AContinuationToken(ContinuationToken):
+    """Continuation token for A2A protocol long-running tasks."""
+
+    task_id: str
+    """A2A protocol task ID."""
+    context_id: str
+    """A2A protocol context ID."""
+
+
 TERMINAL_TASK_STATES = [
     TaskState.completed,
     TaskState.failed,
     TaskState.canceled,
     TaskState.rejected,
 ]
+IN_PROGRESS_TASK_STATES = [
+    TaskState.submitted,
+    TaskState.working,
+    TaskState.input_required,
+    TaskState.auth_required,
+]
+
+A2AClientEvent: TypeAlias = tuple[Task, TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None]
+A2AStreamItem: TypeAlias = A2AMessage | A2AClientEvent
 
 
 def _get_uri_data(uri: str) -> str:
@@ -58,16 +86,18 @@ def _get_uri_data(uri: str) -> str:
     return match.group("base64_data")
 
 
-class A2AAgent(BaseAgent):
+class A2AAgent(AgentTelemetryLayer, BaseAgent):
     """Agent2Agent (A2A) protocol implementation.
 
     Wraps an A2A Client to connect the Agent Framework with external A2A-compliant agents
-    via HTTP/JSON-RPC. Converts framework ChatMessages to A2A Messages on send, and converts
+    via HTTP/JSON-RPC. Converts framework Messages to A2A Messages on send, and converts
     A2A responses (Messages/Tasks) back to framework types. Inherits BaseAgent capabilities
     while managing the underlying A2A protocol communication.
 
     Can be initialized with a URL, AgentCard, or existing A2A Client instance.
     """
+
+    AGENT_PROVIDER_NAME: Final[str] = "A2A"
 
     def __init__(
         self,
@@ -80,23 +110,36 @@ class A2AAgent(BaseAgent):
         client: Client | None = None,
         http_client: httpx.AsyncClient | None = None,
         auth_interceptor: AuthInterceptor | None = None,
+        timeout: float | httpx.Timeout | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the A2AAgent.
 
         Keyword Args:
-            name: The name of the agent.
+            name: The name of the agent. Defaults to agent_card.name if agent_card is provided.
             id: The unique identifier for the agent, will be created automatically if not provided.
-            description: A brief description of the agent's purpose.
+            description: A brief description of the agent's purpose. Defaults to agent_card.description
+                if agent_card is provided.
             agent_card: The agent card for the agent.
             url: The URL for the A2A server.
             client: The A2A client for the agent.
             http_client: Optional httpx.AsyncClient to use.
             auth_interceptor: Optional authentication interceptor for secured endpoints.
+            timeout: Request timeout configuration. Can be a float (applied to all timeout components),
+                httpx.Timeout object (for full control), or None (uses 10.0s connect, 60.0s read,
+                10.0s write, 5.0s pool - optimized for A2A operations).
             kwargs: any additional properties, passed to BaseAgent.
         """
+        # Default name/description from agent_card when not explicitly provided
+        if agent_card is not None:
+            if name is None:
+                name = agent_card.name
+            if description is None:
+                description = agent_card.description
+
         super().__init__(id=id, name=name, description=description, **kwargs)
         self._http_client: httpx.AsyncClient | None = http_client
+        self._timeout_config = self._create_timeout_config(timeout)
         if client is not None:
             self.client = client
             self._close_http_client = True
@@ -109,14 +152,8 @@ class A2AAgent(BaseAgent):
 
         # Create or use provided httpx client
         if http_client is None:
-            timeout = httpx.Timeout(
-                connect=10.0,  # 10 seconds to establish connection
-                read=60.0,  # 60 seconds to read response (A2A operations can take time)
-                write=10.0,  # 10 seconds to send request
-                pool=5.0,  # 5 seconds to get connection from pool
-            )
             headers = prepend_agent_framework_to_user_agent()
-            http_client = httpx.AsyncClient(timeout=timeout, headers=headers)
+            http_client = httpx.AsyncClient(timeout=self._timeout_config, headers=headers)
             self._http_client = http_client  # Store for cleanup
             self._close_http_client = True
 
@@ -143,7 +180,33 @@ class A2AAgent(BaseAgent):
                     f"Fallback error: {fallback_error}"
                 ) from transport_error
 
-    async def __aenter__(self) -> "A2AAgent":
+    def _create_timeout_config(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
+        """Create httpx.Timeout configuration from user input.
+
+        Args:
+            timeout: User-provided timeout configuration
+
+        Returns:
+            Configured httpx.Timeout object
+        """
+        if timeout is None:
+            # Default timeout configuration (preserving original values)
+            return httpx.Timeout(
+                connect=10.0,  # 10 seconds to establish connection
+                read=60.0,  # 60 seconds to read response (A2A operations can take time)
+                write=10.0,  # 10 seconds to send request
+                pool=5.0,  # 5 seconds to get connection from pool
+            )
+        if isinstance(timeout, float):
+            # Simple timeout
+            return httpx.Timeout(timeout)
+        if isinstance(timeout, httpx.Timeout):
+            # Full timeout configuration provided by user
+            return timeout
+        msg = f"Invalid timeout type: {type(timeout)}. Expected float, httpx.Timeout, or None."
+        raise TypeError(msg)
+
+    async def __aenter__(self) -> A2AAgent:
         """Async context manager entry."""
         return self
 
@@ -158,103 +221,243 @@ class A2AAgent(BaseAgent):
         if self._http_client is not None and self._close_http_client:
             await self._http_client.aclose()
 
-    async def run(
+    @overload
+    def run(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        messages: AgentRunInputs | None = None,
         *,
-        thread: AgentThread | None = None,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        continuation_token: A2AContinuationToken | None = None,
+        background: bool = False,
         **kwargs: Any,
-    ) -> AgentRunResponse:
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        continuation_token: A2AContinuationToken | None = None,
+        background: bool = False,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        continuation_token: A2AContinuationToken | None = None,
+        background: bool = False,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
 
-        This method returns the final result of the agent's execution
-        as a single AgentRunResponse object. The caller is blocked until
-        the final result is available.
-
         Args:
             messages: The message(s) to send to the agent.
 
         Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
+            stream: Whether to stream the response. Defaults to False.
+            session: The conversation session associated with the message(s).
+            function_invocation_kwargs: Present for compatibility with the shared agent interface.
+                A2AAgent does not use these values directly.
+            client_kwargs: Present for compatibility with the shared agent interface.
+                A2AAgent does not use these values directly.
+            kwargs: Additional compatibility keyword arguments.
+                A2AAgent does not use these values directly.
+            continuation_token: Optional token to resume a long-running task
+                instead of starting a new one.
+            background: When True, in-progress task updates surface continuation
+                tokens so the caller can poll or resubscribe later. When False
+                (default), the agent internally waits for the task to complete.
 
         Returns:
-            An agent response item.
+            When stream=False: An Awaitable[AgentResponse].
+            When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
-        # Collect all updates and use framework to consolidate updates into response
-        updates = [update async for update in self.run_stream(messages, thread=thread, **kwargs)]
-        return AgentRunResponse.from_agent_run_response_updates(updates)
+        del function_invocation_kwargs, client_kwargs, kwargs
+        normalized_messages = normalize_messages(messages)
 
-    async def run_stream(
+        if continuation_token is not None:
+            a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
+                TaskIdParams(id=continuation_token["task_id"])
+            )
+        else:
+            if not normalized_messages:
+                raise ValueError("At least one message is required when starting a new task (no continuation_token).")
+            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_stream = self.client.send_message(a2a_message)
+
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
+        session_context = SessionContext(
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
+            input_messages=normalized_messages or [],
+            options={},
+        )
+
+        response = ResponseStream(
+            self._map_a2a_stream(
+                a2a_stream,
+                background=background,
+                session=provider_session,
+                session_context=session_context,
+            ),
+            finalizer=AgentResponse.from_updates,
+        )
+        if stream:
+            return response
+        return response.get_final_response()
+
+    async def _map_a2a_stream(
         self,
-        messages: str | ChatMessage | list[str] | list[ChatMessage] | None = None,
+        a2a_stream: AsyncIterable[A2AStreamItem],
         *,
-        thread: AgentThread | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentRunResponseUpdate]:
-        """Run the agent as a stream.
-
-        This method will return the intermediate steps and final results of the
-        agent's execution as a stream of AgentRunResponseUpdate objects to the caller.
+        background: bool = False,
+        session: AgentSession | None = None,
+        session_context: SessionContext | None = None,
+    ) -> AsyncIterable[AgentResponseUpdate]:
+        """Map raw A2A protocol items to AgentResponseUpdates.
 
         Args:
-            messages: The message(s) to send to the agent.
+            a2a_stream: The raw A2A event stream.
 
         Keyword Args:
-            thread: The conversation thread associated with the message(s).
-            kwargs: Additional keyword arguments.
-
-        Yields:
-            An agent response item.
+            background: When False, in-progress task updates are silently
+                consumed (the stream keeps iterating until a terminal state).
+                When True, they are yielded with a continuation token.
+            session: The agent session for context providers.
+            session_context: The session context for context providers.
         """
-        messages = self._normalize_messages(messages)
-        a2a_message = self._chat_message_to_a2a_message(messages[-1])
+        if session_context is None:
+            session_context = SessionContext(input_messages=[], options={})
 
-        response_stream = self.client.send_message(a2a_message)
+        # Run before_run providers (forward order)
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            if session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
 
-        async for item in response_stream:
-            if isinstance(item, Message):
+        all_updates: list[AgentResponseUpdate] = []
+        async for item in a2a_stream:
+            if isinstance(item, A2AMessage):
                 # Process A2A Message
-                contents = self._a2a_parts_to_contents(item.parts)
-                yield AgentRunResponseUpdate(
+                contents = self._parse_contents_from_a2a(item.parts)
+                update = AgentResponseUpdate(
                     contents=contents,
-                    role=Role.ASSISTANT if item.role == A2ARole.agent else Role.USER,
+                    role="assistant" if item.role == A2ARole.agent else "user",
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
-            elif isinstance(item, tuple) and len(item) == 2:  # ClientEvent = (Task, UpdateEvent)
+                all_updates.append(update)
+                yield update
+            elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, _update_event = item
-                if isinstance(task, Task) and task.status.state in TERMINAL_TASK_STATES:
-                    # Convert Task artifacts to ChatMessages and yield as separate updates
-                    task_messages = self._task_to_chat_messages(task)
-                    if task_messages:
-                        for message in task_messages:
-                            # Use the artifact's ID from raw_representation as message_id for unique identification
-                            artifact_id = getattr(message.raw_representation, "artifact_id", None)
-                            yield AgentRunResponseUpdate(
-                                contents=message.contents,
-                                role=message.role,
-                                response_id=task.id,
-                                message_id=artifact_id,
-                                raw_representation=task,
-                            )
-                    else:
-                        # Empty task
-                        yield AgentRunResponseUpdate(
-                            contents=[],
-                            role=Role.ASSISTANT,
-                            response_id=task.id,
-                            raw_representation=task,
-                        )
+                for update in self._updates_from_task(task, background=background):
+                    all_updates.append(update)
+                    yield update
             else:
-                # Unknown response type
-                msg = f"Only Message and Task responses are supported from A2A agents. Received: {type(item)}"
-                raise NotImplementedError(msg)
+                raise NotImplementedError("Only Message and Task responses are supported")
 
-    def _chat_message_to_a2a_message(self, message: ChatMessage) -> A2AMessage:
-        """Convert a ChatMessage to an A2A Message.
+        # Set the response on the context for after_run providers
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
 
-        Transforms Agent Framework ChatMessage objects into A2A protocol Messages by:
+        await self._run_after_providers(session=session, context=session_context)
+
+    # ------------------------------------------------------------------
+    # Task helpers
+    # ------------------------------------------------------------------
+
+    def _updates_from_task(self, task: Task, *, background: bool = False) -> list[AgentResponseUpdate]:
+        """Convert an A2A Task into AgentResponseUpdate(s).
+
+        Terminal tasks produce updates from their artifacts/history.
+        In-progress tasks produce a continuation token update only when
+        ``background=True``; otherwise they are silently skipped so the
+        caller keeps consuming the stream until completion.
+        """
+        if task.status.state in TERMINAL_TASK_STATES:
+            task_messages = self._parse_messages_from_task(task)
+            if task_messages:
+                return [
+                    AgentResponseUpdate(
+                        contents=message.contents,
+                        role=message.role,
+                        response_id=task.id,
+                        message_id=getattr(message.raw_representation, "artifact_id", None),
+                        raw_representation=task,
+                    )
+                    for message in task_messages
+                ]
+            return [AgentResponseUpdate(contents=[], role="assistant", response_id=task.id, raw_representation=task)]
+
+        if background and task.status.state in IN_PROGRESS_TASK_STATES:
+            token = self._build_continuation_token(task)
+            return [
+                AgentResponseUpdate(
+                    contents=[],
+                    role="assistant",
+                    response_id=task.id,
+                    continuation_token=token,
+                    raw_representation=task,
+                )
+            ]
+
+        return []
+
+    @staticmethod
+    def _build_continuation_token(task: Task) -> A2AContinuationToken | None:
+        """Build an A2AContinuationToken from an A2A Task if it is still in progress."""
+        if task.status.state in IN_PROGRESS_TASK_STATES:
+            return A2AContinuationToken(task_id=task.id, context_id=task.context_id)
+        return None
+
+    async def poll_task(self, continuation_token: A2AContinuationToken) -> AgentResponse[Any]:
+        """Poll for the current state of a long-running A2A task.
+
+        Unlike ``run(continuation_token=...)``, which resubscribes to the SSE
+        stream, this performs a single request to retrieve the task state.
+
+        Args:
+            continuation_token: A token previously obtained from a response's
+                ``continuation_token`` field.
+
+        Returns:
+            An AgentResponse whose ``continuation_token`` is set when the task
+            is still in progress, or ``None`` when it has reached a terminal state.
+        """
+        task_id = continuation_token["task_id"]
+        task = await self.client.get_task(TaskQueryParams(id=task_id))
+        updates = self._updates_from_task(task, background=True)
+        if updates:
+            return AgentResponse.from_updates(updates)
+        return AgentResponse(messages=[], response_id=task.id, raw_representation=task)
+
+    def _prepare_message_for_a2a(self, message: Message) -> A2AMessage:
+        """Prepare a Message for the A2A protocol.
+
+        Transforms Agent Framework Message objects into A2A protocol Messages by:
         - Converting all message contents to appropriate A2A Part types
         - Mapping text content to TextPart objects
         - Converting file references (URI/data/hosted_file) to FilePart objects
@@ -263,12 +466,14 @@ class A2AAgent(BaseAgent):
         """
         parts: list[A2APart] = []
         if not message.contents:
-            raise ValueError("ChatMessage.contents is empty; cannot convert to A2AMessage.")
+            raise ValueError("Message.contents is empty; cannot convert to A2AMessage.")
 
         # Process ALL contents
         for content in message.contents:
             match content.type:
                 case "text":
+                    if content.text is None:
+                        raise ValueError("Text content requires a non-null text value")
                     parts.append(
                         A2APart(
                             root=TextPart(
@@ -287,6 +492,8 @@ class A2AAgent(BaseAgent):
                         )
                     )
                 case "uri":
+                    if content.uri is None:
+                        raise ValueError("URI content requires a non-null uri value")
                     parts.append(
                         A2APart(
                             root=FilePart(
@@ -299,6 +506,8 @@ class A2AAgent(BaseAgent):
                         )
                     )
                 case "data":
+                    if content.uri is None:
+                        raise ValueError("Data content requires a non-null uri value")
                     parts.append(
                         A2APart(
                             root=FilePart(
@@ -311,6 +520,8 @@ class A2AAgent(BaseAgent):
                         )
                     )
                 case "hosted_file":
+                    if content.file_id is None:
+                        raise ValueError("Hosted file content requires a non-null file_id value")
                     parts.append(
                         A2APart(
                             root=FilePart(
@@ -325,26 +536,31 @@ class A2AAgent(BaseAgent):
                 case _:
                     raise ValueError(f"Unknown content type: {content.type}")
 
+        # Exclude framework-internal keys (e.g. attribution) from wire metadata
+        internal_keys = {"_attribution", "context_id"}
+        metadata = {k: v for k, v in message.additional_properties.items() if k not in internal_keys} or None
+
         return A2AMessage(
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
-            metadata=cast(dict[str, Any], message.additional_properties),
+            context_id=message.additional_properties.get("context_id"),
+            metadata=metadata,
         )
 
-    def _a2a_parts_to_contents(self, parts: Sequence[A2APart]) -> list[Contents]:
-        """Convert A2A Parts to Agent Framework Contents.
+    def _parse_contents_from_a2a(self, parts: Sequence[A2APart]) -> list[Content]:
+        """Parse A2A Parts into Agent Framework Content.
 
         Transforms A2A protocol Parts into framework-native Content objects,
         handling text, file (URI/bytes), and data parts with metadata preservation.
         """
-        contents: list[Contents] = []
+        contents: list[Content] = []
         for part in parts:
             inner_part = part.root
             match inner_part.kind:
                 case "text":
                     contents.append(
-                        TextContent(
+                        Content.from_text(
                             text=inner_part.text,
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
@@ -353,7 +569,7 @@ class A2AAgent(BaseAgent):
                 case "file":
                     if isinstance(inner_part.file, FileWithUri):
                         contents.append(
-                            UriContent(
+                            Content.from_uri(
                                 uri=inner_part.file.uri,
                                 media_type=inner_part.file.mime_type or "",
                                 additional_properties=inner_part.metadata,
@@ -362,7 +578,7 @@ class A2AAgent(BaseAgent):
                         )
                     elif isinstance(inner_part.file, FileWithBytes):
                         contents.append(
-                            DataContent(
+                            Content.from_data(
                                 data=base64.b64decode(inner_part.file.bytes),
                                 media_type=inner_part.file.mime_type or "",
                                 additional_properties=inner_part.metadata,
@@ -371,7 +587,7 @@ class A2AAgent(BaseAgent):
                         )
                 case "data":
                     contents.append(
-                        TextContent(
+                        Content.from_text(
                             text=json.dumps(inner_part.data),
                             additional_properties=inner_part.metadata,
                             raw_representation=inner_part,
@@ -381,20 +597,20 @@ class A2AAgent(BaseAgent):
                     raise ValueError(f"Unknown Part kind: {inner_part.kind}")
         return contents
 
-    def _task_to_chat_messages(self, task: Task) -> list[ChatMessage]:
-        """Convert A2A Task artifacts to ChatMessages with ASSISTANT role."""
-        messages: list[ChatMessage] = []
+    def _parse_messages_from_task(self, task: Task) -> list[Message]:
+        """Parse A2A Task artifacts into Messages with ASSISTANT role."""
+        messages: list[Message] = []
 
         if task.artifacts is not None:
             for artifact in task.artifacts:
-                messages.append(self._artifact_to_chat_message(artifact))
+                messages.append(self._parse_message_from_artifact(artifact))
         elif task.history is not None and len(task.history) > 0:
             # Include the last history item as the agent response
             history_item = task.history[-1]
-            contents = self._a2a_parts_to_contents(history_item.parts)
+            contents = self._parse_contents_from_a2a(history_item.parts)
             messages.append(
-                ChatMessage(
-                    role=Role.ASSISTANT if history_item.role == A2ARole.agent else Role.USER,
+                Message(
+                    role="assistant" if history_item.role == A2ARole.agent else "user",
                     contents=contents,
                     raw_representation=history_item,
                 )
@@ -402,11 +618,11 @@ class A2AAgent(BaseAgent):
 
         return messages
 
-    def _artifact_to_chat_message(self, artifact: Artifact) -> ChatMessage:
-        """Convert A2A Artifact to ChatMessage using part contents."""
-        contents = self._a2a_parts_to_contents(artifact.parts)
-        return ChatMessage(
-            role=Role.ASSISTANT,
+    def _parse_message_from_artifact(self, artifact: Artifact) -> Message:
+        """Parse A2A Artifact into Message using part contents."""
+        contents = self._parse_contents_from_a2a(artifact.parts)
+        return Message(
+            role="assistant",
             contents=contents,
             raw_representation=artifact,
         )

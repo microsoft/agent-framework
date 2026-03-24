@@ -10,8 +10,9 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Core;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
@@ -25,7 +26,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// project endpoint and credentials to authenticate requests.</remarks>
 /// <param name="projectEndpoint">A <see cref="Uri"/> instance representing the endpoint URL of the Foundry project. This must be a valid, non-null URI pointing to the project.</param>
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
-public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : WorkflowAgentProvider
+public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : ResponseAgentProvider
 {
     private readonly Dictionary<string, AgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
@@ -90,7 +91,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     }
 
     /// <inheritdoc/>
-    public override async IAsyncEnumerable<AgentRunResponseUpdate> InvokeAgentAsync(
+    public override async IAsyncEnumerable<AgentResponseUpdate> InvokeAgentAsync(
         string agentId,
         string? agentVersion,
         string? conversationId,
@@ -111,7 +112,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         if (inputArguments is not null)
         {
             JsonNode jsonNode = ConvertDictionaryToJson(inputArguments);
-            ResponseCreationOptions responseCreationOptions = new();
+            CreateResponseOptions responseCreationOptions = new();
 #pragma warning disable SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
             responseCreationOptions.Patch.Set("$.structured_inputs"u8, BinaryData.FromString(jsonNode.ToJsonString()));
 #pragma warning restore SCME0001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
@@ -120,12 +121,12 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         ChatClientAgentRunOptions runOptions = new(chatOptions);
 
-        IAsyncEnumerable<AgentRunResponseUpdate> agentResponse =
+        IAsyncEnumerable<AgentResponseUpdate> agentResponse =
             messages is not null ?
                 agent.RunStreamingAsync([.. messages], null, runOptions, cancellationToken) :
-                agent.RunStreamingAsync([new ChatMessage(ChatRole.User, string.Empty)], null, runOptions, cancellationToken);
+                agent.RunStreamingAsync([], null, runOptions, cancellationToken);
 
-        await foreach (AgentRunResponseUpdate update in agentResponse.ConfigureAwait(false))
+        await foreach (AgentResponseUpdate update in agentResponse.ConfigureAwait(false))
         {
             update.AuthorName = agentVersionResult.Name;
             yield return update;
@@ -149,7 +150,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
                     agentName,
                     cancellationToken).ConfigureAwait(false);
 
-            targetAgent = agentRecord.Versions.Latest;
+            targetAgent = agentRecord.GetLatestVersion();
         }
         else
         {
@@ -174,7 +175,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         AIProjectClient client = this.GetAgentClient();
 
-        agent = client.GetAIAgent(agentVersion, tools: null, clientFactory: null, services: null);
+        agent = client.AsAIAgent(agentVersion, tools: null, clientFactory: null, services: null);
 
         FunctionInvokingChatClient? functionInvokingClient = agent.GetService<FunctionInvokingChatClient>();
         if (functionInvokingClient is not null)
@@ -206,7 +207,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
     public override async Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default)
     {
         AgentResponseItem responseItem = await this.GetConversationClient().GetProjectConversationItemAsync(conversationId, messageId, include: null, cancellationToken).ConfigureAwait(false);
-        ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+        ResponseItem[] items = [responseItem.AsResponseResultItem()];
         return items.AsChatMessages().Single();
     }
 
@@ -223,7 +224,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         await foreach (AgentResponseItem responseItem in this.GetConversationClient().GetProjectConversationItemsAsync(conversationId, null, limit, order.ToString(), after, before, include: null, cancellationToken).ConfigureAwait(false))
         {
-            ResponseItem[] items = [responseItem.AsOpenAIResponseItem()];
+            ResponseItem[] items = [responseItem.AsResponseResultItem()];
             foreach (ChatMessage message in items.AsChatMessages())
             {
                 yield return message;

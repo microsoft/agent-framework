@@ -1,7 +1,9 @@
 ﻿<#@ template language="C#" inherits="ActionTemplate" visibility="internal" linePragmas="false" #>
 <#@ output extension=".cs" #>
 <#@ assembly name="System.Core" #>
-<#@ include file="Snippets/Index.tt" once="true" #>
+<#@ import namespace="Microsoft.Agents.ObjectModel" #>
+<#@ include file="Snippets/AssignVariableTemplate.tt" once="true" #>
+<#@ include file="Snippets/EvaluateValueExpressionTemplate.tt" once="true" #>
 /// <summary>
 /// Loops over a list assignign the loop variable to "<#= this.Model.Value #>" variable.
 /// </summary>
@@ -34,7 +36,7 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
             this._values = [evaluatedValue];
         }
 
-        await this.ResetAsync(context, null, cancellationToken).ConfigureAwait(false);
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
 
         return default;
     }
@@ -57,7 +59,12 @@ internal sealed class <#= this.Name #>Executor(FormulaSession session) : ActionE
         }
     }
 
-    public async ValueTask ResetAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    public async ValueTask CompleteAsync(IWorkflowContext context, object? _, CancellationToken cancellationToken)
+    {
+        await this.ResetAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ResetAsync(IWorkflowContext context, CancellationToken cancellationToken)
     {<# 
         AssignVariable(this.Value, "UnassignedValue.Instance", tightFormat: true);
 

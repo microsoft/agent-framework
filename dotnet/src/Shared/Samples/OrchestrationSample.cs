@@ -75,13 +75,13 @@ public abstract class OrchestrationSample : BaseSample
     /// <summary>
     /// Writes the streamed agent run response updates to the console or test output, including role and author information.
     /// </summary>
-    /// <param name="streamedResponses">An enumerable of <see cref="AgentRunResponseUpdate"/> objects representing streamed responses.</param>
-    protected static void WriteStreamedResponse(IEnumerable<AgentRunResponseUpdate> streamedResponses)
+    /// <param name="streamedResponses">An enumerable of <see cref="AgentResponseUpdate"/> objects representing streamed responses.</param>
+    protected static void WriteStreamedResponse(IEnumerable<AgentResponseUpdate> streamedResponses)
     {
         string? authorName = null;
         ChatRole? authorRole = null;
         StringBuilder builder = new();
-        foreach (AgentRunResponseUpdate response in streamedResponses)
+        foreach (AgentResponseUpdate response in streamedResponses)
         {
             authorName ??= response.AuthorName;
             authorRole ??= response.Role;
@@ -106,7 +106,7 @@ public abstract class OrchestrationSample : BaseSample
         /// <summary>
         /// Gets the list of streamed response updates received so far.
         /// </summary>
-        public List<AgentRunResponseUpdate> StreamedResponses { get; } = [];
+        public List<AgentResponseUpdate> StreamedResponses { get; } = [];
 
         /// <summary>
         /// Gets the list of chat messages representing the conversation history.
@@ -131,9 +131,9 @@ public abstract class OrchestrationSample : BaseSample
         /// <summary>
         /// Callback to handle a streamed agent run response update, adding it to the list and writing output if final.
         /// </summary>
-        /// <param name="streamedResponse">The <see cref="AgentRunResponseUpdate"/> to process.</param>
+        /// <param name="streamedResponse">The <see cref="AgentResponseUpdate"/> to process.</param>
         /// <returns>A <see cref="ValueTask"/> representing the asynchronous operation.</returns>
-        public ValueTask StreamingResultCallbackAsync(AgentRunResponseUpdate streamedResponse)
+        public ValueTask StreamingResultCallbackAsync(AgentResponseUpdate streamedResponse)
         {
             this.StreamedResponses.Add(streamedResponse);
             return default;

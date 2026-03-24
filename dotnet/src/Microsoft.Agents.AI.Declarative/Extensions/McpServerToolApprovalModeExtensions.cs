@@ -2,7 +2,7 @@
 
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Bot.ObjectModel;
+namespace Microsoft.Agents.ObjectModel;
 
 /// <summary>
 /// Extension methods for <see cref="McpServerToolApprovalMode"/>.

@@ -44,7 +44,7 @@ internal sealed class AgentRunHandle
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The agent response corresponding to this request.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the response is not found after polling.</exception>
-    public async Task<AgentRunResponse> ReadAgentResponseAsync(CancellationToken cancellationToken = default)
+    public async Task<AgentResponse> ReadAgentResponseAsync(CancellationToken cancellationToken = default)
     {
         TimeSpan pollInterval = TimeSpan.FromMilliseconds(50); // Start with 50ms
         TimeSpan maxPollInterval = TimeSpan.FromSeconds(3); // Maximum 3 seconds
@@ -69,7 +69,7 @@ internal sealed class AgentRunHandle
                 if (response is not null)
                 {
                     this._logger.LogDonePollingForResponse(this.SessionId, this.CorrelationId);
-                    return response.ToRunResponse();
+                    return response.ToResponse();
                 }
             }
 
