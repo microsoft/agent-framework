@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._chat_client import GeminiChatClient, GeminiChatOptions, GeminiSettings, ThinkingConfig
+from ._chat_client import GeminiChatClient, GeminiChatOptions, GeminiSettings, RawGeminiChatClient, ThinkingConfig
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -13,6 +13,7 @@ __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
     "GeminiSettings",
+    "RawGeminiChatClient",
     "ThinkingConfig",
     "__version__",
 ]

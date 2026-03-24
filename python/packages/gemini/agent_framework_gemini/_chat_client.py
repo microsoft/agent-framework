@@ -54,6 +54,7 @@ __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
     "GeminiSettings",
+    "RawGeminiChatClient",
     "ThinkingConfig",
 ]
 
@@ -190,14 +191,16 @@ _FINISH_REASON_MAP: dict[str, FinishReasonLiteral] = {
 }
 
 
-class GeminiChatClient(
-    FunctionInvocationLayer[GeminiChatOptionsT],
-    ChatMiddlewareLayer[GeminiChatOptionsT],
-    ChatTelemetryLayer[GeminiChatOptionsT],
+class RawGeminiChatClient(
     BaseChatClient[GeminiChatOptionsT],
     Generic[GeminiChatOptionsT],
 ):
-    """Async chat client for the Google Gemini API with middleware, function invocation and telemetry."""
+    """A raw Gemini chat client for the Google Gemini API without function invocation, middleware or telemetry.
+
+    Use this when you want full control over the request pipeline. For instance, to opt out of
+    telemetry, use custom middleware, or compose your own layers. If you want the full-featured
+    client with batteries included, use `GeminiChatClient` instead.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "gcp.gemini"  # type: ignore[reportIncompatibleVariableOverride, misc]
 
@@ -210,10 +213,8 @@ class GeminiChatClient(
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
         additional_properties: dict[str, Any] | None = None,
-        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     ) -> None:
-        """Create a Gemini chat client.
+        """Create a raw Gemini chat client.
 
         Args:
             api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
@@ -222,8 +223,6 @@ class GeminiChatClient(
             env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
             additional_properties: Extra properties stored on the client instance.
-            middleware: Optional middleware chain.
-            function_invocation_configuration: Optional function invocation configuration.
         """
         settings = load_settings(
             GeminiSettings,
@@ -249,11 +248,7 @@ class GeminiChatClient(
 
         self.model_id = settings.get("chat_model_id")
 
-        super().__init__(
-            additional_properties=additional_properties,
-            middleware=middleware,
-            function_invocation_configuration=function_invocation_configuration,
-        )
+        super().__init__(additional_properties=additional_properties)
 
     @override
     def _inner_get_response(
@@ -752,3 +747,48 @@ class GeminiChatClient(
             A unique string in the format ``tool-call-<uuid_hex>``.
         """
         return f"tool-call-{uuid4().hex}"
+
+
+class GeminiChatClient(
+    FunctionInvocationLayer[GeminiChatOptionsT],
+    ChatMiddlewareLayer[GeminiChatOptionsT],
+    ChatTelemetryLayer[GeminiChatOptionsT],
+    RawGeminiChatClient[GeminiChatOptionsT],
+    Generic[GeminiChatOptionsT],
+):
+    """Gemini chat client for the Google Gemini API with function invocation, middleware and telemetry."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        model_id: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+        client: genai.Client | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+    ) -> None:
+        """Create a Gemini chat client.
+
+        Args:
+            api_key: The Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
+            model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` environment variable.
+            env_file_path: Path to a ``.env`` file for credential loading.
+            env_file_encoding: Encoding for the ``.env`` file.
+            client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
+            additional_properties: Extra properties stored on the client instance.
+            middleware: Optional middleware chain applied to every call.
+            function_invocation_configuration: Optional configuration for the function invocation loop.
+        """
+        super().__init__(
+            api_key=api_key,
+            model_id=model_id,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            client=client,
+            additional_properties=additional_properties,
+            middleware=middleware,
+            function_invocation_configuration=function_invocation_configuration,
+        )
