@@ -9,6 +9,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using SampleApp;
 
@@ -25,7 +26,7 @@ AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync
         {
             Instructions = AssistantInstructions
         }));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 ChatClientAgentRunOptions runOptions = new(
     new ChatOptions
     {

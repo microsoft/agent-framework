@@ -42,7 +42,7 @@ internal sealed class Program
             {
                 Description = "Computer automation agent with screen interaction capabilities."
             });
-        ChatClientAgent agentOption1 = aiProjectClient.AsAIAgent(agentVersion1);
+        FoundryAgent agentOption1 = aiProjectClient.AsAIAgent(agentVersion1);
 
         // Option 2 - Using PromptAgentDefinition SDK native type
         // Create the server side agent version
@@ -57,7 +57,7 @@ internal sealed class Program
                 displayWidth: 1026,
                 displayHeight: 769) }
                 }));
-        ChatClientAgent agentOption2 = aiProjectClient.AsAIAgent(agentVersion2);
+        FoundryAgent agentOption2 = aiProjectClient.AsAIAgent(agentVersion2);
 
         // Either invoke option1 or option2 agent, should have same result
         // Option 1

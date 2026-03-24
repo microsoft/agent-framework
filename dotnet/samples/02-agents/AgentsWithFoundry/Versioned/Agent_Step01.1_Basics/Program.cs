@@ -5,7 +5,7 @@
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
-using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -17,7 +17,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 AgentRecord jokerAgentRecord = await GetAgentRecord(deploymentName, JokerName, aiProjectClient);
 
 // You can create an AIAgent from the agent record.
-ChatClientAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
+FoundryAgent jokerAgentLatest = aiProjectClient.AsAIAgent(jokerAgentRecord);
 
 // The AgentVersion can be accessed via the GetService method.
 Console.WriteLine($"Latest agent version id: {jokerAgentRecord.GetLatestVersion().Id}");

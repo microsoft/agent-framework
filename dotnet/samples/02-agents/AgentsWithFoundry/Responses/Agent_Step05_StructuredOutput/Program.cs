@@ -8,6 +8,7 @@ using System.Text.Json.Serialization;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using SampleApp;
 
 #pragma warning disable CA5399
@@ -17,7 +18,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions
+FoundryAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions
 {
     Name = "StructuredOutputAssistant",
     ChatOptions = new()

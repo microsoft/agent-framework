@@ -17,11 +17,11 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using Microsoft.Extensions.AI.Evaluation.Quality;
 using Microsoft.Extensions.AI.Evaluation.Safety;
-
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
 
@@ -63,7 +63,7 @@ AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync
         {
             Instructions = "You are a helpful assistant. Answer questions accurately based on the provided context."
         }));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 Console.WriteLine($"Created agent: {agent.Name}");
 Console.WriteLine();
 

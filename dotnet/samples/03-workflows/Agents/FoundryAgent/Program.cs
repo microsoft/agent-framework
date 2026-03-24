@@ -4,6 +4,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
@@ -69,8 +70,8 @@ public static class Program
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to create the agent with.</param>
     /// <param name="model">The model to use for the agent</param>
-    /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static async Task<ChatClientAgent> CreateTranslationAgentAsync(
+    /// <returns>A FoundryAgent configured for the specified language</returns>
+    private static async Task<FoundryAgent> CreateTranslationAgentAsync(
         string targetLanguage,
         AIProjectClient aiProjectClient,
         string model)

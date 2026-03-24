@@ -5,7 +5,6 @@
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
-using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
@@ -16,8 +15,8 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = await CreateAgentWithMEAI();
-// ChatClientAgent agent = await CreateAgentWithNativeSDK();
+FoundryAgent agent = await CreateAgentWithMEAI();
+// FoundryAgent agent = await CreateAgentWithNativeSDK();
 
 // Run the agent with a question about countries
 Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
@@ -28,7 +27,7 @@ await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
-async Task<ChatClientAgent> CreateAgentWithMEAI()
+async Task<FoundryAgent> CreateAgentWithMEAI()
 {
     AITool tool = FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition());
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -44,7 +43,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAI()
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateOpenApiTool (Native SDK)
-async Task<ChatClientAgent> CreateAgentWithNativeSDK()
+async Task<FoundryAgent> CreateAgentWithNativeSDK()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         "OpenAPIToolsAgent-NATIVE",

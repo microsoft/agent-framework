@@ -9,6 +9,7 @@ using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
@@ -20,10 +21,10 @@ namespace AzureAI.IntegrationTests;
 /// </summary>
 public class ResponsesAgentFixture : IChatClientAgentFixture
 {
-    private ChatClientAgent _agent = null!;
+    private FoundryAgent _agent = null!;
     private AIProjectClient _client = null!;
 
-    public IChatClient ChatClient => this._agent.ChatClient;
+    public IChatClient ChatClient => this._agent.GetService<ChatClientAgent>()!.ChatClient;
 
     public AIAgent Agent => this._agent;
 
@@ -116,12 +117,12 @@ public class ResponsesAgentFixture : IChatClientAgentFixture
             model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
             instructions: instructions,
             name: name,
-            tools: aiTools));
+            tools: aiTools).GetService<ChatClientAgent>()!);
     }
 
     public Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
-        return Task.FromResult(this._client.AsAIAgent(options));
+        return Task.FromResult(this._client.AsAIAgent(options).GetService<ChatClientAgent>()!);
     }
 
     // Non-versioned Responses agents have no server-side agent to delete.

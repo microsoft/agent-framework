@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -31,7 +32,7 @@ PromptAgentDefinition weatherAgentDefinition = new(model: deploymentName)
     Tools = { weatherTool.GetService<ResponseTool>() ?? weatherTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert weather tool to a ResponseTool.") }
 };
 AgentVersion weatherAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(WeatherName, new AgentVersionCreationOptions(weatherAgentDefinition));
-ChatClientAgent weatherAgent = aiProjectClient.AsAIAgent(weatherAgentVersion, [weatherTool]);
+FoundryAgent weatherAgent = aiProjectClient.AsAIAgent(weatherAgentVersion, [weatherTool]);
 
 // Create the main agent, and provide the weather agent as a function tool.
 AITool weatherAgentTool = weatherAgent.AsAIFunction();
@@ -41,7 +42,7 @@ PromptAgentDefinition mainAgentDefinition = new(model: deploymentName)
     Tools = { weatherAgentTool.GetService<ResponseTool>() ?? weatherAgentTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert weather agent tool to a ResponseTool.") }
 };
 AgentVersion mainAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(MainName, new AgentVersionCreationOptions(mainAgentDefinition));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(mainAgentVersion, [weatherAgentTool]);
+FoundryAgent agent = aiProjectClient.AsAIAgent(mainAgentVersion, [weatherAgentTool]);
 
 // Invoke the agent and output the text result.
 AgentSession session = await agent.CreateSessionAsync();

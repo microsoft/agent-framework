@@ -6,6 +6,7 @@ using System.ComponentModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 [Description("Get the weather for a given location.")]
@@ -21,7 +22,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a ChatClientAgent with function tools.
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are a helpful assistant that can get weather information.",
     name: "WeatherAssistant",
     tools: [tool]);

@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -19,7 +20,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
     VisionName,
     new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = VisionInstructions }));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),

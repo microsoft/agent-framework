@@ -2,11 +2,11 @@
 
 // This sample shows how to create and use a simple AI agent with a multi-turn conversation.
 
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -19,14 +19,10 @@ AgentVersion jokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersion
         {
             Instructions = "You are good at telling jokes."
         }));
-ChatClientAgent jokerAgent = aiProjectClient.AsAIAgent(jokerAgentVersion);
+FoundryAgent jokerAgent = aiProjectClient.AsAIAgent(jokerAgentVersion);
 
 // Create a conversation session — this creates a server-side conversation that appears in the Foundry Project UI.
-ProjectConversation conversation = await aiProjectClient
-    .GetProjectOpenAIClient()
-    .GetProjectConversationsClient()
-    .CreateProjectConversationAsync();
-ChatClientAgentSession session = (ChatClientAgentSession)await jokerAgent.CreateSessionAsync(conversation.Id);
+ChatClientAgentSession session = await jokerAgent.CreateConversationSessionAsync();
 
 Console.WriteLine(await jokerAgent.RunAsync("Tell me a joke about a pirate.", session));
 Console.WriteLine(await jokerAgent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));

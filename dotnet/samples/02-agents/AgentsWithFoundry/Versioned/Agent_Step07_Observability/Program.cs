@@ -7,6 +7,7 @@ using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenTelemetry;
 using OpenTelemetry.Trace;
 
@@ -30,11 +31,11 @@ if (!string.IsNullOrWhiteSpace(applicationInsightsConnectionString))
 }
 using var tracerProvider = tracerProviderBuilder.Build();
 
-// Define the agent you want to create. (Prompt Agent in this case)
+// Define the agent you want to create.(Prompt Agent in this case)
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
     JokerName,
     new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions }));
-ChatClientAgent foundryAgent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent foundryAgent = aiProjectClient.AsAIAgent(agentVersion);
 AIAgent agent = foundryAgent
     .AsBuilder()
     .UseOpenTelemetry(sourceName: sourceName)

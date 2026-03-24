@@ -26,8 +26,8 @@ BingCustomSearchToolOptions bingCustomSearchToolParameters = new([
 ]);
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = await CreateAgentWithMEAIAsync();
-// ChatClientAgent agent = await CreateAgentWithNativeSDKAsync();
+FoundryAgent agent = await CreateAgentWithMEAIAsync();
+// FoundryAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -47,7 +47,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool wrapping for BingCustomSearchTool (MEAI + AgentFramework)
-async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryAgent> CreateAgentWithMEAIAsync()
 {
     AITool tool = FoundryAITool.CreateBingCustomSearchTool(bingCustomSearchToolParameters);
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -63,7 +63,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateBingCustomSearchTool (Native SDK)
-async Task<ChatClientAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryAgent> CreateAgentWithNativeSDKAsync()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         "BingCustomSearchAgent-NATIVE",

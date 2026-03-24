@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using SampleApp;
@@ -19,7 +20,7 @@ const string JokerName = "JokerAgent";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a new agent if one doesn't exist already.
-ChatClientAgent agent;
+FoundryAgent agent;
 try
 {
     AgentRecord agentRecord = await aiProjectClient.Agents.GetAgentAsync(JokerName);
@@ -56,7 +57,7 @@ namespace SampleApp
     /// <summary>
     /// A sample service that uses an AI agent to respond to user input.
     /// </summary>
-    internal sealed class SampleService(ChatClientAgent agent, AIProjectClient aiProjectClient, IHostApplicationLifetime appLifetime) : IHostedService
+    internal sealed class SampleService(FoundryAgent agent, AIProjectClient aiProjectClient, IHostApplicationLifetime appLifetime) : IHostedService
     {
         private AgentSession? _session;
 

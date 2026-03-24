@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -17,10 +18,10 @@ const string AgentName = "WebSearchAgent";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Option 1 - Using HostedWebSearchTool (MEAI + AgentFramework)
-ChatClientAgent agent = await CreateAgentWithMEAIAsync();
+FoundryAgent agent = await CreateAgentWithMEAIAsync();
 
 // Option 2 - Using PromptAgentDefinition with the Responses API native type
-// ChatClientAgent agent = await CreateAgentWithNativeSDKAsync();
+// FoundryAgent agent = await CreateAgentWithNativeSDKAsync();
 
 AgentResponse response = await agent.RunAsync("What's the weather today in Seattle?");
 
@@ -44,7 +45,7 @@ foreach (AIAnnotation annotation in response.Messages.SelectMany(m => m.Contents
 await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 // Creates the agent using the HostedWebSearchTool MEAI abstraction that maps to the built-in Responses API web search tool.
-async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryAgent> CreateAgentWithMEAIAsync()
 {
     HostedWebSearchTool tool = new();
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -60,7 +61,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
 }
 
 // Creates the agent using the PromptAgentDefinition with the Responses API native ResponseTool.CreateWebSearchTool().
-async Task<ChatClientAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryAgent> CreateAgentWithNativeSDKAsync()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         AgentName,

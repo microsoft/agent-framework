@@ -7,6 +7,7 @@
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using SampleApp;
@@ -36,7 +37,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a ChatClientAgent with the locally-resolved MCP tools.
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: AgentInstructions,
     name: AgentName,
     tools: wrappedTools);

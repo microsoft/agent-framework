@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -18,7 +19,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
     JokerName,
     new AgentVersionCreationOptions(new PromptAgentDefinition(model: deploymentName) { Instructions = JokerInstructions }));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 // Start a new session for the agent conversation.
 AgentSession session = await agent.CreateSessionAsync();

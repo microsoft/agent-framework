@@ -9,6 +9,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI.Responses;
@@ -52,7 +53,7 @@ foreach (AITool tool in wrappedTools)
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
     AgentName,
     new AgentVersionCreationOptions(agentDefinition));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion, wrappedTools);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion, wrappedTools);
 
 Console.WriteLine($"Agent '{agent.Name}' created successfully.");
 

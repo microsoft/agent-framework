@@ -22,7 +22,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a ChatClientAgent with Microsoft Fabric tool.
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: AgentInstructions,
     name: "FabricAgent-RAPI",
     tools: [FoundryAITool.CreateMicrosoftFabricTool(fabricToolOptions)]);

@@ -5,6 +5,7 @@
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -12,7 +13,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are a helpful agent that can analyze images.",
     name: "VisionAgent");
 

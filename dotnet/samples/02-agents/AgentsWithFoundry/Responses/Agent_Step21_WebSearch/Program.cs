@@ -5,6 +5,7 @@
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -17,7 +18,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a ChatClientAgent with HostedWebSearchTool.
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: AgentInstructions,
     name: AgentName,
     tools: [new HostedWebSearchTool()]);

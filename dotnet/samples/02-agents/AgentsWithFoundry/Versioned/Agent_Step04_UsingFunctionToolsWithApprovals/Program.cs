@@ -10,6 +10,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -33,7 +34,7 @@ PromptAgentDefinition agentDefinition = new(model: deploymentName)
     Tools = { approvalTool.GetService<ResponseTool>() ?? approvalTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert approval tool to a ResponseTool.") }
 };
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(AssistantName, new AgentVersionCreationOptions(agentDefinition));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion, [approvalTool]);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion, [approvalTool]);
 
 // Call the agent with approval-required function tools.
 // The agent will request approval before invoking the function.

@@ -21,8 +21,8 @@ var fabricToolOptions = new FabricDataAgentToolOptions();
 fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection(fabricConnectionId));
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = await CreateAgentWithMEAIAsync();
-// ChatClientAgent agent = await CreateAgentWithNativeSDKAsync();
+FoundryAgent agent = await CreateAgentWithMEAIAsync();
+// FoundryAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -42,7 +42,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool wrapping for MicrosoftFabricTool (MEAI + AgentFramework)
-async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryAgent> CreateAgentWithMEAIAsync()
 {
     AITool tool = FoundryAITool.CreateMicrosoftFabricTool(fabricToolOptions);
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -58,7 +58,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition with AgentTool.CreateMicrosoftFabricTool (Native SDK)
-async Task<ChatClientAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryAgent> CreateAgentWithNativeSDKAsync()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         "FabricAgent-NATIVE",

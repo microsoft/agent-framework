@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Files;
@@ -49,7 +50,7 @@ AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync
             Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
             Tools = { fileSearchTool.GetService<ResponseTool>() ?? fileSearchTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert hosted file search tool to a ResponseTool.") }
         }));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 AgentSession session = await agent.CreateSessionAsync();
 

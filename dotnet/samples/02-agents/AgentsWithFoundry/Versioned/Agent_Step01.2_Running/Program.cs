@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -21,7 +22,7 @@ AgentVersion jokerAgentVersion = await aiProjectClient.Agents.CreateAgentVersion
         {
             Instructions = JokerInstructions
         }));
-ChatClientAgent jokerAgent = aiProjectClient.AsAIAgent(jokerAgentVersion);
+FoundryAgent jokerAgent = aiProjectClient.AsAIAgent(jokerAgentVersion);
 
 // Invoke the agent with streaming support.
 await foreach (AgentResponseUpdate update in jokerAgent.RunStreamingAsync("Tell me a joke about a pirate."))

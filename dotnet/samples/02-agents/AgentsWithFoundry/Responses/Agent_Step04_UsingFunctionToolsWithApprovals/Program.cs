@@ -6,6 +6,7 @@ using System.ComponentModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 [Description("Get the weather for a given location.")]
@@ -19,7 +20,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 
 ApprovalRequiredAIFunction approvalTool = new(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)));
 
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are a helpful assistant that can get weather information.",
     name: "WeatherAssistant",
     tools: [approvalTool]);

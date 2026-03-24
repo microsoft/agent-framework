@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -47,7 +48,7 @@ AgentVersion newAgentVersion = await aiProjectClient.Agents.CreateAgentVersionAs
             Instructions = AssistantInstructions,
             Tools = { ResponseTool.CreateFunctionTool(nameof(GetWeather), toolParameters, strictModeEnabled: false, functionDescription: "Get the weather for a given location.") }
         }));
-ChatClientAgent newAgent = aiProjectClient.AsAIAgent(newAgentVersion, tools: [tool]);
+FoundryAgent newAgent = aiProjectClient.AsAIAgent(newAgentVersion, tools: [tool]);
 
 // Getting an already existing agent by name with tools.
 /* 
@@ -56,7 +57,7 @@ ChatClientAgent newAgent = aiProjectClient.AsAIAgent(newAgentVersion, tools: [to
  * If no invocable tools are provided, the function calling needs to handled manually.
  */
 AgentRecord existingAgentRecord = await aiProjectClient.Agents.GetAgentAsync(AssistantName);
-ChatClientAgent existingAgent = aiProjectClient.AsAIAgent(existingAgentRecord, tools: [tool]);
+FoundryAgent existingAgent = aiProjectClient.AsAIAgent(existingAgentRecord, tools: [tool]);
 
 AgentSession session = await existingAgent.CreateSessionAsync();
 Console.WriteLine(await existingAgent.RunAsync("What is the weather like in Amsterdam?", session));

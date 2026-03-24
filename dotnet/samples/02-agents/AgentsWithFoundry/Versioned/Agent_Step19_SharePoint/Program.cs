@@ -24,8 +24,8 @@ var sharepointOptions = new SharePointGroundingToolOptions();
 sharepointOptions.ProjectConnections.Add(new ToolProjectConnection(sharepointConnectionId));
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-ChatClientAgent agent = await CreateAgentWithMEAIAsync();
-// ChatClientAgent agent = await CreateAgentWithNativeSDKAsync();
+FoundryAgent agent = await CreateAgentWithMEAIAsync();
+// FoundryAgent agent = await CreateAgentWithNativeSDKAsync();
 
 Console.WriteLine($"Created agent: {agent.Name}");
 
@@ -57,7 +57,7 @@ Console.WriteLine($"\nDeleted agent: {agent.Name}");
 // --- Agent Creation Options ---
 
 // Option 1 - Using FoundryAITool.CreateSharepointTool (MEAI + AgentFramework)
-async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
+async Task<FoundryAgent> CreateAgentWithMEAIAsync()
 {
     AITool tool = FoundryAITool.CreateSharepointTool(sharepointOptions);
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -73,7 +73,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAIAsync()
 }
 
 // Option 2 - Using PromptAgentDefinition SDK native type
-async Task<ChatClientAgent> CreateAgentWithNativeSDKAsync()
+async Task<FoundryAgent> CreateAgentWithNativeSDKAsync()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         "SharePointAgent-NATIVE",

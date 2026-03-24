@@ -9,6 +9,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -31,8 +32,8 @@ MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { Upd
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
-ChatClientAgent agent = await CreateAgentWithMEAI();
-// ChatClientAgent agent = await CreateAgentWithNativeSDK();
+FoundryAgent agent = await CreateAgentWithMEAI();
+// FoundryAgent agent = await CreateAgentWithNativeSDK();
 
 // Ensure the memory store exists and has memories to retrieve.
 await EnsureMemoryStoreAsync();
@@ -110,7 +111,7 @@ async Task EnsureMemoryStoreAsync()
 #pragma warning disable CS8321 // Local function is declared but never used
 
 // Option 1 - Using MemorySearchTool wrapped as MEAI AITool
-async Task<ChatClientAgent> CreateAgentWithMEAI()
+async Task<FoundryAgent> CreateAgentWithMEAI()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         AgentNameMEAI,
@@ -125,7 +126,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAI()
 }
 
 // Option 2 - Using PromptAgentDefinition with MemorySearchTool (Native SDK)
-async Task<ChatClientAgent> CreateAgentWithNativeSDK()
+async Task<FoundryAgent> CreateAgentWithNativeSDK()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         AgentNameNative,

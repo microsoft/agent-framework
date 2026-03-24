@@ -11,6 +11,7 @@ using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Agents.AI.FoundryMemory;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -33,7 +34,7 @@ FoundryMemoryProvider memoryProvider = new(
     memoryStoreName,
     stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
-ChatClientAgent agent = projectClient.AsAIAgent(
+FoundryAgent agent = projectClient.AsAIAgent(
     new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",

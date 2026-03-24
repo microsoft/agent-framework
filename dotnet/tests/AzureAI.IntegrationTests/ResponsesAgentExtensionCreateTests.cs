@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
@@ -29,7 +30,7 @@ public class ResponsesAgentExtensionCreateTests
         const string AgentDescription = "Integration test agent created from AIProjectClient.AsAIAgent(model, instructions).";
         const string VerificationToken = "integration-extension-ok";
 
-        ChatClientAgent agent = this._client.AsAIAgent(
+        FoundryAgent agent = this._client.AsAIAgent(
             model: Model,
             instructions: $"You are a helpful assistant. When asked for verification, reply with exactly '{VerificationToken}'.",
             name: AgentName,
@@ -72,9 +73,8 @@ public class ResponsesAgentExtensionCreateTests
             },
         };
 
-        ChatClientAgent agent = this._client.AsAIAgent(options);
-        string conversationId = (await this._client.GetProjectOpenAIClient().GetProjectConversationsClient().CreateProjectConversationAsync()).Value.Id;
-        ChatClientAgentSession session = (ChatClientAgentSession)await agent.CreateSessionAsync(conversationId);
+        FoundryAgent agent = this._client.AsAIAgent(options);
+        ChatClientAgentSession session = await agent.CreateConversationSessionAsync();
 
         try
         {

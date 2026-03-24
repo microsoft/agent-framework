@@ -9,6 +9,7 @@ using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
 using OpenAI.Responses;
@@ -54,7 +55,7 @@ public class AIProjectClientCreateTests
             Assert.NotNull(agent);
             Assert.Equal(AgentName, agent.Name);
             Assert.Equal(AgentDescription, agent.Description);
-            Assert.Equal(AgentInstructions, agent.Instructions);
+            Assert.Equal(AgentInstructions, agent.GetService<ChatClientAgent>()!.Instructions);
 
             var agentRecord = await this._client.Agents.GetAgentAsync(agent.Name);
             Assert.NotNull(agentRecord);
@@ -330,7 +331,7 @@ public class AIProjectClientCreateTests
         static string GetWeather(string location) => $"The weather in {location} is sunny with a high of 23C.";
         var weatherFunction = AIFunctionFactory.Create(GetWeather);
 
-        ChatClientAgent agent = createMechanism switch
+        FoundryAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
                 model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),

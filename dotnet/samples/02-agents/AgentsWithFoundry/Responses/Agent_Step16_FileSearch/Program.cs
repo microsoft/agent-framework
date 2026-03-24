@@ -5,6 +5,7 @@
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Files;
@@ -48,7 +49,7 @@ string vectorStoreId = vectorStoreResult.Value.Id;
 Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
 // Create a ChatClientAgent with HostedFileSearchTool.
-ChatClientAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: AgentInstructions,
     name: "FileSearchAgent-RAPI",
     tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] }]);

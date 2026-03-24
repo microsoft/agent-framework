@@ -11,6 +11,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
@@ -68,7 +69,7 @@ AgentVersion originalAgentVersion = await aiProjectClient.Agents.CreateAgentVers
                 ResponseTool.CreateFunctionTool(nameof(GetDateTime), getDateTimeParameters, strictModeEnabled: false, functionDescription: "The current datetime offset.")
             }
         }));
-ChatClientAgent originalAgent = aiProjectClient.AsAIAgent(originalAgentVersion, tools: [getWeatherTool, dateTimeTool]);
+FoundryAgent originalAgent = aiProjectClient.AsAIAgent(originalAgentVersion, tools: [getWeatherTool, dateTimeTool]);
 
 // Adding middleware to the agent level
 AIAgent middlewareEnabledAgent = originalAgent

@@ -7,6 +7,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Responses;
@@ -29,7 +30,7 @@ AgentVersion agentVersion1 = await aiProjectClient.Agents.CreateAgentVersionAsyn
             Instructions = AgentInstructions,
             Tools = { hostedCodeInterpreterTool.GetService<ResponseTool>() ?? hostedCodeInterpreterTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert hosted code interpreter tool to a ResponseTool.") }
         }));
-ChatClientAgent agentOption1 = aiProjectClient.AsAIAgent(agentVersion1);
+FoundryAgent agentOption1 = aiProjectClient.AsAIAgent(agentVersion1);
 
 // Option 2 - Using PromptAgentDefinition SDK native type
 // Create the server side agent version
@@ -47,7 +48,7 @@ AgentVersion agentVersion2 = await aiProjectClient.Agents.CreateAgentVersionAsyn
                 ),
             }
         }));
-ChatClientAgent agentOption2 = aiProjectClient.AsAIAgent(agentVersion2);
+FoundryAgent agentOption2 = aiProjectClient.AsAIAgent(agentVersion2);
 
 // Either invoke option1 or option2 agent, should have same result
 // Option 1

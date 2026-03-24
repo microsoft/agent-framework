@@ -13,6 +13,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using OpenAI.Responses;
@@ -45,7 +46,7 @@ foreach (AITool tool in pluginTools)
 
 // Define the agent with plugin tools.
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(AssistantName, new AgentVersionCreationOptions(agentDefinition));
-ChatClientAgent agent = aiProjectClient.AsAIAgent(agentVersion, pluginTools, services: serviceProvider);
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion, pluginTools, services: serviceProvider);
 
 // Invoke the agent and output the text result.
 AgentSession session = await agent.CreateSessionAsync();

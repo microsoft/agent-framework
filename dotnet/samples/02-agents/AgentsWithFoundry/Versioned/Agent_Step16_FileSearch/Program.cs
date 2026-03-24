@@ -6,6 +6,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Assistants;
 using OpenAI.Files;
@@ -48,9 +49,9 @@ string vectorStoreId = vectorStoreResult.Value.Id;
 Console.WriteLine($"Created vector store, vector store ID: {vectorStoreId}");
 
 // Option 1 - Recreate the agent with the file search tool (MEAI + AgentFramework)
-ChatClientAgent agent = await CreateAgentWithMEAI();
+FoundryAgent agent = await CreateAgentWithMEAI();
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
-// ChatClientAgent agent = await CreateAgentWithNativeSDK();
+// FoundryAgent agent = await CreateAgentWithNativeSDK();
 
 // Run the agent
 Console.WriteLine("\n--- Running File Search Agent ---");
@@ -81,7 +82,7 @@ Console.WriteLine("Cleanup completed successfully.");
 // --- Agent Creation Options ---
 
 #pragma warning disable CS8321 // Local function is declared but never used
-async Task<ChatClientAgent> CreateAgentWithMEAI()
+async Task<FoundryAgent> CreateAgentWithMEAI()
 {
     HostedFileSearchTool tool = new() { Inputs = [new HostedVectorStoreContent(vectorStoreId)] };
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
@@ -97,7 +98,7 @@ async Task<ChatClientAgent> CreateAgentWithMEAI()
 }
 
 // Option 2 - Using PromptAgentDefinition with ResponseTool.CreateFileSearchTool (Native SDK)
-async Task<ChatClientAgent> CreateAgentWithNativeSDK()
+async Task<FoundryAgent> CreateAgentWithNativeSDK()
 {
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
         "FileSearchAgent-NATIVE",

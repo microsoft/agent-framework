@@ -189,7 +189,7 @@ async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Agent
         // Regex patterns for PII detection (simplified for demonstration)
         Regex[] piiPatterns =
         [
-            new(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled), // Phone number (e.g., 123-456-7890)
+            MyRegex(), // Phone number (e.g., 123-456-7890)
             new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
             new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
         ];
@@ -308,4 +308,10 @@ internal sealed class DateTimeContextProvider : MessageAIContextProvider
                 new ChatMessage(ChatRole.User, $"For reference, the current date and time is: {DateTimeOffset.Now}")
             ]);
     }
+}
+
+partial class Program
+{
+    [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
+    private static partial Regex MyRegex();
 }
