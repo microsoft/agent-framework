@@ -16,7 +16,7 @@ namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 /// </summary>
 public class FoundryAgentTests
 {
-    private static readonly Uri TestEndpoint = new("https://test.services.ai.azure.com/api/projects/test-project");
+    private static readonly Uri s_testEndpoint = new("https://test.services.ai.azure.com/api/projects/test-project");
 
     #region Constructor validation tests
 
@@ -38,7 +38,7 @@ public class FoundryAgentTests
     {
         ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
             new FoundryAgent(
-                projectEndpoint: TestEndpoint,
+                projectEndpoint: s_testEndpoint,
                 credential: null!,
                 model: "gpt-4o-mini",
                 instructions: "Test instructions"));
@@ -51,7 +51,7 @@ public class FoundryAgentTests
     {
         Assert.ThrowsAny<ArgumentException>(() =>
             new FoundryAgent(
-                projectEndpoint: TestEndpoint,
+                projectEndpoint: s_testEndpoint,
                 credential: new FakeAuthenticationTokenProvider(),
                 model: null!,
                 instructions: "Test instructions"));
@@ -62,7 +62,7 @@ public class FoundryAgentTests
     {
         Assert.ThrowsAny<ArgumentException>(() =>
             new FoundryAgent(
-                projectEndpoint: TestEndpoint,
+                projectEndpoint: s_testEndpoint,
                 credential: new FakeAuthenticationTokenProvider(),
                 model: string.Empty,
                 instructions: "Test instructions"));
@@ -73,7 +73,7 @@ public class FoundryAgentTests
     {
         Assert.ThrowsAny<ArgumentException>(() =>
             new FoundryAgent(
-                projectEndpoint: TestEndpoint,
+                projectEndpoint: s_testEndpoint,
                 credential: new FakeAuthenticationTokenProvider(),
                 model: "gpt-4o-mini",
                 instructions: null!));
@@ -83,7 +83,7 @@ public class FoundryAgentTests
     public void Constructor_WithValidParams_CreatesAgent()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "You are a helpful assistant.",
@@ -103,7 +103,7 @@ public class FoundryAgentTests
     public void Name_ReturnsConfiguredName()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test",
@@ -116,7 +116,7 @@ public class FoundryAgentTests
     public void Description_ReturnsConfiguredDescription()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test",
@@ -129,7 +129,7 @@ public class FoundryAgentTests
     public void GetService_ReturnsAIProjectClient()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
@@ -143,7 +143,7 @@ public class FoundryAgentTests
     public void GetService_ReturnsChatClientAgent()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
@@ -157,7 +157,7 @@ public class FoundryAgentTests
     public void GetService_ReturnsIChatClient()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
@@ -171,7 +171,7 @@ public class FoundryAgentTests
     public void GetService_ReturnsChatClientMetadata()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
@@ -186,7 +186,7 @@ public class FoundryAgentTests
     public void GetService_ReturnsNullForUnknownType()
     {
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test");
@@ -199,7 +199,7 @@ public class FoundryAgentTests
     #region Functional tests
 
     [Fact]
-    public async Task RunAsync_SendsRequestToResponsesAPI()
+    public async Task RunAsync_SendsRequestToResponsesAPIAsync()
     {
         bool requestTriggered = false;
         using HttpHandlerAssert httpHandler = new(request =>
@@ -232,7 +232,7 @@ public class FoundryAgentTests
         };
 
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "You are a helpful assistant.",
@@ -250,7 +250,7 @@ public class FoundryAgentTests
         bool factoryCalled = false;
 
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test",
@@ -265,7 +265,7 @@ public class FoundryAgentTests
     }
 
     [Fact]
-    public async Task Constructor_UserAgentHeaderAddedToRequests()
+    public async Task Constructor_UserAgentHeaderAddedToRequestsAsync()
     {
         bool userAgentFound = false;
         using HttpHandlerAssert httpHandler = new(request =>
@@ -300,7 +300,7 @@ public class FoundryAgentTests
         };
 
         FoundryAgent agent = new(
-            TestEndpoint,
+            s_testEndpoint,
             new FakeAuthenticationTokenProvider(),
             model: "gpt-4o-mini",
             instructions: "Test",

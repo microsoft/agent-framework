@@ -310,7 +310,7 @@ internal sealed class DateTimeContextProvider : MessageAIContextProvider
     }
 }
 
-partial class Program
+internal partial class Program
 {
     [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
     private static partial Regex MyRegex();

@@ -22,7 +22,7 @@ AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
 HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
 // Add the AI agent to the service collection.
-builder.Services.AddSingleton<AIAgent>(agent);
+builder.Services.AddSingleton(agent);
 
 // Add a sample service that will use the agent to respond to user input.
 builder.Services.AddHostedService<SampleService>();
