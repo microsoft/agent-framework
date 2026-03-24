@@ -720,4 +720,208 @@ class-based, and custom skills can coexist in the same provider. Custom skills a
 participate in the model-facing tools (`load_skill`, `read_skill_resource`, `run_skill_script`),
 filtering, deduplication, and caching — no additional integration work is required.
 
+## Script Representation: `AgentSkillScript` vs `AIFunction`
+
+Two approaches were considered for representing executable scripts within skills:
+
+### Option A — Custom `AgentSkillScript` abstract base class (original design)
+
+Scripts are modeled as a custom `AgentSkillScript` abstract class with `Name`, `Description`, and
+`ExecuteAsync(AgentSkill, AIFunctionArguments, CancellationToken)`. Concrete implementations:
+`AgentInlineSkillScript` (wraps a delegate/`AIFunction`) and `AgentFileSkillScript` (wraps a file path + executor delegate).
+
+```csharp
+// Base type
+public abstract class AgentSkillScript
+{
+    public string Name { get; }
+    public string? Description { get; }
+    public abstract Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+}
+
+// AgentSkill exposes scripts as:
+public abstract IReadOnlyList<AgentSkillScript>? Scripts { get; }
+
+// Inline script wraps an AIFunction internally
+var script = new AgentInlineSkillScript(ConvertUnits, "convert");
+
+// Pre-built AIFunction must be wrapped
+var script = new AgentInlineSkillScript(myAIFunction);
+
+// Class-based skill declares scripts as:
+public override IReadOnlyList<AgentSkillScript>? Scripts { get; } =
+[
+    new AgentInlineSkillScript(ConvertUnits, "convert"),
+];
+
+// Provider executes scripts by passing the owning skill:
+await script.ExecuteAsync(skill, arguments, cancellationToken);
+```
+
+**Pros:**
+
+- **Explicit skill context at execution time.** `ExecuteAsync` receives the owning `AgentSkill`, so any script can access skill metadata or resources during execution without requiring construction-time wiring.
+- **Self-contained abstraction.** A dedicated type communicates clearly that scripts are a skills-framework concept, separate from general-purpose AI functions.
+- **Easier extensibility for custom script types.** Third-party implementations can subclass `AgentSkillScript` and access the owning skill in `ExecuteAsync` without special setup.
+
+**Cons:**
+
+- **Wrapper overhead.** `AgentInlineSkillScript` is a thin pass-through around `AIFunction` — it adds a class, a constructor, and an indirection layer for no behavioral difference.
+- **Parallel abstraction.** `AgentSkillScript` and `AIFunction` serve overlapping purposes (named callable with arguments), creating two parallel hierarchies for the same concept.
+- **Friction for consumers.** Users who already have `AIFunction` instances must wrap them in `AgentInlineSkillScript` to use them as scripts, adding ceremony.
+
+### Option B — Reuse `AIFunction` directly
+
+Scripts are represented as `AIFunction` (from `Microsoft.Extensions.AI`). `AgentSkill.Scripts` returns
+`IReadOnlyList<AIFunction>?`. `AgentInlineSkillScript` is eliminated entirely — callers use
+`AIFunctionFactory.Create(delegate, name: ...)` or pass `AIFunction` instances directly.
+`AgentFileSkillScript` becomes an `AIFunction` subclass that captures its owning `AgentFileSkill` via
+an internal back-reference set during construction.
+
+```csharp
+// AgentSkill exposes scripts as AIFunction directly:
+public abstract IReadOnlyList<AIFunction>? Scripts { get; }
+
+// Inline scripts use AIFunctionFactory — no wrapper class needed
+var skill = new AgentInlineSkill("my-skill", "desc", "instructions");
+skill.AddScript(ConvertUnits, "convert");           // delegate
+skill.AddScript(myAIFunction);                       // pre-built AIFunction — no wrapping
+
+// Class-based skill declares scripts as:
+public override IReadOnlyList<AIFunction>? Scripts { get; } =
+[
+    AIFunctionFactory.Create(ConvertUnits, name: "convert"),
+];
+
+// Provider executes scripts via standard AIFunction invocation:
+await script.InvokeAsync(arguments, cancellationToken);
+
+// File-based scripts extend AIFunction and capture the owning skill internally:
+public sealed class AgentFileSkillScript : AIFunction
+{
+    internal AgentFileSkill? Skill { get; set; }   // set by AgentFileSkill constructor
+
+    protected override async ValueTask<object?> InvokeCoreAsync(
+        AIFunctionArguments arguments, CancellationToken cancellationToken)
+    {
+        return await _executor(Skill!, this, arguments, cancellationToken);
+    }
+}
+```
+
+**Pros:**
+
+- **Fewer types.** Eliminates `AgentSkillScript` and `AgentInlineSkillScript`, reducing the public API surface by two classes.
+- **Seamless interop.** Any `AIFunction` — whether from `AIFunctionFactory`, a custom subclass, or an external library — can be used as a skill script with zero wrapping.
+- **Consistent with `Microsoft.Extensions.AI` ecosystem.** Scripts share the same type as tool functions used by `IChatClient` and `FunctionInvokingChatClient`, reducing conceptual overhead for developers already familiar with the ecosystem.
+
+**Cons:**
+
+- **No owning-skill context in invocation signature.** `AIFunction.InvokeAsync` does not accept an `AgentSkill` parameter, so `AgentFileSkillScript` must capture its owning skill via an internal setter during construction. This adds a construction-order dependency: the skill must set the back-reference on its scripts.
+- **Custom script types lose automatic skill access.** Third-party `AIFunction` subclasses that need the owning skill must implement their own mechanism (e.g., constructor injection, closure capture) instead of receiving it as a method parameter.
+
+## Resource Representation: `AgentSkillResource` vs `AIFunction`
+
+Two approaches were considered for representing skill resources (supplementary content such as references, assets, or dynamic data):
+
+### Option A — Custom `AgentSkillResource` abstract base class (original design)
+
+Resources are modeled as a custom `AgentSkillResource` abstract class with `Name`, `Description`, and
+`ReadAsync(AIFunctionArguments, CancellationToken)`. Concrete implementations:
+`AgentInlineSkillResource` (static value, delegate, or `AIFunction` wrapper) and `AgentFileSkillResource` (reads file content from disk).
+
+```csharp
+// Base type
+public abstract class AgentSkillResource
+{
+    public string Name { get; }
+    public string? Description { get; }
+    public abstract Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+}
+
+// AgentSkill exposes resources as:
+public abstract IReadOnlyList<AgentSkillResource>? Resources { get; }
+
+// Static resource
+var resource = new AgentInlineSkillResource("static content", "my-resource");
+
+// Dynamic resource (delegate)
+var resource = new AgentInlineSkillResource((IServiceProvider sp) => GetData(sp), "my-resource");
+
+// Pre-built AIFunction must be wrapped
+var resource = new AgentInlineSkillResource(myAIFunction);
+
+// Class-based skill declares resources as:
+public override IReadOnlyList<AgentSkillResource>? Resources { get; } =
+[
+    new AgentInlineSkillResource("# Conversion Tables\n...", "conversion-table"),
+];
+
+// Provider reads resources via:
+await resource.ReadAsync(arguments, cancellationToken);
+```
+
+**Pros:**
+
+- **Clear semantic distinction.** A dedicated `AgentSkillResource` type distinguishes resources (data providers) from scripts (executable actions), making the API self-documenting.
+- **Purpose-built API.** `ReadAsync` communicates intent better than `InvokeAsync` for a data-access operation.
+
+**Cons:**
+
+- **Wrapper overhead.** `AgentInlineSkillResource` wraps `AIFunction` internally for delegate/function cases — adding a class and indirection for no behavioral difference.
+- **Parallel abstraction.** `AgentSkillResource` and `AIFunction` serve overlapping purposes (named callable that returns data), creating two parallel hierarchies.
+- **Friction for consumers.** Users who already have `AIFunction` instances must wrap them in `AgentInlineSkillResource`, adding ceremony.
+
+### Option B — Reuse `AIFunction` directly (adopted)
+
+Resources are represented as `AIFunction`. `AgentSkill.Resources` returns `IReadOnlyList<AIFunction>?`.
+`AgentInlineSkillResource` becomes an `AIFunction` subclass (retained as a convenience for the static-value
+pattern: `new AgentInlineSkillResource("data", "name")`). `AgentFileSkillResource` becomes an `AIFunction`
+subclass that reads file content.
+
+```csharp
+// AgentSkill exposes resources as AIFunction directly:
+public abstract IReadOnlyList<AIFunction>? Resources { get; }
+
+// Static resource — AgentInlineSkillResource is retained as a convenience AIFunction subclass
+var resource = new AgentInlineSkillResource("static content", "my-resource");
+
+// Dynamic resource — AgentInlineSkillResource wraps delegate as AIFunction
+var resource = new AgentInlineSkillResource((IServiceProvider sp) => GetData(sp), "my-resource");
+
+// Pre-built AIFunction can be used directly — no wrapping needed
+skill.AddResource(myAIFunction);
+
+// Class-based skill declares resources as:
+public override IReadOnlyList<AIFunction>? Resources { get; } =
+[
+    new AgentInlineSkillResource("# Conversion Tables\n...", "conversion-table"),
+];
+
+// Provider reads resources via standard AIFunction invocation:
+await resource.InvokeAsync(arguments, cancellationToken);
+
+// File-based resources extend AIFunction directly:
+internal sealed class AgentFileSkillResource : AIFunction
+{
+    public string FullPath { get; }
+
+    protected override async ValueTask<object?> InvokeCoreAsync(
+        AIFunctionArguments arguments, CancellationToken cancellationToken)
+    {
+        return await File.ReadAllTextAsync(FullPath, Encoding.UTF8, cancellationToken);
+    }
+}
+```
+
+**Pros:**
+
+- **Fewer base types.** Eliminates the `AgentSkillResource` abstract class, reducing the public API surface.
+- **Seamless interop.** Any `AIFunction` can be used as a skill resource with zero wrapping.
+
+**Cons:**
+
+- **Loss of semantic distinction.** Resources and scripts are now both `AIFunction`, which could make it less obvious which list a function belongs to when reading code.
+- **Static values require a wrapper.** Unlike the original `ReadAsync` which could return a stored value directly, `AIFunction.InvokeAsync` implies invocation. `AgentInlineSkillResource` is retained as a convenience subclass to handle the static-value case, so this is not eliminated — just moved to a different class.
+
 ## Decision Outcome
