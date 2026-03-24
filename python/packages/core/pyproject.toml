@@ -55,7 +55,6 @@ all = [
     "agent-framework-devui",
     "agent-framework-durabletask",
     "agent-framework-foundry-local",
-    "agent-framework-gemini",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",
     "agent-framework-mem0",
