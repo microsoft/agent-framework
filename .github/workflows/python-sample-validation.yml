@@ -41,6 +41,13 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 01-get-started --save-report --report-name 01-get-started
@@ -84,6 +91,17 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
+          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents --exclude providers --save-report --report-name 02-agents
@@ -116,6 +134,12 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
+          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
 
       - name: Run sample validation
         run: |
@@ -150,6 +174,12 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_openai --save-report --report-name 02-agents-azure-openai
@@ -181,6 +211,11 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
 
       - name: Run sample validation
         run: |
@@ -214,6 +249,11 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_ai_agent --save-report --report-name 02-agents-azure-ai-agent
@@ -230,8 +270,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC__APIKEY }}
-      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC__CHATMODELID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
     defaults:
       run:
         working-directory: python
@@ -245,6 +285,11 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> .env
+          echo "ANTHROPIC_CHAT_MODEL_ID=$ANTHROPIC_CHAT_MODEL_ID" >> .env
 
       - name: Run sample validation
         run: |
@@ -382,6 +427,7 @@ jobs:
 
   validate-02-agents-copilotstudio:
     name: Validate 02-agents/providers/copilotstudio
+    if: false  # Temporarily disabled - requires Copilot Studio setup
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -402,6 +448,13 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "COPILOTSTUDIOAGENT__ENVIRONMENTID=$COPILOTSTUDIOAGENT__ENVIRONMENTID" >> .env
+          echo "COPILOTSTUDIOAGENT__SCHEMANAME=$COPILOTSTUDIOAGENT__SCHEMANAME" >> .env
+          echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
+          echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
 
       - name: Run sample validation
         run: |
@@ -468,6 +521,14 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
 
       - name: Run sample validation
         run: |
@@ -592,6 +653,16 @@ jobs:
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
 
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
+          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+
       - name: Run sample validation
         run: |
           cd scripts && uv run python -m sample_validation --subdir autogen-migration --save-report --report-name autogen-migration
@@ -637,6 +708,21 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
+          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env
+          echo "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=$AZURE_OPENAI_CHAT_DEPLOYMENT_NAME" >> .env
+          echo "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=$AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME" >> .env
+          echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> .env
+          echo "OPENAI_CHAT_MODEL_ID=$OPENAI_CHAT_MODEL_ID" >> .env
+          echo "OPENAI_RESPONSES_MODEL_ID=$OPENAI_RESPONSES_MODEL_ID" >> .env
+          echo "COPILOTSTUDIOAGENT__ENVIRONMENTID=$COPILOTSTUDIOAGENT__ENVIRONMENTID" >> .env
+          echo "COPILOTSTUDIOAGENT__SCHEMANAME=$COPILOTSTUDIOAGENT__SCHEMANAME" >> .env
+          echo "COPILOTSTUDIOAGENT__TENANTID=$COPILOTSTUDIOAGENT__TENANTID" >> .env
+          echo "COPILOTSTUDIOAGENT__AGENTAPPID=$COPILOTSTUDIOAGENT__AGENTAPPID" >> .env
 
       - name: Run sample validation
         run: |
