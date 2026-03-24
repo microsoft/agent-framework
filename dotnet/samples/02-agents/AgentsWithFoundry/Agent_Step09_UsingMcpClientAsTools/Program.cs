@@ -1,6 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use MCP client tools with an agent.
+// It connects to the Microsoft Learn MCP server via HTTP and uses its tools.
 
 using Azure.AI.Projects;
 using Azure.Identity;
@@ -11,30 +12,30 @@ using ModelContextProtocol.Client;
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-Console.WriteLine("Starting MCP Stdio for @modelcontextprotocol/server-github ... ");
+// Connect to the Microsoft Learn MCP server via HTTP (Streamable HTTP transport).
+Console.WriteLine("Connecting to MCP server at https://learn.microsoft.com/api/mcp ...");
 
-// Create an MCPClient for the GitHub server
-await using var mcpClient = await McpClient.CreateAsync(new StdioClientTransport(new()
+await using McpClient mcpClient = await McpClient.CreateAsync(new HttpClientTransport(new()
 {
-    Name = "MCPServer",
-    Command = "npx",
-    Arguments = ["-y", "--verbose", "@modelcontextprotocol/server-github"],
+    Endpoint = new Uri("https://learn.microsoft.com/api/mcp"),
+    Name = "Microsoft Learn MCP",
 }));
 
-// Retrieve the list of tools available on the GitHub server
+// Retrieve the list of tools available on the MCP server.
 IList<McpClientTool> mcpTools = await mcpClient.ListToolsAsync();
+Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t => t.Name))}");
+
 List<AITool> agentTools = [.. mcpTools.Cast<AITool>()];
 
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
-    instructions: "You answer questions related to GitHub repositories only.",
-    name: "AgentWithMCP",
+    instructions: "You are a helpful assistant that can help with Microsoft documentation questions. Use the Microsoft Learn MCP tool to search for documentation.",
+    name: "DocsAgent",
     tools: agentTools);
 
-string prompt = "Summarize the last four commits to the microsoft/semantic-kernel repository?";
+Console.WriteLine($"Agent '{agent.Name}' created. Asking a question...\n");
 
-Console.WriteLine($"Invoking agent '{agent.Name}' with prompt: {prompt} ...");
-
-// Invoke the agent and output the text result.
-Console.WriteLine(await agent.RunAsync(prompt));
+const string Prompt = "How does one create an Azure storage account using az cli?";
+Console.WriteLine($"User: {Prompt}\n");
+Console.WriteLine($"Agent: {await agent.RunAsync(Prompt)}");
