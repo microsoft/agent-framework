@@ -1,11 +1,12 @@
-# FoundryAgent Step 01 - Direct Construction
+# FoundryAgent Step 01 - Server-Side Agent Lifecycle
 
-This sample demonstrates how to create a `FoundryAgent` directly using a project endpoint and credentials, without manually constructing an `AIProjectClient`.
+This sample demonstrates the full lifecycle of a `FoundryAgent` backed by a server-side versioned agent in Azure AI Foundry: create → run → delete.
 
 ## Prerequisites
 
 - An Azure AI Foundry project endpoint
 - A model deployment name (defaults to `gpt-4o-mini`)
+- Azure CLI installed and authenticated
 
 ## Environment Variables
 
