@@ -81,19 +81,15 @@ TOOLS = [
 
 def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAST_TURN) -> None:
     """Print the query/response split for an EvalItem."""
-    d = item.to_eval_data(split=split)
-    print(f"  query_messages ({len(d['query_messages'])}):")
-    for m in d["query_messages"]:
-        content = m.get("content", "")
-        if isinstance(content, list):
-            content = content[0].get("type", str(content[0]))
-        print(f"    {m['role']}: {str(content)[:70]}")
-    print(f"  response_messages ({len(d['response_messages'])}):")
-    for m in d["response_messages"]:
-        content = m.get("content", "")
-        if isinstance(content, list):
-            content = content[0].get("type", str(content[0]))
-        print(f"    {m['role']}: {str(content)[:70]}")
+    query_msgs, response_msgs = item.split_messages(split)
+    print(f"  query_messages ({len(query_msgs)}):")
+    for m in query_msgs:
+        text = m.text or ""
+        print(f"    {m.role}: {text[:70]}")
+    print(f"  response_messages ({len(response_msgs)}):")
+    for m in response_msgs:
+        text = m.text or ""
+        print(f"    {m.role}: {text[:70]}")
 
 
 async def main() -> None:

@@ -525,11 +525,6 @@ class FoundryEvals:
     Automatically adds ``tool_call_accuracy`` when items contain tool
     definitions. Override with ``evaluators=``.
 
-    **Responses API optimization:**
-
-    When all items have a ``response_id`` and no tool evaluators are needed,
-    uses Foundry's server-side response retrieval path (no data upload).
-
     Args:
         project_client: An ``AIProjectClient`` instance (sync or async).
             Provide this or *openai_client*.

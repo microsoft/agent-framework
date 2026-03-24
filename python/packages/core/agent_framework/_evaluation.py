@@ -89,7 +89,7 @@ ConversationSplitter = Union[
     ConversationSplit,
     Callable[[list[Message]], tuple[list[Message], list[Message]]],
 ]
-"""Type accepted by ``EvalItem.to_eval_data(split=...)``.
+"""Type accepted by ``EvalItem.split_messages(split=...)``.
 
 Either a built-in ``ConversationSplit`` enum value **or** a callable with
 signature::
@@ -108,7 +108,7 @@ splitting just before a memory-retrieval tool call to evaluate recall quality::
         # Fallback: split at last user message
         return EvalItem._split_last_turn_static(conversation)
 
-    item.to_eval_data(split=split_before_memory)
+    item.split_messages(split=split_before_memory)
 """
 
 
@@ -178,57 +178,6 @@ class EvalItem:
         assistant_texts = [m.text for m in response_msgs if m.role == "assistant" and m.text]
         return " ".join(assistant_texts).strip()
 
-    def to_eval_data(
-        self,
-        *,
-        split: ConversationSplitter | None = None,
-    ) -> dict[str, Any]:
-        """Convert to a flat dict for serialization.
-
-        Produces ``query``, ``response``, ``query_messages`` and
-        ``response_messages`` by splitting the conversation according to
-        *split*:
-
-        - ``LAST_TURN`` (default): split at the last user message.
-        - ``FULL``: split after the first user message.
-        - A callable: your function receives the conversation list and
-          returns ``(query_messages, response_messages)``.
-
-        When *split* is ``None`` (the default), uses ``self.split_strategy``
-        if set, otherwise ``ConversationSplit.LAST_TURN``.
-
-        Returns:
-            A flat dict with ``query``, ``response``, ``query_messages`` and
-            ``response_messages``.  **Note**: ``query_messages`` and
-            ``response_messages`` contain only text-role entries; non-text
-            content (tool calls, function results) is omitted.  Providers
-            that need full typed content should call ``split_messages()``
-            and apply their own converter (e.g.
-            ``AgentEvalConverter.convert_messages()``).
-            ``tool_definitions`` is included when ``self.tools`` is set.
-        """
-        effective_split = split or self.split_strategy or ConversationSplit.LAST_TURN
-        query_msgs, response_msgs = self._split_conversation(effective_split)
-
-        query_text = " ".join(m.text for m in query_msgs if m.role == "user" and m.text).strip()
-        response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text).strip()
-
-        item: dict[str, Any] = {
-            "query": query_text,
-            "response": response_text,
-            # NOTE: Non-text content (tool calls, function results) is dropped here;
-            # providers should overwrite via split_messages() + their own converter.
-            "query_messages": [{"role": m.role, "content": m.text or ""} for m in query_msgs],
-            "response_messages": [{"role": m.role, "content": m.text or ""} for m in response_msgs],
-        }
-        if self.tools:
-            item["tool_definitions"] = [
-                {"name": t.name, "description": t.description, "parameters": t.parameters()} for t in self.tools
-            ]
-        if self.context:
-            item["context"] = self.context
-        return item
-
     def _split_conversation(self, split: ConversationSplitter) -> tuple[list[Message], list[Message]]:
         """Split ``self.conversation`` into (query_messages, response_messages)."""
         if callable(split) and not isinstance(split, ConversationSplit):
@@ -243,8 +192,8 @@ class EvalItem:
     ) -> tuple[list[Message], list[Message]]:
         """Split the conversation into (query_messages, response_messages).
 
-        Uses the same resolution order as ``to_eval_data``: explicit *split*,
-        then ``self.split_strategy``, then ``ConversationSplit.LAST_TURN``.
+        Resolution order: explicit *split*, then ``self.split_strategy``,
+        then ``ConversationSplit.LAST_TURN``.
         """
         effective = split or self.split_strategy or ConversationSplit.LAST_TURN
         return self._split_conversation(effective)
