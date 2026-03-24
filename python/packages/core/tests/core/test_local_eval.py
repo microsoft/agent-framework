@@ -13,9 +13,12 @@ from agent_framework._evaluation import (
     EvalItem,
     ExpectedToolCall,
     LocalEvaluator,
+    _coerce_result,
+    _normalize_queries,
     evaluator,
     keyword_check,
     tool_call_args_match,
+    tool_called_check,
     tool_calls_present,
 )
 from agent_framework._types import Content, Message
@@ -865,3 +868,159 @@ class TestNumRepetitions:
         assert len(results) == 1
         assert results[0].total == 1
         assert results[0].passed == 1
+
+
+# ---------------------------------------------------------------------------
+# r3 review: additional test coverage
+# ---------------------------------------------------------------------------
+
+
+class TestToolCalledCheckModeAny:
+    """Tests for tool_called_check with mode='any'."""
+
+    async def test_any_mode_one_tool_called(self):
+        """mode='any' passes when at least one expected tool is called."""
+        item = _make_item(
+            conversation=[
+                Message("user", ["Do something"]),
+                Message("assistant", [Content.from_function_call("c1", "tool_a", arguments={})]),
+                Message("tool", [Content.from_function_result("c1", result="ok")]),
+                Message("assistant", ["Done"]),
+            ]
+        )
+        check = tool_called_check("tool_a", "tool_b", mode="any")
+        result = check(item)
+        assert result.passed is True
+
+    async def test_any_mode_none_called(self):
+        """mode='any' fails when no expected tools are called."""
+        item = _make_item(
+            conversation=[
+                Message("user", ["Do something"]),
+                Message("assistant", ["I can't use tools"]),
+            ]
+        )
+        check = tool_called_check("tool_a", "tool_b", mode="any")
+        result = check(item)
+        assert result.passed is False
+        assert "None of expected tools" in result.reason
+
+
+class TestNormalizeQueries:
+    """Tests for _normalize_queries branches and validation."""
+
+    def test_single_string_replicates(self):
+        """Single string query replicates to match expected_count."""
+        result = _normalize_queries("hello", 3)
+        assert result == ["hello", "hello", "hello"]
+
+    def test_single_message_replicates(self):
+        """Single Message replicates to match expected_count."""
+        msg = Message("user", ["test"])
+        result = _normalize_queries(msg, 2)
+        assert len(result) == 2
+        assert result[0] is msg
+
+    def test_list_of_messages_replicates(self):
+        """List of Messages (multi-turn query) replicates."""
+        msgs = [Message("user", ["Q1"]), Message("assistant", ["A1"])]
+        result = _normalize_queries(msgs, 2)
+        assert len(result) == 2
+
+    def test_list_of_strings_passthrough(self):
+        """List of strings passes through as-is."""
+        result = _normalize_queries(["Q1", "Q2", "Q3"], 3)
+        assert result == ["Q1", "Q2", "Q3"]
+
+    def test_count_mismatch_raises(self):
+        """Mismatched count raises ValueError."""
+        with pytest.raises(ValueError, match="does not match"):
+            _normalize_queries(["Q1", "Q2"], 3)
+
+
+class TestCoerceResultScoreError:
+    """Tests for _coerce_result handling non-numeric score."""
+
+    def test_non_numeric_score_raises(self):
+        """Dict with non-numeric score raises TypeError."""
+        with pytest.raises(TypeError, match="non-numeric 'score'"):
+            _coerce_result({"score": "high"}, "test_check")
+
+    def test_none_score_raises(self):
+        with pytest.raises(TypeError, match="non-numeric 'score'"):
+            _coerce_result({"score": None}, "test_check")
+
+
+class TestBareCheckViaEvaluateAgent:
+    """Test bare callable check functions through the public evaluate_agent API."""
+
+    async def test_bare_check_through_evaluate_agent(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_agent
+        from agent_framework._types import AgentResponse
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message("assistant", ["The weather is sunny"])])
+        )
+
+        is_long = keyword_check("weather")
+
+        results = await evaluate_agent(
+            agent=mock_agent,
+            queries=["Q"],
+            evaluators=is_long,
+        )
+        assert results[0].total == 1
+        assert results[0].passed == 1
+
+
+class TestEvaluateAgentModuloWrapping:
+    """Test that expected_output stamps correctly with num_repetitions > 1 and multiple queries."""
+
+    async def test_modulo_stamps_correct_expected_output(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from agent_framework._evaluation import evaluate_agent
+        from agent_framework._types import AgentResponse
+
+        mock_agent = MagicMock()
+        mock_agent.name = "test"
+        mock_agent.default_options = {}
+        mock_agent.run = AsyncMock(
+            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
+        )
+
+        # Track which expected_output each item gets
+        seen_expected: list[str] = []
+
+        @evaluator
+        def capture_expected(response: str, expected_output: str) -> dict:
+            seen_expected.append(expected_output)
+            return {"passed": True, "reason": "ok"}
+
+        await evaluate_agent(
+            agent=mock_agent,
+            queries=["Q1", "Q2", "Q3"],
+            expected_output=["A", "B", "C"],
+            evaluators=LocalEvaluator(capture_expected),
+            num_repetitions=2,
+        )
+        # 3 queries × 2 reps = 6 items; modulo wrapping: A,B,C,A,B,C
+        assert seen_expected == ["A", "B", "C", "A", "B", "C"]
+
+
+class TestEvaluateAgentQueriesWithoutAgent:
+    """Test error message when queries provided without agent."""
+
+    async def test_queries_without_agent_gives_clear_error(self):
+        from agent_framework._evaluation import evaluate_agent
+
+        with pytest.raises(ValueError, match="Provide 'agent' when using 'queries'"):
+            await evaluate_agent(
+                queries=["hello"],
+                evaluators=LocalEvaluator(keyword_check("x")),
+            )

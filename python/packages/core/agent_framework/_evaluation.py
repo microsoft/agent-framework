@@ -597,6 +597,8 @@ class AgentEvalConverter:
                     try:
                         args = json.loads(args)
                     except (json.JSONDecodeError, TypeError):
+                        # Note: _raw_arguments preserves the original string, which
+                        # may contain sensitive data from tool call arguments.
                         args = {"_raw_arguments": args}
                 tc: dict[str, Any] = {
                     "type": "tool_call",
@@ -1157,7 +1159,12 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
     if isinstance(value, dict):
         d = cast(dict[str, Any], value)
         if "score" in d:
-            score = float(d["score"])
+            try:
+                score = float(d["score"])
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value: {d['score']!r}"
+                ) from exc
             passed = score >= float(d.get("threshold", 0.5))
             reason = str(d.get("reason", f"score={score:.3f}"))
             return CheckResult(passed=passed, reason=reason, check_name=check_name)
@@ -1264,7 +1271,7 @@ def evaluator(
             result = func(**kwargs)
             if inspect.isawaitable(result):
                 result = await result
-            return _coerce_result(result, check_name)
+            return _coerce_result(value=result, check_name=check_name)
 
         _check.__name__ = check_name  # type: ignore[attr-defined,assignment]
         _check.__doc__ = func.__doc__
@@ -1556,8 +1563,13 @@ async def evaluate_agent(
                         context=context,
                     )
                 )
+    elif queries is not None and agent is None:
+        raise ValueError(
+            "Provide 'agent' when using 'queries' to run the agent. "
+            "To evaluate pre-existing responses without an agent, use 'responses=' instead."
+        )
     else:
-        raise ValueError("Provide either 'queries' or 'responses' (or both).")
+        raise ValueError("Provide either 'queries' (with 'agent') or 'responses' (or both).")
 
     # Stamp expected output values on items (repeated across all repetitions)
     if expected_output is not None:

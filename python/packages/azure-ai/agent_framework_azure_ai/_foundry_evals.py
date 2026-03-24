@@ -105,6 +105,16 @@ _DEFAULT_TOOL_EVALUATORS: list[str] = [
     "tool_call_accuracy",
 ]
 
+# Catch drift between evaluator sets at import time
+assert _AGENT_EVALUATORS.issubset(_BUILTIN_EVALUATORS.values()), (
+    "_AGENT_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: "
+    f"{_AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())}"
+)
+assert _TOOL_EVALUATORS.issubset(_BUILTIN_EVALUATORS.values()), (
+    "_TOOL_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: "
+    f"{_TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())}"
+)
+
 
 def _resolve_evaluator(name: str) -> str:
     """Resolve a short evaluator name to its fully-qualified ``builtin.*`` form.
@@ -243,13 +253,6 @@ def _filter_tool_evaluators(
     return filtered
 
 
-async def _ensure_async_result(func: Any, *args: Any, **kwargs: Any) -> Any:
-    """Invoke an async client method and await the result.
-
-    Only async clients (``AsyncOpenAI``) are supported.  The function call is
-    awaited directly.
-    """
-    return await func(*args, **kwargs)
 
 
 async def _poll_eval_run(
@@ -266,7 +269,7 @@ async def _poll_eval_run(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while True:
-        run = await _ensure_async_result(client.evals.runs.retrieve, run_id=run_id, eval_id=eval_id)
+        run = await client.evals.runs.retrieve(run_id=run_id, eval_id=eval_id)
         if run.status in ("completed", "failed", "canceled"):
             error_msg = None
             if run.status == "failed":
@@ -297,7 +300,7 @@ async def _poll_eval_run(
         if remaining <= 0:
             return EvalResults(provider=provider, eval_id=eval_id, run_id=run_id, status="timeout")
         logger.debug("Eval run %s status: %s (%.0fs remaining)", run_id, run.status, remaining)
-        await asyncio.sleep(min(poll_interval, remaining))
+        await asyncio.sleep(min(max(poll_interval, 0.1), remaining))
 
 
 def _extract_result_counts(run: Any) -> dict[str, int] | None:
@@ -345,8 +348,7 @@ async def _fetch_output_items(
     """
     items: list[EvalItemResult] = []
     try:
-        output_items_page = await _ensure_async_result(
-            client.evals.runs.output_items.list,
+        output_items_page = await client.evals.runs.output_items.list(
             run_id=run_id,
             eval_id=eval_id,
         )
@@ -450,6 +452,11 @@ def _resolve_openai_client(
         client = project_client.get_openai_client()
         if client is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
+        if not hasattr(client, "__aenter__"):
+            raise TypeError(
+                "project_client.get_openai_client() returned a sync client. "
+                "FoundryEvals requires an async AIProjectClient (from azure.ai.projects.aio)."
+            )
         return client
     raise ValueError("Provide either 'openai_client' or 'project_client'.")
 
@@ -469,8 +476,7 @@ async def _evaluate_via_responses_impl(
 
     Module-level helper used by both ``FoundryEvals`` and ``evaluate_traces``.
     """
-    eval_obj = await _ensure_async_result(
-        client.evals.create,
+    eval_obj = await client.evals.create(
         name=eval_name,
         data_source_config={"type": "azure_ai_source", "scenario": "responses"},
         testing_criteria=_build_testing_criteria(evaluators, model_deployment),
@@ -488,8 +494,7 @@ async def _evaluate_via_responses_impl(
         },
     }
 
-    run = await _ensure_async_result(
-        client.evals.runs.create,
+    run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
         data_source=data_source,
@@ -668,8 +673,7 @@ class FoundryEvals:
         has_context = any("context" in d for d in dicts)
         has_tools = any("tool_definitions" in d for d in dicts)
 
-        eval_obj = await _ensure_async_result(
-            self._client.evals.create,
+        eval_obj = await self._client.evals.create(
             name=eval_name,
             data_source_config={
                 "type": "custom",
@@ -691,8 +695,7 @@ class FoundryEvals:
             },
         }
 
-        run = await _ensure_async_result(
-            self._client.evals.runs.create,
+        run = await self._client.evals.runs.create(
             eval_id=eval_obj.id,
             name=f"{eval_name} Run",
             data_source=data_source,
@@ -786,15 +789,13 @@ async def evaluate_traces(
     if agent_id:
         trace_source["agent_id"] = agent_id
 
-    eval_obj = await _ensure_async_result(
-        client.evals.create,
+    eval_obj = await client.evals.create(
         name=eval_name,
         data_source_config={"type": "azure_ai_source", "scenario": "traces"},
         testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),
     )
 
-    run = await _ensure_async_result(
-        client.evals.runs.create,
+    run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
         data_source=trace_source,
@@ -846,8 +847,7 @@ async def evaluate_foundry_target(
     client = _resolve_openai_client(openai_client, project_client)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
-    eval_obj = await _ensure_async_result(
-        client.evals.create,
+    eval_obj = await client.evals.create(
         name=eval_name,
         data_source_config={
             "type": "azure_ai_source",
@@ -865,8 +865,7 @@ async def evaluate_foundry_target(
         },
     }
 
-    run = await _ensure_async_result(
-        client.evals.runs.create,
+    run = await client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
         data_source=data_source,

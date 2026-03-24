@@ -25,6 +25,8 @@ from agent_framework_azure_ai._foundry_evals import (
     FoundryEvals,
     _build_item_schema,
     _build_testing_criteria,
+    _extract_per_evaluator,
+    _extract_result_counts,
     _filter_tool_evaluators,
     _resolve_default_evaluators,
     _resolve_evaluator,
@@ -732,7 +734,6 @@ class TestFoundryEvals:
         )
         assert fe._evaluators == ["relevance", "coherence"]
 
-    @pytest.mark.asyncio
     async def test_evaluate_calls_evals_api(self) -> None:
         mock_client = MagicMock()
 
@@ -753,6 +754,7 @@ class TestFoundryEvals:
 
         # Mock output_items.list so _fetch_output_items exercises the full flow
         mock_output_item = MagicMock()
+        mock_output_item.id = "output_item_1"
         mock_output_item.status = "pass"
         mock_output_item.sample = {"query": "Hello", "response": "Hi there!"}
         mock_output_item.results = [
@@ -784,6 +786,13 @@ class TestFoundryEvals:
         assert results.passed == 2
         assert results.failed == 0
 
+        # Verify per-item output_items were fetched
+        assert len(results.items) == 1
+        assert results.items[0].item_id == "output_item_1"
+        assert results.items[0].status == "pass"
+        assert len(results.items[0].scores) == 1
+        assert results.items[0].scores[0].score == 5
+
         # Verify evals.create was called with correct structure
         create_call = mock_client.evals.create.call_args
         assert create_call.kwargs["name"] == "Agent Framework Eval"
@@ -795,7 +804,6 @@ class TestFoundryEvals:
         content = run_call.kwargs["data_source"]["source"]["content"]
         assert len(content) == 2
 
-    @pytest.mark.asyncio
     async def test_evaluate_uses_default_evaluators(self) -> None:
         mock_client = MagicMock()
 
@@ -825,7 +833,6 @@ class TestFoundryEvals:
         assert "coherence" in names
         assert "task_adherence" in names
 
-    @pytest.mark.asyncio
     async def test_evaluate_uses_dataset_path(self) -> None:
         """Items use the JSONL dataset path."""
         mock_client = MagicMock()
@@ -860,7 +867,6 @@ class TestFoundryEvals:
         content = ds["source"]["content"]
         assert content[0]["item"]["query"] == "What's the weather?"
 
-    @pytest.mark.asyncio
     async def test_evaluate_with_tool_items_uses_dataset_path(self) -> None:
         """Items with tool_definitions use the dataset path."""
         mock_client = MagicMock()
@@ -899,7 +905,6 @@ class TestFoundryEvals:
         assert ds["type"] == "jsonl"
         assert "tool_definitions" in ds["source"]["content"][0]["item"]
 
-    @pytest.mark.asyncio
     async def test_evaluate_with_project_client(self) -> None:
         mock_oai = MagicMock()
         mock_project = MagicMock()
@@ -1159,7 +1164,6 @@ class TestResolveOpenAIClient:
 
 
 class TestEvaluateAgentWithResponses:
-    @pytest.mark.asyncio
     async def test_responses_without_queries_raises(self) -> None:
         mock_oai = MagicMock()
         response = AgentResponse(messages=[Message("assistant", ["Hello"])])
@@ -1170,7 +1174,6 @@ class TestEvaluateAgentWithResponses:
                 evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
             )
 
-    @pytest.mark.asyncio
     async def test_fallback_to_dataset_with_query(self) -> None:
         """Non-Responses-API: falls back to dataset path when query is provided."""
         mock_oai = MagicMock()
@@ -1210,7 +1213,6 @@ class TestEvaluateAgentWithResponses:
         assert content[0]["item"]["query"] == "What's the weather?"
         assert content[0]["item"]["response"] == "It's sunny."
 
-    @pytest.mark.asyncio
     async def test_fallback_with_agent_extracts_tools(self) -> None:
         """Non-Responses-API with agent: tool definitions are included in the eval item."""
         mock_oai = MagicMock()
@@ -1254,7 +1256,6 @@ class TestEvaluateAgentWithResponses:
         tool_defs = item["tool_definitions"]
         assert any(t["name"] == "my_tool" for t in tool_defs)
 
-    @pytest.mark.asyncio
     async def test_fallback_multiple_responses_with_queries(self) -> None:
         """Non-Responses-API with multiple responses requires matching queries."""
         mock_oai = MagicMock()
@@ -1292,7 +1293,6 @@ class TestEvaluateAgentWithResponses:
         assert content[0]["item"]["query"] == "Question 1"
         assert content[1]["item"]["query"] == "Question 2"
 
-    @pytest.mark.asyncio
     async def test_query_response_count_mismatch_raises(self) -> None:
         """Mismatched query and response counts should raise."""
         mock_oai = MagicMock()
@@ -1309,7 +1309,6 @@ class TestEvaluateAgentWithResponses:
                 evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
             )
 
-    @pytest.mark.asyncio
     async def test_tool_evaluators_with_query_and_agent_uses_dataset_path(self) -> None:
         """Tool evaluators with query+agent uses dataset path."""
         mock_oai = MagicMock()
@@ -1590,7 +1589,6 @@ class TestEvaluateWorkflow:
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
         return mock_oai
 
-    @pytest.mark.asyncio
     async def test_post_hoc_with_workflow_result(self) -> None:
         """Evaluate a workflow result that was already produced."""
         mock_oai = self._mock_oai_client()
@@ -1626,7 +1624,6 @@ class TestEvaluateWorkflow:
         assert "reviewer" in results[0].sub_results
         assert len(results[0].sub_results) == 2
 
-    @pytest.mark.asyncio
     async def test_with_queries_runs_workflow(self) -> None:
         """Passing queries= runs the workflow and evaluates."""
         mock_oai = self._mock_oai_client()
@@ -1655,7 +1652,6 @@ class TestEvaluateWorkflow:
         mock_workflow.run.assert_called_once_with("Test query")
         assert "agent" in results[0].sub_results
 
-    @pytest.mark.asyncio
     async def test_overall_plus_per_agent(self) -> None:
         """Both overall and per-agent evals run by default."""
         mock_oai = self._mock_oai_client()
@@ -1687,7 +1683,6 @@ class TestEvaluateWorkflow:
         # FoundryEvals.evaluate called twice: once for planner, once for overall
         assert mock_oai.evals.create.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_no_result_or_queries_raises(self) -> None:
         mock_oai = MagicMock()
         mock_workflow = MagicMock()
@@ -1698,7 +1693,6 @@ class TestEvaluateWorkflow:
                 evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
             )
 
-    @pytest.mark.asyncio
     async def test_per_agent_only(self) -> None:
         """include_overall=False skips the overall eval."""
         mock_oai = self._mock_oai_client()
@@ -1725,7 +1719,6 @@ class TestEvaluateWorkflow:
         # Only one eval call (per-agent), no overall
         assert mock_oai.evals.create.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_overall_eval_excludes_tool_evaluators(self) -> None:
         """Tool evaluators should not be passed to the overall workflow eval."""
         mock_oai = self._mock_oai_client()
@@ -1766,7 +1759,6 @@ class TestEvaluateWorkflow:
         assert "builtin.tool_call_accuracy" not in evaluator_names
         assert "builtin.relevance" in evaluator_names
 
-    @pytest.mark.asyncio
     async def test_per_agent_excludes_tool_evaluators_when_no_tools(self) -> None:
         """Sub-agents without tools should not get tool evaluators."""
         mock_oai = self._mock_oai_client()
@@ -1946,7 +1938,6 @@ class TestEvalResultsWithItems:
 
 
 class TestFetchOutputItems:
-    @pytest.mark.asyncio
     async def test_fetches_and_converts_output_items(self) -> None:
         from agent_framework_azure_ai._foundry_evals import _fetch_output_items
 
@@ -2011,7 +2002,6 @@ class TestFetchOutputItems:
         assert item.token_usage["total_tokens"] == 150
         assert item.error_code is None
 
-    @pytest.mark.asyncio
     async def test_handles_errored_item(self) -> None:
         from agent_framework_azure_ai._foundry_evals import _fetch_output_items
 
@@ -2046,7 +2036,6 @@ class TestFetchOutputItems:
         assert item.error_message == "Query list cannot be empty"
         assert len(item.scores) == 0
 
-    @pytest.mark.asyncio
     async def test_handles_api_failure_gracefully(self) -> None:
         from agent_framework_azure_ai._foundry_evals import _fetch_output_items
 
@@ -2063,7 +2052,6 @@ class TestFetchOutputItems:
 
 
 class TestPollEvalRun:
-    @pytest.mark.asyncio
     async def test_timeout_returns_timeout_status(self) -> None:
         """Poll timeout returns EvalResults with status='timeout'."""
         from agent_framework_azure_ai._foundry_evals import _poll_eval_run
@@ -2078,7 +2066,6 @@ class TestPollEvalRun:
         assert results.eval_id == "eval_1"
         assert results.run_id == "run_1"
 
-    @pytest.mark.asyncio
     async def test_failed_run_returns_error(self) -> None:
         """Failed run returns EvalResults with error message."""
         from agent_framework_azure_ai._foundry_evals import _poll_eval_run
@@ -2096,7 +2083,6 @@ class TestPollEvalRun:
         assert results.status == "failed"
         assert results.error == "Model deployment unavailable"
 
-    @pytest.mark.asyncio
     async def test_canceled_run_returns_canceled_status(self) -> None:
         """Canceled run returns EvalResults with status='canceled'."""
         from agent_framework_azure_ai._foundry_evals import _poll_eval_run
@@ -2121,7 +2107,6 @@ class TestPollEvalRun:
 
 
 class TestEvaluateTraces:
-    @pytest.mark.asyncio
     async def test_raises_without_required_args(self) -> None:
         """Raises ValueError when no response_ids, trace_ids, or agent_id given."""
         from agent_framework_azure_ai._foundry_evals import evaluate_traces
@@ -2133,7 +2118,6 @@ class TestEvaluateTraces:
                 model_deployment="gpt-4o",
             )
 
-    @pytest.mark.asyncio
     async def test_response_ids_path(self) -> None:
         """evaluate_traces with response_ids delegates to _evaluate_via_responses."""
         from agent_framework_azure_ai._foundry_evals import evaluate_traces
@@ -2171,7 +2155,6 @@ class TestEvaluateTraces:
         assert len(content) == 2
         assert content[0]["item"]["resp_id"] == "resp_abc"
 
-    @pytest.mark.asyncio
     async def test_trace_ids_path(self) -> None:
         """evaluate_traces with trace_ids builds azure_ai_traces data source."""
         from agent_framework_azure_ai._foundry_evals import evaluate_traces
@@ -2212,7 +2195,6 @@ class TestEvaluateTraces:
 
 
 class TestEvaluateFoundryTarget:
-    @pytest.mark.asyncio
     async def test_happy_path(self) -> None:
         """evaluate_foundry_target creates eval + run and polls to completion."""
         from agent_framework_azure_ai._foundry_evals import evaluate_foundry_target
@@ -2252,3 +2234,112 @@ class TestEvaluateFoundryTarget:
         content = ds["source"]["content"]
         assert len(content) == 2
         assert content[0]["item"]["query"] == "Query 1"
+
+
+# ---------------------------------------------------------------------------
+# r3 review: _extract_result_counts paths
+# ---------------------------------------------------------------------------
+
+
+class TestExtractResultCounts:
+    """Tests for all _extract_result_counts code paths."""
+
+    def test_dict_passthrough(self):
+        """Path 1: result_counts is already a dict."""
+        run = MagicMock()
+        run.result_counts = {"passed": 3, "failed": 1}
+        assert _extract_result_counts(run) == {"passed": 3, "failed": 1}
+
+    def test_vars_extraction(self):
+        """Path 2: result_counts is an object with vars()."""
+
+        class Counts:
+            def __init__(self):
+                self.passed = 5
+                self.failed = 2
+                self.label = "info"  # non-int, should be filtered
+
+        run = MagicMock()
+        run.result_counts = Counts()
+        result = _extract_result_counts(run)
+        assert result is not None
+        assert result["passed"] == 5
+        assert result["failed"] == 2
+        assert "label" not in result
+
+    def test_type_error_fallback(self):
+        """Path 3: result_counts has no __dict__ (e.g. an int) → None."""
+        run = MagicMock()
+        run.result_counts = 42  # can't call vars() on an int
+        assert _extract_result_counts(run) is None
+
+    def test_none_result_counts(self):
+        run = MagicMock()
+        run.result_counts = None
+        assert _extract_result_counts(run) is None
+
+
+# ---------------------------------------------------------------------------
+# r3 review: _extract_per_evaluator
+# ---------------------------------------------------------------------------
+
+
+class TestExtractPerEvaluator:
+    """Tests for _extract_per_evaluator with mock data."""
+
+    def test_with_per_testing_criteria_results(self):
+        """Parses per_testing_criteria_results into per-evaluator breakdown."""
+
+        class CriteriaItem:
+            def __init__(self, name: str, passed: int, failed: int):
+                self.name = name
+                self.result_counts = {"passed": passed, "failed": failed}
+
+        run = MagicMock()
+        run.per_testing_criteria_results = [
+            CriteriaItem("relevance", 4, 1),
+            CriteriaItem("coherence", 5, 0),
+        ]
+        result = _extract_per_evaluator(run)
+        assert "relevance" in result
+        assert result["relevance"] == {"passed": 4, "failed": 1}
+        assert "coherence" in result
+        assert result["coherence"] == {"passed": 5, "failed": 0}
+
+    def test_with_testing_criteria_attr(self):
+        """Falls back to 'testing_criteria' attr when 'name' is absent."""
+
+        class CriteriaItem:
+            def __init__(self, criteria: str, passed: int, failed: int):
+                self.testing_criteria = criteria
+                self.name = None
+                self.result_counts = {"passed": passed, "failed": failed}
+
+        run = MagicMock()
+        run.per_testing_criteria_results = [CriteriaItem("fluency", 3, 2)]
+        result = _extract_per_evaluator(run)
+        assert "fluency" in result
+        assert result["fluency"]["passed"] == 3
+
+    def test_none_per_testing_criteria(self):
+        run = MagicMock()
+        run.per_testing_criteria_results = None
+        assert _extract_per_evaluator(run) == {}
+
+
+# ---------------------------------------------------------------------------
+# r3 review: _resolve_openai_client async check
+# ---------------------------------------------------------------------------
+
+
+class TestResolveOpenaiClientAsyncCheck:
+    """Tests for the async client runtime check."""
+
+    def test_sync_client_raises(self):
+        """A sync project_client raises TypeError."""
+        mock_project = MagicMock()
+        sync_client = MagicMock(spec=[])  # no __aenter__
+        mock_project.get_openai_client.return_value = sync_client
+
+        with pytest.raises(TypeError, match="sync client"):
+            _resolve_openai_client(project_client=mock_project)
