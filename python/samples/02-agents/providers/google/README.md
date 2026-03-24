@@ -15,4 +15,4 @@ This folder contains examples demonstrating how to use Google Gemini models with
 ## Environment Variables
 
 - `GEMINI_API_KEY`: Your Google AI Studio API key (get one from [Google AI Studio](https://aistudio.google.com/apikey))
-- `GEMINI_CHAT_MODEL_ID`: The Gemini model to use (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`)
+- `GEMINI_MODEL`: The Gemini model to use (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`)

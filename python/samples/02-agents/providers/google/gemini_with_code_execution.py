@@ -6,7 +6,7 @@ and run code in a sandboxed environment to answer questions.
 
 Requires the following environment variables to be set:
 - GEMINI_API_KEY
-- GEMINI_CHAT_MODEL_ID
+- GEMINI_MODEL
 """
 
 import asyncio

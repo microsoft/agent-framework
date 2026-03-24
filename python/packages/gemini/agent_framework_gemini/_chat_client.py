@@ -92,7 +92,7 @@ class GeminiChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], to
     See: https://ai.google.dev/api/generate-content#generationconfig
 
     Inherited fields from ``ChatOptions``:
-        model_id: Model to use for this call (e.g. ``"gemini-2.5-flash"``).
+        model: Model to use for this call (e.g. ``"gemini-2.5-flash"``).
         temperature: Controls randomness. Higher values produce more varied output.
         max_tokens: Maximum number of tokens to generate (``maxOutputTokens``).
         top_p: Nucleus sampling cutoff. Only tokens within the top-p probability mass are considered.
@@ -166,7 +166,7 @@ class GeminiSettings(TypedDict, total=False):
     """Gemini configuration settings loaded from environment or .env files."""
 
     api_key: SecretString | None
-    chat_model_id: str | None
+    model: str | None
 
 
 # endregion
@@ -208,7 +208,7 @@ class RawGeminiChatClient(
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
@@ -218,7 +218,7 @@ class RawGeminiChatClient(
 
         Args:
             api_key: Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
-            model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` environment variable.
+            model: Default model identifier. Falls back to ``GEMINI_MODEL`` environment variable.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
@@ -228,7 +228,7 @@ class RawGeminiChatClient(
             GeminiSettings,
             env_prefix="GEMINI_",
             api_key=api_key,
-            chat_model_id=model_id,
+            model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
@@ -246,7 +246,7 @@ class RawGeminiChatClient(
                 http_options={"headers": {"x-goog-api-client": AGENT_FRAMEWORK_USER_AGENT}},
             )
 
-        self.model_id = settings.get("chat_model_id")
+        self.model = settings.get("model")
 
         super().__init__(additional_properties=additional_properties)
 
@@ -263,9 +263,9 @@ class RawGeminiChatClient(
 
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
                 validated = await self._validate_options(options)
-                model_id, contents, config = self._prepare_request(messages, validated)
+                model, contents, config = self._prepare_request(messages, validated)
                 async for chunk in await self._genai_client.aio.models.generate_content_stream(
-                    model=model_id,
+                    model=model,
                     contents=contents,  # type: ignore[arg-type]
                     config=config,
                 ):
@@ -275,8 +275,8 @@ class RawGeminiChatClient(
 
         async def _get_response() -> ChatResponse:
             validated = await self._validate_options(options)
-            model_id, contents, config = self._prepare_request(messages, validated)
-            raw = await self._genai_client.aio.models.generate_content(model=model_id, contents=contents, config=config)  # type: ignore[arg-type]
+            model, contents, config = self._prepare_request(messages, validated)
+            raw = await self._genai_client.aio.models.generate_content(model=model, contents=contents, config=config)  # type: ignore[arg-type]
             return self._process_generate_response(raw, response_format=validated.get("response_format"))
 
         return _get_response()
@@ -307,16 +307,14 @@ class RawGeminiChatClient(
             options: Validated and normalized chat options.
 
         Returns:
-            A tuple of the resolved model ID, the Gemini contents list, and the generation config.
+            A tuple of the resolved model, the Gemini contents list, and the generation config.
 
         Raises:
-            ValueError: If no model ID is set on the options or the client instance.
+            ValueError: If no model is set on the options or the client instance.
         """
-        model_id = options.get("model_id") or self.model_id
-        if not model_id:
-            raise ValueError(
-                "Gemini model_id is required. Set via model_id parameter or GEMINI_CHAT_MODEL_ID environment variable."
-            )
+        model = options.get("model") or self.model
+        if not model:
+            raise ValueError("Gemini model is required. Set via model parameter or GEMINI_MODEL environment variable.")
 
         system_instruction, contents = self._prepare_gemini_messages(messages)
         if call_instructions := options.get("instructions"):
@@ -324,7 +322,7 @@ class RawGeminiChatClient(
                 f"{call_instructions}\n{system_instruction}" if system_instruction else call_instructions
             )
 
-        return model_id, contents, self._prepare_config(options, system_instruction)
+        return model, contents, self._prepare_config(options, system_instruction)
 
     def _prepare_gemini_messages(self, messages: Sequence[Message]) -> tuple[str | None, list[types.Content]]:
         """Convert framework messages to Gemini contents and extract system instruction.
@@ -625,7 +623,7 @@ class RawGeminiChatClient(
             response_id=None,
             messages=[Message(role="assistant", contents=contents, raw_representation=candidate)],
             usage_details=self._parse_usage(response.usage_metadata),
-            model_id=response.model_version or self.model_id,
+            model_id=response.model_version or self.model,
             finish_reason=self._map_finish_reason(
                 candidate.finish_reason.name if candidate and candidate.finish_reason else None
             ),
@@ -762,7 +760,7 @@ class GeminiChatClient(
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
+        model: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         client: genai.Client | None = None,
@@ -774,7 +772,7 @@ class GeminiChatClient(
 
         Args:
             api_key: The Google AI Studio API key. Falls back to ``GEMINI_API_KEY`` environment variable.
-            model_id: Default model identifier. Falls back to ``GEMINI_CHAT_MODEL_ID`` environment variable.
+            model: Default model identifier. Falls back to ``GEMINI_MODEL`` environment variable.
             env_file_path: Path to a ``.env`` file for credential loading.
             env_file_encoding: Encoding for the ``.env`` file.
             client: Pre-built ``genai.Client`` instance. When provided, ``api_key`` is not required.
@@ -784,7 +782,7 @@ class GeminiChatClient(
         """
         super().__init__(
             api_key=api_key,
-            model_id=model_id,
+            model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             client=client,

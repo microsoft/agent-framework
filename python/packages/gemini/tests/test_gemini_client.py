@@ -93,42 +93,42 @@ async def _async_iter(items: list[Any]):
 
 
 def _make_gemini_client(
-    model_id: str = "gemini-2.5-flash",
+    model: str = "gemini-2.5-flash",
     mock_client: MagicMock | None = None,
 ) -> tuple[GeminiChatClient, MagicMock]:
     """Return a (GeminiChatClient, mock_genai_client) pair."""
     mock = mock_client or MagicMock()
-    client = GeminiChatClient(client=mock, model_id=model_id)
+    client = GeminiChatClient(client=mock, model=model)
     return client, mock
 
 
 # settings & initialisation
 
 
-def test_model_id_stored_on_instance() -> None:
-    client, _ = _make_gemini_client(model_id="gemini-2.5-pro")
-    assert client.model_id == "gemini-2.5-pro"
+def test_model_stored_on_instance() -> None:
+    client, _ = _make_gemini_client(model="gemini-2.5-pro")
+    assert client.model == "gemini-2.5-pro"
 
 
 def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-123")
-    client = GeminiChatClient(model_id="gemini-2.5-flash")
-    assert client.model_id == "gemini-2.5-flash"
+    client = GeminiChatClient(model="gemini-2.5-flash")
+    assert client.model == "gemini-2.5-flash"
 
 
 def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_CHAT_MODEL_ID", raising=False)
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
 
     with pytest.raises(ValueError, match="GEMINI_API_KEY"):
-        GeminiChatClient(model_id="gemini-2.5-flash")
+        GeminiChatClient(model="gemini-2.5-flash")
 
 
-async def test_missing_model_id_raises_on_get_response() -> None:
-    client, mock = _make_gemini_client(model_id=None)  # type: ignore[arg-type]
+async def test_missing_model_raises_on_get_response() -> None:
+    client, mock = _make_gemini_client(model=None)  # type: ignore[arg-type]
     mock.aio.models.generate_content = AsyncMock()
 
-    with pytest.raises(ValueError, match="model_id"):
+    with pytest.raises(ValueError, match="model"):
         await client.get_response(messages=[Message(role="user", contents=[Content.from_text("hi")])])
 
 
@@ -155,13 +155,13 @@ async def test_get_response_model_id_from_response() -> None:
     assert response.model_id == "gemini-2.5-pro-002"
 
 
-async def test_get_response_uses_model_id_from_options() -> None:
-    client, mock = _make_gemini_client(model_id="gemini-2.5-flash")
+async def test_get_response_uses_model_from_options() -> None:
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
     mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
 
     await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Hi")])],
-        options={"model_id": "gemini-2.5-pro"},
+        options={"model": "gemini-2.5-pro"},
     )
 
     call_kwargs = mock.aio.models.generate_content.call_args.kwargs
@@ -1105,7 +1105,7 @@ def test_service_url() -> None:
 @skip_if_no_api_key
 async def test_integration_basic_chat() -> None:
     """Basic request/response round-trip returns a non-empty text reply."""
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Reply with the single word: hello")])]
     )
@@ -1119,7 +1119,7 @@ async def test_integration_basic_chat() -> None:
 @skip_if_no_api_key
 async def test_integration_streaming() -> None:
     """Streaming yields multiple chunks that together form a non-empty response."""
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
     stream = client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("Count from 1 to 5.")])],
         stream=True,
@@ -1140,7 +1140,7 @@ async def test_integration_structured_output() -> None:
     class Answer(BaseModel):
         answer: str
 
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is the capital of Germany?")])],
@@ -1163,7 +1163,7 @@ async def test_integration_tool_calling() -> None:
         return f"22°C in {city}"
 
     tool = FunctionTool(name="get_temperature", func=get_temperature)
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is the temperature in Berlin?")])],
@@ -1181,7 +1181,7 @@ async def test_integration_tool_calling() -> None:
 async def test_integration_thinking_config() -> None:
     """Model accepts a thinking budget and returns a non-empty text reply."""
     options: GeminiChatOptions = {"thinking_config": ThinkingConfig(thinking_budget=512)}
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is 17 * 34?")])],
@@ -1198,7 +1198,7 @@ async def test_integration_thinking_config() -> None:
 async def test_integration_google_search_grounding() -> None:
     """Google Search grounding returns a non-empty response for a current-events question."""
     options: GeminiChatOptions = {"google_search_grounding": True}
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[Message(role="user", contents=[Content.from_text("What is the latest stable version of Python?")])],
@@ -1215,7 +1215,7 @@ async def test_integration_google_search_grounding() -> None:
 async def test_integration_google_maps_grounding() -> None:
     """Google Maps grounding returns a non-empty response for a location-based question."""
     options: GeminiChatOptions = {"google_maps_grounding": True}
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[
@@ -1237,7 +1237,7 @@ async def test_integration_google_maps_grounding() -> None:
 async def test_integration_code_execution() -> None:
     """Code execution tool produces a non-empty response for a computation request."""
     options: GeminiChatOptions = {"code_execution": True}
-    client = GeminiChatClient(model_id=_TEST_MODEL)
+    client = GeminiChatClient(model=_TEST_MODEL)
 
     response = await client.get_response(
         messages=[
