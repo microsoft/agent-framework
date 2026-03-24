@@ -25,6 +25,15 @@ STATUS_EMOJI = {
 }
 
 
+def _format_run_label(timestamp: str) -> str:
+    """Format a run timestamp as a compact column label (e.g. '03-24 18:05')."""
+    try:
+        dt = datetime.fromisoformat(timestamp)
+        return dt.strftime("%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return timestamp[:16]
+
+
 def load_current_run(reports_dir: Path) -> dict[str, Any]:
     """Load all JSON report files from the current run and merge them."""
     combined_results: dict[str, str] = {}
@@ -101,14 +110,14 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     # --- Overall status table (most recent first) ---
     lines.append("## Overall Status (Last 5 Runs)")
     lines.append("")
-    lines.append("| Run Date | Success | Failure | Missing Setup | Total |")
-    lines.append("|----------|---------|---------|---------------|-------|")
+    lines.append("| Run | Success | Failure | Missing Setup | Total |")
+    lines.append("|-----|---------|---------|---------------|-------|")
 
     for run in reversed(runs):
         s = run["summary"]
-        date = run["timestamp"][:10]
+        label = _format_run_label(run["timestamp"])
         lines.append(
-            f"| {date} | {s['success_count']}/{s['total_samples']} "
+            f"| {label} | {s['success_count']}/{s['total_samples']} "
             f"| {s['failure_count']}/{s['total_samples']} "
             f"| {s['missing_setup_count']}/{s['total_samples']} "
             f"| {s['total_samples']} |"
@@ -137,8 +146,8 @@ def generate_trend_report(runs: list[dict[str, Any]]) -> str:
     header = "| Sample |"
     separator = "|--------|"
     for run in reversed(runs):
-        date = run["timestamp"][:10]
-        header += f" {date} |"
+        label = _format_run_label(run["timestamp"])
+        header += f" {label} |"
         separator += "------------|"
     for _ in range(MAX_HISTORY - len(runs)):
         header += " N/A |"
