@@ -30,6 +30,7 @@
     <None Include="$(MSBuildThisFileDirectory)\..\..\..\workflow-samples\Setup\*.yaml" LinkBase="Agents">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
+    <Compile Remove="DeclarativeCodeGenTest.cs" />
     <None Update="Testcases\*.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
