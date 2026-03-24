@@ -235,7 +235,7 @@ class TestDurableAgentState:
         restored = durable_message.to_chat_message()
 
         assert restored.contents[0].type == "function_call"
-        assert restored.contents[0].arguments == '{"location":"Chicago"}'
+        assert restored.contents[0].arguments == '{"location": "Chicago"}'
 
     def test_function_call_content_supports_legacy_mapping_arguments(self) -> None:
         """Existing persisted mapping arguments should still restore successfully."""
@@ -248,7 +248,7 @@ class TestDurableAgentState:
         restored = content.to_ai_content()
 
         assert restored.type == "function_call"
-        assert restored.arguments == {"location": "Chicago"}
+        assert restored.arguments == '{"location": "Chicago"}'
 
 
 class TestDurableAgentStateUsage:
