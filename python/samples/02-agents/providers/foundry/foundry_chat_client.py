@@ -9,7 +9,6 @@ from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from pydantic import Field
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,16 +22,14 @@ directly, you provide a Foundry project endpoint and the client is created via
 the Azure AI Foundry project SDK.
 
 This requires:
-- The `azure-ai-projects` package to be installed.
 - The `FOUNDRY_PROJECT_ENDPOINT` environment variable set to your Foundry project endpoint.
 - The `FOUNDRY_MODEL` environment variable set to the model deployment name.
-"""  # Load environment variables from .env file if present
+"""
 
 
-# NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
+    location: Annotated[str, "The location to get the weather for."],
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]

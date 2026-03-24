@@ -5,7 +5,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, AgentSession, InMemoryHistoryProvider, tool
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -40,7 +40,7 @@ async def example_with_automatic_session_creation() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=OpenAIChatCompletionClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -67,7 +67,7 @@ async def example_with_session_persistence() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=OpenAIChatCompletionClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -102,7 +102,7 @@ async def example_with_existing_session_messages() -> None:
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     agent = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=OpenAIChatCompletionClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )
@@ -125,7 +125,7 @@ async def example_with_existing_session_messages() -> None:
 
     # Create a new agent instance but use the existing session with its message history
     new_agent = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=OpenAIChatCompletionClient(credential=AzureCliCredential()),
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

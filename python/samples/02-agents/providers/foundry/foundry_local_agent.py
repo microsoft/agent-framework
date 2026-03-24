@@ -5,12 +5,10 @@ from __future__ import annotations
 
 import asyncio
 from random import randint
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
-from agent_framework.microsoft import FoundryLocalClient
-
-if TYPE_CHECKING:
-    from agent_framework import Agent
+from agent_framework import Agent
+from agent_framework.foundry import FoundryLocalClient
 
 """
 This sample demonstrates basic usage of the FoundryLocalClient.
