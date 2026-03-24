@@ -34,16 +34,14 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
-    client = FoundryChatClient(credential=AzureCliCredential())
-
     physicist = Agent(
-        client=client,
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
     chemist = Agent(
-        client=client,
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
