@@ -23,17 +23,23 @@ Required environment variables:
 Authentication uses AzureCliCredential (Azure Identity).
 """
 
+import os
+
 from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Create Foundry chat client
 # This uses AzureCliCredential for authentication (requires 'az login')
-client = FoundryChatClient(credential=AzureCliCredential())
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=AzureCliCredential(),
+)
 
 # Define three AI agents with different roles
 # Agent 1: Joker - HTTP trigger only (default)

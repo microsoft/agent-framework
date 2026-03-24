@@ -12,6 +12,7 @@ Functions host."""
 
 import json
 import logging
+import os
 from collections.abc import Generator, Mapping
 from typing import Any
 
@@ -20,7 +21,7 @@ from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,11 @@ class EmailPayload(BaseModel):
 
 # 2. Instantiate both agents so they can be registered with AgentFunctionApp.
 def _create_agents() -> list[Any]:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     spam_agent = Agent(
         client=client,

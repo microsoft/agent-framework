@@ -10,12 +10,13 @@ Components used in this sample:
 Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import logging
+import os
 from typing import Any
 
 from agent_framework import Agent, tool
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -59,7 +60,11 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 
 # 1. Create multiple agents, each with its own instruction set and tools.
-client = FoundryChatClient(credential=AzureCliCredential())
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=AzureCliCredential(),
+)
 
 weather_agent = Agent(
     client=client,

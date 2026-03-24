@@ -23,6 +23,7 @@ from agent_framework import Agent, AgentResponse
 from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task, when_any  # type: ignore
@@ -75,7 +76,11 @@ def create_writer_agent() -> "Agent":
         "Limit response to 300 words or less."
     )
 
-    _client = FoundryChatClient(credential=AzureCliCredential())
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
     return Agent(
         client=_client,
         name=WRITER_AGENT_NAME,

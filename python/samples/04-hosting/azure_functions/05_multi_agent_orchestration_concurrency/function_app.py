@@ -11,6 +11,7 @@ Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign i
 
 import json
 import logging
+import os
 from collections.abc import Generator
 from typing import Any, cast
 
@@ -19,7 +20,7 @@ from agent_framework import Agent, AgentResponse
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -35,13 +36,21 @@ CHEMIST_AGENT_NAME = "ChemistAgent"
 # 2. Instantiate both agents that the orchestration will run concurrently.
 def _create_agents() -> list[Any]:
     physicist = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
 
     chemist = Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )

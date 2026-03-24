@@ -42,16 +42,13 @@ from agent_framework import (
     executor,
     handler,
 )
+from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
-from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
-
-FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 
 # Agent names
 SENTIMENT_AGENT_NAME = "SentimentAnalysisAgent"
@@ -339,23 +336,6 @@ class MixedResultCollector(Executor):
 # ============================================================================
 
 
-def _build_client_kwargs() -> dict[str, Any]:
-    """Build Foundry chat client kwargs from environment variables."""
-    project_endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
-    if not project_endpoint:
-        raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
-
-    model = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not model:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    return {
-        "project_endpoint": project_endpoint,
-        "model": model,
-        "credential": AzureCliCredential(),
-    }
-
-
 def _create_workflow() -> Workflow:
     """Create the parallel workflow definition.
 
@@ -379,8 +359,11 @@ def _create_workflow() -> Workflow:
                        └─> statistics_processor ─┤
                                                  └──> final_report
     """
-    client_kwargs = _build_client_kwargs()
-    chat_client = FoundryChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     # Create agents for parallel analysis
     sentiment_agent = Agent(

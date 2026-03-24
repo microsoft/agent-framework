@@ -21,6 +21,7 @@ from agent_framework import Agent, tool
 from agent_framework.azure import DurableAIAgentWorker
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
@@ -72,7 +73,11 @@ def create_weather_agent():
     Returns:
         Agent: The configured Weather agent with weather tool
     """
-    _client = FoundryChatClient(credential=AzureCliCredential())
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
     return Agent(
         client=_client,
         name=WEATHER_AGENT_NAME,
@@ -87,7 +92,11 @@ def create_math_agent():
     Returns:
         Agent: The configured Math agent with calculation tools
     """
-    _client = FoundryChatClient(credential=AzureCliCredential())
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
     return Agent(
         client=_client,
         name=MATH_AGENT_NAME,

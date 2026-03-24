@@ -29,7 +29,7 @@ from agent_framework.azure import (
     AgentResponseCallbackProtocol,
 )
 from agent_framework.foundry import FoundryChatClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
@@ -157,7 +157,11 @@ redis_callback = RedisStreamCallback()
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
     return Agent(
-        client=FoundryChatClient(credential=AzureCliCredential()),
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

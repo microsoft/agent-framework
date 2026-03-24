@@ -36,7 +36,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 

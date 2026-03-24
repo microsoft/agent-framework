@@ -11,6 +11,7 @@ Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign i
 
 import json
 import logging
+import os
 from collections.abc import Generator
 from typing import Any
 
@@ -19,7 +20,7 @@ from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,11 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    _client = FoundryChatClient(credential=AzureCliCredential())
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
     return Agent(
         client=_client,
         name=WRITER_AGENT_NAME,
