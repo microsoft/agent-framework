@@ -26,6 +26,6 @@ $env:APPLICATIONINSIGHTS_CONNECTION_STRING="..."  # Optional
 ## Run the sample
 
 ```powershell
-cd dotnet/samples/02-agents/AgentsWithFoundry/Responses
+cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step07_Observability
 ```

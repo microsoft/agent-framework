@@ -7,8 +7,7 @@ The getting started samples demonstrate the fundamental concepts and functionali
 | Sample | Description |
 | --- | --- |
 | [Agents](./Agents/README.md) | Step-by-step instructions for getting started with agents |
-| [Agents with Foundry (Responses)](./AgentsWithFoundry/Responses/README.md) | Direct Responses samples using `AIProjectClient.AsAIAgent(...)` |
-| [Agents with Foundry (Versioned)](./AgentsWithFoundry/Versioned/README.md) | Server-side Foundry agent samples using native `AIProjectClient.Agents` flows plus `AsAIAgent(...)` |
+| [Agents with Foundry](./AgentsWithFoundry/README.md) | Foundry agent samples using `FoundryAgent` and `AIProjectClient.AsAIAgent(...)` |
 | [Agent Providers](./AgentProviders/README.md) | Getting started with creating agents using various providers |
 | [Agents With Retrieval Augmented Generation (RAG)](./AgentWithRAG/README.md) | Adding Retrieval Augmented Generation (RAG) capabilities to your agents |
 | [Agents With Memory](./AgentWithMemory/README.md) | Adding memory capabilities to your agents |

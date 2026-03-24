@@ -1,22 +1,32 @@
 ﻿# Getting started with Foundry Agents
 
-These samples demonstrate the direct Responses path in Azure AI Foundry using `AIProjectClient.AsAIAgent(...)`.
+These samples demonstrate how to use Azure AI Foundry with Agent Framework.
 
-This path is code-first:
+## Quick start
 
-- no server-side agent definition is created
-- model, instructions, tools, and options are supplied from your code
-- the public agent type stays `ChatClientAgent`
+The simplest way to create a Foundry agent is using the `FoundryAgent` type directly:
 
-## How these differ from [Foundry Versioned Agents](../Versioned/README.md)
+```csharp
+FoundryAgent agent = new(
+    new Uri(endpoint),
+    new AzureCliCredential(),
+    model: "gpt-4o-mini",
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
 
-|  | Foundry Versioned Agents | Foundry Agents |
-| --- | --- | --- |
-| Server-side agent | Yes | No |
-| Versioning | `AgentVersion` resources are created in Foundry | No server-side versioning |
-| Lifecycle | Create -> Run -> Delete | Construct -> Run |
-| Primary API | `AIProjectClient.Agents` + `AsAIAgent(...)` | `AIProjectClient.AsAIAgent(...)` |
-| Public agent type | `ChatClientAgent` | `ChatClientAgent` |
+Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
+```
+
+Or using the `AIProjectClient.AsAIAgent(...)` extensions:
+
+```csharp
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+FoundryAgent agent = aiProjectClient.AsAIAgent(
+    model: deploymentName,
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
+```
 
 ## Prerequisites
 
@@ -31,34 +41,24 @@ $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.c
 $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 ```
 
-Basic construction:
-
-```csharp
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
-ChatClientAgent agent = aiProjectClient.AsAIAgent(
-    model: deploymentName,
-    instructions: "You are good at telling jokes.",
-    name: "JokerAgent");
-```
-
 Some samples require extra tool-specific environment variables. See each sample for details.
 
 ## Samples
 
 | Sample | Description |
 | --- | --- |
-| [Basics](./Agent_Step01_Basics/) | Create and run a direct Responses agent |
-| [Multi-turn conversation](./Agent_Step02_MultiturnConversation/) | Persist a conversation explicitly and reuse the session |
-| [Using function tools](./Agent_Step03_UsingFunctionTools/) | Function tools with the direct Responses path |
-| [Using function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/) | Human-in-the-loop approval before function execution |
+| [FoundryAgent basics](./FoundryAgent_Step01/) | Create a FoundryAgent directly with endpoint and credentials |
+| [Basics (Responses API)](./Agent_Step01_Basics/) | Create and run an agent using AsAIAgent extensions |
+| [Multi-turn conversation](./Agent_Step02_MultiturnConversation/) | Persist a conversation and reuse the session |
+| [Using function tools](./Agent_Step03_UsingFunctionTools/) | Function tools |
+| [Function tools with approvals](./Agent_Step04_UsingFunctionToolsWithApprovals/) | Human-in-the-loop approval |
 | [Structured output](./Agent_Step05_StructuredOutput/) | Structured output with JSON schema |
 | [Persisted conversations](./Agent_Step06_PersistedConversations/) | Persisting and resuming conversations |
-| [Observability](./Agent_Step07_Observability/) | Adding OpenTelemetry observability |
-| [Dependency injection](./Agent_Step08_DependencyInjection/) | Using DI with a hosted service |
+| [Observability](./Agent_Step07_Observability/) | OpenTelemetry observability |
+| [Dependency injection](./Agent_Step08_DependencyInjection/) | DI with a hosted service |
 | [Using MCP client as tools](./Agent_Step09_UsingMcpClientAsTools/) | MCP client tools |
 | [Using images](./Agent_Step10_UsingImages/) | Image multi-modality |
-| [Agent as function tool](./Agent_Step11_AsFunctionTool/) | Use one agent as a function tool for another |
+| [Agent as function tool](./Agent_Step11_AsFunctionTool/) | Agent as a function tool for another |
 | [Middleware](./Agent_Step12_Middleware/) | Multiple middleware layers |
 | [Plugins](./Agent_Step13_Plugins/) | Plugins with dependency injection |
 | [Code interpreter](./Agent_Step14_CodeInterpreter/) | Code interpreter tool |
@@ -75,6 +75,6 @@ Some samples require extra tool-specific environment variables. See each sample 
 ## Running the samples
 
 ```powershell
-cd dotnet/samples/02-agents/AgentsWithFoundry/Responses
-dotnet run --project .\Agent_Step01_Basics
+cd dotnet/samples/02-agents/AgentsWithFoundry
+dotnet run --project .\FoundryAgent_Step01
 ```
