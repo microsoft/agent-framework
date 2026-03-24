@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 
 from agent_framework import tool
-from agent_framework.azure import FoundryAgent
+from agent_framework.foundry import FoundryAgent
 from azure.identity import AzureCliCredential
 from pydantic import Field
 

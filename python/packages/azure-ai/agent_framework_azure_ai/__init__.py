@@ -24,10 +24,6 @@ from ._embedding_client import (
     RawAzureAIInferenceEmbeddingClient,
 )
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
-from ._foundry_agent import FoundryAgent, RawFoundryAgent
-from ._foundry_agent_client import RawFoundryAgentChatClient
-from ._foundry_chat_client import FoundryChatClient, RawFoundryChatClient
-from ._foundry_memory_provider import FoundryMemoryProvider
 from ._project_provider import AzureAIProjectAgentProvider  # pyright: ignore[reportDeprecated]
 from ._shared import AzureAISettings
 
@@ -59,13 +55,7 @@ __all__ = [
     "AzureOpenAISettings",
     "AzureTokenProvider",
     "AzureUserSecurityContext",
-    "FoundryAgent",
-    "FoundryChatClient",
-    "FoundryMemoryProvider",
     "RawAzureAIClient",
     "RawAzureAIInferenceEmbeddingClient",
-    "RawFoundryAgent",
-    "RawFoundryAgentChatClient",
-    "RawFoundryChatClient",
     "__version__",
 ]

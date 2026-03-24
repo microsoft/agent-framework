@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
 

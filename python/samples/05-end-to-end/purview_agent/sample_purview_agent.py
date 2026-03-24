@@ -26,7 +26,7 @@ import os
 from typing import Any
 
 from agent_framework import Agent, AgentResponse, Message
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.microsoft import (
     PurviewChatPolicyMiddleware,
     PurviewPolicyMiddleware,

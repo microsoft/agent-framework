@@ -29,7 +29,7 @@ import uvicorn
 
 # Agent Framework imports
 from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 
 # Agent Framework ChatKit integration
 from agent_framework_chatkit import ThreadItemConverter, stream_agent_response

@@ -57,7 +57,7 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import DefaultAzureCredential
 from dotenv import load_dotenv

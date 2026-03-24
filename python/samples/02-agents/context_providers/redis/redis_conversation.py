@@ -22,7 +22,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from redisvl.extensions.cache.embeddings import EmbeddingsCache

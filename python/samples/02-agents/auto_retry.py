@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
 
 from agent_framework import Agent, ChatContext, ChatMiddleware, SupportsChatGetResponse, chat_middleware
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import RateLimitError

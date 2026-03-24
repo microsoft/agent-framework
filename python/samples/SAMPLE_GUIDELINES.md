@@ -58,7 +58,7 @@ For getting started samples (`01-get-started/`) and `basic` samples, use **expli
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 """
@@ -90,7 +90,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 """

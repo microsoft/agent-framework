@@ -26,7 +26,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisHistoryProvider
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential

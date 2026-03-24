@@ -15,7 +15,7 @@ from invoice_data import query_by_invoice_id, query_by_transaction_id, query_inv
 
 if TYPE_CHECKING:
     from agent_framework import Agent
-    from agent_framework.azure import FoundryChatClient
+    from agent_framework.foundry import FoundryChatClient
 
 
 # ---------------------------------------------------------------------------

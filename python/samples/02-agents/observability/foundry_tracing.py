@@ -16,7 +16,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

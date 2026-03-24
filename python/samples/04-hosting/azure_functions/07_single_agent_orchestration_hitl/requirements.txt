@@ -1,2 +1,2 @@
-agent-framework-azure-ai
+agent-framework-foundry
 agent-framework-azurefunctions

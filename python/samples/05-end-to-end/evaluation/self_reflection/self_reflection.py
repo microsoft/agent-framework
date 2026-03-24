@@ -20,7 +20,7 @@ from typing import Any
 import openai
 import pandas as pd
 from agent_framework import Agent, Message
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

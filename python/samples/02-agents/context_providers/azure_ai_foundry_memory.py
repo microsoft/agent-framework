@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 
 from agent_framework import Agent, InMemoryHistoryProvider
-from agent_framework.azure import FoundryChatClient, FoundryMemoryProvider
+from agent_framework.foundry import FoundryChatClient, FoundryMemoryProvider
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     MemoryStoreDefaultDefinition,

@@ -6,8 +6,8 @@ import pytest
 from agent_framework import SupportsChatGetResponse
 from agent_framework._settings import load_settings
 from agent_framework.exceptions import SettingNotFoundError
+from agent_framework.foundry import FoundryLocalClient
 
-from agent_framework_foundry_local import FoundryLocalClient
 from agent_framework_foundry_local._foundry_local_client import FoundryLocalSettings
 
 # Settings Tests

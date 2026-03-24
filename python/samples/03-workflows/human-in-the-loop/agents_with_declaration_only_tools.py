@@ -27,7 +27,7 @@ import os
 from typing import Any
 
 from agent_framework import Agent, Content, FunctionTool, WorkflowBuilder
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 

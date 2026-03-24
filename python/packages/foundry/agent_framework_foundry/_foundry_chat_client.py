@@ -50,7 +50,7 @@ if TYPE_CHECKING:
         FunctionMiddlewareCallable,
     )
 
-logger: logging.Logger = logging.getLogger("agent_framework.azure")
+logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
 
 class FoundrySettings(TypedDict, total=False):
@@ -151,7 +151,7 @@ class RawFoundryChatClient(  # type: ignore[misc]
             if not project_endpoint:
                 raise ValueError(
                     "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable,"
+                    "or 'FOUNDRY_PROJECT_ENDPOINT' environment variable,"
                     "or pass in a AIProjectClient."
                 )
             if not credential:
@@ -458,7 +458,7 @@ class FoundryChatClient(  # type: ignore[misc]
         .. code-block:: python
 
             from azure.identity import AzureCliCredential
-            from agent_framework_azure_ai import FoundryChatClient
+            from agent_framework_foundry import FoundryChatClient
 
             client = FoundryChatClient(
                 project_endpoint="https://your-project.services.ai.azure.com",

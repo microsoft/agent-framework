@@ -94,7 +94,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
     layers via subclassing::
 
         from agent_framework._tools import FunctionInvocationLayer
-        from agent_framework.azure import RawFoundryAgentChatClient
+        from agent_framework.foundry import RawFoundryAgentChatClient
 
 
         class MyClient(FunctionInvocationLayer, RawFoundryAgentChatClient):
@@ -334,7 +334,7 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         .. code-block:: python
 
             from agent_framework import Agent
-            from agent_framework.azure import FoundryAgentClient
+            from agent_framework.foundry import FoundryAgentClient
             from azure.identity import AzureCliCredential
 
             client = FoundryAgentClient(

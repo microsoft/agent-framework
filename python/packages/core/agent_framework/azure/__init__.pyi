@@ -21,13 +21,7 @@ from agent_framework_azure_ai import (
     AzureOpenAISettings,
     AzureTokenProvider,
     AzureUserSecurityContext,
-    FoundryAgent,
-    FoundryChatClient,
-    FoundryMemoryProvider,
     RawAzureAIClient,
-    RawFoundryAgent,
-    RawFoundryAgentChatClient,
-    RawFoundryChatClient,
 )
 from agent_framework_azure_ai_search import (
     AzureAISearchContextProvider,
@@ -70,11 +64,5 @@ __all__ = [
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
-    "FoundryAgent",
-    "FoundryChatClient",
-    "FoundryMemoryProvider",
     "RawAzureAIClient",
-    "RawFoundryAgent",
-    "RawFoundryAgentChatClient",
-    "RawFoundryChatClient",
 ]

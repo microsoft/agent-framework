@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Message
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file

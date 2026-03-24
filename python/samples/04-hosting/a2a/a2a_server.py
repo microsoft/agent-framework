@@ -10,7 +10,7 @@ from a2a.server.request_handlers.default_request_handler import DefaultRequestHa
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
 from agent_executor import AgentFrameworkExecutor
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 

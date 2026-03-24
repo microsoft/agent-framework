@@ -4,8 +4,8 @@ from pathlib import Path
 from random import randint
 from typing import Literal
 
-from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import AgentFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 

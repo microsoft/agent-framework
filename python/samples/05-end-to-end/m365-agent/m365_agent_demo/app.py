@@ -19,7 +19,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
 from dotenv import load_dotenv

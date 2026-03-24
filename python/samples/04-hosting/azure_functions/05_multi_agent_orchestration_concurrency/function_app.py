@@ -16,7 +16,8 @@ from typing import Any, cast
 
 import azure.functions as func
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AgentFunctionApp, FoundryChatClient
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryAgent, RawFoundryAgentChatClient
+from agent_framework.foundry import FoundryAgent, RawFoundryAgentChatClient
 from azure.identity import AzureCliCredential
 
 """

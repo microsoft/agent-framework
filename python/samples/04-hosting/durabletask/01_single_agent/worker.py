@@ -16,7 +16,8 @@ import logging
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import DurableAIAgentWorker, FoundryChatClient
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
@@ -35,9 +36,8 @@ def create_joker_agent() -> Agent:
     Returns:
         Agent: The configured Joker agent
     """
-    _client = FoundryChatClient(credential=AzureCliCredential())
     return Agent(
-        client=_client,
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="Joker",
         instructions="You are good at telling jokes.",
     )

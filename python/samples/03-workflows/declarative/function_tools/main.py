@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from agent_framework import Agent, FileCheckpointStorage, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

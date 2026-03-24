@@ -16,7 +16,7 @@ from agent_framework import (
     WorkflowContext,  # Per run context and event bus
     handler,  # Decorator to mark an Executor method as invokable
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from typing_extensions import Never

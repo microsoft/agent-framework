@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from agent_framework import Agent, Message
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

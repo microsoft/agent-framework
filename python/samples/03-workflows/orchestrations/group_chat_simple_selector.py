@@ -9,7 +9,7 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder, GroupChatState
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

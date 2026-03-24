@@ -6,7 +6,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Message, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider

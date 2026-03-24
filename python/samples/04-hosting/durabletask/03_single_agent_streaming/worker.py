@@ -23,8 +23,8 @@ from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
     DurableAIAgentWorker,
-    FoundryChatClient,
 )
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker

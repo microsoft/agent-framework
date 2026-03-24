@@ -9,7 +9,7 @@ from agent_framework import (
     function_middleware,
     tool,
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 

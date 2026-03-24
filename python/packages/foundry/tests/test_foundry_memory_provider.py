@@ -10,7 +10,7 @@ import pytest
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, AgentResponse, Message
 from agent_framework._sessions import AgentSession, SessionContext
 
-from agent_framework_azure_ai._foundry_memory_provider import FoundryMemoryProvider
+from agent_framework_foundry._foundry_memory_provider import FoundryMemoryProvider
 
 
 @pytest.fixture
@@ -81,7 +81,7 @@ class TestInit:
     def test_init_with_project_endpoint_and_credential(
         self, mock_project_client: AsyncMock, mock_credential: Mock
     ) -> None:
-        with patch("agent_framework_azure_ai._foundry_memory_provider.AIProjectClient") as mock_ai_project_client:
+        with patch("agent_framework_foundry._foundry_memory_provider.AIProjectClient") as mock_ai_project_client:
             mock_ai_project_client.return_value = mock_project_client
             provider = FoundryMemoryProvider(
                 project_endpoint="https://test.project.endpoint",
@@ -100,7 +100,7 @@ class TestInit:
 
     def test_init_requires_project_endpoint_without_project_client(self) -> None:
         with (
-            patch("agent_framework_azure_ai._foundry_memory_provider.load_settings") as mock_load_settings,
+            patch("agent_framework_foundry._foundry_memory_provider.load_settings") as mock_load_settings,
             patch.dict(os.environ, {}, clear=True),
             pytest.raises(ValueError, match="project endpoint is required"),
         ):

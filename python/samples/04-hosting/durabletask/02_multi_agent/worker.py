@@ -18,7 +18,8 @@ import os
 from typing import Any
 
 from agent_framework import Agent, tool
-from agent_framework.azure import DurableAIAgentWorker, FoundryChatClient
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker

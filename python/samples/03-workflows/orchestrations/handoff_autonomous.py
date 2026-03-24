@@ -11,7 +11,7 @@ from agent_framework import (
     Message,
     resolve_agent_id,
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from agent_framework import Agent, FunctionInvocationContext, function_middleware, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 

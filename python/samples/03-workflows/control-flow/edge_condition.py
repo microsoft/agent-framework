@@ -14,7 +14,7 @@ from agent_framework import (  # Core chat primitives used to build requests
     WorkflowContext,  # Per-run context and event bus
     executor,  # Decorator to declare a Python function as a workflow executor
 )
-from agent_framework.azure import FoundryChatClient  # Thin client wrapper for Azure OpenAI chat models
+from agent_framework.foundry import FoundryChatClient  # Thin client wrapper for Azure OpenAI chat models
 from azure.identity import AzureCliCredential  # Uses your az CLI login for credentials
 from dotenv import load_dotenv
 from pydantic import BaseModel  # Structured outputs for safer parsing

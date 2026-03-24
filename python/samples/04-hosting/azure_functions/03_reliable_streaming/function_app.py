@@ -27,8 +27,8 @@ from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
     AgentResponseCallbackProtocol,
-    FoundryChatClient,
 )
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk

@@ -91,7 +91,7 @@ enable_instrumentation(enable_sensitive_data=False)
 For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
 
 ```python
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 client = FoundryChatClient(
@@ -349,7 +349,7 @@ setup_observability(
 **After (Current):**
 ```python
 # For Microsoft Foundry projects
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 client = FoundryChatClient(

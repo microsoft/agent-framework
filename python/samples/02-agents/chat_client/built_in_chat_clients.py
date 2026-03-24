@@ -8,8 +8,8 @@ from typing import Annotated, Any, Literal
 from agent_framework import Message, SupportsChatGetResponse, tool
 from agent_framework.azure import (
     AzureOpenAIAssistantsClient,
-    FoundryChatClient,
 )
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
@@ -70,9 +70,6 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     """Create a built-in chat client from a name."""
     from agent_framework.amazon import BedrockChatClient
     from agent_framework.anthropic import AnthropicClient
-    from agent_framework.azure import (
-        FoundryChatClient,
-    )
     from agent_framework.ollama import OllamaChatClient
     from agent_framework.openai import OpenAIResponsesClient
 

@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from agent_framework import Agent, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv

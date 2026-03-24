@@ -20,7 +20,7 @@ from azure.ai.projects.aio import AIProjectClient
 from openai.types.responses import ResponseInputItemParam
 
 from ._entra_id_authentication import AzureCredentialTypes
-from ._shared import AzureAISettings
+from ._shared import FoundryProjectSettings
 
 if sys.version_info >= (3, 11):
     from typing import Self  # pragma: no cover
@@ -72,7 +72,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         Args:
             source_id: Unique identifier for this provider instance.
             project_client: Azure AI Project client for memory operations.
-            project_endpoint: Azure AI project endpoint URL. Used when project_client is not provided.
+            project_endpoint: Foundry project endpoint URL. Used when project_client is not provided.
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
@@ -86,20 +86,20 @@ class FoundryMemoryProvider(BaseContextProvider):
             env_file_encoding: Encoding of the environment file.
         """
         super().__init__(source_id)
-        azure_ai_settings = load_settings(
-            AzureAISettings,
-            env_prefix="AZURE_AI_",
+        foundry_settings = load_settings(
+            FoundryProjectSettings,
+            env_prefix="FOUNDRY_",
             project_endpoint=project_endpoint,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
         if project_client is None:
-            resolved_endpoint = azure_ai_settings.get("project_endpoint")
+            resolved_endpoint = foundry_settings.get("project_endpoint")
             if not resolved_endpoint:
                 raise ValueError(
-                    "Azure AI project endpoint is required. Set via 'project_endpoint' parameter "
-                    "or 'AZURE_AI_PROJECT_ENDPOINT' environment variable."
+                    "Foundry project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
                 )
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")

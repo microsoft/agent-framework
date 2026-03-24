@@ -180,7 +180,7 @@ class FoundryLocalClient(
             .. code-block:: python
 
                 # Create a FoundryLocalClient with a specific model ID:
-                from agent_framework_foundry_local import FoundryLocalClient
+                from agent_framework.foundry import FoundryLocalClient
 
                 client = FoundryLocalClient(model_id="phi-4-mini")
 
@@ -225,7 +225,7 @@ class FoundryLocalClient(
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
-                from agent_framework_foundry_local import FoundryLocalChatOptions
+                from agent_framework.foundry import FoundryLocalChatOptions
 
                 class MyOptions(FoundryLocalChatOptions, total=False):
                     my_custom_option: str

@@ -24,8 +24,8 @@ import os
 from pathlib import Path
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 # Copyright (c) Microsoft. All rights reserved.

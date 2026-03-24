@@ -18,8 +18,8 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import FoundryChatClient
 from agent_framework.devui import serve
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 from typing_extensions import Never
 

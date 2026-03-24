@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from agent_framework._tools import FunctionTool
     from agent_framework_openai._chat_client import OpenAIChatOptions
 
-logger: logging.Logger = logging.getLogger("agent_framework.azure")
+logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
 FoundryAgentOptionsT = TypeVar(
     "FoundryAgentOptionsT",
@@ -63,7 +63,7 @@ class RawFoundryAgent(  # type: ignore[misc]
     Examples:
         .. code-block:: python
 
-            from agent_framework.azure import RawFoundryAgent
+            from agent_framework.foundry import RawFoundryAgent
             from azure.identity import AzureCliCredential
 
             agent = RawFoundryAgent(
@@ -207,7 +207,7 @@ class FoundryAgent(  # type: ignore[misc]
     Examples:
         .. code-block:: python
 
-            from agent_framework.azure import FoundryAgent
+            from agent_framework.foundry import FoundryAgent
             from azure.identity import AzureCliCredential
 
             # Connect to a PromptAgent

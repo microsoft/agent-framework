@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_orchestrations import ConcurrentBuilder
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity import DefaultAzureCredential  # pyright: ignore[reportUnknownVariableType]

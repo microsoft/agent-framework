@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Annotated
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 

@@ -14,7 +14,7 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 ## Installation
 
 ```bash
-pip install agent-framework-azure-ai-search agent-framework-azure-ai
+pip install agent-framework-foundry-search agent-framework-foundry
 ```
 
 ## Prerequisites

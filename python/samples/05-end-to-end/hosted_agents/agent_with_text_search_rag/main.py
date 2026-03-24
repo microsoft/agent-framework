@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import Agent, AgentSession, BaseContextProvider, Message, SessionContext
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv

@@ -37,7 +37,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError

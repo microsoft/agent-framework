@@ -5,7 +5,7 @@ import os
 from contextlib import asynccontextmanager
 
 from agent_framework import Agent, WorkflowBuilder
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from agent_framework import Agent
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv

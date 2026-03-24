@@ -42,6 +42,7 @@ members = [
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-durabletask",
+    "agent-framework-foundry",
     "agent-framework-foundry-local",
     "agent-framework-github-copilot",
     "agent-framework-lab",
@@ -366,6 +367,7 @@ all = [
     { name = "agent-framework-declarative", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-devui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-durabletask", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-foundry", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-foundry-local", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-github-copilot", marker = "(python_full_version >= '3.11' and sys_platform == 'darwin') or (python_full_version >= '3.11' and sys_platform == 'linux') or (python_full_version >= '3.11' and sys_platform == 'win32')" },
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -391,6 +393,7 @@ requires-dist = [
     { name = "agent-framework-declarative", marker = "extra == 'all'", editable = "packages/declarative" },
     { name = "agent-framework-devui", marker = "extra == 'all'", editable = "packages/devui" },
     { name = "agent-framework-durabletask", marker = "extra == 'all'", editable = "packages/durabletask" },
+    { name = "agent-framework-foundry", marker = "extra == 'all'", editable = "packages/foundry" },
     { name = "agent-framework-foundry-local", marker = "extra == 'all'", editable = "packages/foundry_local" },
     { name = "agent-framework-github-copilot", marker = "python_full_version >= '3.11' and extra == 'all'", editable = "packages/github_copilot" },
     { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
@@ -500,6 +503,23 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "types-python-dateutil", specifier = "==2.9.0.20260305" }]
+
+[[package]]
+name = "agent-framework-foundry"
+version = "1.0.0rc5"
+source = { editable = "packages/foundry" }
+dependencies = [
+    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-framework-core", editable = "packages/core" },
+    { name = "agent-framework-openai", editable = "packages/openai" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
+]
 
 [[package]]
 name = "agent-framework-foundry-local"

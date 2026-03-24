@@ -19,7 +19,8 @@ from collections.abc import Generator
 from typing import Any, cast
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker, FoundryChatClient
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker

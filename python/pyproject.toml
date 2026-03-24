@@ -76,6 +76,7 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-durabletask = { workspace = true }
+agent-framework-foundry = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
@@ -195,7 +196,8 @@ executionEnvironments = [
     { root = "packages/declarative/tests", reportPrivateUsage = "none" },
     { root = "packages/devui/tests", reportPrivateUsage = "none" },
     { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
-    { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
+    { root = "packages/foundry/tests", reportPrivateUsage = "none" },
+{ root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },

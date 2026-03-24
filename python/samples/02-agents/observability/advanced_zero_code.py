@@ -5,7 +5,7 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated
 
 from agent_framework import Message, tool
-from agent_framework.azure import FoundryChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
