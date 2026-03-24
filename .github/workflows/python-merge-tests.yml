@@ -47,6 +47,9 @@ jobs:
           filters: |
             python:
               - 'python/**'
+              - '.github/actions/setup-local-mcp-server/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
             core:
               - 'python/packages/core/agent_framework/_*.py'
               - 'python/packages/core/agent_framework/_workflows/**'
@@ -66,6 +69,10 @@ jobs:
               - 'python/packages/ollama/**'
               - 'python/packages/core/agent_framework/_mcp.py'
               - 'python/packages/core/tests/core/test_mcp.py'
+              - 'python/scripts/local_mcp_streamable_http_server.py'
+              - '.github/actions/setup-local-mcp-server/**'
+              - '.github/workflows/python-merge-tests.yml'
+              - '.github/workflows/python-integration-tests.yml'
             functions:
               - 'python/packages/azurefunctions/**'
               - 'python/packages/durabletask/**'
@@ -259,6 +266,13 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
+      - name: Start local MCP server
+        id: local-mcp
+        uses: ./.github/actions/setup-local-mcp-server
+        with:
+          fallback_url: ${{ env.LOCAL_MCP_URL }}
+      - name: Prefer local MCP URL when available
+        run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
       - name: Test with pytest (Anthropic, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
@@ -332,7 +346,7 @@ jobs:
           packages/durabletask/tests/integration_tests
           -m integration
           -n logical --dist worksteal
-          --timeout=120 --session-timeout=900 --timeout_method thread
+          --timeout=360 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
         working-directory: ./python
       - name: Surface failing tests

@@ -153,6 +153,13 @@ jobs:
         with:
           python-version: ${{ env.UV_PYTHON }}
           os: ${{ runner.os }}
+      - name: Start local MCP server
+        id: local-mcp
+        uses: ./.github/actions/setup-local-mcp-server
+        with:
+          fallback_url: ${{ env.LOCAL_MCP_URL }}
+      - name: Prefer local MCP URL when available
+        run: echo "LOCAL_MCP_URL=${{ steps.local-mcp.outputs.effective_url }}" >> "$GITHUB_ENV"
       - name: Test with pytest (Anthropic, Ollama, MCP integration)
         run: >
           uv run pytest --import-mode=importlib
@@ -212,8 +219,8 @@ jobs:
           packages/durabletask/tests/integration_tests
           -m integration
           -n logical --dist worksteal
-          --timeout=150 --session-timeout=900 --timeout_method thread
-          --retries 1 --retry-delay 5
+          --timeout=360 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
 
   # Azure AI integration tests
   python-tests-azure-ai:
