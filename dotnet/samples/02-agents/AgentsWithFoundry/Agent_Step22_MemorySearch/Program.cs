@@ -32,7 +32,7 @@ MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { Upd
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create agent using MEAI
-FoundryAgent agent = await CreateAgentWithMEAI();
+AIAgent agent = await CreateAgentWithMEAI();
 
 // Ensure the memory store exists and has memories to retrieve.
 await EnsureMemoryStoreAsync();
@@ -78,7 +78,7 @@ finally
 // Helpers — kept at the bottom so the main agent flow above stays clean.
 
 // Using FoundryAITool wrapping for MemorySearchTool (MEAI + AgentFramework)
-async Task<FoundryAgent> CreateAgentWithMEAI()
+async Task<AIAgent> CreateAgentWithMEAI()
 {
     AITool tool = FoundryAITool.FromResponseTool(memorySearchTool);
     AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(

@@ -26,8 +26,8 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-// Create a ChatClientAgent with Bing Custom Search tool.
-FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+// Create a AIAgent with Bing Custom Search tool.
+AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: AgentInstructions,
     name: "BingCustomSearchAgent-RAPI",
     tools: [FoundryAITool.CreateBingCustomSearchTool(bingCustomSearchToolParameters)]);

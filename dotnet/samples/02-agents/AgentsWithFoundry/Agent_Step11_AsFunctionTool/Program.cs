@@ -6,7 +6,6 @@ using System.ComponentModel;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 [Description("Get the weather for a given location.")]
@@ -19,12 +18,12 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 AITool weatherTool = AIFunctionFactory.Create(GetWeather);
-FoundryAgent weatherAgent = aiProjectClient.AsAIAgent(deploymentName,
+AIAgent weatherAgent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You answer questions about the weather.",
     name: "WeatherAgent",
     tools: [weatherTool]);
 
-FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are a helpful assistant who responds in French.",
     name: "MainAgent",
     tools: [weatherAgent.AsAIFunction()]);

@@ -5,7 +5,7 @@
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
-using Microsoft.Agents.AI.AzureAI;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using OpenAI.Responses;
@@ -42,7 +42,7 @@ Console.WriteLine($"Creating the agent '{agentName}' ...");
 
 // Define the agent you want to create. (Prompt Agent in this case)
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(agentName, new AgentVersionCreationOptions(agentDefinition));
-FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion, agentTools);
+AIAgent agent = aiProjectClient.AsAIAgent(agentVersion, agentTools);
 
 string prompt = "Summarize the last four commits to the microsoft/semantic-kernel repository?";
 

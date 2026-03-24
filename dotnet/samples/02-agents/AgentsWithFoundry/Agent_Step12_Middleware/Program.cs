@@ -10,7 +10,6 @@ using System.Text.RegularExpressions;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 
 [Description("Get the weather for a given location.")]
@@ -29,7 +28,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredent
 AITool dateTimeTool = AIFunctionFactory.Create(GetDateTime, name: nameof(GetDateTime));
 AITool getWeatherTool = AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather));
 
-FoundryAgent originalAgent = aiProjectClient.AsAIAgent(deploymentName,
+AIAgent originalAgent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are an AI assistant that helps people find information.",
     name: "InformationAssistant",
     tools: [getWeatherTool, dateTimeTool]);
@@ -60,7 +59,7 @@ Console.WriteLine($"Function calling response: {functionCallResponse}");
 // Special per-request middleware agent.
 Console.WriteLine("\n\n=== Example 4: Middleware with human in the loop function approval ===");
 
-FoundryAgent humanInTheLoopAgent = aiProjectClient.AsAIAgent(deploymentName,
+AIAgent humanInTheLoopAgent = aiProjectClient.AsAIAgent(deploymentName,
     instructions: "You are a Human in the loop testing AI assistant that helps people find information.",
     name: "HumanInTheLoopAgent",
     tools: [new ApprovalRequiredAIFunction(AIFunctionFactory.Create(GetWeather, name: nameof(GetWeather)))]);

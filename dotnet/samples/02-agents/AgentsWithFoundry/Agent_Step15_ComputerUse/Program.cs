@@ -28,8 +28,8 @@ internal sealed class Program
 
         AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-        // Create a ChatClientAgent with ComputerUseTool.
-        FoundryAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+        // Create a AIAgent with ComputerUseTool.
+        AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
             instructions: AgentInstructions,
             name: AgentName,
             description: "Computer automation agent with screen interaction capabilities.",
