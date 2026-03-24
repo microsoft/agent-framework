@@ -197,7 +197,7 @@ executionEnvironments = [
     { root = "packages/devui/tests", reportPrivateUsage = "none" },
     { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
     { root = "packages/foundry/tests", reportPrivateUsage = "none" },
-{ root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
+    { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/lightning/tests", reportPrivateUsage = "none" },
