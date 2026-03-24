@@ -50,8 +50,11 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
         int initialCount = original.Count;
         this._logger.LogTransformingFunctionMetadata(initialCount);
 
-        // Track registered function names to avoid duplicates when workflows share executors.
-        HashSet<string> registeredFunctions = [];
+        // Seed with existing function names to avoid duplicates across transformers
+        // (e.g., when DurableAgentFunctionMetadataTransformer already registered entity triggers).
+        HashSet<string> registeredFunctions = new(
+            original.Select(f => f.Name!),
+            StringComparer.OrdinalIgnoreCase);
 
         DurableWorkflowOptions workflowOptions = this._options.Workflows;
         foreach (var workflow in workflowOptions.Workflows)

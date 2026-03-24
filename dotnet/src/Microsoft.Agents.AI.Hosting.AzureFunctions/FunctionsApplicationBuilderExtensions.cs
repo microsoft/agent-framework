@@ -27,8 +27,15 @@ public static class FunctionsApplicationBuilderExtensions
     {
         ArgumentNullException.ThrowIfNull(configure);
 
+        // Create/get shared options BEFORE the DurableTask library call so it can find them.
+        FunctionsDurableOptions sharedOptions = GetOrCreateSharedOptions(builder.Services);
+
         // The main agent services registration is done in Microsoft.DurableTask.Agents.
         builder.Services.ConfigureDurableAgents(configure);
+
+        // Ensure all agents registered through this path have default FunctionsAgentOptions.
+        // This distinguishes them from agents auto-registered by workflows.
+        DurableAgentsOptionsExtensions.EnsureDefaultOptionsForAll(sharedOptions.Agents.GetAgentFactories().Keys);
 
         builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
             new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
@@ -67,7 +74,7 @@ public static class FunctionsApplicationBuilderExtensions
 
         builder.Services.ConfigureDurableOptions(configure);
 
-        if (sharedOptions.Agents.GetAgentFactories().Count > 0)
+        if (DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot().Count > 0)
         {
             builder.Services.TryAddSingleton<IFunctionsAgentOptionsProvider>(_ =>
                 new DefaultFunctionsAgentOptionsProvider(DurableAgentsOptionsExtensions.GetAgentOptionsSnapshot()));
