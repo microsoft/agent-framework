@@ -26,6 +26,7 @@ dependencies = [
     "agent-framework-core>=1.0.0rc5",
     "azure-ai-contentunderstanding>=1.0.0,<1.1",
     "aiohttp>=3.9,<4",
+    "filetype>=1.2,<2",
 ]
 
 [tool.uv]

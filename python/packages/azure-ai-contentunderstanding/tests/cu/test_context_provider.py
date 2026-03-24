@@ -688,6 +688,230 @@ class TestBinaryStripping:
         assert found_zip
 
 
+# Real magic-byte headers for binary sniffing tests
+_MP4_MAGIC = b"\x00\x00\x00\x1cftypisom" + b"\x00" * 250
+_WAV_MAGIC = b"RIFF\x00\x00\x00\x00WAVE" + b"\x00" * 250
+_MP3_MAGIC = b"ID3\x04\x00\x00" + b"\x00" * 250
+_FLAC_MAGIC = b"fLaC\x00\x00\x00\x00" + b"\x00" * 250
+_OGG_MAGIC = b"OggS\x00\x02" + b"\x00" * 250
+_AVI_MAGIC = b"RIFF\x00\x00\x00\x00AVI " + b"\x00" * 250
+_MOV_MAGIC = b"\x00\x00\x00\x14ftypqt  " + b"\x00" * 250
+
+
+class TestMimeSniffing:
+    """Tests for binary MIME sniffing via filetype when upstream MIME is unreliable."""
+
+    async def test_octet_stream_mp4_detected_and_stripped(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """MP4 uploaded as application/octet-stream should be sniffed, corrected, and stripped."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("What's in this file?"),
+                _make_content_from_data(_MP4_MAGIC, "application/octet-stream", "video.mp4"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # MP4 should be stripped from input
+        for m in context.input_messages:
+            for c in m.contents:
+                assert c.media_type != "application/octet-stream", "octet-stream content should be stripped"
+
+        # CU should have been called
+        assert mock_cu_client.begin_analyze_binary.called
+
+    async def test_octet_stream_wav_detected_via_sniff(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """WAV uploaded as application/octet-stream should be detected via filetype sniffing."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Transcribe"),
+                _make_content_from_data(_WAV_MAGIC, "application/octet-stream", "audio.wav"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Should be detected and analyzed
+        assert "audio.wav" in state["documents"]
+        # The media_type should be corrected to audio/wav (via _MIME_ALIASES)
+        assert state["documents"]["audio.wav"]["media_type"] == "audio/wav"
+
+    async def test_octet_stream_mp3_detected_via_sniff(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """MP3 uploaded as application/octet-stream should be detected as audio/mpeg."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Transcribe"),
+                _make_content_from_data(_MP3_MAGIC, "application/octet-stream", "song.mp3"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert "song.mp3" in state["documents"]
+        assert state["documents"]["song.mp3"]["media_type"] == "audio/mpeg"
+
+    async def test_octet_stream_flac_alias_normalized(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """FLAC sniffed as audio/x-flac should be normalized to audio/flac."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Transcribe"),
+                _make_content_from_data(_FLAC_MAGIC, "application/octet-stream", "music.flac"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert "music.flac" in state["documents"]
+        assert state["documents"]["music.flac"]["media_type"] == "audio/flac"
+
+    async def test_octet_stream_unknown_binary_not_stripped(
+        self,
+        mock_cu_client: AsyncMock,
+    ) -> None:
+        """Unknown binary with application/octet-stream should NOT be stripped."""
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        unknown_bytes = b"\x00\x01\x02\x03random garbage" + b"\x00" * 250
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("What is this?"),
+                _make_content_from_data(unknown_bytes, "application/octet-stream", "mystery.bin"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Unknown file should NOT be stripped
+        found_octet = False
+        for m in context.input_messages:
+            for c in m.contents:
+                if c.media_type == "application/octet-stream":
+                    found_octet = True
+        assert found_octet
+
+    async def test_missing_mime_falls_back_to_filename(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Content with empty MIME but a .mp4 filename should be detected via mimetypes fallback."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        # Use garbage binary (filetype won't detect) but filename has .mp4
+        garbage = b"\x00" * 300
+        content = Content.from_data(garbage, "", additional_properties={"filename": "recording.mp4"})
+        msg = Message(
+            role="user",
+            contents=[Content.from_text("Analyze"), content],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Should be detected via filename and analyzed
+        assert "recording.mp4" in state["documents"]
+
+    async def test_correct_mime_not_sniffed(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Files with correct MIME type should go through fast path without sniffing."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert "doc.pdf" in state["documents"]
+        assert state["documents"]["doc.pdf"]["media_type"] == "application/pdf"
+
+    async def test_sniffed_video_uses_correct_analyzer(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """MP4 sniffed from octet-stream should use prebuilt-videoSearch analyzer."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)  # analyzer_id=None → auto-detect
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("What's in this video?"),
+                _make_content_from_data(_MP4_MAGIC, "application/octet-stream", "demo.mp4"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        assert state["documents"]["demo.mp4"]["analyzer_id"] == "prebuilt-videoSearch"
+
+
 class TestErrorHandling:
     async def test_cu_service_error(self, mock_cu_client: AsyncMock) -> None:
         mock_cu_client.begin_analyze_binary = AsyncMock(

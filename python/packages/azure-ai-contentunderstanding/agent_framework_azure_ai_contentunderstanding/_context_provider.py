@@ -7,9 +7,11 @@ import base64
 import hashlib
 import json
 import logging
+import mimetypes
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+import filetype
 from agent_framework import BaseContextProvider, Content, FunctionTool, Message, SessionContext
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
@@ -52,6 +54,16 @@ SUPPORTED_MEDIA_TYPES: frozenset[str] = frozenset({
     "video/x-msvideo",
     "video/webm",
 })
+
+# Mapping from filetype's MIME output to our canonical SUPPORTED_MEDIA_TYPES values.
+# filetype uses some x-prefixed variants that differ from our set.
+_MIME_ALIASES: dict[str, str] = {
+    "audio/x-wav": "audio/wav",
+    "audio/x-flac": "audio/flac",
+    "audio/mp4": "audio/m4a",
+    "video/x-m4v": "video/mp4",
+    "video/x-matroska": "video/webm",
+}
 
 # Mapping from media type prefix to the appropriate prebuilt CU analyzer.
 # Used when analyzer_id is None (auto-detect mode).
@@ -225,26 +237,71 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     ) -> list[tuple[str, Content, bytes | None]]:
         """Detect supported files in input, strip them, and return metadata.
 
+        When the upstream MIME type is unreliable (``application/octet-stream``
+        or missing), binary content sniffing via ``filetype`` is used to
+        determine the real media type, with ``mimetypes.guess_type`` as a
+        filename-based fallback.
+
         Returns:
             List of (doc_key, content_item, binary_data) tuples.
         """
         results: list[tuple[str, Content, bytes | None]] = []
+        strip_ids: set[int] = set()
 
         for msg in context.input_messages:
-            supported: list[Content] = []
             for c in msg.contents:
-                if self._is_supported_content(c):
-                    supported.append(c)
+                if c.type not in ("data", "uri"):
+                    continue
 
-            for c in supported:
-                doc_key = self._derive_doc_key(c)
-                binary_data = self._extract_binary(c)
-                results.append((doc_key, c, binary_data))
+                media_type = c.media_type
+                # Fast path: already a known supported type
+                if media_type and media_type in SUPPORTED_MEDIA_TYPES:
+                    binary_data = self._extract_binary(c)
+                    results.append((self._derive_doc_key(c), c, binary_data))
+                    strip_ids.add(id(c))
+                    continue
 
-            # Strip supported files from input so raw binary isn't sent to LLM
-            msg.contents = [c for c in msg.contents if not self._is_supported_content(c)]
+                # Slow path: unreliable MIME — sniff binary content
+                if not media_type or media_type == "application/octet-stream":
+                    binary_data = self._extract_binary(c)
+                    resolved = self._sniff_media_type(binary_data, c)
+                    if resolved and resolved in SUPPORTED_MEDIA_TYPES:
+                        c.media_type = resolved
+                        results.append((self._derive_doc_key(c), c, binary_data))
+                        strip_ids.add(id(c))
+
+            # Strip detected files from input so raw binary isn't sent to LLM
+            msg.contents = [c for c in msg.contents if id(c) not in strip_ids]
 
         return results
+
+    @staticmethod
+    def _sniff_media_type(binary_data: bytes | None, content: Content) -> str | None:
+        """Sniff the actual MIME type from binary data, with filename fallback.
+
+        Uses ``filetype`` (magic-bytes) first, then ``mimetypes.guess_type``
+        on the filename. Normalizes filetype's variant MIME values (e.g.
+        ``audio/x-wav`` → ``audio/wav``) via ``_MIME_ALIASES``.
+        """
+        # 1. Binary sniffing via filetype (needs only first 261 bytes)
+        if binary_data:
+            kind = filetype.guess(binary_data[:262])  # type: ignore[reportUnknownMemberType]
+            if kind:
+                mime: str = kind.mime  # type: ignore[reportUnknownMemberType]
+                return _MIME_ALIASES.get(mime, mime)
+
+        # 2. Filename extension fallback
+        filename: str | None = None
+        if content.additional_properties:
+            filename = content.additional_properties.get("filename")
+        if not filename and content.uri and not content.uri.startswith("data:"):
+            filename = content.uri.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+        if filename:
+            guessed, _ = mimetypes.guess_type(filename)
+            if guessed:
+                return _MIME_ALIASES.get(guessed, guessed)
+
+        return None
 
     @staticmethod
     def _is_supported_content(content: Content) -> bool:
@@ -389,30 +446,26 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
                 return
 
-            # Wait with timeout
-            if self.max_wait is not None:
-                try:
-                    result = await asyncio.wait_for(poller.result(), timeout=self.max_wait)
-                except asyncio.TimeoutError:
-                    # Defer to background
-                    task = asyncio.create_task(self._background_poll(poller))
-                    self._pending_tasks[doc_key] = task
-                    documents[doc_key] = DocumentEntry(
-                        status="pending",
-                        filename=filename,
-                        media_type=media_type,
-                        analyzer_id=resolved_analyzer,
-                        analyzed_at=None,
-                        result=None,
-                        error=None,
-                    )
-                    context.extend_instructions(
-                        self.source_id,
-                        f"Document '{filename}' is being analyzed. Ask about it again in a moment.",
-                    )
-                    return
-            else:
-                result = await poller.result()
+            # Wait with timeout; defer to background polling on timeout.
+            try:
+                result = await asyncio.wait_for(poller.result(), timeout=self.max_wait)
+            except asyncio.TimeoutError:
+                task = asyncio.create_task(self._background_poll(poller))
+                self._pending_tasks[doc_key] = task
+                documents[doc_key] = DocumentEntry(
+                    status="pending",
+                    filename=filename,
+                    media_type=media_type,
+                    analyzer_id=resolved_analyzer,
+                    analyzed_at=None,
+                    result=None,
+                    error=None,
+                )
+                context.extend_instructions(
+                    self.source_id,
+                    f"Document '{filename}' is being analyzed. Ask about it again in a moment.",
+                )
+                return
 
             # Store successful result
             extracted = self._extract_sections(result)
@@ -527,6 +580,19 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         content = contents[0]
 
+        # Extract media metadata (kind, duration, dimensions) when present.
+        kind = getattr(content, "kind", None)
+        if kind:
+            extracted["kind"] = kind
+        start_ms = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
+        end_ms = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
+        if start_ms is not None and end_ms is not None:
+            extracted["duration_seconds"] = round((end_ms - start_ms) / 1000, 1)
+        width = getattr(content, "width", None)
+        height = getattr(content, "height", None)
+        if width and height:
+            extracted["resolution"] = f"{width}x{height}"
+
         if AnalysisSection.MARKDOWN in self.output_sections and content.markdown:
             extracted["markdown"] = content.markdown
 
@@ -548,16 +614,57 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     @staticmethod
     def _format_result(filename: str, result: dict[str, object]) -> str:
         """Format extracted CU result for LLM consumption."""
-        parts: list[str] = [f'Document analysis of "{filename}":']
+        kind = result.get("kind")
+        is_video = kind == "audioVisual"
+        is_audio = kind == "audio"
 
+        # Header — media-aware label
+        if is_video:
+            label = "Video analysis"
+        elif is_audio:
+            label = "Audio analysis"
+        else:
+            label = "Document analysis"
+        parts: list[str] = [f'{label} of "{filename}":']
+
+        # Media metadata line (duration, resolution)
+        meta_items: list[str] = []
+        duration = result.get("duration_seconds")
+        if duration is not None:
+            mins, secs = divmod(int(duration), 60)  # type: ignore[arg-type]
+            meta_items.append(f"Duration: {mins}:{secs:02d}")
+        resolution = result.get("resolution")
+        if resolution:
+            meta_items.append(f"Resolution: {resolution}")
+        if meta_items:
+            parts.append(" | ".join(meta_items))
+
+        # For audio: promote Summary field as prose before markdown
+        fields_raw = result.get("fields")
+        fields: dict[str, object] = (
+            cast(dict[str, object], fields_raw) if isinstance(fields_raw, dict) else {}
+        )
+        if is_audio and fields:
+            summary_field = fields.get("Summary")
+            if isinstance(summary_field, dict):
+                sf = cast(dict[str, object], summary_field)
+                if sf.get("value"):
+                    parts.append(f"\n## Summary\n\n{sf['value']}")
+
+        # Markdown content
         markdown = result.get("markdown")
         if markdown:
-            parts.append(f"\n## Document Content\n\n```markdown\n{markdown}\n```")
+            parts.append(f"\n## Content\n\n```markdown\n{markdown}\n```")
 
-        fields = result.get("fields")
+        # Fields section
         if fields:
-            fields_json = json.dumps(fields, indent=2, default=str)
-            parts.append(f"\n## Extracted Fields\n\n```json\n{fields_json}\n```")
+            remaining = dict(fields)
+            # For audio, Summary was already shown as prose above
+            if is_audio:
+                remaining = {k: v for k, v in remaining.items() if k != "Summary"}
+            if remaining:
+                fields_json = json.dumps(remaining, indent=2, default=str)
+                parts.append(f"\n## Extracted Fields\n\n```json\n{fields_json}\n```")
 
         return "\n".join(parts)
 
@@ -668,9 +775,15 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         oai_client = self.file_search.openai_client
 
         try:
-            # Create vector store on first upload
+            # Create vector store on first upload.
+            # expires_after is a safety net: if the process crashes before
+            # _cleanup_vector_store() runs, OpenAI will auto-delete the store
+            # after 1 day of inactivity instead of keeping it indefinitely.
             if not self._vector_store_id:
-                vs = await oai_client.vector_stores.create(name=self.file_search.vector_store_name)  # type: ignore[union-attr]
+                vs = await oai_client.vector_stores.create(  # type: ignore[union-attr]
+                    name=self.file_search.vector_store_name,
+                    expires_after={"anchor": "last_active_at", "days": 1},
+                )
                 self._vector_store_id = vs.id
                 logger.info("Created vector store '%s' (%s).", self.file_search.vector_store_name, vs.id)
 
