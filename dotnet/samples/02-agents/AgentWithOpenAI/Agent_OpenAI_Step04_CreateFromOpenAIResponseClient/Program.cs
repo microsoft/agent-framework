@@ -10,10 +10,10 @@ var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? throw new I
 var model = Environment.GetEnvironmentVariable("OPENAI_CHAT_MODEL_NAME") ?? "gpt-4o-mini";
 
 // Create a ResponsesClient directly from OpenAIClient
-ResponsesClient responseClient = new OpenAIClient(apiKey).GetResponsesClient(model);
+ResponsesClient responseClient = new OpenAIClient(apiKey).GetResponsesClient();
 
 // Create an agent directly from the ResponsesClient using OpenAIResponseClientAgent
-OpenAIResponseClientAgent agent = new(responseClient, instructions: "You are good at telling jokes.", name: "Joker");
+OpenAIResponseClientAgent agent = new(responseClient, instructions: "You are good at telling jokes.", name: "Joker", model: model);
 
 ResponseItem userMessage = ResponseItem.CreateUserMessageItem("Tell me a joke about a pirate.");
 

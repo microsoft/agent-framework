@@ -210,8 +210,8 @@ OpenAIAssistantsOptionsT = TypeVar(
 
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
-    ChatMiddlewareLayer[OpenAIAssistantsOptionsT],
     FunctionInvocationLayer[OpenAIAssistantsOptionsT],
+    ChatMiddlewareLayer[OpenAIAssistantsOptionsT],
     ChatTelemetryLayer[OpenAIAssistantsOptionsT],
     BaseChatClient[OpenAIAssistantsOptionsT],
     Generic[OpenAIAssistantsOptionsT],

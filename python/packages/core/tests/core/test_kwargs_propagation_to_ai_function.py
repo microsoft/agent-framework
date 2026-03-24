@@ -84,8 +84,8 @@ class _MockBaseChatClient(BaseChatClient[Any]):
 
 
 class FunctionInvokingMockClient(
-    ChatMiddlewareLayer[Any],
     FunctionInvocationLayer[Any],
+    ChatMiddlewareLayer[Any],
     ChatTelemetryLayer[Any],
     _MockBaseChatClient,
 ):

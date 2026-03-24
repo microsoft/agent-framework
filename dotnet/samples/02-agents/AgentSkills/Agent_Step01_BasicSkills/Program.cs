@@ -23,7 +23,7 @@ var skillsProvider = new FileAgentSkillsProvider(skillPath: Path.Combine(AppCont
 
 // --- Agent Setup ---
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient(deploymentName)
+    .GetResponsesClient()
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "SkillsAgent",
@@ -32,7 +32,8 @@ AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredent
             Instructions = "You are a helpful assistant.",
         },
         AIContextProviders = [skillsProvider],
-    });
+    },
+    model: deploymentName);
 
 // --- Example 1: Expense policy question (loads FAQ resource) ---
 Console.WriteLine("Example 1: Checking expense policy FAQ");

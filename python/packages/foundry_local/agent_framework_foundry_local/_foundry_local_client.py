@@ -130,8 +130,8 @@ class FoundryLocalSettings(TypedDict, total=False):
 
 
 class FoundryLocalClient(
-    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     FunctionInvocationLayer[FoundryLocalChatOptionsT],
+    ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     ChatTelemetryLayer[FoundryLocalChatOptionsT],
     RawOpenAIChatClient[FoundryLocalChatOptionsT],
     Generic[FoundryLocalChatOptionsT],

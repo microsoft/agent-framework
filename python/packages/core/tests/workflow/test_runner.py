@@ -341,7 +341,7 @@ async def test_runner_emits_runner_completion_for_agent_response_without_targets
 
     await ctx.send_message(
         WorkflowMessage(
-            data=AgentExecutorResponse("agent", AgentResponse()),
+            data=AgentExecutorResponse("agent", AgentResponse(), []),
             source_id="agent",
         )
     )

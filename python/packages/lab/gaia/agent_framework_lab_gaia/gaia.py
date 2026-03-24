@@ -273,7 +273,7 @@ def _load_gaia_local(repo_dir: Path, wanted_levels: list[int] | None = None, max
 
     for p in parquet_files:
         try:
-            import pyarrow.parquet as pq
+            import pyarrow.parquet as pq  # type: ignore[reportMissingImports]
 
             pq_any = cast(Any, pq)
             table: Any = pq_any.read_table(p)
