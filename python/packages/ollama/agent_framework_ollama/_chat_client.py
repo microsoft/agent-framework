@@ -285,8 +285,8 @@ logger = logging.getLogger("agent_framework.ollama")
 
 
 class OllamaChatClient(
-    ChatMiddlewareLayer[OllamaChatOptionsT],
     FunctionInvocationLayer[OllamaChatOptionsT],
+    ChatMiddlewareLayer[OllamaChatOptionsT],
     ChatTelemetryLayer[OllamaChatOptionsT],
     BaseChatClient[OllamaChatOptionsT],
 ):

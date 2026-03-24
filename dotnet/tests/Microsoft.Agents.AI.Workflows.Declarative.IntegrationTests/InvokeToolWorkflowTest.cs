@@ -123,9 +123,9 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         foreach (ChatMessage message in toolRequest.AgentResponse.Messages)
         {
             // Handle approval requests if present
-            foreach (FunctionApprovalRequestContent approvalRequest in message.Contents.OfType<FunctionApprovalRequestContent>())
+            foreach (ToolApprovalRequestContent approvalRequest in message.Contents.OfType<ToolApprovalRequestContent>())
             {
-                this.Output.WriteLine($"APPROVAL REQUEST: {approvalRequest.FunctionCall.Name}");
+                this.Output.WriteLine($"APPROVAL REQUEST: {((FunctionCallContent)approvalRequest.ToolCall).Name}");
                 // Auto-approve for testing
                 results.Add(approvalRequest.CreateResponse(approved: true));
             }
@@ -233,12 +233,12 @@ public sealed class InvokeToolWorkflowTest(ITestOutputHelper output) : Integrati
         foreach (ChatMessage message in toolRequest.AgentResponse.Messages)
         {
             // Handle MCP approval requests if present
-            foreach (McpServerToolApprovalRequestContent approvalRequest in message.Contents.OfType<McpServerToolApprovalRequestContent>())
+            foreach (ToolApprovalRequestContent approvalRequest in message.Contents.OfType<ToolApprovalRequestContent>())
             {
-                this.Output.WriteLine($"MCP APPROVAL REQUEST: {approvalRequest.Id}");
+                this.Output.WriteLine($"MCP APPROVAL REQUEST: {approvalRequest.RequestId}");
 
                 // Respond based on test configuration
-                McpServerToolApprovalResponseContent response = approvalRequest.CreateResponse(approved: approveRequest);
+                ToolApprovalResponseContent response = approvalRequest.CreateResponse(approved: approveRequest);
                 results.Add(response);
 
                 this.Output.WriteLine($"MCP APPROVAL RESPONSE: {(approveRequest ? "Approved" : "Rejected")}");

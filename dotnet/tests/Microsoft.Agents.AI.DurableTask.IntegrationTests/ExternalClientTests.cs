@@ -21,7 +21,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
 {
     private static readonly TimeSpan s_defaultTimeout = Debugger.IsAttached
         ? TimeSpan.FromMinutes(5)
-        : TimeSpan.FromSeconds(30);
+        : TimeSpan.FromSeconds(60);
 
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()

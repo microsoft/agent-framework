@@ -74,8 +74,8 @@ def test_openai_chat_client_get_response_docstring_surfaces_layered_runtime_docs
     assert docstring is not None
     assert "Get a response from a chat client." in docstring
     assert "function_invocation_kwargs" in docstring
-    assert "function_middleware: Optional per-call function middleware." in docstring
     assert "middleware: Optional per-call chat and function middleware." in docstring
+    assert "function_middleware: Optional per-call function middleware." not in docstring
 
 
 def test_openai_chat_client_get_response_is_defined_on_openai_class() -> None:
@@ -84,7 +84,6 @@ def test_openai_chat_client_get_response_is_defined_on_openai_class() -> None:
     signature = inspect.signature(OpenAIChatClient.get_response)
 
     assert OpenAIChatClient.get_response.__qualname__ == "OpenAIChatClient.get_response"
-    assert "function_middleware" in signature.parameters
     assert "middleware" in signature.parameters
 
 

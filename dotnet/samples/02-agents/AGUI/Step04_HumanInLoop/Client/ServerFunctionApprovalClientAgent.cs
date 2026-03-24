@@ -9,7 +9,7 @@ using ServerFunctionApproval;
 
 /// <summary>
 /// A delegating agent that handles server function approval requests and responses.
-/// Transforms between FunctionApprovalRequestContent/FunctionApprovalResponseContent
+/// Transforms between ToolApprovalRequestContent/ToolApprovalResponseContent
 /// and the server's request_approval tool call pattern.
 /// </summary>
 internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
@@ -50,14 +50,14 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
     }
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
-    private static FunctionResultContent ConvertApprovalResponseToToolResult(FunctionApprovalResponseContent approvalResponse, JsonSerializerOptions jsonOptions)
+    private static FunctionResultContent ConvertApprovalResponseToToolResult(ToolApprovalResponseContent approvalResponse, JsonSerializerOptions jsonOptions)
     {
         return new FunctionResultContent(
-            callId: approvalResponse.Id,
+            callId: approvalResponse.RequestId,
             result: JsonSerializer.SerializeToElement(
                 new ApprovalResponse
                 {
-                    ApprovalId = approvalResponse.Id,
+                    ApprovalId = approvalResponse.RequestId,
                     Approved = approvalResponse.Approved
                 },
                 jsonOptions));
@@ -89,7 +89,7 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
     {
         List<ChatMessage>? result = null;
 
-        Dictionary<string, FunctionApprovalRequestContent> approvalRequests = [];
+        Dictionary<string, ToolApprovalRequestContent> approvalRequests = [];
         for (var messageIndex = 0; messageIndex < messages.Count; messageIndex++)
         {
             var message = messages[messageIndex];
@@ -102,21 +102,21 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 var content = message.Contents[contentIndex];
 
                 // Handle pending approval requests (transform to tool call)
-                if (content is FunctionApprovalRequestContent approvalRequest &&
+                if (content is ToolApprovalRequestContent approvalRequest &&
                     approvalRequest.AdditionalProperties?.TryGetValue("original_function", out var originalFunction) == true &&
                     originalFunction is FunctionCallContent original)
                 {
-                    approvalRequests[approvalRequest.Id] = approvalRequest;
+                    approvalRequests[approvalRequest.RequestId] = approvalRequest;
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, contentIndex);
                     transformedContents.Add(original);
                 }
                 // Handle pending approval responses (transform to tool result)
-                else if (content is FunctionApprovalResponseContent approvalResponse &&
-                    approvalRequests.TryGetValue(approvalResponse.Id, out var correspondingRequest))
+                else if (content is ToolApprovalResponseContent approvalResponse &&
+                    approvalRequests.TryGetValue(approvalResponse.RequestId, out var correspondingRequest))
                 {
                     transformedContents ??= CopyContentsUpToIndex(message.Contents, contentIndex);
                     transformedContents.Add(ConvertApprovalResponseToToolResult(approvalResponse, jsonSerializerOptions));
-                    approvalRequests.Remove(approvalResponse.Id);
+                    approvalRequests.Remove(approvalResponse.RequestId);
                     correspondingRequest.AdditionalProperties?.Remove("original_function");
                 }
                 // Skip historical approval content
@@ -198,8 +198,8 @@ internal sealed class ServerFunctionApprovalClientAgent : DelegatingAIAgent
                 var functionCallArgs = (Dictionary<string, object?>?)approvalRequest.FunctionArguments?
                     .Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(Dictionary<string, object?>)));
 
-                var approvalRequestContent = new FunctionApprovalRequestContent(
-                    id: approvalRequest.ApprovalId,
+                var approvalRequestContent = new ToolApprovalRequestContent(
+                    requestId: approvalRequest.ApprovalId,
                     new FunctionCallContent(
                         callId: approvalRequest.ApprovalId,
                         name: approvalRequest.FunctionName,

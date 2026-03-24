@@ -16,7 +16,6 @@ from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
 
-
 load_dotenv(override=True)
 
 # Configure these for your Foundry project
