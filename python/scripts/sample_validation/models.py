@@ -18,6 +18,7 @@ class ValidationConfig:
     samples_dir: Path
     python_root: Path
     subdir: str | None = None
+    exclude: list[str] | None = None
     max_parallel_workers: int = 10
 
 
