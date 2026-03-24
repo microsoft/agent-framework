@@ -153,11 +153,24 @@ class CustomAgentExecutor(Executor):
                     logger.warning(
                         f"Error executing agent {self.agent.id} (attempt {current_retry + 1}/{self.RETRY_COUNT}): {ex}. Retrying..."
                     )
-                    current_retry += 1
-                    await self.agent.stop()
-                    await self.agent.start()
-                    self._session = self.agent.create_session()  # Reset session for retry
-                    continue
+                    try:
+                        current_retry += 1
+                        await self.agent.stop()
+                        await self.agent.start()
+                        self._session = self.agent.create_session()  # Reset session for retry
+                        continue
+                    except Exception as restart_ex:
+                        logger.error(
+                            f"Error restarting agent {self.agent.id}: {restart_ex}. No more retries."
+                        )
+                        result = RunResult(
+                            sample=sample,
+                            status=RunStatus.FAILURE,
+                            output="",
+                            error=f"Original error: {ex}. Restart error: {restart_ex}",
+                            fix="",
+                        )
+                        break
 
                 logger.error(f"Error executing agent {self.agent.id}: {ex}")
                 result = RunResult(

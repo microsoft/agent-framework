@@ -175,7 +175,7 @@ Produces:
 
 ### Agent output parsing errors
 
-If an agent returns non-JSON content, that sample is marked as `ERROR` with parser details in the report.
+If an agent returns non-JSON content, that sample is marked as `FAILURE` with parser details in the report.
 
 ### GitHub Copilot authentication or CLI issues
 
