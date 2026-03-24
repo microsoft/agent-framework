@@ -125,39 +125,39 @@ public static class AIAgentExtensions
         private readonly ITaskStore _inner;
         private readonly ConcurrentDictionary<string, Action<AgentTask>> _pendingModifications = new();
 
-        internal MetadataInjectingTaskStore(ITaskStore inner) => _inner = inner;
+        internal MetadataInjectingTaskStore(ITaskStore inner) => this._inner = inner;
 
         internal void RegisterModification(string taskId, Action<AgentTask> modification)
-            => _pendingModifications.AddOrUpdate(taskId, modification, (_, existing) => task =>
+            => this._pendingModifications.AddOrUpdate(taskId, modification, (_, existing) => task =>
             {
                 existing(task);
                 modification(task);
             });
 
         internal void ClearModification(string taskId)
-            => _pendingModifications.TryRemove(taskId, out _);
+            => this._pendingModifications.TryRemove(taskId, out _);
 
         public async Task SaveTaskAsync(string taskId, AgentTask task, CancellationToken cancellationToken)
         {
-            if (_pendingModifications.TryRemove(taskId, out var modification))
+            if (this._pendingModifications.TryRemove(taskId, out var modification))
             {
                 modification(task);
             }
 
-            await _inner.SaveTaskAsync(taskId, task, cancellationToken).ConfigureAwait(false);
+            await this._inner.SaveTaskAsync(taskId, task, cancellationToken).ConfigureAwait(false);
         }
 
         public Task<AgentTask?> GetTaskAsync(string taskId, CancellationToken cancellationToken)
-            => _inner.GetTaskAsync(taskId, cancellationToken);
+            => this._inner.GetTaskAsync(taskId, cancellationToken);
 
         public Task DeleteTaskAsync(string taskId, CancellationToken cancellationToken)
         {
-            _pendingModifications.TryRemove(taskId, out _);
-            return _inner.DeleteTaskAsync(taskId, cancellationToken);
+            this._pendingModifications.TryRemove(taskId, out _);
+            return this._inner.DeleteTaskAsync(taskId, cancellationToken);
         }
 
         public Task<ListTasksResponse> ListTasksAsync(ListTasksRequest request, CancellationToken cancellationToken)
-            => _inner.ListTasksAsync(request, cancellationToken);
+            => this._inner.ListTasksAsync(request, cancellationToken);
     }
 
     /// <summary>
@@ -176,10 +176,10 @@ public static class AIAgentExtensions
             MetadataInjectingTaskStore taskStore,
             JsonSerializerOptions continuationTokenJsonOptions)
         {
-            _hostAgent = hostAgent;
-            _runMode = runMode;
-            _taskStore = taskStore;
-            _continuationTokenJsonOptions = continuationTokenJsonOptions;
+            this._hostAgent = hostAgent;
+            this._runMode = runMode;
+            this._taskStore = taskStore;
+            this._continuationTokenJsonOptions = continuationTokenJsonOptions;
         }
 
         public async Task ExecuteAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
@@ -212,11 +212,11 @@ public static class AIAgentExtensions
             }
 
             var contextId = context.ContextId;
-            var session = await _hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
 
             var sendRequest = new SendMessageRequest { Message = context.Message!, Metadata = context.Metadata };
             var decisionContext = new A2ARunDecisionContext(sendRequest);
-            var allowBackgroundResponses = await _runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
+            var allowBackgroundResponses = await this._runMode.ShouldRunInBackgroundAsync(decisionContext, cancellationToken).ConfigureAwait(false);
 
             var options = context.Metadata is not { Count: > 0 }
                 ? new AgentRunOptions { AllowBackgroundResponses = allowBackgroundResponses }
@@ -228,13 +228,13 @@ public static class AIAgentExtensions
                 chatMessages.Add(context.Message.ToChatMessage());
             }
 
-            var response = await _hostAgent.RunAsync(
+            var response = await this._hostAgent.RunAsync(
                 chatMessages,
                 session: session,
                 options: options,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
 
-            await _hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+            await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
             if (response.ContinuationToken is null)
             {
@@ -249,9 +249,9 @@ public static class AIAgentExtensions
                 // Register a pending modification so that when A2AServer materializes
                 // the task, the continuation token and original message are injected.
                 var continuationToken = response.ContinuationToken;
-                var continuationJsonOptions = _continuationTokenJsonOptions;
+                var continuationJsonOptions = this._continuationTokenJsonOptions;
                 var originalMessage = context.Message;
-                _taskStore.RegisterModification(context.TaskId, task =>
+                this._taskStore.RegisterModification(context.TaskId, task =>
                 {
                     StoreContinuationToken(task, continuationToken, continuationJsonOptions);
                     task.History ??= [];
@@ -269,7 +269,7 @@ public static class AIAgentExtensions
         private async Task HandleTaskUpdateAsync(RequestContext context, AgentEventQueue eventQueue, CancellationToken cancellationToken)
         {
             var contextId = context.ContextId;
-            var session = await _hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
+            var session = await this._hostAgent.GetOrCreateSessionAsync(contextId, cancellationToken).ConfigureAwait(false);
             var taskUpdater = new TaskUpdater(eventQueue, context.TaskId, contextId);
 
             try
@@ -289,20 +289,20 @@ public static class AIAgentExtensions
 
                 await taskUpdater.StartWorkAsync(null, cancellationToken).ConfigureAwait(false);
 
-                var response = await _hostAgent.RunAsync(
+                var response = await this._hostAgent.RunAsync(
                     ExtractChatMessagesFromTaskHistory(agentTask),
                     session: session,
                     options: new AgentRunOptions { AllowBackgroundResponses = true },
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
-                await _hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
+                await this._hostAgent.SaveSessionAsync(contextId, session, cancellationToken).ConfigureAwait(false);
 
                 if (response.ContinuationToken is not null)
                 {
                     // Register continuation token injection for the next task save.
                     var continuationToken = response.ContinuationToken;
-                    var continuationJsonOptions = _continuationTokenJsonOptions;
-                    _taskStore.RegisterModification(context.TaskId, task =>
+                    var continuationJsonOptions = this._continuationTokenJsonOptions;
+                    this._taskStore.RegisterModification(context.TaskId, task =>
                         StoreContinuationToken(task, continuationToken, continuationJsonOptions));
 
                     Message? progressMessage = response.Messages.Count > 0 ? CreateMessageFromResponse(contextId, response) : null;

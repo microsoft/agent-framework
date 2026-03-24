@@ -656,8 +656,8 @@ public sealed class A2AAgentTests : IDisposable
             }
         };
 
-        const string expectedTaskId = "my-task-789";
-        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(expectedTaskId) };
+        const string ExpectedTaskId = "my-task-789";
+        var options = new AgentRunOptions { ContinuationToken = new A2AContinuationToken(ExpectedTaskId) };
 
         // Act
         await foreach (var _ in this._agent.RunStreamingAsync([], null, options))
@@ -670,7 +670,7 @@ public sealed class A2AAgentTests : IDisposable
         var subscribeRequest = this._handler.CapturedJsonRpcRequests[0];
         var subscribeParams = subscribeRequest.Params?.Deserialize<SubscribeToTaskRequest>(A2AJsonUtilities.DefaultOptions);
         Assert.NotNull(subscribeParams);
-        Assert.Equal(expectedTaskId, subscribeParams.Id);
+        Assert.Equal(ExpectedTaskId, subscribeParams.Id);
     }
 
     [Fact]
