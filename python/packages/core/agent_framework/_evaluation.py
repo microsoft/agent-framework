@@ -230,6 +230,18 @@ class EvalItem:
             return self._split_full()
         return self._split_last_turn()
 
+    def split_messages(
+        self,
+        split: ConversationSplitter | None = None,
+    ) -> tuple[list[Message], list[Message]]:
+        """Split the conversation into (query_messages, response_messages).
+
+        Uses the same resolution order as ``to_eval_data``: explicit *split*,
+        then ``self.split_strategy``, then ``ConversationSplit.LAST_TURN``.
+        """
+        effective = split or self.split_strategy or ConversationSplit.LAST_TURN
+        return self._split_conversation(effective)
+
     def _split_last_turn(self) -> tuple[list[Message], list[Message]]:
         """Split at the last user message (default strategy)."""
         return self._split_last_turn_static(self.conversation)
@@ -1239,9 +1251,7 @@ def evaluator(
             n for n, p in sig.parameters.items() if n in _KNOWN_PARAMS or p.default is inspect.Parameter.empty
         }
         required_unknown = {
-            n
-            for n, p in sig.parameters.items()
-            if n not in _KNOWN_PARAMS and p.default is inspect.Parameter.empty
+            n for n, p in sig.parameters.items() if n not in _KNOWN_PARAMS and p.default is inspect.Parameter.empty
         }
         if required_unknown:
             raise TypeError(

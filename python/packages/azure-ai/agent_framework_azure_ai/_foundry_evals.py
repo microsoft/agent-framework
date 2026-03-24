@@ -448,7 +448,7 @@ def _resolve_openai_client(
         return openai_client
     if project_client is not None:
         client = project_client.get_openai_client()
-        if client is None:
+        if client is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
         return client
     raise ValueError("Provide either 'openai_client' or 'project_client'.")
@@ -659,8 +659,9 @@ class FoundryEvals:
 
         # Apply Foundry-specific typed-content conversion to messages
         for d, item in zip(dicts, items):
-            effective_split = item.split_strategy or self._conversation_split or ConversationSplit.LAST_TURN
-            query_msgs, response_msgs = item._split_conversation(effective_split)  # noqa: SLF001
+            query_msgs, response_msgs = item.split_messages(
+                item.split_strategy or self._conversation_split,
+            )
             d["query_messages"] = AgentEvalConverter.convert_messages(query_msgs)
             d["response_messages"] = AgentEvalConverter.convert_messages(response_msgs)
 

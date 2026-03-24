@@ -758,9 +758,7 @@ class TestNumRepetitions:
         mock_agent = MagicMock()
         mock_agent.name = "test"
         mock_agent.default_options = {}
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message("assistant", ["reply"])]))
 
         results = await evaluate_agent(
             agent=mock_agent,
@@ -783,9 +781,7 @@ class TestNumRepetitions:
         mock_agent = MagicMock()
         mock_agent.name = "test"
         mock_agent.default_options = {}
-        mock_agent.run = AsyncMock(
-            return_value=AgentResponse(messages=[Message("assistant", ["reply"])])
-        )
+        mock_agent.run = AsyncMock(return_value=AgentResponse(messages=[Message("assistant", ["reply"])]))
 
         @evaluator
         def check_expected(response: str, expected_output: str) -> dict:
@@ -841,7 +837,7 @@ class TestNumRepetitions:
     async def test_evaluate_response_deprecation_warning(self):
         """evaluate_response() emits DeprecationWarning and delegates."""
         import warnings
-        from unittest.mock import AsyncMock, MagicMock
+        from unittest.mock import MagicMock
 
         from agent_framework._evaluation import evaluate_response
         from agent_framework._types import AgentResponse, Message

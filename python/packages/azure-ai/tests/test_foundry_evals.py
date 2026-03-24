@@ -2073,9 +2073,7 @@ class TestPollEvalRun:
         mock_pending.status = "queued"
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_pending)
 
-        results = await _poll_eval_run(
-            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=0.05
-        )
+        results = await _poll_eval_run(mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=0.05)
         assert results.status == "timeout"
         assert results.eval_id == "eval_1"
         assert results.run_id == "run_1"
@@ -2094,9 +2092,7 @@ class TestPollEvalRun:
         mock_failed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_failed)
 
-        results = await _poll_eval_run(
-            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0
-        )
+        results = await _poll_eval_run(mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0)
         assert results.status == "failed"
         assert results.error == "Model deployment unavailable"
 
@@ -2114,9 +2110,7 @@ class TestPollEvalRun:
         mock_canceled.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_canceled)
 
-        results = await _poll_eval_run(
-            mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0
-        )
+        results = await _poll_eval_run(mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0)
         assert results.status == "canceled"
         assert results.error is None
 
