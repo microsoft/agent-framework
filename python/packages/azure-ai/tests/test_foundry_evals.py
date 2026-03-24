@@ -756,10 +756,10 @@ class TestFoundryEvals:
         mock_output_item = MagicMock()
         mock_output_item.id = "output_item_1"
         mock_output_item.status = "pass"
-        mock_output_item.sample = {"query": "Hello", "response": "Hi there!"}
-        mock_output_item.results = [
-            MagicMock(name="relevance", status="pass", score=5, reason="Relevant response"),
-        ]
+        mock_output_item.sample = MagicMock(error=None, usage=None, input=[], output=[])
+        mock_result = MagicMock(status="pass", score=5, reason="Relevant response")
+        mock_result.name = "relevance"  # MagicMock(name=...) sets display name, not .name attr
+        mock_output_item.results = [mock_result]
         mock_page = MagicMock()
         mock_page.__iter__ = MagicMock(return_value=iter([mock_output_item]))
         mock_page.has_more = False
@@ -791,6 +791,7 @@ class TestFoundryEvals:
         assert results.items[0].item_id == "output_item_1"
         assert results.items[0].status == "pass"
         assert len(results.items[0].scores) == 1
+        assert results.items[0].scores[0].name == "relevance"
         assert results.items[0].scores[0].score == 5
 
         # Verify evals.create was called with correct structure

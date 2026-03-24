@@ -211,6 +211,8 @@ class EvalItem:
         item: dict[str, Any] = {
             "query": query_text,
             "response": response_text,
+            # NOTE: Non-text content (tool calls, function results) is dropped here;
+            # providers should overwrite via split_messages() + their own converter.
             "query_messages": [{"role": m.role, "content": m.text or ""} for m in query_msgs],
             "response_messages": [{"role": m.role, "content": m.text or ""} for m in response_msgs],
         }
@@ -473,8 +475,9 @@ class EvalResults:
         """
         if self.status not in ("completed",):
             return False
+        own_passed = self.failed == 0 and self.errored == 0 and self.total > 0 if self.result_counts else True
         if self.sub_results:
-            return all(sub.all_passed for sub in self.sub_results.values())
+            return own_passed and all(sub.all_passed for sub in self.sub_results.values())
         # Leaf result - check own counts
         return self.failed == 0 and self.errored == 0 and self.total > 0
 
@@ -597,9 +600,9 @@ class AgentEvalConverter:
                     try:
                         args = json.loads(args)
                     except (json.JSONDecodeError, TypeError):
-                        # Note: _raw_arguments preserves the original string, which
-                        # may contain sensitive data from tool call arguments.
-                        args = {"_raw_arguments": args}
+                        # Sanitize to avoid leaking sensitive tool-call arguments
+                        # to external evaluation services.
+                        args = {"_raw_arguments": "[unparseable]"}
                 tc: dict[str, Any] = {
                     "type": "tool_call",
                     "tool_call_id": c.call_id or "",
@@ -955,7 +958,16 @@ def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None
     for msg in item.conversation:
         for c in msg.contents or []:
             if c.type == "function_call" and c.name:
-                args = c.arguments if isinstance(c.arguments, dict) else None
+                args: dict[str, Any] | None = None
+                if isinstance(c.arguments, dict):
+                    args = c.arguments
+                elif isinstance(c.arguments, str):
+                    try:
+                        parsed = json.loads(c.arguments)
+                        if isinstance(parsed, dict):
+                            args = cast(dict[str, Any], parsed)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
                 calls.append((c.name, args))
     return calls
 

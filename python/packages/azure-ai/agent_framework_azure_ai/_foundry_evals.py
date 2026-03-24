@@ -301,7 +301,7 @@ async def _poll_eval_run(
         if remaining <= 0:
             return EvalResults(provider=provider, eval_id=eval_id, run_id=run_id, status="timeout")
         logger.debug("Eval run %s status: %s (%.0fs remaining)", run_id, run.status, remaining)
-        await asyncio.sleep(min(max(poll_interval, 0.1), remaining))
+        await asyncio.sleep(min(max(poll_interval, 1.0), remaining))
 
 
 def _extract_result_counts(run: Any) -> dict[str, int] | None:
@@ -661,15 +661,29 @@ class FoundryEvals:
         eval_name: str,
     ) -> EvalResults:
         """Evaluate using JSONL dataset upload path."""
-        dicts = [item.to_eval_data(split=item.split_strategy or self._conversation_split) for item in items]
+        dicts: list[dict[str, Any]] = []
+        for item in items:
+            # Build JSONL dict directly from split_messages + converter
+            # to avoid splitting the conversation twice.
+            effective_split = item.split_strategy or self._conversation_split
+            query_msgs, response_msgs = item.split_messages(effective_split)
 
-        # Apply Foundry-specific typed-content conversion to messages
-        for d, item in zip(dicts, items):
-            query_msgs, response_msgs = item.split_messages(
-                item.split_strategy or self._conversation_split,
-            )
-            d["query_messages"] = AgentEvalConverter.convert_messages(query_msgs)
-            d["response_messages"] = AgentEvalConverter.convert_messages(response_msgs)
+            query_text = " ".join(m.text for m in query_msgs if m.role == "user" and m.text).strip()
+            response_text = " ".join(m.text for m in response_msgs if m.role == "assistant" and m.text).strip()
+
+            d: dict[str, Any] = {
+                "query": query_text,
+                "response": response_text,
+                "query_messages": AgentEvalConverter.convert_messages(query_msgs),
+                "response_messages": AgentEvalConverter.convert_messages(response_msgs),
+            }
+            if item.tools:
+                d["tool_definitions"] = [
+                    {"name": t.name, "description": t.description, "parameters": t.parameters()} for t in item.tools
+                ]
+            if item.context:
+                d["context"] = item.context
+            dicts.append(d)
 
         has_context = any("context" in d for d in dicts)
         has_tools = any("tool_definitions" in d for d in dicts)
