@@ -8,8 +8,7 @@ Cosmos DB, or another search service.
 
 from typing import Optional
 
-# TODO: Uncomment when implementing with actual Agent Framework
-# from microsoft.agents.core import ai_function
+from agent_framework import tool
 
 # Simulated knowledge base entries
 KNOWLEDGE_BASE = [
@@ -46,7 +45,7 @@ KNOWLEDGE_BASE = [
 ]
 
 
-# @ai_function
+@tool
 def search_knowledge_base(
     query: str,
     category: Optional[str] = None,

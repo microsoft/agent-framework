@@ -4,13 +4,18 @@
 
 import json
 import logging
-import uuid
+from datetime import datetime, timezone
 
 import azure.functions as func
 
-from services import http_request_span, cosmos_span
+from services import (
+    http_request_span,
+    cosmos_span,
+    get_agent,
+    get_history_provider,
+    get_mcp_tool,
+)
 from routes.threads import get_store
-from tools import get_weather, calculate, search_knowledge_base
 
 bp = func.Blueprint()
 
@@ -20,8 +25,10 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
     """
     Send a message to the agent and get a response.
 
-    The agent will autonomously decide which tools to use based on
-    the message content.
+    The agent uses:
+    - CosmosHistoryProvider for automatic conversation history persistence
+    - MCPStreamableHTTPTool for Microsoft Learn documentation search
+    - Local tools for weather, calculator, and knowledge base
 
     Request:
         POST /api/threads/{thread_id}/messages
@@ -30,7 +37,6 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
     Response:
         200 OK
         {
-            "id": "msg_xxx",
             "thread_id": "thread_xxx",
             "role": "assistant",
             "content": "The weather in Seattle is...",
@@ -77,82 +83,38 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        # Store user message in Cosmos DB
-        user_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-        async with cosmos_span("upsert", "messages", thread_id):
-            await store.add_message(
-                thread_id=thread_id,
-                message_id=user_message_id,
-                role="user",
-                content=content,
-                metadata={"client": "http_api"},
+        # Get agent (configured with CosmosHistoryProvider and local tools)
+        agent = get_agent()
+
+        # Run agent with MCP tools for Microsoft Learn documentation
+        # The agent combines:
+        # - Local tools: get_weather, calculate, search_knowledge_base
+        # - MCP tools: microsoft_docs_search, microsoft_code_sample_search
+        async with get_mcp_tool() as mcp:
+            response = await agent.run(
+                content,
+                session_id=thread_id,
+                tools=mcp,  # Add MCP tools for this run
             )
 
-        # TODO: Replace with actual agent invocation
-        # agent = get_agent()
-        # response = await agent.run(content, thread_id=thread_id)
-        # Framework auto-creates: invoke_agent, chat, execute_tool spans
-
-        # Placeholder response (demonstrates tool selection pattern)
+        # Extract response content and tool calls
+        response_content = response.text or ""
         tool_calls = []
-        response_content = ""
 
-        # Simple keyword-based tool selection demo
-        content_lower = content.lower()
-        if "weather" in content_lower:
-            location = "Seattle"  # Default
-            if "in " in content_lower:
-                location = content_lower.split("in ")[-1].split()[0].title()
-            weather_result = get_weather(location)
-            tool_calls.append({
-                "tool": "get_weather",
-                "arguments": {"location": location},
-                "result": weather_result,
-            })
-            response_content += (
-                f"The weather in {location} is {weather_result['temp']}°F "
-                f"with {weather_result['condition']}. "
-            )
+        # Parse tool calls from response if any
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            for tool_call in response.tool_calls:
+                tool_calls.append({
+                    "tool": getattr(tool_call, "name", str(tool_call)),
+                    "arguments": getattr(tool_call, "arguments", {}),
+                })
 
-        calc_keywords = ["calculate", "tip", "%", "percent"]
-        if any(word in content_lower for word in calc_keywords):
-            calc_result = calculate("85 * 0.15")
-            tool_calls.append({
-                "tool": "calculate",
-                "arguments": {"expression": "85 * 0.15"},
-                "result": calc_result,
-            })
-            response_content += f"A 15% tip on $85 is ${calc_result:.2f}."
-
-        if not response_content:
-            response_content = (
-                f"I received your message: '{content}'. "
-                "How can I help you further?"
-            )
-
-        # Store assistant response in Cosmos DB
-        assistant_message_id = f"msg_{uuid.uuid4().hex[:12]}"
-
-        # Example: Add sources for RAG
-        sources = None
-        if "weather" in content_lower:
-            sources = [
-                {
-                    "title": "Weather Service API",
-                    "url": "https://api.weather.example.com",
-                    "snippet": "Real-time weather data",
-                }
-            ]
-
-        async with cosmos_span("upsert", "messages", thread_id):
-            assistant_message = await store.add_message(
+        # Update thread metadata with last message preview
+        async with cosmos_span("update", "threads", thread_id):
+            preview = response_content[:100] + "..." if len(response_content) > 100 else response_content
+            await store.update_thread(
                 thread_id=thread_id,
-                message_id=assistant_message_id,
-                role="assistant",
-                content=response_content.strip(),
-                tool_calls=tool_calls if tool_calls else None,
-                sources=sources,
-                metadata={"model": "placeholder"},
+                last_message_preview=preview,
             )
 
         logging.info(
@@ -160,9 +122,18 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
             f"tools used: {[t['tool'] for t in tool_calls]}"
         )
 
+        # Build response
+        result = {
+            "thread_id": thread_id,
+            "role": "assistant",
+            "content": response_content,
+            "tool_calls": tool_calls if tool_calls else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
         span.set_attribute("http.status_code", 200)
         return func.HttpResponse(
-            body=json.dumps(assistant_message),
+            body=json.dumps(result),
             mimetype="application/json",
         )
 
@@ -170,7 +141,7 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
 @bp.route(route="threads/{thread_id}/messages", methods=["GET"])
 async def get_messages(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Get conversation history for a thread.
+    Get conversation history for a thread from CosmosHistoryProvider.
 
     Request:
         GET /api/threads/{thread_id}/messages
@@ -198,11 +169,21 @@ async def get_messages(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
+        # Get messages from CosmosHistoryProvider
+        history_provider = get_history_provider()
         async with cosmos_span("query", "messages", thread_id):
-            messages = await store.get_messages(thread_id)
+            messages = await history_provider.get_messages(session_id=thread_id)
+
+        # Convert Message objects to serializable dicts
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                "role": msg.role.value if hasattr(msg.role, "value") else str(msg.role),
+                "content": msg.content if hasattr(msg, "content") else str(msg),
+            })
 
         span.set_attribute("http.status_code", 200)
         return func.HttpResponse(
-            body=json.dumps({"messages": messages}),
+            body=json.dumps({"messages": message_list}),
             mimetype="application/json",
         )

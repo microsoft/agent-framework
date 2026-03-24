@@ -8,8 +8,7 @@ import ast
 import operator
 from typing import Union
 
-# TODO: Uncomment when implementing with actual Agent Framework
-# from microsoft.agents.core import ai_function
+from agent_framework import tool
 
 # Safe operators for expression evaluation
 SAFE_OPERATORS = {
@@ -53,7 +52,7 @@ def _safe_eval(node: ast.AST) -> Union[int, float]:
     raise ValueError(f"Unsupported AST node type: {type(node).__name__}")
 
 
-# @ai_function
+@tool
 def calculate(expression: str) -> float:
     """
     Evaluate a mathematical expression safely.

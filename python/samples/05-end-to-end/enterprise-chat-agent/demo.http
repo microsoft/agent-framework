@@ -20,7 +20,7 @@ POST {{baseUrl}}/threads
 Content-Type: application/json
 
 {
-  "user_id": "user_123",
+  "user_id": "user_1234",
   "title": "Customer Support Chat",
   "metadata": {
     "session_type": "support",
@@ -62,7 +62,71 @@ Content-Type: application/json
   "content": "What's the weather in Tokyo and what's 20% of 150?"
 }
 
-### Example 4: No Tools Needed
+### Example 4: Knowledge Base Search
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's your return policy?"
+}
+
+### Example 5: Microsoft Docs - Azure Service
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I configure partition keys in Azure Cosmos DB?"
+}
+
+### Example 6: Microsoft Docs - Best Practices
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What are the best practices for Azure Functions error handling?"
+}
+
+### Example 7: Microsoft Code Samples - Python
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "Show me Python code for Azure OpenAI chat completion"
+}
+
+### Example 8: Microsoft Code Samples - General
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I authenticate to Azure using DefaultAzureCredential? Show me code examples."
+}
+
+### Example 9: Complex Query - Multiple Tools
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the weather in Seattle? Also, explain how Azure Functions scales and show me example code for HTTP triggers."
+}
+
+### Example 10: Azure Architecture Question
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "What's the difference between Azure App Service and Azure Container Apps?"
+}
+
+### Example 11: Deployment Question
+POST {{baseUrl}}/threads/{{threadId}}/messages
+Content-Type: application/json
+
+{
+  "content": "How do I deploy a Python application to Azure using azd?"
+}
+
+### Example 12: No Tools Needed
 POST {{baseUrl}}/threads/{{threadId}}/messages
 Content-Type: application/json
 

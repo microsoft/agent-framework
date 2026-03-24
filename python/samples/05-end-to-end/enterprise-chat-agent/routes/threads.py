@@ -12,6 +12,7 @@ from services import (
     CosmosConversationStore,
     http_request_span,
     cosmos_span,
+    get_history_provider,
 )
 
 bp = func.Blueprint()
@@ -110,6 +111,9 @@ async def delete_thread(req: func.HttpRequest) -> func.HttpResponse:
     """
     Delete a thread and its messages.
 
+    Deletes both the thread metadata and all messages stored by
+    CosmosHistoryProvider for this thread's session.
+
     Request:
         DELETE /api/threads/{thread_id}
 
@@ -122,6 +126,8 @@ async def delete_thread(req: func.HttpRequest) -> func.HttpResponse:
         "DELETE", "/threads/{thread_id}", thread_id=thread_id
     ) as span:
         store = get_store()
+
+        # Delete thread metadata
         async with cosmos_span("delete", "threads", thread_id):
             deleted = await store.delete_thread(thread_id)
 
@@ -133,7 +139,12 @@ async def delete_thread(req: func.HttpRequest) -> func.HttpResponse:
                 mimetype="application/json",
             )
 
-        logging.info(f"Deleted thread {thread_id}")
+        # Clear messages from CosmosHistoryProvider
+        history_provider = get_history_provider()
+        async with cosmos_span("delete", "messages", thread_id):
+            await history_provider.clear(session_id=thread_id)
+
+        logging.info(f"Deleted thread {thread_id} and cleared messages")
 
         span.set_attribute("http.status_code", 204)
         return func.HttpResponse(status_code=204)

@@ -18,11 +18,12 @@ This sample showcases:
 Client → Azure Functions (HTTP Triggers) → ChatAgent → Azure OpenAI
                                               ↓
                                          [Tools]
-                                    ┌────────┼────────┐
-                                    ↓        ↓        ↓
-                               Weather  Calculator  Search
-                                              ↓
-                                         Cosmos DB (Persistence)
+                                ┌─────────┼──────────┐
+                                ↓         ↓          ↓
+                            Weather  Calculator  Knowledge Base
+                                                     ↓
+                             Microsoft Docs ← → Azure Cosmos DB
+                            (MCP Integration)
 ```
 
 ## Prerequisites
@@ -148,9 +149,30 @@ User: "What's the weather in Tokyo?"
 User: "What's the weather in Paris and what's 18% tip on €75?"
 → Agent calls: get_weather("Paris") AND calculate("75 * 0.18")
 
+User: "How do I configure partition keys in Azure Cosmos DB?"
+→ Agent calls: search_microsoft_docs("Cosmos DB partition keys")
+→ Returns: Official Microsoft documentation with best practices
+
+User: "Show me Python code for Azure OpenAI chat completion"
+→ Agent calls: search_microsoft_code_samples("Azure OpenAI chat", language="python")
+→ Returns: Official code examples from Microsoft Learn
+
+User: "What's your return policy?"
+→ Agent calls: search_knowledge_base("return policy")
+
 User: "Tell me a joke"
 → Agent responds directly (no tools needed)
 ```
+
+### Available Tools
+
+| Tool | Description | Example Use |
+|------|-------------|-------------|
+| `search_microsoft_docs` | Search official Microsoft/Azure docs | Azure services, cloud architecture |
+| `search_microsoft_code_samples` | Find code examples from Microsoft Learn | SDK usage, implementation samples |
+| `search_knowledge_base` | Internal company knowledge | Policies, FAQs, procedures |
+| `get_weather` | Current weather data | Weather queries |
+| `calculate` | Safe math evaluation | Calculations, tips, conversions |
 
 ## Project Structure
 
@@ -168,7 +190,8 @@ enterprise-chat-agent/
 │   ├── __init__.py
 │   ├── weather.py            # Weather tool
 │   ├── calculator.py         # Calculator tool
-│   └── knowledge_base.py     # Knowledge base search tool
+│   ├── knowledge_base.py     # Knowledge base search tool
+│   └── microsoft_docs.py     # Microsoft Docs MCP integration
 ├── infra/                    # Infrastructure as Code (Bicep)
 │   ├── main.bicep            # Main deployment template
 │   ├── main.parameters.json  # Parameter file
@@ -200,3 +223,17 @@ See [DESIGN.md](./DESIGN.md) for:
 - [GitHub Issue #2436](https://github.com/microsoft/agent-framework/issues/2436)
 - [Microsoft Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)
 - [Azure Functions Python Developer Guide](https://learn.microsoft.com/azure/azure-functions/functions-reference-python)
+
+## Implementation Status
+
+### ✅ Completed
+- ✅ Create tools (weather, calculator, knowledge_base)
+- ✅ Create an agent (ChatAgent with Azure OpenAI)
+- ✅ Use tools with agents (@ai_function decorators + agent configuration)
+- ✅ Cosmos DB persistence
+- ✅ OpenTelemetry observability
+
+### 🔄 Pending
+- ⏳ Test agent locally with `func start`
+- ⏳ Check the logs in Application Insights
+- ⏳ Deploy to Azure with `azd up`

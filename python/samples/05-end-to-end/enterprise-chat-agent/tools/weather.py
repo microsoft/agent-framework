@@ -7,11 +7,10 @@ In a production scenario, this would integrate with a weather API.
 
 import random
 
-# TODO: Uncomment when implementing with actual Agent Framework
-# from microsoft.agents.core import ai_function
+from agent_framework import tool
 
 
-# @ai_function
+@tool
 def get_weather(location: str) -> dict:
     """
     Get current weather for a location.

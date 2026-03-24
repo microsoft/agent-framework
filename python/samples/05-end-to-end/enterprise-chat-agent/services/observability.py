@@ -8,7 +8,7 @@ Provides complementary spans for layers the Agent Framework doesn't instrument:
 - Cosmos DB operations
 - Request validation
 
-Uses the framework's setup_observability() and get_tracer() APIs.
+Uses the framework's configure_otel_providers() and get_tracer() APIs.
 """
 
 import logging
@@ -18,7 +18,7 @@ from typing import AsyncIterator, Optional
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 # Import framework's observability - use framework APIs, don't recreate them
-from agent_framework.observability import setup_observability, get_tracer
+from agent_framework.observability import configure_otel_providers, get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +48,15 @@ def init_observability() -> None:
     - OTLP and Azure Monitor exporters
 
     Environment variables used:
-    - ENABLE_OTEL: Enable OpenTelemetry (default: false)
+    - ENABLE_INSTRUMENTATION: Enable telemetry (default: false)
     - ENABLE_SENSITIVE_DATA: Log message contents (default: false)
-    - OTLP_ENDPOINT: OTLP collector endpoint
+    - ENABLE_CONSOLE_EXPORTERS: Enable console output (default: false)
+    - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint
     - APPLICATIONINSIGHTS_CONNECTION_STRING: Azure Monitor connection
     - OTEL_SERVICE_NAME: Service name (default: agent_framework)
     """
     try:
-        setup_observability()
+        configure_otel_providers()
         logger.info("Observability initialized successfully")
     except Exception as e:
         logger.warning(f"Failed to initialize observability: {e}")

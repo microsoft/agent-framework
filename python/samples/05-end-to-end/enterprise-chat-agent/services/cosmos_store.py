@@ -1,13 +1,16 @@
 # Copyright (c) Microsoft. All rights reserved.
 """
-Cosmos DB Storage for Threads and Messages
+Cosmos DB Storage for Thread Metadata
 
-This module provides persistent storage for conversation threads and messages
-using Azure Cosmos DB with thread_id as the partition key.
+This module provides persistent storage for conversation thread metadata
+using Azure Cosmos DB. Message storage is handled separately by the
+CosmosHistoryProvider from agent-framework-azure-cosmos package.
 
 Document Types:
 - Thread: {"type": "thread", "id": "thread_xxx", "thread_id": "thread_xxx", ...}
-- Message: {"type": "message", "id": "msg_xxx", "thread_id": "thread_xxx", ...}
+
+Note: Conversation messages are managed by CosmosHistoryProvider which uses
+session_id (thread_id) as the partition key for efficient message retrieval.
 """
 
 import logging
@@ -15,17 +18,17 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from azure.cosmos import CosmosClient, PartitionKey
+from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 
 
 class CosmosConversationStore:
     """
-    Manages conversation threads and messages in Azure Cosmos DB.
+    Manages conversation thread metadata in Azure Cosmos DB.
 
-    Uses a single container with thread_id as partition key.
-    Documents are differentiated by 'type' field: 'thread' or 'message'.
+    Thread metadata includes: user_id, title, status, created_at, updated_at.
+    Message persistence is handled by CosmosHistoryProvider (context provider).
     """
 
     def __init__(
@@ -41,7 +44,7 @@ class CosmosConversationStore:
         Args:
             endpoint: Cosmos DB endpoint URL. Defaults to AZURE_COSMOS_ENDPOINT env var.
             database_name: Database name. Defaults to AZURE_COSMOS_DATABASE_NAME env var.
-            container_name: Container name. Defaults to AZURE_COSMOS_CONTAINER_NAME env var.
+            container_name: Container name for threads. Defaults to AZURE_COSMOS_THREADS_CONTAINER_NAME.
             credential: Azure credential. Defaults to DefaultAzureCredential.
         """
         self.endpoint = endpoint or os.environ.get("AZURE_COSMOS_ENDPOINT")
@@ -49,7 +52,7 @@ class CosmosConversationStore:
             "AZURE_COSMOS_DATABASE_NAME", "chat_db"
         )
         self.container_name = container_name or os.environ.get(
-            "AZURE_COSMOS_CONTAINER_NAME", "messages"
+            "AZURE_COSMOS_THREADS_CONTAINER_NAME", "threads"
         )
 
         if not self.endpoint:
@@ -64,11 +67,19 @@ class CosmosConversationStore:
 
     @property
     def container(self):
-        """Lazy initialization of Cosmos DB container client."""
+        """Lazy initialization of Cosmos DB container client with auto-create."""
         if self._container is None:
             self._client = CosmosClient(self.endpoint, credential=self.credential)
-            database = self._client.get_database_client(self.database_name)
-            self._container = database.get_container_client(self.container_name)
+            # Create database if it doesn't exist
+            database = self._client.create_database_if_not_exists(id=self.database_name)
+            # Create container with thread_id as partition key
+            self._container = database.create_container_if_not_exists(
+                id=self.container_name,
+                partition_key={"paths": ["/thread_id"], "kind": "Hash"},
+            )
+            logging.info(
+                f"Initialized Cosmos container: {self.database_name}/{self.container_name}"
+            )
         return self._container
 
     # -------------------------------------------------------------------------
@@ -134,7 +145,10 @@ class CosmosConversationStore:
 
     async def delete_thread(self, thread_id: str) -> bool:
         """
-        Delete a thread and all its messages.
+        Delete a thread metadata document.
+
+        Note: Messages are stored separately by CosmosHistoryProvider and
+        can be cleared using history_provider.clear(session_id=thread_id).
 
         Args:
             thread_id: Thread identifier.
@@ -142,115 +156,12 @@ class CosmosConversationStore:
         Returns:
             True if deleted, False if not found.
         """
-        # First, get all items in the partition (thread + messages)
-        query = "SELECT c.id FROM c WHERE c.thread_id = @thread_id"
-        items = list(
-            self.container.query_items(
-                query=query,
-                parameters=[{"name": "@thread_id", "value": thread_id}],
-                partition_key=thread_id,
-            )
-        )
-
-        if not items:
+        try:
+            self.container.delete_item(item=thread_id, partition_key=thread_id)
+            logging.info(f"Deleted thread {thread_id} from Cosmos DB")
+            return True
+        except CosmosResourceNotFoundError:
             return False
-
-        # Delete all items in the partition
-        for item in items:
-            self.container.delete_item(item=item["id"], partition_key=thread_id)
-
-        logging.info(f"Deleted thread {thread_id} and {len(items)} items from Cosmos DB")
-        return True
-
-    # -------------------------------------------------------------------------
-    # Message Operations
-    # -------------------------------------------------------------------------
-
-    async def add_message(
-        self,
-        thread_id: str,
-        message_id: str,
-        role: str,
-        content: str,
-        tool_calls: list[dict] | None = None,
-        sources: list[dict] | None = None,
-        metadata: dict | None = None,
-    ) -> dict:
-        """
-        Add a message to a thread and update thread metadata.
-
-        Args:
-            thread_id: Thread identifier (partition key).
-            message_id: Unique message identifier.
-            role: Message role ('user', 'assistant', or 'system').
-            content: Message content.
-            tool_calls: Optional list of tool calls made by the agent.
-            sources: Optional RAG sources (for assistant messages).
-            metadata: Optional custom metadata.
-
-        Returns:
-            The created message document.
-        """
-        message = {
-            "id": message_id,
-            "message_id": message_id,
-            "thread_id": thread_id,  # Partition key
-            "type": "message",
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "tool_calls": tool_calls,
-            "sources": sources,
-            "metadata": metadata or {},
-        }
-
-        self.container.create_item(body=message)
-        logging.info(f"Added {role} message {message_id} to thread {thread_id}")
-
-        # Update thread metadata
-        thread = await self.get_thread(thread_id)
-        if thread:
-            # Truncate content for preview (first 100 chars)
-            preview = content[:100] + "..." if len(content) > 100 else content
-            await self.update_thread(
-                thread_id=thread_id,
-                message_count=thread.get("message_count", 0) + 1,
-                last_message_preview=preview,
-            )
-
-        return message
-
-    async def get_messages(
-        self,
-        thread_id: str,
-        limit: int = 100,
-    ) -> list[dict]:
-        """
-        Get all messages in a thread, ordered by timestamp.
-
-        Args:
-            thread_id: Thread identifier.
-            limit: Maximum number of messages to return.
-
-        Returns:
-            List of message documents.
-        """
-        query = """
-            SELECT * FROM c
-            WHERE c.thread_id = @thread_id AND c.type = 'message'
-            ORDER BY c.timestamp ASC
-        """
-
-        messages = list(
-            self.container.query_items(
-                query=query,
-                parameters=[{"name": "@thread_id", "value": thread_id}],
-                partition_key=thread_id,
-                max_item_count=limit,
-            )
-        )
-
-        return messages
 
     async def update_thread(
         self,
