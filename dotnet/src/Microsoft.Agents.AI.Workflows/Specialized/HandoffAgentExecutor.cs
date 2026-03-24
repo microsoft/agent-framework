@@ -14,13 +14,19 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal sealed class HandoffAgentExecutorOptions
 {
-    public HandoffAgentExecutorOptions(string? handoffInstructions, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
+    public HandoffAgentExecutorOptions(string? handoffInstructions, bool emitAgentResponseEvents, bool? emitAgentResponseUpdateEvents, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
     {
         this.HandoffInstructions = handoffInstructions;
+        this.EmitAgentResponseEvents = emitAgentResponseEvents;
+        this.EmitAgentResponseUpdateEvents = emitAgentResponseUpdateEvents;
         this.ToolCallFilteringBehavior = toolCallFilteringBehavior;
     }
 
     public string? HandoffInstructions { get; set; }
+
+    public bool EmitAgentResponseEvents { get; set; }
+
+    public bool? EmitAgentResponseUpdateEvents { get; set; }
 
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
 }
@@ -252,11 +258,7 @@ internal sealed class HandoffAgentExecutor(
 
         AgentResponse agentResponse = updates.ToAgentResponse();
 
-        // Since there is no good way to configure the agent output behaviour due to how we add it to Handoff orchestration
-        // configurations, treat the emitEvents flag as simply determining whether to stream updates or to emit the whole response
-        // It would make little sense to avoid emitting any agent responses since this is only used in Orchestration workflows,
-        // which are Agent-only, and thus would do nothing.
-        if (message.TurnToken.EmitEvents is not true)
+        if (options.EmitAgentResponseEvents)
         {
             await context.YieldOutputAsync(agentResponse, cancellationToken).ConfigureAwait(false);
         }
@@ -270,7 +272,7 @@ internal sealed class HandoffAgentExecutor(
         async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
         {
             updates.Add(update);
-            if (message.TurnToken.EmitEvents is true)
+            if (message.TurnToken.ShouldEmitStreamingEvents(options.EmitAgentResponseUpdateEvents))
             {
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
             }
