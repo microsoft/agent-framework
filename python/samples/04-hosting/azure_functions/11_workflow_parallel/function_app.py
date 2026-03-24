@@ -47,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
 AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 # Agent names
 SENTIMENT_AGENT_NAME = "SentimentAnalysisAgent"
@@ -336,27 +335,20 @@ class MixedResultCollector(Executor):
 
 
 def _build_client_kwargs() -> dict[str, Any]:
-    """Build Azure OpenAI client kwargs from environment variables."""
-    endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
-    if not endpoint:
+    """Build Foundry chat client kwargs from environment variables."""
+    project_endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
+    if not project_endpoint:
         raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
 
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
+    model = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
+    if not model:
         raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
+    return {
+        "project_endpoint": project_endpoint,
+        "model": model,
+        "credential": AzureCliCredential(),
     }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
 
 
 def _create_workflow() -> Workflow:
