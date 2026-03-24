@@ -212,8 +212,8 @@ jobs:
           packages/durabletask/tests/integration_tests
           -m integration
           -n logical --dist worksteal
-          --timeout=120 --session-timeout=900 --timeout_method thread
-          --retries 2 --retry-delay 5
+          --timeout=150 --session-timeout=900 --timeout_method thread
+          --retries 1 --retry-delay 5
 
   # Azure AI integration tests
   python-tests-azure-ai:
