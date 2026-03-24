@@ -10,12 +10,10 @@
 // which methods should be exposed to the AI agent.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
-using OpenAI.Responses;
 using SampleApp;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -31,28 +29,20 @@ services.AddSingleton<CurrentTimeProvider>();
 services.AddSingleton<AgentPlugin>(); // The plugin depends on WeatherProvider and CurrentTimeProvider registered above.
 
 IServiceProvider serviceProvider = services.BuildServiceProvider();
-List<AITool> pluginTools = serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList();
+
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-PromptAgentDefinition agentDefinition = new(model: deploymentName)
-{
-    Instructions = AssistantInstructions,
-};
 
-foreach (AITool tool in pluginTools)
+// Create a ChatClientAgent with the options-based constructor to pass services.
+AIAgent agent = aiProjectClient.AsAIAgent(new ChatClientAgentOptions
 {
-    agentDefinition.Tools.Add(tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert plugin tool to a ResponseTool."));
-}
-
-// Define the agent with plugin tools.
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(AssistantName, new AgentVersionCreationOptions(agentDefinition));
-AIAgent agent = aiProjectClient.AsAIAgent(agentVersion, pluginTools, services: serviceProvider);
+    Name = AssistantName,
+    ChatOptions = new() { ModelId = deploymentName, Instructions = AssistantInstructions, Tools = serviceProvider.GetRequiredService<AgentPlugin>().AsAITools().ToList() }
+},
+    services: serviceProvider);
 
 // Invoke the agent and output the text result.
 AgentSession session = await agent.CreateSessionAsync();
 Console.WriteLine(await agent.RunAsync("Tell me current time and weather in Seattle.", session));
-
-// Cleanup: deletes the agent and all its versions.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
 
 namespace SampleApp
 {

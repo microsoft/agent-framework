@@ -24,15 +24,18 @@ const string AgentInstructions = """
     When a user shares personal details or preferences, remember them for future conversations.
     """;
 
-const string AgentNameMEAI = "MemorySearchAgent-MEAI";
+const string AgentName = "MemorySearchAgent";
 
 string userScope = $"user_{Environment.MachineName}";
 
 MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-// Create agent using MEAI
-AIAgent agent = await CreateAgentWithMEAI();
+// Create agent using the RAPI path with the MemorySearch tool
+AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+    instructions: AgentInstructions,
+    name: AgentName,
+    tools: [FoundryAITool.FromResponseTool(memorySearchTool)]);
 
 // Ensure the memory store exists and has memories to retrieve.
 await EnsureMemoryStoreAsync();
@@ -67,31 +70,13 @@ try
 }
 finally
 {
-    // Cleanup: Delete the agent and memory store.
+    // Cleanup: Delete the memory store (no server-side agent to clean up in RAPI path).
     Console.WriteLine("\nCleaning up...");
-    await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-    Console.WriteLine("Agent deleted.");
     await aiProjectClient.MemoryStores.DeleteMemoryStoreAsync(memoryStoreName);
     Console.WriteLine("Memory store deleted.");
 }
 
 // Helpers — kept at the bottom so the main agent flow above stays clean.
-
-// Using FoundryAITool wrapping for MemorySearchTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
-{
-    AITool tool = FoundryAITool.FromResponseTool(memorySearchTool);
-    AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
-        AgentNameMEAI,
-        new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert Memory Search tool to a ResponseTool.") }
-            }));
-
-    return aiProjectClient.AsAIAgent(agentVersion);
-}
 
 async Task EnsureMemoryStoreAsync()
 {

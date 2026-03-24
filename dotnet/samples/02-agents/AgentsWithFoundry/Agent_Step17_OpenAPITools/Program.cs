@@ -8,7 +8,6 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
-using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -16,31 +15,15 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-AIAgent agent = await CreateAgentWithMEAI();
+AITool openApiTool = FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition());
+
+AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,
+    instructions: AgentInstructions,
+    name: "OpenAPIToolsAgent",
+    tools: [openApiTool]);
 
 // Run the agent with a question about countries
 Console.WriteLine(await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them."));
-
-// Cleanup by deleting the agent
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
-
-// --- Agent Creation ---
-
-// Using FoundryAITool wrapping for OpenApiTool (MEAI + AgentFramework)
-async Task<AIAgent> CreateAgentWithMEAI()
-{
-    AITool tool = FoundryAITool.CreateOpenApiTool(CreateOpenAPIFunctionDefinition());
-    AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
-        "OpenAPIToolsAgent-MEAI",
-        new AgentVersionCreationOptions(
-            new PromptAgentDefinition(model: deploymentName)
-            {
-                Instructions = AgentInstructions,
-                Tools = { tool.GetService<ResponseTool>() ?? tool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert OpenAPI tool to a ResponseTool.") }
-            }));
-
-    return aiProjectClient.AsAIAgent(agentVersion);
-}
 
 OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
 {
