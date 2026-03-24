@@ -1020,16 +1020,15 @@ class TestFilterToolEvaluators:
         assert "relevance" in result
         assert "tool_call_accuracy" not in result
 
-    def test_falls_back_to_defaults_when_all_filtered(self) -> None:
+    def test_raises_when_all_filtered(self) -> None:
         items = [
             EvalItem(conversation=[Message("user", ["q"]), Message("assistant", ["r"])]),
         ]
-        result = _filter_tool_evaluators(
-            ["tool_call_accuracy", "tool_selection"],
-            items,
-        )
-        # Should fall back to defaults since all evaluators were tool evaluators
-        assert FoundryEvals.RELEVANCE in result
+        with pytest.raises(ValueError, match="require tool definitions"):
+            _filter_tool_evaluators(
+                ["tool_call_accuracy", "tool_selection"],
+                items,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -2083,6 +2082,7 @@ class TestPollEvalRun:
         results = await _poll_eval_run(mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0)
         assert results.status == "failed"
         assert results.error == "Model deployment unavailable"
+        assert results.items == []
 
     async def test_canceled_run_returns_canceled_status(self) -> None:
         """Canceled run returns EvalResults with status='canceled'."""
@@ -2100,6 +2100,7 @@ class TestPollEvalRun:
         results = await _poll_eval_run(mock_client, "eval_1", "run_1", poll_interval=0.01, timeout=5.0)
         assert results.status == "canceled"
         assert results.error is None
+        assert results.items == []
 
 
 # ---------------------------------------------------------------------------
@@ -2140,6 +2141,18 @@ class TestEvaluateTraces:
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
+        mock_output_item = MagicMock()
+        mock_output_item.id = "oi_resp"
+        mock_output_item.status = "pass"
+        mock_output_item.sample = MagicMock(error=None, usage=None, input=[], output=[])
+        mock_result = MagicMock(status="pass", score=4)
+        mock_result.name = "relevance"
+        mock_output_item.results = [mock_result]
+        mock_page = MagicMock()
+        mock_page.__iter__ = MagicMock(return_value=iter([mock_output_item]))
+        mock_page.has_more = False
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+
         results = await evaluate_traces(
             response_ids=["resp_abc", "resp_def"],
             openai_client=mock_client,
@@ -2147,6 +2160,8 @@ class TestEvaluateTraces:
         )
         assert results.status == "completed"
         assert results.eval_id == "eval_tr"
+        assert len(results.items) == 1
+        assert results.items[0].item_id == "oi_resp"
 
         # Verify the response IDs are in the data source
         run_call = mock_client.evals.runs.create.call_args
@@ -2344,3 +2359,105 @@ class TestResolveOpenaiClientAsyncCheck:
 
         with pytest.raises(TypeError, match="sync client"):
             _resolve_openai_client(project_client=mock_project)
+
+
+# ---------------------------------------------------------------------------
+# r5 review: evaluator set consistency (replaces import-time asserts)
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluatorSetConsistency:
+    """Verify that _AGENT_EVALUATORS and _TOOL_EVALUATORS are subsets of _BUILTIN_EVALUATORS."""
+
+    def test_agent_evaluators_subset(self):
+        from agent_framework_azure_ai._foundry_evals import _AGENT_EVALUATORS, _BUILTIN_EVALUATORS
+
+        diff = _AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
+        assert not diff, f"_AGENT_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
+
+    def test_tool_evaluators_subset(self):
+        from agent_framework_azure_ai._foundry_evals import _BUILTIN_EVALUATORS, _TOOL_EVALUATORS
+
+        diff = _TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
+        assert not diff, f"_TOOL_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
+
+
+# ---------------------------------------------------------------------------
+# r5 review: evaluate_traces with agent_id only
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateTracesAgentId:
+    async def test_agent_id_only_path(self) -> None:
+        """evaluate_traces with agent_id only builds azure_ai_traces data source."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_aid"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_aid"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.report_url = None
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        mock_page = MagicMock()
+        mock_page.__iter__ = MagicMock(return_value=iter([]))
+        mock_page.has_more = False
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+
+        results = await evaluate_traces(
+            agent_id="my-agent",
+            openai_client=mock_client,
+            model_deployment="gpt-4o",
+            lookback_hours=24,
+        )
+        assert results.status == "completed"
+
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "azure_ai_traces"
+        assert ds["agent_id"] == "my-agent"
+        assert ds["lookback_hours"] == 24
+        assert "trace_ids" not in ds
+
+
+# ---------------------------------------------------------------------------
+# r5 review: _filter_tool_evaluators raises ValueError
+# ---------------------------------------------------------------------------
+
+
+class TestFilterToolEvaluatorsRaises:
+    def test_all_tool_evaluators_no_tools_raises(self):
+        """All tool evaluators + no items with tools → ValueError."""
+        items = [EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])]
+        with pytest.raises(ValueError, match="require tool definitions"):
+            _filter_tool_evaluators(["builtin.tool_call_accuracy", "builtin.tool_selection"], items)
+
+
+# ---------------------------------------------------------------------------
+# r5 review: evaluate_foundry_target validates target dict
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateFoundryTargetValidation:
+    async def test_target_without_type_raises(self) -> None:
+        """target dict without 'type' key raises ValueError."""
+        from agent_framework_azure_ai._foundry_evals import evaluate_foundry_target
+
+        mock_client = MagicMock()
+        with pytest.raises(ValueError, match="'type' key"):
+            await evaluate_foundry_target(
+                target={"name": "my-agent"},  # missing "type"
+                test_queries=["Hello"],
+                openai_client=mock_client,
+                model_deployment="gpt-4o",
+            )

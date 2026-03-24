@@ -105,18 +105,8 @@ _DEFAULT_TOOL_EVALUATORS: list[str] = [
     "tool_call_accuracy",
 ]
 
-# Catch drift between evaluator sets at import time
-_agent_diff = _AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
-if _agent_diff:
-    raise RuntimeError(
-        f"_AGENT_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: {_agent_diff}"
-    )
-_tool_diff = _TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
-if _tool_diff:
-    raise RuntimeError(
-        f"_TOOL_EVALUATORS contains names not in _BUILTIN_EVALUATORS — update one of the two sets: {_tool_diff}"
-    )
-del _agent_diff, _tool_diff  # clean up module namespace
+# Consistency between evaluator sets is enforced by tests in
+# test_foundry_evals.py — see TestEvaluatorSetConsistency.
 
 
 def _resolve_evaluator(name: str) -> str:
@@ -243,13 +233,11 @@ def _filter_tool_evaluators(
         return evaluators
     filtered = [e for e in evaluators if _resolve_evaluator(e) not in _TOOL_EVALUATORS]
     if not filtered:
-        logger.warning(
-            "All requested evaluators (%s) require tool definitions, but no items have tools. "
-            "Falling back to default evaluators: %s",
-            evaluators,
-            list(_DEFAULT_EVALUATORS),
+        raise ValueError(
+            f"All requested evaluators {evaluators} require tool definitions, "
+            "but no items have tools. Either add tool definitions to your items "
+            "or choose evaluators that do not require tools."
         )
-        return list(_DEFAULT_EVALUATORS)
     if len(filtered) < len(evaluators):
         removed = [e for e in evaluators if _resolve_evaluator(e) in _TOOL_EVALUATORS]
         logger.info("Removed tool evaluators %s (no items have tools)", removed)
@@ -301,7 +289,7 @@ async def _poll_eval_run(
         if remaining <= 0:
             return EvalResults(provider=provider, eval_id=eval_id, run_id=run_id, status="timeout")
         logger.debug("Eval run %s status: %s (%.0fs remaining)", run_id, run.status, remaining)
-        await asyncio.sleep(min(max(poll_interval, 1.0), remaining))
+        await asyncio.sleep(min(max(poll_interval, 1.0), remaining, 60.0))
 
 
 def _extract_result_counts(run: Any) -> dict[str, int] | None:
@@ -436,8 +424,8 @@ async def _fetch_output_items(
                     token_usage=token_usage,
                 )
             )
-    except (AttributeError, KeyError, TypeError) as exc:
-        logger.warning("Could not fetch output_items for run %s: %s", run_id, exc)
+    except (AttributeError, KeyError, TypeError):
+        logger.warning("Could not fetch output_items for run %s", run_id, exc_info=True)
 
     return items
 
@@ -615,9 +603,8 @@ class FoundryEvals:
     ) -> EvalResults:
         """Evaluate items using Foundry evaluators.
 
-        Implements the ``Evaluator`` protocol. Automatically selects the
-        optimal data path (Responses API vs JSONL dataset) and filters
-        tool evaluators for items without tool definitions.
+        Implements the ``Evaluator`` protocol. Automatically resolves default
+        evaluators and filters tool evaluators for items without tool definitions.
 
         Args:
             items: Eval data items from ``AgentEvalConverter.to_eval_item()``.
@@ -859,6 +846,8 @@ async def evaluate_foundry_target(
             model_deployment="gpt-4o",
         )
     """
+    if "type" not in target:
+        raise ValueError("target dict must include a 'type' key (e.g., 'azure_ai_agent').")
     client = _resolve_openai_client(openai_client, project_client)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 

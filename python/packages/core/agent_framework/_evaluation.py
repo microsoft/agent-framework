@@ -197,10 +197,15 @@ class EvalItem:
         When *split* is ``None`` (the default), uses ``self.split_strategy``
         if set, otherwise ``ConversationSplit.LAST_TURN``.
 
-        The returned ``query_messages`` and ``response_messages`` are plain
-        ``{"role": ..., "content": ...}`` dicts.  Provider-specific formats
-        (e.g. Foundry typed-content) should be applied by the provider before
-        API submission.
+        Returns:
+            A flat dict with ``query``, ``response``, ``query_messages`` and
+            ``response_messages``.  **Note**: ``query_messages`` and
+            ``response_messages`` contain only text-role entries; non-text
+            content (tool calls, function results) is omitted.  Providers
+            that need full typed content should call ``split_messages()``
+            and apply their own converter (e.g.
+            ``AgentEvalConverter.convert_messages()``).
+            ``tool_definitions`` is included when ``self.tools`` is set.
         """
         effective_split = split or self.split_strategy or ConversationSplit.LAST_TURN
         query_msgs, response_msgs = self._split_conversation(effective_split)

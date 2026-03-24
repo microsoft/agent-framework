@@ -1022,3 +1022,61 @@ class TestEvaluateAgentQueriesWithoutAgent:
                 queries=["hello"],
                 evaluators=LocalEvaluator(keyword_check("x")),
             )
+
+
+# ---------------------------------------------------------------------------
+# r5 review: all_passed with result_counts=None + sub_results
+# ---------------------------------------------------------------------------
+
+
+class TestAllPassedSubResults:
+    """Tests for EvalResults.all_passed with sub_results."""
+
+    def test_all_passed_ignores_own_counts_when_none(self):
+        """When result_counts is None (aggregate), all_passed delegates to sub_results."""
+        from agent_framework._evaluation import EvalResults
+
+        sub_pass = EvalResults(
+            provider="Local", eval_id="e1", run_id="r1", status="completed",
+            result_counts={"passed": 2, "failed": 0, "errored": 0},
+        )
+        parent = EvalResults(
+            provider="Local", eval_id="e0", run_id="r0", status="completed",
+            result_counts=None,
+            sub_results={"agent1": sub_pass},
+        )
+        assert parent.all_passed is True
+
+    def test_all_passed_parent_fails_when_own_counts_fail(self):
+        """When parent has result_counts with failures, all_passed is False even if sub_results pass."""
+        from agent_framework._evaluation import EvalResults
+
+        sub_pass = EvalResults(
+            provider="Local", eval_id="e1", run_id="r1", status="completed",
+            result_counts={"passed": 2, "failed": 0, "errored": 0},
+        )
+        parent = EvalResults(
+            provider="Local", eval_id="e0", run_id="r0", status="completed",
+            result_counts={"passed": 1, "failed": 1, "errored": 0},
+            sub_results={"agent1": sub_pass},
+        )
+        assert parent.all_passed is False
+
+
+# ---------------------------------------------------------------------------
+# r5 review: _build_overall_item with empty outputs
+# ---------------------------------------------------------------------------
+
+
+class TestBuildOverallItemEmpty:
+    """Test _build_overall_item returns None for empty workflow outputs."""
+
+    def test_returns_none_for_empty_outputs(self):
+        from unittest.mock import MagicMock
+
+        from agent_framework._evaluation import _build_overall_item
+
+        mock_result = MagicMock()
+        mock_result.get_outputs.return_value = []
+        item = _build_overall_item("Hello", mock_result)
+        assert item is None
