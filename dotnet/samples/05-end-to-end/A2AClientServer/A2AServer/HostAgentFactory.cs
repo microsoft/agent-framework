@@ -12,7 +12,7 @@ namespace A2AServer;
 
 internal static class HostAgentFactory
 {
-    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string agentName, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string agentName, string[] agentUrls, IList<AITool>? tools = null)
     {
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
@@ -24,16 +24,16 @@ internal static class HostAgentFactory
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {
-            "INVOICE" => GetInvoiceAgentCard(),
-            "POLICY" => GetPolicyAgentCard(),
-            "LOGISTICS" => GetLogisticsAgentCard(),
+            "INVOICE" => GetInvoiceAgentCard(agentUrls),
+            "POLICY" => GetPolicyAgentCard(agentUrls),
+            "LOGISTICS" => GetLogisticsAgentCard(agentUrls),
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
         return new(agent, agentCard);
     }
 
-    internal static async Task<(AIAgent, AgentCard)> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateChatCompletionHostAgentAsync(string agentType, string model, string apiKey, string name, string instructions, string[] agentUrls, IList<AITool>? tools = null)
     {
         AIAgent agent = new OpenAIClient(apiKey)
              .GetChatClient(model)
@@ -41,9 +41,9 @@ internal static class HostAgentFactory
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {
-            "INVOICE" => GetInvoiceAgentCard(),
-            "POLICY" => GetPolicyAgentCard(),
-            "LOGISTICS" => GetLogisticsAgentCard(),
+            "INVOICE" => GetInvoiceAgentCard(agentUrls),
+            "POLICY" => GetPolicyAgentCard(agentUrls),
+            "LOGISTICS" => GetLogisticsAgentCard(agentUrls),
             _ => throw new ArgumentException($"Unsupported agent type: {agentType}"),
         };
 
@@ -51,7 +51,7 @@ internal static class HostAgentFactory
     }
 
     #region private
-    private static AgentCard GetInvoiceAgentCard()
+    private static AgentCard GetInvoiceAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -80,10 +80,11 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [invoiceQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
     }
 
-    private static AgentCard GetPolicyAgentCard()
+    private static AgentCard GetPolicyAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -112,10 +113,11 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [policyQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
     }
 
-    private static AgentCard GetLogisticsAgentCard()
+    private static AgentCard GetLogisticsAgentCard(string[] agentUrls)
     {
         var capabilities = new AgentCapabilities()
         {
@@ -144,7 +146,18 @@ internal static class HostAgentFactory
             DefaultOutputModes = ["text"],
             Capabilities = capabilities,
             Skills = [logisticsQuery],
+            SupportedInterfaces = CreateAgentInterfaces(agentUrls)
         };
+    }
+
+    private static List<AgentInterface> CreateAgentInterfaces(string[] agentUrls)
+    {
+        return agentUrls.Select(url => new AgentInterface
+        {
+            Url = url,
+            ProtocolBinding = "JSONRPC",
+            ProtocolVersion = "1.0",
+        }).ToList();
     }
     #endregion
 }

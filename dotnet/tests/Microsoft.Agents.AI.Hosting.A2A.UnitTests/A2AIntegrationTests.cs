@@ -16,9 +16,17 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 public sealed class A2AIntegrationTests
 {
     /// <summary>
-    /// Verifies that calling the A2A card endpoint with MapA2A returns an agent card with a URL populated.
+    /// Verifies that calling the A2A well-known agent card endpoint returns the configured agent card.
     /// </summary>
+    /// <remarks>
+    /// Skipped on .NET 8 because the A2A.AspNetCore SDK's MapWellKnownAgentCard uses
+    /// PipeWriter.UnflushedBytes which requires .NET 9+.
+    /// </remarks>
+#if NET9_0_OR_GREATER
     [Fact]
+#else
+    [Fact(Skip = "A2A.AspNetCore MapWellKnownAgentCard requires .NET 9+ (PipeWriter.UnflushedBytes)")]
+#endif
     public async Task MapA2A_WithAgentCard_CardEndpointReturnsCardWithUrlAsync()
     {
         // Arrange
@@ -36,7 +44,11 @@ public sealed class A2AIntegrationTests
         {
             Name = "Test Agent",
             Description = "A test agent for A2A communication",
-            Version = "1.0"
+            Version = "1.0",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://localhost/a2a/test-agent" }
+            ]
         };
 
         // Map A2A with the agent card
@@ -51,10 +63,11 @@ public sealed class A2AIntegrationTests
                 ?? throw new InvalidOperationException("TestServer not found");
             var httpClient = testServer.CreateClient();
 
-            // Act - Query the agent card endpoint
-            var requestUri = new Uri("/a2a/test-agent/v1/card", UriKind.Relative);
+            // Act - Query the well-known agent card endpoint
+            var requestUri = new Uri("/.well-known/agent-card.json", UriKind.Relative);
             var response = await httpClient.GetAsync(requestUri);
 
+            // Assert
             // Assert
             Assert.True(response.IsSuccessStatusCode, $"Expected successful response but got {response.StatusCode}");
 
@@ -69,17 +82,17 @@ public sealed class A2AIntegrationTests
             Assert.True(root.TryGetProperty("description", out var descProperty));
             Assert.Equal("A test agent for A2A communication", descProperty.GetString());
 
-            // Verify the card has a URL property and it's not null/empty
-            Assert.True(root.TryGetProperty("url", out var urlProperty));
-            Assert.NotEqual(JsonValueKind.Null, urlProperty.ValueKind);
+            // Verify the card has a supportedInterfaces property with a URL
+            Assert.True(root.TryGetProperty("supportedInterfaces", out var interfacesProp));
+            Assert.NotEqual(JsonValueKind.Null, interfacesProp.ValueKind);
+            Assert.True(interfacesProp.GetArrayLength() > 0);
 
+            var firstInterface = interfacesProp[0];
+            Assert.True(firstInterface.TryGetProperty("url", out var urlProperty));
             var url = urlProperty.GetString();
             Assert.NotNull(url);
             Assert.NotEmpty(url);
-            Assert.StartsWith("http", url, StringComparison.OrdinalIgnoreCase);
-
-            // agentCard's URL matches the agent endpoint
-            Assert.Equal($"{testServer.BaseAddress.ToString().TrimEnd('/')}/a2a/test-agent", url);
+            Assert.Equal("http://localhost/a2a/test-agent", url);
         }
         finally
         {

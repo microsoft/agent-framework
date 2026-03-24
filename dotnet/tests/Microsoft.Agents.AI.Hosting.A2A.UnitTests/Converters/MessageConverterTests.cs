@@ -10,66 +10,66 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests.Converters;
 public class MessageConverterTests
 {
     [Fact]
-    public void ToChatMessages_MessageSendParams_Null_ReturnsEmptyCollection()
+    public void ToChatMessages_SendMessageRequest_Null_ReturnsEmptyCollection()
     {
-        MessageSendParams? messageSendParams = null;
+        SendMessageRequest? sendMessageRequest = null;
 
-        var result = messageSendParams!.ToChatMessages();
+        var result = sendMessageRequest!.ToChatMessages();
 
         Assert.NotNull(result);
         Assert.Empty(result);
     }
 
     [Fact]
-    public void ToChatMessages_MessageSendParams_WithNullMessage_ReturnsEmptyCollection()
+    public void ToChatMessages_SendMessageRequest_WithNullMessage_ReturnsEmptyCollection()
     {
-        var messageSendParams = new MessageSendParams
+        var sendMessageRequest = new SendMessageRequest
         {
             Message = null!
         };
 
-        var result = messageSendParams.ToChatMessages();
+        var result = sendMessageRequest.ToChatMessages();
 
         Assert.NotNull(result);
         Assert.Empty(result);
     }
 
     [Fact]
-    public void ToChatMessages_MessageSendParams_WithMessageWithoutParts_ReturnsEmptyCollection()
+    public void ToChatMessages_SendMessageRequest_WithMessageWithoutParts_ReturnsEmptyCollection()
     {
-        var messageSendParams = new MessageSendParams
+        var sendMessageRequest = new SendMessageRequest
         {
-            Message = new AgentMessage
+            Message = new Message
             {
                 MessageId = "test-id",
-                Role = MessageRole.User,
+                Role = Role.User,
                 Parts = null!
             }
         };
 
-        var result = messageSendParams.ToChatMessages();
+        var result = sendMessageRequest.ToChatMessages();
 
         Assert.NotNull(result);
         Assert.Empty(result);
     }
 
     [Fact]
-    public void ToChatMessages_MessageSendParams_WithValidTextMessage_ReturnsCorrectChatMessage()
+    public void ToChatMessages_SendMessageRequest_WithValidTextMessage_ReturnsCorrectChatMessage()
     {
-        var messageSendParams = new MessageSendParams
+        var sendMessageRequest = new SendMessageRequest
         {
-            Message = new AgentMessage
+            Message = new Message
             {
                 MessageId = "test-id",
-                Role = MessageRole.User,
+                Role = Role.User,
                 Parts =
                 [
-                    new TextPart { Text = "Hello, world!" }
+                    Part.FromText("Hello, world!")
                 ]
             }
         };
 
-        var result = messageSendParams.ToChatMessages();
+        var result = sendMessageRequest.ToChatMessages();
 
         Assert.NotNull(result);
         Assert.Single(result);

@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI.Hosting.A2A.UnitTests;
 public sealed class AIAgentExtensionsTests
 {
     /// <summary>
-    /// Verifies that when messageSendParams.Metadata is null, the options passed to RunAsync have
+    /// Verifies that when sendMessageRequest.Metadata is null, the options passed to RunAsync have
     /// AllowBackgroundResponses enabled and no AdditionalProperties.
     /// </summary>
     [Fact]
@@ -27,14 +27,14 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
 
         // Act
-        await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] },
             Metadata = null
-        });
+        }, CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedOptions);
@@ -43,25 +43,25 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when messageSendParams.Metadata has values, the options.AdditionalProperties contains the converted values.
+    /// Verifies that when sendMessageRequest.Metadata has values, the options.AdditionalProperties contains the converted values.
     /// </summary>
     [Fact]
     public async Task MapA2A_WhenMetadataHasValues_PassesOptionsWithAdditionalPropertiesToRunAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
 
         // Act
-        await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] },
             Metadata = new Dictionary<string, JsonElement>
             {
                 ["key1"] = JsonSerializer.SerializeToElement("value1"),
                 ["key2"] = JsonSerializer.SerializeToElement(42)
             }
-        });
+        }, CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedOptions);
@@ -72,7 +72,7 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when messageSendParams.Metadata is an empty dictionary, the options passed to RunAsync have
+    /// Verifies that when sendMessageRequest.Metadata is an empty dictionary, the options passed to RunAsync have
     /// AllowBackgroundResponses enabled and no AdditionalProperties.
     /// </summary>
     [Fact]
@@ -80,14 +80,14 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMock(options => capturedOptions = options).Object.MapA2A();
 
         // Act
-        await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] },
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] },
             Metadata = []
-        });
+        }, CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedOptions);
@@ -96,10 +96,10 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when the agent response has AdditionalProperties, the returned AgentMessage.Metadata contains the converted values.
+    /// Verifies that when the agent response has AdditionalProperties, the returned Message.Metadata contains the converted values.
     /// </summary>
     [Fact]
-    public async Task MapA2A_WhenResponseHasAdditionalProperties_ReturnsAgentMessageWithMetadataAsync()
+    public async Task MapA2A_WhenResponseHasAdditionalProperties_ReturnsMessageWithMetadataAsync()
     {
         // Arrange
         AdditionalPropertiesDictionary additionalProps = new()
@@ -111,16 +111,18 @@ public sealed class AIAgentExtensionsTests
         {
             AdditionalProperties = additionalProps
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Message agentMessage = a2aResponse.Message!;
+        Assert.NotNull(agentMessage);
         Assert.NotNull(agentMessage.Metadata);
         Assert.Equal(2, agentMessage.Metadata.Count);
         Assert.True(agentMessage.Metadata.ContainsKey("responseKey1"));
@@ -130,121 +132,128 @@ public sealed class AIAgentExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that when the agent response has null AdditionalProperties, the returned AgentMessage.Metadata is null.
+    /// Verifies that when the agent response has null AdditionalProperties, the returned Message.Metadata is null.
     /// </summary>
     [Fact]
-    public async Task MapA2A_WhenResponseHasNullAdditionalProperties_ReturnsAgentMessageWithNullMetadataAsync()
+    public async Task MapA2A_WhenResponseHasNullAdditionalProperties_ReturnsMessageWithNullMetadataAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
         {
             AdditionalProperties = null
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Message agentMessage = a2aResponse.Message!;
+        Assert.NotNull(agentMessage);
         Assert.Null(agentMessage.Metadata);
     }
 
     /// <summary>
-    /// Verifies that when the agent response has empty AdditionalProperties, the returned AgentMessage.Metadata is null.
+    /// Verifies that when the agent response has empty AdditionalProperties, the returned Message.Metadata is null.
     /// </summary>
     [Fact]
-    public async Task MapA2A_WhenResponseHasEmptyAdditionalProperties_ReturnsAgentMessageWithNullMetadataAsync()
+    public async Task MapA2A_WhenResponseHasEmptyAdditionalProperties_ReturnsMessageWithNullMetadataAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Test response")])
         {
             AdditionalProperties = []
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Message agentMessage = a2aResponse.Message!;
+        Assert.NotNull(agentMessage);
         Assert.Null(agentMessage.Metadata);
     }
 
     /// <summary>
-    /// Verifies that when runMode is Message, the result is always an AgentMessage even when
+    /// Verifies that when runMode is Message, the result is always a Message even when
     /// the agent would otherwise support background responses.
     /// </summary>
     [Fact]
-    public async Task MapA2A_MessageMode_AlwaysReturnsAgentMessageAsync()
+    public async Task MapA2A_MessageMode_AlwaysReturnsMessageAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options)
+        IA2ARequestHandler handler = CreateAgentMock(options => capturedOptions = options)
             .Object.MapA2A(runMode: AgentRunMode.DisallowBackground);
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Assert.NotNull(a2aResponse.Message);
         Assert.NotNull(capturedOptions);
         Assert.False(capturedOptions.AllowBackgroundResponses);
     }
 
     /// <summary>
     /// Verifies that in BackgroundIfSupported mode when the agent completes immediately (no ContinuationToken),
-    /// the result is an AgentMessage because the response type is determined solely by ContinuationToken presence.
+    /// the result is a Message because the response type is determined solely by ContinuationToken presence.
     /// </summary>
     [Fact]
-    public async Task MapA2A_BackgroundIfSupportedMode_WhenNoContinuationToken_ReturnsAgentMessageAsync()
+    public async Task MapA2A_BackgroundIfSupportedMode_WhenNoContinuationToken_ReturnsMessageAsync()
     {
         // Arrange
         AgentRunOptions? capturedOptions = null;
-        ITaskManager taskManager = CreateAgentMock(options => capturedOptions = options)
+        IA2ARequestHandler handler = CreateAgentMock(options => capturedOptions = options)
             .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundIfSupported);
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Assert.NotNull(a2aResponse.Message);
         Assert.NotNull(capturedOptions);
         Assert.True(capturedOptions.AllowBackgroundResponses);
     }
 
     /// <summary>
-    /// Verifies that a custom Dynamic delegate returning false produces an AgentMessage
+    /// Verifies that a custom Dynamic delegate returning false produces a Message
     /// even when the agent completes immediately (no ContinuationToken).
     /// </summary>
     [Fact]
-    public async Task MapA2A_DynamicMode_WithFalseCallback_ReturnsAgentMessageAsync()
+    public async Task MapA2A_DynamicMode_WithFalseCallback_ReturnsMessageAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Quick reply")]);
-        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response)
             .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundWhen((_, _) => ValueTask.FromResult(false)));
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Assert.NotNull(a2aResponse.Message);
     }
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
@@ -260,16 +269,18 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Task, a2aResponse.PayloadCase);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.Equal(TaskState.Working, agentTask.Status.State);
     }
 
@@ -285,19 +296,21 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.NotNull(agentTask.Status.Message);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(agentTask.Status.Message.Parts));
-        Assert.Equal("Starting work...", textPart.Text);
+        Part part = Assert.Single(agentTask.Status.Message.Parts);
+        Assert.Equal(PartContentCase.Text, part.ContentCase);
+        Assert.Equal("Starting work...", part.Text);
     }
 
     /// <summary>
@@ -312,18 +325,20 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
-        Assert.NotNull(agentTask.Metadata);
-        Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
+        AgentTask storedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
+        Assert.NotNull(storedTask.Metadata);
+        Assert.True(storedTask.Metadata.ContainsKey("__a2a__continuationToken"));
     }
 
     /// <summary>
@@ -338,51 +353,55 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
-        AgentMessage originalMessage = new() { MessageId = "user-msg-1", Role = MessageRole.User, Parts = [new TextPart { Text = "Do something" }] };
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
+        Message originalMessage = new() { MessageId = "user-msg-1", Role = Role.User, Parts = [Part.FromText("Do something")] };
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
             Message = originalMessage
-        });
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
-        Assert.NotNull(agentTask.History);
-        Assert.Contains(agentTask.History, m => m.MessageId == "user-msg-1" && m.Role == MessageRole.User);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
+        AgentTask storedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
+        Assert.NotNull(storedTask.History);
+        Assert.Contains(storedTask.History, m => m.MessageId == "user-msg-1" && m.Role == Role.User);
     }
 
     /// <summary>
     /// Verifies that in BackgroundIfSupported mode when the agent completes immediately (no ContinuationToken),
-    /// the returned AgentMessage preserves the original context ID.
+    /// the returned Message preserves the original context ID.
     /// </summary>
     [Fact]
-    public async Task MapA2A_BackgroundIfSupportedMode_WhenNoContinuationToken_ReturnsAgentMessageWithContextIdAsync()
+    public async Task MapA2A_BackgroundIfSupportedMode_WhenNoContinuationToken_ReturnsMessageWithContextIdAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
-        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response)
             .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundIfSupported);
-        AgentMessage originalMessage = new() { MessageId = "user-msg-2", ContextId = "ctx-123", Role = MessageRole.User, Parts = [new TextPart { Text = "Quick task" }] };
+        Message originalMessage = new() { MessageId = "user-msg-2", ContextId = "ctx-123", Role = Role.User, Parts = [Part.FromText("Quick task")] };
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
             Message = originalMessage
-        });
+        }, CancellationToken.None);
 
         // Assert
-        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Message agentMessage = a2aResponse.Message!;
+        Assert.NotNull(agentMessage);
         Assert.Equal("ctx-123", agentMessage.ContextId);
     }
 
     /// <summary>
-    /// Verifies that when OnTaskUpdated is invoked on a task with a pending continuation token
+    /// Verifies that when a continuation is triggered on a task with a pending continuation token
     /// and the agent returns a completed response (null ContinuationToken), the task is updated to Completed.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_WhenBackgroundOperationCompletes_TaskIsCompletedAsync()
+    public async Task MapA2A_OnContinuation_WhenBackgroundOperationCompletes_TaskIsCompletedAsync()
     {
         // Arrange
         int callCount = 0;
@@ -392,38 +411,40 @@ public sealed class AIAgentExtensionsTests
             {
                 ContinuationToken = CreateTestContinuationToken()
             },
-            // Second call (via OnTaskUpdated): return completed response
+            // Second call (via continuation): return completed response
             new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done!")]),
             ref callCount);
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
-        // Act — trigger OnMessageReceived to create the task
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        // Act — send initial message to create the task
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.Equal(TaskState.Working, agentTask.Status.State);
 
-        // Act — invoke OnTaskUpdated to check on the background operation
-        await InvokeOnTaskUpdatedAsync(taskManager, agentTask);
+        // Act — send continuation message to check on the background operation
+        await SendTaskContinuationAsync(handler, agentTask);
 
         // Assert — task should now be completed
-        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        AgentTask updatedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(updatedTask);
         Assert.Equal(TaskState.Completed, updatedTask.Status.State);
         Assert.NotNull(updatedTask.Artifacts);
         Artifact artifact = Assert.Single(updatedTask.Artifacts);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
-        Assert.Equal("Done!", textPart.Text);
+        Part part = Assert.Single(artifact.Parts);
+        Assert.Equal(PartContentCase.Text, part.ContentCase);
+        Assert.Equal("Done!", part.Text);
     }
 
     /// <summary>
-    /// Verifies that when OnTaskUpdated is invoked on a task with a pending continuation token
+    /// Verifies that when a continuation is triggered on a task with a pending continuation token
     /// and the agent returns another ContinuationToken, the task stays in Working state.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_WhenBackgroundOperationStillWorking_TaskRemainsWorkingAsync()
+    public async Task MapA2A_OnContinuation_WhenBackgroundOperationStillWorking_TaskRemainsWorkingAsync()
     {
         // Arrange
         int callCount = 0;
@@ -433,26 +454,27 @@ public sealed class AIAgentExtensionsTests
             {
                 ContinuationToken = CreateTestContinuationToken()
             },
-            // Second call (via OnTaskUpdated): still working, return another token
+            // Second call (via continuation): still working, return another token
             new AgentResponse([new ChatMessage(ChatRole.Assistant, "Still working...")])
             {
                 ContinuationToken = CreateTestContinuationToken()
             },
             ref callCount);
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
-        // Act — trigger OnMessageReceived to create the task
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        // Act — send initial message to create the task
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
 
-        // Act — invoke OnTaskUpdated; agent still working
-        await InvokeOnTaskUpdatedAsync(taskManager, agentTask);
+        // Act — send continuation; agent still working
+        await SendTaskContinuationAsync(handler, agentTask);
 
         // Assert — task should still be in Working state
-        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        AgentTask updatedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(updatedTask);
         Assert.Equal(TaskState.Working, updatedTask.Status.State);
     }
@@ -462,7 +484,7 @@ public sealed class AIAgentExtensionsTests
     /// second poll returns completed.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_MultiplePolls_EventuallyCompletesAsync()
+    public async Task MapA2A_OnContinuation_MultiplePolls_EventuallyCompletesAsync()
     {
         // Arrange
         int callCount = 0;
@@ -484,35 +506,35 @@ public sealed class AIAgentExtensionsTests
                 _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "All done!")])
             };
         });
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
         // Act — create the task
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Do work" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Do work")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.Equal(TaskState.Working, agentTask.Status.State);
 
         // Act — first poll: still working
-        AgentTask? currentTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
-        Assert.NotNull(currentTask);
-        await InvokeOnTaskUpdatedAsync(taskManager, currentTask);
-        currentTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        await SendTaskContinuationAsync(handler, agentTask);
+        AgentTask currentTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(currentTask);
         Assert.Equal(TaskState.Working, currentTask.Status.State);
 
         // Act — second poll: completed
-        await InvokeOnTaskUpdatedAsync(taskManager, currentTask);
-        currentTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        await SendTaskContinuationAsync(handler, agentTask);
+        currentTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(currentTask);
         Assert.Equal(TaskState.Completed, currentTask.Status.State);
 
         // Assert — final output as artifact
         Assert.NotNull(currentTask.Artifacts);
         Artifact artifact = Assert.Single(currentTask.Artifacts);
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
-        Assert.Equal("All done!", textPart.Text);
+        Part part = Assert.Single(artifact.Parts);
+        Assert.Equal(PartContentCase.Text, part.ContentCase);
+        Assert.Equal("All done!", part.Text);
     }
 
     /// <summary>
@@ -520,7 +542,7 @@ public sealed class AIAgentExtensionsTests
     /// the task is updated to Failed state.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_WhenAgentThrows_TaskIsFailedAsync()
+    public async Task MapA2A_OnContinuation_WhenAgentThrows_TaskIsFailedAsync()
     {
         // Arrange
         int callCount = 0;
@@ -536,20 +558,21 @@ public sealed class AIAgentExtensionsTests
 
             throw new InvalidOperationException("Agent failed");
         });
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
         // Act — create the task
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
 
         // Act — poll the task; agent throws
-        await Assert.ThrowsAsync<InvalidOperationException>(() => InvokeOnTaskUpdatedAsync(taskManager, agentTask));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => SendTaskContinuationAsync(handler, agentTask));
 
         // Assert — task should be Failed
-        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        AgentTask updatedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(updatedTask);
         Assert.Equal(TaskState.Failed, updatedTask.Status.State);
     }
@@ -565,20 +588,23 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response)
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response)
             .Object.MapA2A(runMode: AgentRunMode.AllowBackgroundIfSupported);
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Task, a2aResponse.PayloadCase);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.Equal(TaskState.Working, agentTask.Status.State);
-        Assert.NotNull(agentTask.Metadata);
-        Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+        AgentTask storedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
+        Assert.NotNull(storedTask.Metadata);
+        Assert.True(storedTask.Metadata.ContainsKey("__a2a__continuationToken"));
     }
 
     /// <summary>
@@ -593,26 +619,28 @@ public sealed class AIAgentExtensionsTests
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
 
         // Assert
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Task, a2aResponse.PayloadCase);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
         Assert.Equal(TaskState.Working, agentTask.Status.State);
         Assert.Null(agentTask.Status.Message);
     }
 
     /// <summary>
-    /// Verifies that when OnTaskUpdated is invoked on a completed task with a follow-up message
-    /// and no continuation token in metadata, the task processes history and completes with a new artifact.
+    /// Verifies that when a continuation completes a task, the task transitions to Completed state
+    /// with an artifact, and sending a follow-up to the terminal task is rejected by A2AServer.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_WhenNoContinuationToken_ProcessesHistoryAndCompletesAsync()
+    public async Task MapA2A_OnContinuation_WhenCompleted_FollowUpToTerminalTaskThrowsAsync()
     {
         // Arrange
         int callCount = 0;
@@ -625,71 +653,64 @@ public sealed class AIAgentExtensionsTests
                 {
                     ContinuationToken = CreateTestContinuationToken()
                 },
-                // Second call (via OnTaskUpdated): complete the background operation
-                2 => new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done!")]),
-                // Third call (follow-up via OnTaskUpdated): complete follow-up
-                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "Follow-up done!")])
+                // Second call (via continuation): complete the background operation
+                _ => new AgentResponse([new ChatMessage(ChatRole.Assistant, "Done!")])
             };
         });
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
         // Act — create a working task (with continuation token)
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
 
-        // Act — first OnTaskUpdated: completes the background operation
-        await InvokeOnTaskUpdatedAsync(taskManager, agentTask);
-        agentTask = (await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None))!;
-        Assert.Equal(TaskState.Completed, agentTask.Status.State);
+        // Act — first continuation: completes the background operation
+        await SendTaskContinuationAsync(handler, agentTask);
+        AgentTask storedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
+        Assert.Equal(TaskState.Completed, storedTask.Status.State);
+        Assert.NotNull(storedTask.Artifacts);
+        Artifact artifact = Assert.Single(storedTask.Artifacts);
+        Part part = Assert.Single(artifact.Parts);
+        Assert.Equal(PartContentCase.Text, part.ContentCase);
+        Assert.Equal("Done!", part.Text);
 
-        // Simulate a follow-up message by adding it to history and re-submitting via OnTaskUpdated
-        agentTask.History ??= [];
-        agentTask.History.Add(new AgentMessage { MessageId = "follow-up", Role = MessageRole.User, Parts = [new TextPart { Text = "Follow up" }] });
-
-        // Act — invoke OnTaskUpdated without a continuation token in metadata
-        await InvokeOnTaskUpdatedAsync(taskManager, agentTask);
-
-        // Assert
-        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
-        Assert.NotNull(updatedTask);
-        Assert.Equal(TaskState.Completed, updatedTask.Status.State);
-        Assert.NotNull(updatedTask.Artifacts);
-        Assert.Equal(2, updatedTask.Artifacts.Count);
-        Artifact artifact = updatedTask.Artifacts[1];
-        TextPart textPart = Assert.IsType<TextPart>(Assert.Single(artifact.Parts));
-        Assert.Equal("Follow-up done!", textPart.Text);
+        // Assert — follow-up to a terminal (Completed) task is rejected
+        A2AException ex = await Assert.ThrowsAsync<A2AException>(() => SendTaskContinuationAsync(handler, agentTask, "Follow up"));
+        Assert.Contains("terminal state", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// Verifies that when a task is cancelled, the continuation token is removed from metadata.
+    /// Verifies that when a task is cancelled via CancelTaskAsync, the A2AServer
+    /// invokes the handler's CancelAsync and returns the task from the store.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskCancelled_RemovesContinuationTokenFromMetadataAsync()
+    public async Task MapA2A_OnTaskCancelled_CancelTaskAsyncReturnsTaskAsync()
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Starting...")])
         {
             ContinuationToken = CreateTestContinuationToken()
         };
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act — create a working task with a continuation token
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
-        Assert.NotNull(agentTask.Metadata);
-        Assert.True(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
+        Assert.Equal(TaskState.Working, agentTask.Status.State);
 
         // Act — cancel the task
-        await taskManager.CancelTaskAsync(new TaskIdParams { Id = agentTask.Id }, CancellationToken.None);
+        AgentTask cancelledTask = await handler.CancelTaskAsync(new CancelTaskRequest { Id = agentTask.Id }, CancellationToken.None);
 
-        // Assert — continuation token should be removed from metadata
-        Assert.False(agentTask.Metadata.ContainsKey("__a2a__continuationToken"));
+        // Assert — CancelTaskAsync returns the task from the store
+        Assert.NotNull(cancelledTask);
+        Assert.Equal(agentTask.Id, cancelledTask.Id);
     }
 
     /// <summary>
@@ -697,7 +718,7 @@ public sealed class AIAgentExtensionsTests
     /// it is re-thrown without marking the task as Failed.
     /// </summary>
     [Fact]
-    public async Task MapA2A_OnTaskUpdated_WhenOperationCancelled_DoesNotMarkFailedAsync()
+    public async Task MapA2A_OnContinuation_WhenOperationCancelled_DoesNotMarkFailedAsync()
     {
         // Arrange
         int callCount = 0;
@@ -713,20 +734,21 @@ public sealed class AIAgentExtensionsTests
 
             throw new OperationCanceledException("Cancelled");
         });
-        ITaskManager taskManager = agentMock.Object.MapA2A();
+        IA2ARequestHandler handler = agentMock.Object.MapA2A();
 
         // Act — create the task
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage { MessageId = "test-id", Role = MessageRole.User, Parts = [new TextPart { Text = "Hello" }] }
-        });
-        AgentTask agentTask = Assert.IsType<AgentTask>(a2aResponse);
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [Part.FromText("Hello")] }
+        }, CancellationToken.None);
+        AgentTask agentTask = a2aResponse.Task!;
+        Assert.NotNull(agentTask);
 
         // Act — poll the task; agent throws OperationCanceledException
-        await Assert.ThrowsAsync<OperationCanceledException>(() => InvokeOnTaskUpdatedAsync(taskManager, agentTask));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => SendTaskContinuationAsync(handler, agentTask));
 
         // Assert — task should still be Working, not Failed
-        AgentTask? updatedTask = await taskManager.GetTaskAsync(new TaskQueryParams { Id = agentTask.Id }, CancellationToken.None);
+        AgentTask updatedTask = (await handler.GetTaskAsync(new GetTaskRequest { Id = agentTask.Id }, CancellationToken.None))!;
         Assert.NotNull(updatedTask);
         Assert.Equal(TaskState.Working, updatedTask.Status.State);
     }
@@ -740,22 +762,24 @@ public sealed class AIAgentExtensionsTests
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
-        ITaskManager taskManager = CreateAgentMockWithResponse(response).Object.MapA2A();
+        IA2ARequestHandler handler = CreateAgentMockWithResponse(response).Object.MapA2A();
 
         // Act
-        A2AResponse a2aResponse = await InvokeOnMessageReceivedAsync(taskManager, new MessageSendParams
+        SendMessageResponse a2aResponse = await handler.SendMessageAsync(new SendMessageRequest
         {
-            Message = new AgentMessage
+            Message = new Message
             {
                 MessageId = "test-id",
                 ContextId = "my-context-123",
-                Role = MessageRole.User,
-                Parts = [new TextPart { Text = "Hello" }]
+                Role = Role.User,
+                Parts = [Part.FromText("Hello")]
             }
-        });
+        }, CancellationToken.None);
 
         // Assert
-        AgentMessage agentMessage = Assert.IsType<AgentMessage>(a2aResponse);
+        Assert.Equal(SendMessageResponseCase.Message, a2aResponse.PayloadCase);
+        Message agentMessage = a2aResponse.Message!;
+        Assert.NotNull(agentMessage);
         Assert.Equal("my-context-123", agentMessage.ContextId);
     }
 
@@ -803,18 +827,28 @@ public sealed class AIAgentExtensionsTests
         return agentMock;
     }
 
-    private static async Task<A2AResponse> InvokeOnMessageReceivedAsync(ITaskManager taskManager, MessageSendParams messageSendParams)
+    /// <summary>
+    /// Sends a continuation message for an existing task using the streaming API.
+    /// The streaming path is required because HandleTaskUpdateAsync produces only
+    /// TaskStatusUpdateEvent and TaskArtifactUpdateEvent events, which are not
+    /// recognized by A2AServer.MaterializeResponseAsync (used by SendMessageAsync).
+    /// </summary>
+    private static async Task SendTaskContinuationAsync(IA2ARequestHandler handler, AgentTask agentTask, string text = "continue")
     {
-        Func<MessageSendParams, CancellationToken, Task<A2AResponse>>? handler = taskManager.OnMessageReceived;
-        Assert.NotNull(handler);
-        return await handler.Invoke(messageSendParams, CancellationToken.None);
-    }
-
-    private static async Task InvokeOnTaskUpdatedAsync(ITaskManager taskManager, AgentTask agentTask)
-    {
-        Func<AgentTask, CancellationToken, Task>? handler = taskManager.OnTaskUpdated;
-        Assert.NotNull(handler);
-        await handler.Invoke(agentTask, CancellationToken.None);
+        await foreach (StreamResponse _ in handler.SendStreamingMessageAsync(new SendMessageRequest
+        {
+            Message = new Message
+            {
+                MessageId = Guid.NewGuid().ToString("N"),
+                ContextId = agentTask.ContextId,
+                TaskId = agentTask.Id,
+                Role = Role.User,
+                Parts = [Part.FromText(text)]
+            }
+        }, CancellationToken.None))
+        {
+            // Consume all events to ensure they are applied to the task store.
+        }
     }
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.

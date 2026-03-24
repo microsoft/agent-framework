@@ -29,13 +29,13 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
 
     /// <summary>
     /// Dissallows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>false</c>.
-    /// In the A2A protocol terminology will make responses be returned as <c>AgentMessage</c>.
+    /// In the A2A protocol terminology will make responses be returned as a <c>Message</c>.
     /// </summary>
     public static AgentRunMode DisallowBackground => new(MessageValue);
 
     /// <summary>
     /// Allows the background responses from the agent. Is equivalent to configuring <see cref="AgentRunOptions.AllowBackgroundResponses"/> as <c>true</c>.
-    /// In the A2A protocol terminology will make responses be returned as <c>AgentTask</c> if the agent supports background responses, and as <c>AgentMessage</c> otherwise.
+    /// In the A2A protocol terminology will make responses be returned as <c>AgentTask</c> if the agent supports background responses, and as a <c>Message</c> otherwise.
     /// </summary>
     public static AgentRunMode AllowBackgroundIfSupported => new(TaskValue);
 
@@ -44,9 +44,9 @@ public sealed class AgentRunMode : IEquatable<AgentRunMode>
     /// The delegate receives an <see cref="A2ARunDecisionContext"/> with the incoming
     /// message and returns a boolean specifying whether to run the agent in background mode.
     /// <see langword="true"/> indicates that the agent should run in background mode and return an
-    /// <c>AgentTask</c> if the agent supports background mode; otherwise, it returns an <c>AgentMessage</c>
+    /// <c>AgentTask</c> if the agent supports background mode; otherwise, it returns a <c>Message</c>
     /// if the mode is not supported. <see langword="false"/> indicates that the agent should run in
-    /// non-background mode and return an <c>AgentMessage</c>.
+    /// non-background mode and return a <c>Message</c>.
     /// </summary>
     /// <param name="runInBackground">
     /// An async delegate that decides whether the response should be wrapped in an <c>AgentTask</c>.

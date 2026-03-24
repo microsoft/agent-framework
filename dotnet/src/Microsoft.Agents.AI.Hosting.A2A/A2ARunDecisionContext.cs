@@ -9,13 +9,13 @@ namespace Microsoft.Agents.AI.Hosting.A2A;
 /// </summary>
 public sealed class A2ARunDecisionContext
 {
-    internal A2ARunDecisionContext(MessageSendParams messageSendParams)
+    internal A2ARunDecisionContext(SendMessageRequest sendMessageRequest)
     {
-        this.MessageSendParams = messageSendParams;
+        this.SendMessageRequest = sendMessageRequest;
     }
 
     /// <summary>
-    /// Gets the parameters of the incoming A2A message that triggered this run.
+    /// Gets the <see cref="SendMessageRequest"/> that triggered this run.
     /// </summary>
-    public MessageSendParams MessageSendParams { get; }
+    public SendMessageRequest SendMessageRequest { get; }
 }

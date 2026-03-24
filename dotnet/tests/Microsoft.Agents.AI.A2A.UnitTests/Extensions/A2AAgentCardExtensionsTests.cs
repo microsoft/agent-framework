@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -26,7 +27,7 @@ public sealed class A2AAgentCardExtensionsTests
         {
             Name = "Test Agent",
             Description = "A test agent for unit testing",
-            Url = "http://test-endpoint/agent"
+            SupportedInterfaces = [new AgentInterface { Url = "http://test-endpoint/agent" }]
         };
     }
 
@@ -50,10 +51,10 @@ public sealed class A2AAgentCardExtensionsTests
         using var handler = new HttpMessageHandlerStub();
         using var httpClient = new HttpClient(handler, false);
 
-        handler.ResponsesToReturn.Enqueue(new AgentMessage
+        handler.ResponsesToReturn.Enqueue(new Message
         {
-            Role = MessageRole.Agent,
-            Parts = [new TextPart { Text = "Response" }],
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
         });
 
         var agent = this._agentCard.AsAIAgent(httpClient);
@@ -64,6 +65,42 @@ public sealed class A2AAgentCardExtensionsTests
         // Assert
         Assert.Single(handler.CapturedUris);
         Assert.Equal(new Uri("http://test-endpoint/agent"), handler.CapturedUris[0]);
+    }
+
+    [Fact]
+    public async Task AsAIAgent_WithInterfaceSelector_UsesSelectedInterfaceAsync()
+    {
+        // Arrange
+        var card = new AgentCard
+        {
+            Name = "Multi-Interface Agent",
+            Description = "An agent with multiple interfaces",
+            SupportedInterfaces =
+            [
+                new AgentInterface { Url = "http://first/agent" },
+                new AgentInterface { Url = "http://second/agent", ProtocolBinding = "grpc" },
+                new AgentInterface { Url = "http://third/agent", ProtocolBinding = "http" },
+            ]
+        };
+
+        using var handler = new HttpMessageHandlerStub();
+        using var httpClient = new HttpClient(handler, false);
+
+        handler.ResponsesToReturn.Enqueue(new Message
+        {
+            Role = Role.Agent,
+            Parts = [Part.FromText("Response")],
+        });
+
+        var agent = card.AsAIAgent(httpClient, interfaceSelector: interfaces =>
+            interfaces.First(i => i.ProtocolBinding == "http"));
+
+        // Act
+        await agent.RunAsync("Test input");
+
+        // Assert
+        Assert.Single(handler.CapturedUris);
+        Assert.Equal(new Uri("http://third/agent"), handler.CapturedUris[0]);
     }
 
     internal sealed class HttpMessageHandlerStub : HttpMessageHandler
@@ -86,13 +123,18 @@ public sealed class A2AAgentCardExtensionsTests
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
                 };
             }
-            else if (response is AgentMessage message)
+            else if (response is Message message)
             {
-                var jsonRpcResponse = JsonRpcResponse.CreateJsonRpcResponse<A2AEvent>("response-id", message);
+                var sendMessageResponse = new SendMessageResponse { Message = message };
+                var jsonRpcResponse = new JsonRpcResponse
+                {
+                    Id = "response-id",
+                    Result = JsonSerializer.SerializeToNode(sendMessageResponse, A2AJsonUtilities.DefaultOptions)
+                };
 
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse), Encoding.UTF8, "application/json")
+                    Content = new StringContent(JsonSerializer.Serialize(jsonRpcResponse, A2AJsonUtilities.DefaultOptions), Encoding.UTF8, "application/json")
                 };
             }
 

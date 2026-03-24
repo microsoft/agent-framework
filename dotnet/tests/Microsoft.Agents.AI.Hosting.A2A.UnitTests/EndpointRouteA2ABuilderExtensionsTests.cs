@@ -57,7 +57,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder correctly maps the agent with default task manager configuration.
+    /// Verifies that MapA2A with IHostedAgentBuilder correctly maps the agent with default configuration.
     /// </summary>
     [Fact]
     public void MapA2A_WithAgentBuilder_DefaultConfiguration_Succeeds()
@@ -72,26 +72,6 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
 
         // Act & Assert - Should not throw
         var result = app.MapA2A(agentBuilder, "/a2a");
-        Assert.NotNull(result);
-        Assert.NotNull(app);
-    }
-
-    /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder and custom task manager configuration succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentBuilder_CustomTaskManagerConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", taskManager => { });
         Assert.NotNull(result);
         Assert.NotNull(app);
     }
@@ -123,10 +103,10 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with IHostedAgentBuilder, agent card, and custom task manager configuration succeeds.
+    /// Verifies that MapA2A with IHostedAgentBuilder, agent card, and custom run mode succeeds.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentBuilder_WithAgentCardAndCustomConfiguration_Succeeds()
+    public void MapA2A_WithAgentBuilder_WithAgentCardAndRunMode_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -143,7 +123,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         };
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agentBuilder, "/a2a", agentCard, taskManager => { });
+        var result = app.MapA2A(agentBuilder, "/a2a", agentCard, AgentRunMode.AllowBackgroundIfSupported);
         Assert.NotNull(result);
         Assert.NotNull(app);
     }
@@ -185,26 +165,6 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with string agent name and custom task manager configuration succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentName_CustomTaskManagerConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", taskManager => { });
-        Assert.NotNull(result);
-        Assert.NotNull(app);
-    }
-
-    /// <summary>
     /// Verifies that MapA2A with string agent name and agent card succeeds.
     /// </summary>
     [Fact]
@@ -231,10 +191,10 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with string agent name, agent card, and custom task manager configuration succeeds.
+    /// Verifies that MapA2A with string agent name, agent card, and custom run mode succeeds.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAgentName_WithAgentCardAndCustomConfiguration_Succeeds()
+    public void MapA2A_WithAgentName_WithAgentCardAndRunMode_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -251,7 +211,7 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         };
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A("agent", "/a2a", agentCard, taskManager => { });
+        var result = app.MapA2A("agent", "/a2a", agentCard, AgentRunMode.DisallowBackground);
         Assert.NotNull(result);
         Assert.NotNull(app);
     }
@@ -294,27 +254,6 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with AIAgent and custom task manager configuration succeeds.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAIAgent_CustomTaskManagerConfiguration_Succeeds()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-        AIAgent agent = app.Services.GetRequiredKeyedService<AIAgent>("agent");
-
-        // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", taskManager => { });
-        Assert.NotNull(result);
-        Assert.NotNull(app);
-    }
-
-    /// <summary>
     /// Verifies that MapA2A with AIAgent and agent card succeeds.
     /// </summary>
     [Fact]
@@ -342,10 +281,10 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
     }
 
     /// <summary>
-    /// Verifies that MapA2A with AIAgent, agent card, and custom task manager configuration succeeds.
+    /// Verifies that MapA2A with AIAgent, agent card, and custom run mode succeeds.
     /// </summary>
     [Fact]
-    public void MapA2A_WithAIAgent_WithAgentCardAndCustomConfiguration_Succeeds()
+    public void MapA2A_WithAIAgent_WithAgentCardAndRunMode_Succeeds()
     {
         // Arrange
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -363,26 +302,24 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         };
 
         // Act & Assert - Should not throw
-        var result = app.MapA2A(agent, "/a2a", agentCard, taskManager => { });
+        var result = app.MapA2A(agent, "/a2a", agentCard, AgentRunMode.AllowBackgroundIfSupported);
         Assert.NotNull(result);
         Assert.NotNull(app);
     }
 
     /// <summary>
-    /// Verifies that MapA2A throws ArgumentNullException for null endpoints when using ITaskManager.
+    /// Verifies that MapA2A with IA2ARequestHandler correctly maps the handler.
     /// </summary>
     [Fact]
-    public void MapA2A_WithTaskManager_NullEndpoints_ThrowsArgumentNullException()
+    public void MapA2A_WithHandler_NullEndpoints_ThrowsArgumentNullException()
     {
         // Arrange
         AspNetCore.Routing.IEndpointRouteBuilder endpoints = null!;
-        ITaskManager taskManager = null!;
+        IA2ARequestHandler handler = null!;
 
         // Act & Assert
-        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
-            endpoints.MapA2A(taskManager, "/a2a"));
-
-        Assert.Equal("endpoints", exception.ParamName);
+        Assert.Throws<ArgumentNullException>(() =>
+            endpoints.MapA2A(handler, "/a2a"));
     }
 
     /// <summary>
@@ -423,33 +360,6 @@ public sealed class EndpointRouteA2ABuilderExtensionsTests
         // Act & Assert - Should not throw
         app.MapA2A(agentBuilder, "/custom/a2a/path");
         Assert.NotNull(app);
-    }
-
-    /// <summary>
-    /// Verifies that task manager configuration callback is invoked correctly.
-    /// </summary>
-    [Fact]
-    public void MapA2A_WithAgentBuilder_TaskManagerConfigurationCallbackInvoked()
-    {
-        // Arrange
-        WebApplicationBuilder builder = WebApplication.CreateBuilder();
-        IChatClient mockChatClient = new DummyChatClient();
-        builder.Services.AddKeyedSingleton("chat-client", mockChatClient);
-        IHostedAgentBuilder agentBuilder = builder.AddAIAgent("agent", "Instructions", chatClientServiceKey: "chat-client");
-        builder.Services.AddLogging();
-        using WebApplication app = builder.Build();
-
-        bool configureCallbackInvoked = false;
-
-        // Act
-        app.MapA2A(agentBuilder, "/a2a", taskManager =>
-        {
-            configureCallbackInvoked = true;
-            Assert.NotNull(taskManager);
-        });
-
-        // Assert
-        Assert.True(configureCallbackInvoked);
     }
 
     /// <summary>
