@@ -677,26 +677,33 @@ async def test_function_invocation_scenarios(
     else:  # num_functions == 2
         # Two functions with mixed approval
         if not streaming:
-            # Mixed: assistant message has both calls + approval requests (4 items total)
-            # (because when one requires approval, all are batched for approval)
+            # Mixed: only the approval-required tool gets an approval request;
+            # the never_require tool executes immediately and produces a result.
             assert len(messages) == 1
-            # Should have: 2 FunctionCallContent + 2 FunctionApprovalRequestContent
+            # Should have: 2 FunctionCallContent + 1 FunctionApprovalRequest + 1 FunctionResult
             assert len(messages[0].contents) == 4
             assert messages[0].contents[0].type == "function_call"
             assert messages[0].contents[1].type == "function_call"
-            # Both should result in approval requests
             approval_requests = [c for c in messages[0].contents if c.type == "function_approval_request"]
-            assert len(approval_requests) == 2
-            assert exec_counter == 0  # Neither function executed yet
+            assert len(approval_requests) == 1
+            assert approval_requests[0].function_call.name == "approval_func"
+            function_results = [c for c in messages[0].contents if c.type == "function_result"]
+            assert len(function_results) == 1
+            assert function_results[0].result == "Processed value1"
+            assert exec_counter == 1  # Only the no-approval function executed
         else:
-            # Streaming: 2 function call updates + 1 approval request with 2 contents
+            # Streaming: 2 function call updates + 1 update with approval request + function result
             assert len(messages) == 3
             assert messages[0].contents[0].type == "function_call"
             assert messages[1].contents[0].type == "function_call"
-            # The approval request message contains both approval requests
-            assert len(messages[2].contents) == 2
-            assert all(c.type == "function_approval_request" for c in messages[2].contents)
-            assert exec_counter == 0  # Neither function executed yet
+            # The result message contains the approval request and function result
+            approval_requests = [c for c in messages[2].contents if c.type == "function_approval_request"]
+            function_results_list = [c for c in messages[2].contents if c.type == "function_result"]
+            assert len(approval_requests) == 1
+            assert approval_requests[0].function_call.name == "approval_func"
+            assert len(function_results_list) == 1
+            assert function_results_list[0].result == "Processed value1"
+            assert exec_counter == 1  # Only the no-approval function executed
 
 
 async def test_rejected_approval(chat_client_base: SupportsChatGetResponse):

@@ -1547,8 +1547,7 @@ async def _try_execute_function_calls(
     declaration_only = [tool_name for tool_name, tool in tool_map.items() if tool.declaration_only]
     configured_additional_tools = config.get("additional_tools") or []
     additional_tool_names = [tool.name for tool in configured_additional_tools]
-    # check if any are calling functions that need approval
-    # if so, we return approval request for all
+    # Check which function calls need approval, are declaration-only, or are unknown
     approval_needed = False
     declaration_only_flag = False
     for fcc in function_calls:
@@ -1570,17 +1569,6 @@ async def _try_execute_function_calls(
             config.get("terminate_on_unknown_calls", False) and fcc.type == "function_call" and fcc.name not in tool_map  # type: ignore[attr-defined]
         ):
             raise KeyError(f'Error: Requested function "{fcc.name}" not found.')  # type: ignore[attr-defined]
-    if approval_needed:
-        # approval can only be needed for Function Call Content, not Approval Responses.
-        logger.debug("Returning function_approval_request contents")
-        return (
-            [
-                Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
-                for fcc in function_calls
-                if fcc.type == "function_call"
-            ],
-            False,
-        )
     if declaration_only_flag:
         # return the declaration only tools to the user, since we cannot execute them.
         # Mark as user_input_request so AgentExecutor emits request_info events and pauses the workflow.
@@ -1644,6 +1632,29 @@ async def _try_execute_function_calls(
                 ),
                 False,
             )
+
+    if approval_needed:
+        # Only create approval requests for tools that actually require approval;
+        # execute non-approval tools normally.
+        logger.debug("Returning function_approval_request contents for approval-required tools")
+        approval_results: list[Content] = []
+        non_approval_calls: list[Content] = []
+        for fcc in function_calls:
+            if fcc.type == "function_call" and fcc.name in approval_tools:  # type: ignore[attr-defined]
+                approval_results.append(
+                    Content.from_function_approval_request(id=fcc.call_id, function_call=fcc)  # type: ignore[attr-defined, arg-type]
+                )
+            else:
+                non_approval_calls.append(fcc)
+
+        if non_approval_calls:
+            execution_results = await asyncio.gather(*[
+                invoke_with_termination_handling(fc, seq_idx) for seq_idx, fc in enumerate(non_approval_calls)
+            ])
+            approval_results.extend(result[0] for result in execution_results)
+            approval_results.extend(extra_user_input_contents)
+
+        return (approval_results, False)
 
     execution_results = await asyncio.gather(*[
         invoke_with_termination_handling(function_call, seq_idx) for seq_idx, function_call in enumerate(function_calls)
