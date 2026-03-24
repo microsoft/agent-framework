@@ -238,7 +238,7 @@ jobs:
           packages/azurefunctions/tests/integration_tests
           packages/durabletask/tests/integration_tests
           -m integration
-          -n logical --dist worksteal
+          -x
           --timeout=360 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
 
