@@ -500,6 +500,9 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 JsonValueKind.Number => property.Value.TryGetInt64(out long l)
                     ? (object?)l
                     : property.Value.GetDouble(),
+                JsonValueKind.Object => property.Value.Clone(),
+                JsonValueKind.Array => property.Value.Clone(),
+                JsonValueKind.Undefined => null,
                 _ => property.Value.GetRawText()
             };
         }

@@ -350,7 +350,8 @@ public sealed class GitHubCopilotAgentTests
                     nullVal = (string?)null,
                     intVal = 100,
                     floatVal = 3.14,
-                    objVal = new { nested = "value" }
+                    objVal = new { nested = "value" },
+                    arrVal = new List<int> { 1, 2, 3 }
                 })
             }
         };
@@ -367,8 +368,12 @@ public sealed class GitHubCopilotAgentTests
         Assert.Null(content.Arguments["nullVal"]);
         Assert.Equal(100L, content.Arguments["intVal"]);
         Assert.Equal(3.14, (double)content.Arguments["floatVal"]!, 2);
-        // Non-primitive values fall back to raw JSON text
-        Assert.IsType<string>(content.Arguments["objVal"]);
+        JsonElement objValElement = Assert.IsType<JsonElement>(content.Arguments["objVal"]);
+        Assert.Equal(JsonValueKind.Object, objValElement.ValueKind);
+        Assert.Equal("value", objValElement.GetProperty("nested").GetString());
+        JsonElement arrValElement = Assert.IsType<JsonElement>(content.Arguments["arrVal"]);
+        Assert.Equal(JsonValueKind.Array, arrValElement.ValueKind);
+        Assert.Equal(3, arrValElement.GetArrayLength());
     }
 
     [Fact]
