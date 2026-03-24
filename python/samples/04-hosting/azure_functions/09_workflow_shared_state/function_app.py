@@ -13,8 +13,8 @@ Show how to:
 - Compose agent backed executors with function style executors and yield the final output when the workflow completes.
 
 Prerequisites:
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
-- Authentication via azure-identity. Use DefaultAzureCredential and run az login before executing the sample.
+- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` for FoundryChatClient.
+- Authentication uses `AzureCliCredential`; run `az login` before executing the sample.
 - Familiarity with WorkflowBuilder, executors, conditional edges, and streaming runs.
 """
 

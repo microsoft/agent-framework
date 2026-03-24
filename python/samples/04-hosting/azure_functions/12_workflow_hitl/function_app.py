@@ -18,7 +18,7 @@ Key architectural points:
 - Durable Functions provides durability while waiting for human input
 
 Prerequisites:
-- Azure OpenAI configured with required environment variables
+- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`
 - Durable Task Scheduler connection string
 - Authentication via Azure CLI (az login)
 """

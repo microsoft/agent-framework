@@ -1,14 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host multiple Azure OpenAI agents inside a single Azure Functions app.
+"""Host multiple Foundry-powered agents inside a single Azure Functions app.
 
 Components used in this sample:
-- FoundryChatClient to create agents bound to a shared Azure OpenAI deployment.
+- FoundryChatClient to create agents bound to a shared Foundry deployment.
 - AgentFunctionApp to register multiple agents and expose dedicated HTTP endpoints.
 - Custom tool functions to demonstrate tool invocation from different agents.
 
-Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`, plus either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import logging
 from typing import Any

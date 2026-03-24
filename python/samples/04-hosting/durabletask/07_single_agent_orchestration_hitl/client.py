@@ -8,7 +8,7 @@ by starting an orchestration, sending approval/rejection events, and monitoring 
 Prerequisites:
 - The worker must be running with the agent, orchestration, and activities registered
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 

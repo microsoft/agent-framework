@@ -11,7 +11,7 @@ Components used:
 - Thread management to maintain conversation context across invocations
 Prerequisites:
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running (e.g., using Docker emulator)
 To run this sample:
     python sample.py

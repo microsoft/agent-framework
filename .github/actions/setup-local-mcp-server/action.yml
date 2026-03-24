@@ -83,35 +83,35 @@ runs:
           if ! (
             cd "$GITHUB_WORKSPACE/python"
             LOCAL_MCP_URL="$local_url" uv run python - <<'PY'
-              from __future__ import annotations
+        from __future__ import annotations
 
-              import asyncio
-              import os
+        import asyncio
+        import os
 
-              from agent_framework import Content, MCPStreamableHTTPTool
-
-
-              def result_to_text(result: str | list[Content]) -> str:
-                  if isinstance(result, str):
-                      return result
-                  return "\n".join(content.text for content in result if content.type == "text" and content.text)
+        from agent_framework import Content, MCPStreamableHTTPTool
 
 
-              async def main() -> None:
-                  tool = MCPStreamableHTTPTool(
-                      name="local_ci_mcp",
-                      url=os.environ["LOCAL_MCP_URL"],
-                      approval_mode="never_require",
-                  )
-
-                  async with tool:
-                      assert tool.functions, "Local MCP server did not expose any tools."
-                      result = result_to_text(await tool.functions[0].invoke(query="What is Agent Framework?"))
-                      assert result, "Local MCP server returned an empty response."
+        def result_to_text(result: str | list[Content]) -> str:
+            if isinstance(result, str):
+                return result
+            return "\n".join(content.text for content in result if content.type == "text" and content.text)
 
 
-              asyncio.run(main())
-            PY
+        async def main() -> None:
+            tool = MCPStreamableHTTPTool(
+                name="local_ci_mcp",
+                url=os.environ["LOCAL_MCP_URL"],
+                approval_mode="never_require",
+            )
+
+            async with tool:
+                assert tool.functions, "Local MCP server did not expose any tools."
+                result = result_to_text(await tool.functions[0].invoke(query="What is Agent Framework?"))
+                assert result, "Local MCP server returned an empty response."
+
+
+        asyncio.run(main())
+        PY
           ); then
             started=false
           fi

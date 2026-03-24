@@ -7,8 +7,7 @@ Components used in this sample:
 - AgentFunctionApp with Durable orchestration, HTTP triggers, and activity triggers.
 - External events that pause the workflow until a human decision arrives or times out.
 
-Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and
-either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func start`."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before running `func start`."""
 
 import json
 import logging
@@ -22,9 +21,6 @@ from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
-
-# Copyright (c) Microsoft. All rights reserved.
-
 
 logger = logging.getLogger(__name__)
 

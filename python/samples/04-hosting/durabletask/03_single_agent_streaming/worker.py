@@ -7,7 +7,7 @@ and uses RedisStreamCallback to persist streaming responses to Redis for reliabl
 
 Prerequisites:
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 - Start Redis (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
 """

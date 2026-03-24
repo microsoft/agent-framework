@@ -1,28 +1,34 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host a single Azure OpenAI-powered agent inside Azure Functions.
+"""Host a single Foundry-powered agent inside Azure Functions.
 
 Components used in this sample:
-- FoundryChatClient to call the Azure OpenAI chat deployment.
+- FoundryChatClient to call the Foundry deployment.
 - AgentFunctionApp to expose HTTP endpoints via the Durable Functions extension.
 
-Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` (plus `AZURE_OPENAI_API_KEY` or Azure CLI authentication) before starting the Functions host."""
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in
+with Azure CLI before starting the Functions host."""
 
+import os
 from typing import Any
 
 from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
-# Copyright (c) Microsoft. All rights reserved.
+load_dotenv()
 
 
 # 1. Instantiate the agent with the chosen deployment and instructions.
 def _create_agent() -> Any:
     """Create the Joker agent."""
-    _client = FoundryChatClient(credential=AzureCliCredential())
     return Agent(
-        client=_client,
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="Joker",
         instructions="You are good at telling jokes.",
     )

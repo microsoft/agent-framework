@@ -7,7 +7,7 @@ The worker is started first to register the TravelPlanner agent with Redis strea
 callback, then client operations are performed against the running worker.
 Prerequisites:
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running (e.g., using Docker)
 - Redis must be running (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
 To run this sample:

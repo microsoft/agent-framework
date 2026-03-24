@@ -7,8 +7,7 @@ Components used in this sample:
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
 - Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
-Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import json
 import logging
@@ -20,9 +19,6 @@ from agent_framework import Agent
 from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
-
-# Copyright (c) Microsoft. All rights reserved.
-
 
 logger = logging.getLogger(__name__)
 

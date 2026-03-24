@@ -9,7 +9,7 @@ displays the aggregated results.
 Prerequisites:
 - The worker must be running with both agents and orchestration registered
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 

@@ -7,8 +7,7 @@ Components used in this sample:
 - AgentFunctionApp with Durable orchestration, activity, and HTTP triggers.
 - Pydantic models that validate payloads and agent JSON responses.
 
-Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`,
-and either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running the
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before running the
 Functions host."""
 
 import json
@@ -22,9 +21,6 @@ from agent_framework.azure import AgentFunctionApp, FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, ValidationError
-
-# Copyright (c) Microsoft. All rights reserved.
-
 
 logger = logging.getLogger(__name__)
 

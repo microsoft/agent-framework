@@ -86,6 +86,10 @@ class RawFoundryChatClient(  # type: ignore[misc]
     This client creates an OpenAI-compatible client from a Foundry project
     and delegates to ``RawOpenAIChatClient`` for request handling.
 
+    Environment variables:
+        - ``FOUNDRY_PROJECT_ENDPOINT`` to provide the Foundry project endpoint.
+        - ``FOUNDRY_MODEL`` to provide the Foundry model deployment name.
+
     Warning:
         **This class should not normally be used directly.** Use ``FoundryChatClient``
         for a fully-featured client with middleware, telemetry, and function invocation.
@@ -431,12 +435,16 @@ class FoundryChatClient(  # type: ignore[misc]
     Creates an OpenAI-compatible client from a Foundry project
     with middleware, telemetry, and function invocation support.
 
+    Environment variables:
+        - ``FOUNDRY_PROJECT_ENDPOINT`` to provide the Foundry project endpoint.
+        - ``FOUNDRY_MODEL`` to provide the Foundry model deployment name.
+
     Keyword Args:
         project_endpoint: The Foundry project endpoint URL.
-            Can also be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
+            Can also be set via environment variable ``FOUNDRY_PROJECT_ENDPOINT``.
         project_client: An existing AIProjectClient to use.
         model: The model deployment name.
-            Can also be set via environment variable AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+            Can also be set via environment variable ``FOUNDRY_MODEL``.
         model_id: Deprecated alias for ``model``.
         credential: Azure credential or token provider for authentication.
         allow_preview: Enables preview opt-in on internally-created AIProjectClient.
@@ -494,8 +502,10 @@ class FoundryChatClient(  # type: ignore[misc]
 
         Keyword Args:
             project_endpoint: The Foundry project endpoint URL.
+                Can also be set via environment variable ``FOUNDRY_PROJECT_ENDPOINT``.
             project_client: An existing AIProjectClient to use.
             model: The model deployment name.
+                Can also be set via environment variable ``FOUNDRY_MODEL``.
             credential: Azure credential or token provider for authentication.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
             env_file_path: Path to .env file for settings.

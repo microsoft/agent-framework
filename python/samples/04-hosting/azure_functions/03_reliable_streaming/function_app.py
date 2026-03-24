@@ -11,6 +11,7 @@ Components used in this sample:
 
 Prerequisites:
 - Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI (`az login`) for `AzureCliCredential`
 - Redis running (docker run -d --name redis -p 6379:6379 redis:latest)
 - DTS and Azurite running (see parent README)
 """
@@ -155,9 +156,8 @@ redis_callback = RedisStreamCallback()
 # Create the travel planner agent
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
-    _client = FoundryChatClient(credential=AzureCliCredential())
     return Agent(
-        client=_client,
+        client=FoundryChatClient(credential=AzureCliCredential()),
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:
