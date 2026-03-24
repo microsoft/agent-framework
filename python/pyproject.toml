@@ -49,6 +49,8 @@ dev = [
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
+# Keep transitive litellm below the compromised 1.82.7/1.82.8 releases.
+constraint-dependencies = ["litellm<1.82.7"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -84,6 +86,7 @@ agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
+litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
 
 [tool.ruff]
 line-length = 120
