@@ -96,6 +96,41 @@ list.
 """
 
 
+def _passthrough_result_parser(result: Any) -> str:
+    """Return a Python repr so sandbox code sees native-looking values.
+
+    Using ``repr`` instead of ``json.dumps`` ensures the text can be
+    round-tripped back to a native Python value with ``ast.literal_eval``.
+    """
+    return repr(result)
+
+
+def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
+    """Wrap a tool's ``invoke`` so ``call_tool`` returns native Python values.
+
+    ``invoke()`` always returns ``list[Content]``.  This wrapper extracts
+    the text, parses it back with ``ast.literal_eval``, and returns a
+    single value (not a list) when there is exactly one result item.
+    """
+
+    async def _callback(**kwargs: Any) -> Any:
+        import ast
+
+        contents = await tool_obj.invoke(**kwargs)
+        values: list[Any] = []
+        for c in contents:
+            if c.text is not None:
+                try:
+                    values.append(ast.literal_eval(c.text))
+                except (ValueError, SyntaxError):
+                    values.append(c.text)
+        if len(values) == 1:
+            return values[0]
+        return values
+
+    return _callback
+
+
 def collect_tools(*tool_groups: Any) -> list[FunctionTool]:
     """Normalize and collect unique ``FunctionTool`` instances, excluding execute_code."""
 
@@ -184,21 +219,31 @@ writing Python code via execute_code that calls `call_tool()` inside the
 sandbox.
 
 `call_tool` is a built-in global inside the sandbox. No import is needed.
-You can chain multiple call_tool(...) calls in the same code block, and you can also use regular Python code to post-process tool results, define variables, or control flow with conditionals and loops.
+
+CRITICAL: call_tool takes the tool name as first argument, then KEYWORD
+arguments only. Never pass a dict as a positional argument.
 
 {visibility_note}
 
 Available sandbox tools:
 {tools_descriptions}
 
-Correct usage:
-result = call_tool("tool_name", keyword=value)
+Correct examples:
+  result = call_tool("tool_name", keyword=value)
+  data = call_tool("fetch_data", table="users")
+  x = call_tool("compute", operation="multiply", a=3, b=7)
 
-Wrong usage:
-call_tool("tool_name", {{"keyword": "value"}})
+WRONG — these will fail:
+  call_tool("tool_name", {{"keyword": "value"}})   # dict as positional arg
+  call_tool("tool_name", "value")                  # positional arg
 
-Do NOT hardcode data that should come from call_tool(...).
+call_tool returns native Python values (int, float, str, list, dict),
+so you can use results directly in subsequent code:
+  data = call_tool("fetch_data", table="users")
+  total = call_tool("compute", operation="add", a=data[0]["price"], b=data[1]["price"])
+
 Prefer one execute_code call per request when possible.
+Do NOT hardcode data that should come from call_tool(...).
 """
 
 
@@ -241,6 +286,8 @@ class CodeActContextProvider(BaseContextProvider):
 
         super().__init__(source_id)
         self._provider_tools = collect_tools(tools)
+        for t in self._provider_tools:
+            t.result_parser = _passthrough_result_parser
         self._approval_mode = approval_mode
         self._managed_tools: list[FunctionTool] = []
         self._base_signature: tuple[tuple[str, int], ...] = ()
@@ -282,7 +329,7 @@ class CodeActContextProvider(BaseContextProvider):
         sandbox = Sandbox(backend="wasm", module_path=module_path)
 
         for tool_obj in tools:
-            sandbox.register_tool(tool_obj.name, tool_obj.invoke)
+            sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
 
         sandbox.run("None")
         snapshot = sandbox.snapshot()
@@ -378,6 +425,8 @@ class CodeActContextProvider(BaseContextProvider):
 
         # Capture and remove per-run tools so they are only available in the sandbox.
         runtime_tools = collect_tools(context.options.pop("tools", None))
+        for t in runtime_tools:
+            t.result_parser = _passthrough_result_parser
         self._initialize_sandbox(
             base_tools=self._provider_tools,
             runtime_tools=runtime_tools,
@@ -438,7 +487,9 @@ async def log_function_calls(
 
 @tool(approval_mode="never_require")
 def compute(
-    operation: Annotated[Literal['add', 'subtract', 'multiply', 'divide'], "Math operation: add, subtract, multiply, or divide."],
+    operation: Annotated[
+        Literal["add", "subtract", "multiply", "divide"], "Math operation: add, subtract, multiply, or divide."
+    ],
     a: Annotated[float, "First numeric operand."],
     b: Annotated[float, "Second numeric operand."],
 ) -> float:
@@ -495,7 +546,7 @@ async def main() -> None:
             deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
-        name="HyperlightCodeActProviderAgent",
+        name="CodeActProviderAgent",
         instructions="You are a helpful assistant.",
         context_providers=[
             CodeActContextProvider(tools=[compute, fetch_data], approval_mode="never_require"),
