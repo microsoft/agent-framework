@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 
 import httpx
 from a2a.client import A2ACardResolver
@@ -70,9 +71,13 @@ async def main() -> None:
         url=a2a_agent_host,
     ) as a2a_agent:
         # 4. Convert each A2A skill into a FunctionTool.
-        #    as_tool() handles name sanitization automatically.
+        #    Skill names may contain spaces or special characters, so we
+        #    sanitize them into valid tool identifiers before passing to as_tool().
         skill_tools = [
-            a2a_agent.as_tool(name=skill.name, description=skill.description or "")
+            a2a_agent.as_tool(
+                name=re.sub(r"[^0-9A-Za-z]+", "_", skill.name),
+                description=skill.description or "",
+            )
             for skill in agent_card.skills
         ]
 
