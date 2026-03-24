@@ -1564,8 +1564,8 @@ async def evaluate_agent(
             raise ValueError(
                 "Provide 'queries' alongside 'responses' so the conversation "
                 "can be constructed for evaluation. For Responses API "
-                "evaluation by response ID, use evaluate_responses() from "
-                "the Foundry package."
+                "evaluation by response ID, use evaluate_traces(response_ids=...) from "
+                "the azure-ai package."
             )
     elif queries is not None and agent is not None:
         # Run the agent against test queries, with repetitions
