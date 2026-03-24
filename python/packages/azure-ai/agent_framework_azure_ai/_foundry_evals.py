@@ -249,7 +249,7 @@ async def _poll_eval_run(
     eval_id: str,
     run_id: str,
     poll_interval: float = 5.0,
-    timeout: float = 600.0,
+    timeout: float = 180.0,
     provider: str = "Microsoft Foundry",
     *,
     fetch_output_items: bool = True,
@@ -537,7 +537,7 @@ class FoundryEvals:
             ``ConversationSplit`` enum value or a custom callable — see
             ``ConversationSplitter``.
         poll_interval: Seconds between status polls (default 5.0).
-        timeout: Maximum seconds to wait for completion (default 600.0).
+        timeout: Maximum seconds to wait for completion (default 180.0).
     """
 
     # ---------------------------------------------------------------------------
@@ -580,7 +580,7 @@ class FoundryEvals:
         evaluators: Sequence[str] | None = None,
         conversation_split: ConversationSplitter = ConversationSplit.LAST_TURN,
         poll_interval: float = 5.0,
-        timeout: float = 600.0,
+        timeout: float = 180.0,
     ):
         self.name = "Microsoft Foundry"
         self._client = _resolve_openai_client(openai_client, project_client)
@@ -725,7 +725,7 @@ async def evaluate_traces(
     lookback_hours: int = 24,
     eval_name: str = "Agent Framework Trace Eval",
     poll_interval: float = 5.0,
-    timeout: float = 600.0,
+    timeout: float = 180.0,
 ) -> EvalResults:
     """Evaluate agent behavior from OTel traces or response IDs.
 
@@ -811,7 +811,7 @@ async def evaluate_foundry_target(
     model_deployment: str,
     eval_name: str = "Agent Framework Target Eval",
     poll_interval: float = 5.0,
-    timeout: float = 600.0,
+    timeout: float = 180.0,
 ) -> EvalResults:
     """Evaluate a Foundry-registered agent or model deployment.
 
