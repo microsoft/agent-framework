@@ -170,6 +170,26 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
+      - name: Stop local MCP server
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          server_pid="${{ steps.local-mcp.outputs.pid }}"
+          if [[ -z "$server_pid" ]]; then
+            exit 0
+          fi
+          if ! kill -0 "$server_pid" 2>/dev/null; then
+            exit 0
+          fi
+          kill -TERM -- "-$server_pid" 2>/dev/null || kill -TERM "$server_pid" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          kill -KILL -- "-$server_pid" 2>/dev/null || kill -KILL "$server_pid" 2>/dev/null || true
 
   # Azure Functions + Durable Task integration tests
   python-tests-functions:
