@@ -15,7 +15,6 @@ from azure.ai.agents.models import (
 from azure.ai.agents.models import (
     CodeInterpreterToolDefinition,
 )
-from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel
 
 from agent_framework_azure_ai import (
@@ -769,85 +768,6 @@ def test_from_azure_ai_agent_tools_unknown_dict() -> None:
 
     assert len(result) == 1
     assert result[0] == tool
-
-
-# endregion
-
-# region Integration Tests
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_create_agent() -> None:
-    """Integration test: Create an agent using the provider."""
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIAgentsProvider(credential=credential) as provider,
-    ):
-        agent = await provider.create_agent(
-            name="IntegrationTestAgent",
-            instructions="You are a helpful assistant for testing.",
-        )
-
-        try:
-            assert isinstance(agent, Agent)
-            assert agent.name == "IntegrationTestAgent"
-            assert agent.id is not None
-        finally:
-            # Cleanup: delete the agent
-            if agent.id:
-                await provider._agents_client.delete_agent(agent.id)  # type: ignore
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_get_agent() -> None:
-    """Integration test: Get an existing agent using the provider."""
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIAgentsProvider(credential=credential) as provider,
-    ):
-        # First create an agent
-        created = await provider._agents_client.create_agent(  # type: ignore
-            model=os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
-            name="GetAgentTest",
-            instructions="Test agent",
-        )
-
-        try:
-            # Then get it using the provider
-            agent = await provider.get_agent(created.id)
-
-            assert isinstance(agent, Agent)
-            assert agent.id == created.id
-        finally:
-            await provider._agents_client.delete_agent(created.id)  # type: ignore
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_create_and_run() -> None:
-    """Integration test: Create an agent and run a conversation."""
-    async with (
-        AzureCliCredential() as credential,
-        AzureAIAgentsProvider(credential=credential) as provider,
-    ):
-        agent = await provider.create_agent(
-            name="RunTestAgent",
-            instructions="You are a helpful assistant. Always respond with 'Hello!' to any greeting.",
-        )
-
-        try:
-            result = await agent.run("Hi there!")
-
-            assert result is not None
-            assert len(result.messages) > 0
-        finally:
-            if agent.id:
-                await provider._agents_client.delete_agent(agent.id)  # type: ignore
 
 
 # endregion

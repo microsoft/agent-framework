@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIAssistantProvider
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -43,7 +43,7 @@ async def example_get_agent_by_id() -> None:
 
     # Create an assistant via SDK (simulating an existing assistant)
     created_assistant = await client.beta.assistants.create(
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         name="WeatherAssistant",
         tools=[
             {
@@ -86,7 +86,7 @@ async def example_as_agent_wrap_sdk_object() -> None:
 
     # Create and fetch an assistant via SDK
     created_assistant = await client.beta.assistants.create(
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         name="SimpleAssistant",
         instructions="You are a friendly assistant.",
     )
@@ -94,8 +94,9 @@ async def example_as_agent_wrap_sdk_object() -> None:
 
     try:
         # Use as_agent() to wrap the SDK object
-        agent = provider.as_agent(
-            created_assistant,
+        agent = Agent(
+            client=provider,
+            agent=created_assistant,
             instructions="You are an extremely helpful assistant. Be enthusiastic!",
         )
 

@@ -25,14 +25,14 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Agent Instructions
 RESEARCH_INSTRUCTIONS = """In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability.
@@ -124,45 +124,52 @@ class ManagerResponse(BaseModel):
 async def main() -> None:
     """Run the deep research workflow."""
     # Create Azure OpenAI client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
     # Create agents
-    research_agent = client.as_agent(
+    research_agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=RESEARCH_INSTRUCTIONS,
     )
 
-    planner_agent = client.as_agent(
+    planner_agent = Agent(
+        client=client,
         name="PlannerAgent",
         instructions=PLANNER_INSTRUCTIONS,
     )
 
-    manager_agent = client.as_agent(
+    manager_agent = Agent(
+        client=client,
         name="ManagerAgent",
         instructions=MANAGER_INSTRUCTIONS,
         default_options={"response_format": ManagerResponse},
     )
 
-    summary_agent = client.as_agent(
+    summary_agent = Agent(
+        client=client,
         name="SummaryAgent",
         instructions=SUMMARY_INSTRUCTIONS,
     )
 
-    knowledge_agent = client.as_agent(
+    knowledge_agent = Agent(
+        client=client,
         name="KnowledgeAgent",
         instructions=KNOWLEDGE_INSTRUCTIONS,
     )
 
-    coder_agent = client.as_agent(
+    coder_agent = Agent(
+        client=client,
         name="CoderAgent",
         instructions=CODER_INSTRUCTIONS,
     )
 
-    weather_agent = client.as_agent(
+    weather_agent = Agent(
+        client=client,
         name="WeatherAgent",
         instructions=WEATHER_INSTRUCTIONS,
     )

@@ -11,7 +11,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -25,15 +25,15 @@ This sample uses two custom executors. A Writer agent creates or edits content,
 then hands the conversation to a Reviewer agent which evaluates and finalizes the result.
 
 Purpose:
-Show how to wrap chat agents created by AzureOpenAIResponsesClient inside workflow executors. Demonstrate the @handler
+Show how to wrap chat agents created by FoundryChatClient inside workflow executors. Demonstrate the @handler
 pattern with typed inputs and typed WorkflowContext[T] outputs, connect executors with the fluent WorkflowBuilder,
 and finish by yielding outputs from the terminal node.
 
 Note: When an agent is passed to a workflow, the workflow wraps the agent in a more sophisticated executor.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming or non streaming runs.
 """
@@ -50,12 +50,13 @@ class Writer(Executor):
     agent: Agent
 
     def __init__(self, id: str = "writer"):
-        # Create a domain specific agent using your configured AzureOpenAIResponsesClient.
-        self.agent = AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ).as_agent(
+        # Create a domain specific agent using your configured FoundryChatClient.
+        self.agent = Agent(
+            client=FoundryChatClient(
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You are an excellent content writer. You create new content and edit contents based on the feedback."
             ),
@@ -97,11 +98,12 @@ class Reviewer(Executor):
 
     def __init__(self, id: str = "reviewer"):
         # Create a domain specific agent that evaluates and refines content.
-        self.agent = AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-            credential=AzureCliCredential(),
-        ).as_agent(
+        self.agent = Agent(
+            client=FoundryChatClient(
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                credential=AzureCliCredential(),
+            ),
             instructions=(
                 "You are an excellent content reviewer. You review the content and provide feedback to the writer."
             ),

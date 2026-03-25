@@ -22,11 +22,13 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = [
-    "agent-framework-core>=1.0.0rc5",
-    "fastapi>=0.115.0,<0.133.1",
-    "uvicorn[standard]>=0.30.0,<0.42.0"
-]
+ dependencies = [
+     "agent-framework-core>=1.0.0rc5",
+     "openai>=1.99.0,<3",
+     "opentelemetry-sdk>=1.39.0,<2",
+     "fastapi>=0.115.0,<0.133.1",
+     "uvicorn[standard]>=0.30.0,<0.42.0"
+ ]
 
 [project.optional-dependencies]
 dev = [

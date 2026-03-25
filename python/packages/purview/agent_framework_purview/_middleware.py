@@ -2,9 +2,11 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Union
 
 from agent_framework import AgentContext, AgentMiddleware, ChatContext, ChatMiddleware, MiddlewareTermination
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 from ._cache import CacheProvider
 from ._client import PurviewClient
@@ -12,6 +14,9 @@ from ._exceptions import PurviewPaymentRequiredError
 from ._models import Activity
 from ._processor import ScopedContentProcessor
 from ._settings import PurviewSettings
+
+AzureCredentialTypes = Union[TokenCredential, AsyncTokenCredential]
+AzureTokenProvider = Callable[[], Union[str, Awaitable[str]]]
 
 logger = logging.getLogger("agent_framework.purview")
 

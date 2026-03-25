@@ -9,14 +9,16 @@
 #   uv run samples/autogen-migration/single_agent/03_assistant_agent_thread_and_stream.py
 
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from agent_framework import Agent
+from dotenv import load_dotenv
+
 """AutoGen vs Agent Framework: Thread management and streaming responses.
 
 Demonstrates conversation state management and streaming in both frameworks.
 """
-
-import asyncio
-
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -55,8 +57,9 @@ async def run_agent_framework() -> None:
     """Agent Framework agent with explicit session and streaming."""
     from agent_framework.openai import OpenAIChatClient
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.as_agent(
+    client = OpenAIChatClient(model="gpt-4.1-mini")
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions="You are a helpful math tutor.",
     )
