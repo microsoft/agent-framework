@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
@@ -10,14 +11,11 @@ from typing import Any, ClassVar, Union, cast
 
 import openai
 from agent_framework._serialization import SerializationMixin
-from agent_framework._settings import SecretString
+from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from agent_framework._tools import FunctionTool
-from openai import (
-    AsyncOpenAI,
-    AsyncStream,
-    _legacy_response,  # type: ignore
-)
+from dotenv import dotenv_values
+from openai import AsyncOpenAI, AsyncStream, _legacy_response  # type: ignore
 from openai.types import Completion
 from openai.types.audio import Transcription
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
@@ -27,6 +25,9 @@ from openai.types.responses.response_stream_event import ResponseStreamEvent
 from packaging.version import parse
 
 logger: logging.Logger = logging.getLogger("agent_framework.openai")
+
+DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-10-21"
+DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
 
 
 RESPONSE_TYPE = Union[
@@ -114,6 +115,126 @@ class OpenAISettings(TypedDict, total=False):
     org_id: str | None
     model: str | None
     embedding_model: str | None
+    azure_endpoint: str | None
+    api_version: str | None
+
+
+def _load_dotenv_values(*, env_file_path: str | None, env_file_encoding: str | None) -> dict[str, str]:
+    """Load dotenv values for non-standard environment variable aliases."""
+    if env_file_path is None or not os.path.exists(env_file_path):
+        return {}
+
+    raw_dotenv_values = dotenv_values(dotenv_path=env_file_path, encoding=env_file_encoding or "utf-8")
+    return {key: value for key, value in raw_dotenv_values.items() if value is not None}
+
+
+def _get_setting_from_alias(
+    name: str,
+    *,
+    dotenv_values_by_name: Mapping[str, str],
+) -> str | None:
+    """Resolve a setting from an explicit env-var alias."""
+    if dotenv_value := dotenv_values_by_name.get(name):
+        return dotenv_value
+    return os.getenv(name)
+
+
+def load_openai_service_settings(
+    *,
+    model: str | None,
+    api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None,
+    org_id: str | None,
+    base_url: str | None,
+    azure_endpoint: str | None,
+    api_version: str | None,
+    env_file_path: str | None,
+    env_file_encoding: str | None,
+    azure_model_env_vars: Sequence[str],
+    default_azure_api_version: str,
+) -> tuple[OpenAISettings, bool]:
+    """Load OpenAI settings, including Azure OpenAI aliases.
+
+    The generic OpenAI clients primarily read from ``OPENAI_*`` variables. When an
+    ``AZURE_OPENAI_ENDPOINT`` (or ``AZURE_OPENAI_BASE_URL``) is available and no
+    explicit OpenAI base URL is configured, this helper switches to Azure-specific
+    environment variables for endpoint, API key, model deployment, and API version.
+    """
+    openai_settings = load_settings(
+        OpenAISettings,
+        env_prefix="OPENAI_",
+        api_key=api_key,
+        org_id=org_id,
+        base_url=base_url,
+        model=model,
+        azure_endpoint=azure_endpoint,
+        api_version=api_version,
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
+
+    dotenv_values_by_name = _load_dotenv_values(
+        env_file_path=env_file_path,
+        env_file_encoding=env_file_encoding,
+    )
+
+    resolved_azure_endpoint = azure_endpoint
+    resolved_azure_base_url: str | None = None
+    if not openai_settings.get("base_url"):
+        if resolved_azure_endpoint is None:
+            resolved_azure_endpoint = _get_setting_from_alias(
+                "AZURE_OPENAI_ENDPOINT",
+                dotenv_values_by_name=dotenv_values_by_name,
+            )
+        if resolved_azure_endpoint is None:
+            resolved_azure_base_url = _get_setting_from_alias(
+                "AZURE_OPENAI_BASE_URL",
+                dotenv_values_by_name=dotenv_values_by_name,
+            )
+            if resolved_azure_base_url is not None:
+                openai_settings["base_url"] = resolved_azure_base_url
+
+    use_azure_client = resolved_azure_endpoint is not None or resolved_azure_base_url is not None
+    if resolved_azure_endpoint is not None:
+        openai_settings["azure_endpoint"] = resolved_azure_endpoint
+
+    if use_azure_client:
+        if api_key is None:
+            resolved_azure_api_key = _get_setting_from_alias(
+                "AZURE_OPENAI_API_KEY",
+                dotenv_values_by_name=dotenv_values_by_name,
+            )
+            if resolved_azure_api_key is not None:
+                openai_settings["api_key"] = SecretString(resolved_azure_api_key)
+
+        if model is None:
+            for env_var_name in azure_model_env_vars:
+                resolved_model = _get_setting_from_alias(
+                    env_var_name,
+                    dotenv_values_by_name=dotenv_values_by_name,
+                )
+                if resolved_model is not None:
+                    openai_settings["model"] = resolved_model
+                    break
+
+        if not openai_settings.get("api_version"):
+            resolved_api_version = _get_setting_from_alias(
+                "AZURE_OPENAI_API_VERSION",
+                dotenv_values_by_name=dotenv_values_by_name,
+            )
+            openai_settings["api_version"] = resolved_api_version or default_azure_api_version
+
+    return openai_settings, use_azure_client
+
+
+def maybe_append_azure_endpoint_guidance(message: str, *, azure_endpoint: str | None) -> str:
+    """Append Azure endpoint guidance only when the configured endpoint shape looks suspicious."""
+    if not azure_endpoint or not azure_endpoint.rstrip("/").endswith("/openai/v1"):
+        return message
+
+    return (
+        f"{message} If you are using Azure OpenAI key auth, pass the resource endpoint without "
+        "'/openai/v1' to 'azure_endpoint', or pass the full '/openai/v1' URL via 'base_url' instead."
+    )
 
 
 def get_api_key(

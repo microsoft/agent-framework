@@ -84,7 +84,7 @@ jobs:
         run: >
           uv run pytest --import-mode=importlib
           packages/openai/tests
-          -m integration
+          -m "integration and not azure"
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
@@ -98,6 +98,7 @@ jobs:
     env:
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
     defaults:
@@ -123,6 +124,8 @@ jobs:
       - name: Test with pytest (Azure OpenAI integration)
         run: >
           uv run pytest --import-mode=importlib
+          packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
+          packages/openai/tests/openai/test_openai_chat_client_azure.py
           packages/azure-ai/tests/azure_openai
           -m integration
           -n logical --dist worksteal
@@ -205,7 +208,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       FUNCTIONS_WORKER_RUNTIME: "python"

@@ -47,6 +47,7 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
 timeout = 120
 markers = [
+    "azure: marks tests as Azure-backed OpenAI specific",
     "integration: marks tests as integration tests that require external services",
 ]
 

@@ -21,7 +21,7 @@ Key architectural points:
 - Mixed agent/executor fan-outs execute concurrently
 
 Prerequisites:
-- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
+- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT_NAME`
 - Sign in with Azure CLI (`az login`) for `AzureCliCredential`
 - Ensure Azurite and the Durable Task Scheduler emulator are running
 """
@@ -31,7 +31,6 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
 
 from agent_framework import (
     Agent,
@@ -361,10 +360,10 @@ def _create_workflow() -> Workflow:
                                                  └──> final_report
     """
     credential = AzureCliCredential()
+
     chat_client = OpenAIChatCompletionClient(
-        model=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
-        base_url=urljoin(os.environ["AZURE_OPENAI_ENDPOINT"], "/openai/v1/"),
     )
 
     # Create agents for parallel analysis

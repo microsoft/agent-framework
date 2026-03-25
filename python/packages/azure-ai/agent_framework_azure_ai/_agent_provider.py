@@ -31,6 +31,10 @@ if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
@@ -47,6 +51,11 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated(
+    "AzureAIAgentClient and the AzureAIAgentsProvider are deprecated. "
+    "They target the V1 Agents Service API and have no direct replacement; "
+    "for new Foundry projects, use FoundryAgent."
+)
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
 

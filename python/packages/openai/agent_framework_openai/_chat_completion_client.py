@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Generic, Literal, cast, overload
 from agent_framework._clients import BaseChatClient
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
-from agent_framework._settings import SecretString, load_settings
+from agent_framework._settings import SecretString
 from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from agent_framework._tools import (
     FunctionInvocationConfiguration,
@@ -45,7 +45,7 @@ from agent_framework.exceptions import (
     ChatClientInvalidRequestException,
 )
 from agent_framework.observability import ChatTelemetryLayer
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncAzureOpenAI, AsyncOpenAI, BadRequestError
 from openai.lib._parsing._completions import type_to_response_format_param
 from openai.types import CompletionUsage
 from openai.types.chat.chat_completion import ChatCompletion, Choice
@@ -58,7 +58,12 @@ from openai.types.chat.completion_create_params import WebSearchOptions
 from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
-from ._shared import OpenAISettings, get_api_key
+from ._shared import (
+    DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION,
+    get_api_key,
+    load_openai_service_settings,
+    maybe_append_azure_endpoint_guidance,
+)
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -171,6 +176,38 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
     INJECTABLE: ClassVar[set[str]] = {"client"}
 
+    @overload
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        org_id: str | None = None,
+        base_url: str | None = None,
+        azure_endpoint: str,
+        api_version: str | None = None,
+        default_headers: Mapping[str, str] | None = None,
+        async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        instruction_role: str | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None: ...
+
     def __init__(
         self,
         *,
@@ -179,6 +216,8 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
+        azure_endpoint: str | None = None,
+        api_version: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
@@ -194,6 +233,15 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             api_key: OpenAI API key, SecretString, or callable returning a key.
             org_id: OpenAI organization ID.
             base_url: Custom API base URL.
+            azure_endpoint: Azure OpenAI endpoint. When provided, the client uses
+                ``AsyncAzureOpenAI`` instead of ``AsyncOpenAI``. The value should be the
+                resource endpoint and should not end with ``/openai/v1``. For Azure OpenAI
+                key auth, either pass the resource endpoint without that suffix to
+                ``azure_endpoint`` or pass the full ``.../openai/v1`` URL to ``base_url``.
+                Can also be set via ``AZURE_OPENAI_ENDPOINT`` when no ``OPENAI_BASE_URL``
+                is configured.
+            api_version: Azure OpenAI API version. Can also be set via
+                ``AZURE_OPENAI_API_VERSION``.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured AsyncOpenAI client (skips client creation).
             instruction_role: Role for instruction messages (e.g. ``"system"``).
@@ -207,27 +255,34 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
             model = model_id
 
+        openai_settings: dict[str, Any] = {}
+        use_azure_client = isinstance(async_client, AsyncAzureOpenAI)
         if not async_client:
-            openai_settings = load_settings(
-                OpenAISettings,
-                env_prefix="OPENAI_",
+            resolved_settings, use_azure_client = load_openai_service_settings(
+                model=model,
                 api_key=api_key,
                 org_id=org_id,
                 base_url=base_url,
-                model=model,
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
+                azure_model_env_vars=("AZURE_OPENAI_DEPLOYMENT_NAME",),
+                default_azure_api_version=DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION,
             )
+            openai_settings = dict(resolved_settings)
 
             api_key_value = openai_settings.get("api_key")
             if not api_key_value:
                 raise ValueError(
-                    "OpenAI API key is required. Set via 'api_key' parameter or 'OPENAI_API_KEY' environment variable."
+                    "OpenAI API key is required. Set via the 'api_key' parameter or the "
+                    "'OPENAI_API_KEY' or 'AZURE_OPENAI_API_KEY' environment variables."
                 )
             resolved_model = openai_settings.get("model") or model
             if not resolved_model:
                 raise ValueError(
-                    "OpenAI model is required. Set via 'model' parameter or 'OPENAI_MODEL' environment variable."
+                    "OpenAI model is required. Set via the 'model' parameter or the "
+                    "'OPENAI_MODEL' or 'AZURE_OPENAI_DEPLOYMENT_NAME' environment variables."
                 )
             model = resolved_model
 
@@ -240,19 +295,39 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                 merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
 
             client_args: dict[str, Any] = {"api_key": resolved_api_key, "default_headers": merged_headers}
-            if resolved_org_id := openai_settings.get("org_id"):
-                client_args["organization"] = resolved_org_id
-            if resolved_base_url := openai_settings.get("base_url"):
-                client_args["base_url"] = resolved_base_url
+            if use_azure_client:
+                client_args.pop("api_key")
+                if resolved_api_version := openai_settings.get("api_version"):
+                    client_args["api_version"] = resolved_api_version
+                if resolved_base_url := openai_settings.get("base_url"):
+                    client_args["base_url"] = resolved_base_url
+                elif resolved_azure_endpoint := openai_settings.get("azure_endpoint"):
+                    client_args["azure_endpoint"] = resolved_azure_endpoint
+                if callable(resolved_api_key):
+                    client_args["azure_ad_token_provider"] = resolved_api_key
+                else:
+                    client_args["api_key"] = resolved_api_key
+                client_args["azure_deployment"] = resolved_model
+                async_client = AsyncAzureOpenAI(**client_args)
+            else:
+                if resolved_org_id := openai_settings.get("org_id"):
+                    client_args["organization"] = resolved_org_id
+                if resolved_base_url := openai_settings.get("base_url"):
+                    client_args["base_url"] = resolved_base_url
 
-            async_client = AsyncOpenAI(**client_args)
+                async_client = AsyncOpenAI(**client_args)
 
         self.client = async_client
         self.model: str | None = model.strip() if model else None
 
         # Store configuration for serialization
-        self.org_id = org_id
-        self.base_url = str(base_url) if base_url else None
+        resolved_base_url = openai_settings.get("base_url") or base_url
+        resolved_azure_endpoint = openai_settings.get("azure_endpoint") or azure_endpoint
+        resolved_api_version = openai_settings.get("api_version") or api_version
+        self.org_id = openai_settings.get("org_id") or org_id
+        self.base_url = str(resolved_base_url) if resolved_base_url else None
+        self.azure_endpoint = str(resolved_azure_endpoint) if resolved_azure_endpoint else None
+        self.api_version = str(resolved_api_version) if use_azure_client and resolved_api_version else None
         if default_headers:
             self.default_headers: dict[str, Any] | None = {
                 k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
@@ -262,6 +337,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         if instruction_role is not None:
             self.instruction_role = instruction_role
+
+        if use_azure_client:
+            self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
         super().__init__(**kwargs)
 
@@ -398,12 +476,18 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                             inner_exception=ex,
                         ) from ex
                     raise ChatClientException(
-                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        maybe_append_azure_endpoint_guidance(
+                            f"{type(self)} service failed to complete the prompt: {ex}",
+                            azure_endpoint=self.azure_endpoint,
+                        ),
                         inner_exception=ex,
                     ) from ex
                 except Exception as ex:
                     raise ChatClientException(
-                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        maybe_append_azure_endpoint_guidance(
+                            f"{type(self)} service failed to complete the prompt: {ex}",
+                            azure_endpoint=self.azure_endpoint,
+                        ),
                         inner_exception=ex,
                     ) from ex
 
@@ -423,12 +507,18 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
                         inner_exception=ex,
                     ) from ex
                 raise ChatClientException(
-                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    maybe_append_azure_endpoint_guidance(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        azure_endpoint=self.azure_endpoint,
+                    ),
                     inner_exception=ex,
                 ) from ex
             except Exception as ex:
                 raise ChatClientException(
-                    f"{type(self)} service failed to complete the prompt: {ex}",
+                    maybe_append_azure_endpoint_guidance(
+                        f"{type(self)} service failed to complete the prompt: {ex}",
+                        azure_endpoint=self.azure_endpoint,
+                    ),
                     inner_exception=ex,
                 ) from ex
 
@@ -965,6 +1055,8 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
         base_url: str | None = None,
+        azure_endpoint: str | None = None,
+        api_version: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
@@ -987,6 +1079,14 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             base_url: The base URL to use. If provided will override
                 the standard value for an OpenAI connector, the env vars or .env file value.
                 Can also be set via environment variable OPENAI_BASE_URL.
+            azure_endpoint: Azure OpenAI endpoint. When provided, the client uses
+                ``AsyncAzureOpenAI``. The value should be the Azure resource endpoint and
+                should not end with ``/openai/v1``. For Azure OpenAI key auth, either pass
+                the resource endpoint without that suffix to ``azure_endpoint`` or pass the
+                full ``.../openai/v1`` URL to ``base_url`` instead. Can also be discovered
+                from ``AZURE_OPENAI_ENDPOINT`` when no OpenAI base URL is configured.
+            api_version: Azure OpenAI API version. Can also be set via
+                ``AZURE_OPENAI_API_VERSION``.
             middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
             function_invocation_configuration: Optional configuration for function invocation support.
             env_file_path: Use the environment settings file as a fallback
@@ -1026,6 +1126,8 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             api_key=api_key,
             org_id=org_id,
             base_url=base_url,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
             default_headers=default_headers,
             async_client=async_client,
             instruction_role=instruction_role,
