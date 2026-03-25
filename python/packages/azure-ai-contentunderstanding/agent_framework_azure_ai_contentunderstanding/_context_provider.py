@@ -125,6 +125,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             ``None`` waits until complete.
         output_sections: Which CU output sections to pass to LLM.
             Defaults to ``[AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]``.
+        file_search: Optional configuration for uploading CU-extracted markdown to
+            an OpenAI vector store for token-efficient RAG retrieval. When provided,
+            full content injection is replaced by ``file_search`` tool registration.
         source_id: Unique identifier for message attribution.
     """
 
