@@ -97,7 +97,6 @@ _MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
     "video/": "prebuilt-videoSearch",
 }
 _DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
-_DEFAULT_VECTOR_STORE_NAME: str = "cu_extracted_docs"
 
 
 class ContentUnderstandingContextProvider(BaseContextProvider):
@@ -249,12 +248,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if self.file_search and self._vector_store_id:
             context.extend_tools(
                 self.source_id,
-                [
-                    {
-                        "type": "file_search",
-                        "vector_store_ids": [self._vector_store_id],
-                    }
-                ],
+                [self.file_search.backend.make_tool([self._vector_store_id])],
             )
 
     # ------------------------------------------------------------------
@@ -787,7 +781,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # ------------------------------------------------------------------
 
     async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> None:
-        """Upload CU-extracted markdown to an OpenAI vector store for RAG retrieval."""
+        """Upload CU-extracted markdown to a vector store for RAG retrieval."""
         if not self.file_search:
             return
 
@@ -799,7 +793,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not markdown or not isinstance(markdown, str):
             return
 
-        oai_client = self.file_search.openai_client
+        backend = self.file_search.backend
 
         try:
             # Resolve vector store on first upload: use user-provided ID or auto-create.
@@ -811,32 +805,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     logger.info("Using user-provided vector store (%s).", self._vector_store_id)
                 else:
                     # Auto-create an ephemeral vector store.
-                    # expires_after is a safety net: if the process crashes before
-                    # _cleanup_vector_store() runs, OpenAI will auto-delete the store
-                    # after 1 day of inactivity instead of keeping it indefinitely.
-                    vs = await oai_client.vector_stores.create(  # type: ignore[union-attr]
-                        name=_DEFAULT_VECTOR_STORE_NAME,
-                        expires_after={"anchor": "last_active_at", "days": 1},
-                    )
-                    self._vector_store_id = vs.id
+                    self._vector_store_id = await backend.create_vector_store()
                     self._owns_vector_store = True
-                    logger.info("Created vector store '%s' (%s).", _DEFAULT_VECTOR_STORE_NAME, vs.id)
+                    logger.info("Created vector store (%s).", self._vector_store_id)
 
             # Upload markdown as a .md file
-            md_bytes = markdown.encode("utf-8")
-            import io
-
-            uploaded = await oai_client.files.create(  # type: ignore[union-attr]
-                file=(f"{doc_key}.md", io.BytesIO(md_bytes)),
-                purpose="assistants",
+            file_id = await backend.upload_file(
+                self._vector_store_id, f"{doc_key}.md", markdown.encode("utf-8")
             )
-            self._uploaded_file_ids.append(uploaded.id)
-
-            await oai_client.vector_stores.files.create(  # type: ignore[union-attr]
-                vector_store_id=self._vector_store_id,
-                file_id=uploaded.id,
-            )
-            logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(md_bytes))
+            self._uploaded_file_ids.append(file_id)
+            logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(markdown))
 
         except Exception as e:
             logger.warning("Failed to upload '%s' to vector store: %s", doc_key, e)
@@ -851,18 +829,18 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not self.file_search:
             return
 
-        oai_client = self.file_search.openai_client
+        backend = self.file_search.backend
 
         try:
             # Only delete the vector store if we created it
             if self._vector_store_id and self._owns_vector_store:
-                await oai_client.vector_stores.delete(self._vector_store_id)  # type: ignore[union-attr]
+                await backend.delete_vector_store(self._vector_store_id)
                 logger.info("Deleted vector store %s.", self._vector_store_id)
             self._vector_store_id = None
             self._owns_vector_store = False
 
             for file_id in self._uploaded_file_ids:
-                await oai_client.files.delete(file_id)  # type: ignore[union-attr]
+                await backend.delete_file(file_id)
             self._uploaded_file_ids.clear()
 
         except Exception as e:

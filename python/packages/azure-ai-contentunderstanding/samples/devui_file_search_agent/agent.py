@@ -72,9 +72,7 @@ cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
     max_wait=10.0,
-    file_search=FileSearchConfig(
-        openai_client=_openai_client,
-    ),
+    file_search=FileSearchConfig.from_openai(_openai_client),
 )
 
 # --- LLM client ---

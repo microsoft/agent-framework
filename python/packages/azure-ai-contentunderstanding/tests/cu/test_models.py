@@ -60,12 +60,28 @@ class TestDocumentEntry:
 
 class TestFileSearchConfig:
     def test_defaults(self) -> None:
-        client = AsyncMock()
-        config = FileSearchConfig(openai_client=client)
-        assert config.openai_client is client
+        backend = AsyncMock()
+        config = FileSearchConfig(backend=backend)
+        assert config.backend is backend
         assert config.vector_store_id is None
 
     def test_custom_vector_store_id(self) -> None:
-        client = AsyncMock()
-        config = FileSearchConfig(openai_client=client, vector_store_id="vs_abc123")
+        backend = AsyncMock()
+        config = FileSearchConfig(backend=backend, vector_store_id="vs_abc123")
         assert config.vector_store_id == "vs_abc123"
+
+    def test_from_openai_factory(self) -> None:
+        from agent_framework_azure_ai_contentunderstanding import OpenAIFileSearchBackend
+
+        client = AsyncMock()
+        config = FileSearchConfig.from_openai(client)
+        assert isinstance(config.backend, OpenAIFileSearchBackend)
+        assert config.vector_store_id is None
+
+    def test_from_openai_factory_with_vector_store_id(self) -> None:
+        from agent_framework_azure_ai_contentunderstanding import OpenAIFileSearchBackend
+
+        client = AsyncMock()
+        config = FileSearchConfig.from_openai(client, vector_store_id="vs_xyz")
+        assert isinstance(config.backend, OpenAIFileSearchBackend)
+        assert config.vector_store_id == "vs_xyz"

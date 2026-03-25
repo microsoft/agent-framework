@@ -89,9 +89,7 @@ async def main() -> None:
         credential=cu_credential,
         analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,
-        file_search=FileSearchConfig(
-            openai_client=openai_client,
-        ),
+        file_search=FileSearchConfig.from_openai(openai_client),
     )
 
     client_kwargs: dict[str, Any] = {

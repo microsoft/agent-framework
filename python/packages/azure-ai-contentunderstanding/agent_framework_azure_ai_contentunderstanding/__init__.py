@@ -3,6 +3,7 @@
 import importlib.metadata
 
 from ._context_provider import ContentUnderstandingContextProvider
+from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
 from ._models import AnalysisSection, FileSearchConfig
 
 try:
@@ -13,6 +14,9 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AnalysisSection",
     "ContentUnderstandingContextProvider",
+    "FileSearchBackend",
     "FileSearchConfig",
+    "FoundryFileSearchBackend",
+    "OpenAIFileSearchBackend",
     "__version__",
 ]
