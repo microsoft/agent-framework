@@ -441,6 +441,8 @@ jobs:
     environment: integration
     env:
       # Azure AI configuration
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY__PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY__MODEL }}
       AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       # Azure OpenAI configuration
@@ -463,6 +465,8 @@ jobs:
 
       - name: Create .env for samples
         run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
           echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
           echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
           echo "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" >> .env

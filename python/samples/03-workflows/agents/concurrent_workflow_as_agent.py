@@ -25,7 +25,7 @@ Demonstrates:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI access configured for FoundryChatClient (use az login + env vars)
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with Workflow events (WorkflowEvent with type "output")
 """
 
@@ -34,7 +34,7 @@ async def main() -> None:
     # 1) Create three domain agents using FoundryChatClient
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -69,7 +69,7 @@ async def main() -> None:
     workflow = ConcurrentBuilder(participants=[researcher, marketer, legal]).build()
 
     # 3) Expose the concurrent workflow as an agent for easy reuse
-    agent = Agent(client=workflow, name="ConcurrentWorkflowAgent")
+    agent = workflow.as_agent()
     prompt = "We are launching a new budget-friendly electric bike for urban commuters."
 
     agent_response = await agent.run(prompt)

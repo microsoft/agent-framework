@@ -31,7 +31,7 @@ them to transfer control to each other based on the conversation context.
 Prerequisites:
     - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for FoundryChatClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
+    - Environment variables configured for FoundryChatClient (FOUNDRY_MODEL)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -159,7 +159,7 @@ async def main() -> None:
     # Initialize the Azure OpenAI chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
