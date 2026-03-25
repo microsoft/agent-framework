@@ -1713,6 +1713,71 @@ def test_response_format_json_schema_missing_schema() -> None:
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
+def test_response_format_raw_json_schema_with_properties() -> None:
+    """Test raw JSON schema with properties is wrapped in json_schema envelope."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}, "title": "MyOutput"}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    fmt = text_config["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["name"] == "MyOutput"
+    assert fmt["strict"] is True
+    assert fmt["schema"]["additionalProperties"] is False
+    assert "title" not in fmt["schema"]
+
+
+def test_response_format_raw_json_schema_no_title() -> None:
+    """Test raw JSON schema without title defaults name to 'response'."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["name"] == "response"
+
+
+def test_response_format_raw_json_schema_preserves_additional_properties() -> None:
+    """Test raw JSON schema preserves existing additionalProperties."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}, "additionalProperties": True}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["schema"]["additionalProperties"] is True
+
+
+def test_response_format_raw_json_schema_non_object_type() -> None:
+    """Test raw JSON schema with non-object type does not inject additionalProperties."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "array", "items": {"type": "string"}}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert "additionalProperties" not in text_config["format"]["schema"]
+
+
+def test_response_format_raw_json_schema_with_anyof() -> None:
+    """Test raw JSON schema with anyOf keyword is detected."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"anyOf": [{"type": "string"}, {"type": "number"}]}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["type"] == "json_schema"
+
+
 def test_response_format_unsupported_type() -> None:
     """Test unsupported response_format type raises error."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
