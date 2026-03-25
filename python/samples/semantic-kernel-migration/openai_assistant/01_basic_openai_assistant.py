@@ -9,21 +9,19 @@
 
 # Copyright (c) Microsoft. All rights reserved.
 """Create an OpenAI Assistant using SK and Agent Framework."""
-
 import asyncio
 import os
 
+from agent_framework import Agent
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
 ASSISTANT_MODEL = os.environ.get("OPENAI_ASSISTANT_MODEL", "gpt-4o-mini")
 
 
 async def run_semantic_kernel() -> None:
     from semantic_kernel.agents import AssistantAgentThread, OpenAIAssistantAgent
-
     client = OpenAIAssistantAgent.create_client()
     # Provision the assistant on the OpenAI Assistants service.
     definition = await client.beta.assistants.create(
@@ -32,7 +30,6 @@ async def run_semantic_kernel() -> None:
         instructions="Answer questions in one concise paragraph.",
     )
     agent = OpenAIAssistantAgent(client=client, definition=definition)
-
     thread: AssistantAgentThread | None = None
     response = await agent.get_response("What is the capital of Denmark?", thread=thread)
     thread = response.thread
@@ -43,13 +40,10 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIAssistantsClient
-
     assistants_client = OpenAIAssistantsClient()
     # AF wraps the assistant lifecycle with an async context manager.
-    async with assistants_client.as_agent(
-        name="Helper",
-        instructions="Answer questions in one concise paragraph.",
-        model=ASSISTANT_MODEL,
+    async with Agent(
+        client=assistants_client,
     ) as assistant_agent:
         session = assistant_agent.create_session()
         reply = await assistant_agent.run("What is the capital of Denmark?", session=session)

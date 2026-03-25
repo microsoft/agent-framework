@@ -59,7 +59,8 @@ async def mcp_tools_on_agent_level() -> None:
     # Tools are provided when creating the agent
     # The agent can use these tools for any query during its lifetime
     # The agent will connect to the MCP server through its context manager.
-    async with OpenAIChatClient().as_agent(
+    async with Agent(
+        client=OpenAIChatClient(),
         name="DocsAgent",
         instructions="You are a helpful assistant that can help with microsoft documentation questions.",
         tools=MCPStreamableHTTPTool(  # Tools defined at agent creation

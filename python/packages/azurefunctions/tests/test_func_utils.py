@@ -232,6 +232,7 @@ class TestSerializationRoundtrip:
         original = AgentExecutorResponse(
             executor_id="test_exec",
             agent_response=AgentResponse(messages=[Message(role="assistant", text="Reply")]),
+            full_conversation=[Message(role="assistant", text="Reply")],
         )
         encoded = serialize_value(original)
         decoded = deserialize_value(encoded)

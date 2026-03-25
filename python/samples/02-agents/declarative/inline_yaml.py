@@ -14,9 +14,9 @@ This sample shows how to create an agent using an inline YAML string rather than
 It uses a Azure AI Client so it needs the credential to be passed into the AgentFactory.
 
 Prerequisites:
-- `pip install agent-framework-azure-ai agent-framework-declarative --pre`
+- `pip install agent-framework-foundry agent-framework-declarative --pre`
 - Set the following environment variables in a .env file or your environment:
-    - AZURE_AI_PROJECT_ENDPOINT
+    - FOUNDRY_PROJECT_ENDPOINT
     - AZURE_OPENAI_MODEL
 """
 
@@ -33,7 +33,7 @@ model:
   id: =Env.AZURE_OPENAI_MODEL
   connection:
     kind: remote
-    endpoint: =Env.AZURE_AI_PROJECT_ENDPOINT
+    endpoint: =Env.FOUNDRY_PROJECT_ENDPOINT
 """
     # create the agent from the yaml
     async with (

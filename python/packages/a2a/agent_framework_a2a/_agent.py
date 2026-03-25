@@ -286,121 +286,49 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         del function_invocation_kwargs, client_kwargs, kwargs
-        normalized_messages = normalize_messages(messages) if continuation_token is None else None
+        normalized_messages = normalize_messages(messages)
 
-        if not stream:
-
-            async def _run_non_streaming() -> AgentResponse[Any]:
-                active_session: AgentSession | None = None
-                session_context: SessionContext | None = None
-                if self.context_providers:
-                    active_session, session_context = await self._run_before_providers(
-                        session=session,
-                        input_messages=normalized_messages,
-                    )
-                if continuation_token is not None:
-                    a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
-                        TaskIdParams(id=continuation_token["task_id"])
-                    )
-                else:
-                    a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])  # type: ignore[index]
-                    a2a_stream = self.client.send_message(a2a_message)
-
-                response_stream = ResponseStream(
-                    self._map_a2a_stream(a2a_stream, background=background),
-                    finalizer=AgentResponse.from_updates,
-                )
-                result = await response_stream.get_final_response()
-                if self.context_providers and session_context is not None:
-                    session_context._response = result  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
-                    await self._run_after_providers(session=active_session, context=session_context)
-                return result
-
-            return _run_non_streaming()
-
-        # Streaming path
-        active_session_holder: dict[str, AgentSession | None] = {"session": None}
-        context_holder: dict[str, SessionContext | None] = {"ctx": None}
-
-        async def _post_hook(response: AgentResponse) -> None:
-            if not self.context_providers:
-                return
-            session_context = context_holder["ctx"]
-            if session_context is None:
-                return
-            session_context._response = response  # type: ignore[assignment]  # pyright: ignore[reportPrivateUsage]
-            await self._run_after_providers(session=active_session_holder["session"], context=session_context)
-
-        async def _get_stream() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
-            if self.context_providers:
-                active_session, session_context = await self._run_before_providers(
-                    session=session,
-                    input_messages=normalized_messages,
-                )
-                active_session_holder["session"] = active_session
-                context_holder["ctx"] = session_context
-
-            if continuation_token is not None:
-                a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
-                    TaskIdParams(id=continuation_token["task_id"])
-                )
-            else:
-                a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])  # type: ignore[index]
-                a2a_stream = self.client.send_message(a2a_message)
-
-            return ResponseStream(
-                self._map_a2a_stream(a2a_stream, background=background),
-                finalizer=AgentResponse.from_updates,
+        if continuation_token is not None:
+            a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
+                TaskIdParams(id=continuation_token["task_id"])
             )
+        else:
+            if not normalized_messages:
+                raise ValueError("At least one message is required when starting a new task (no continuation_token).")
+            a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
+            a2a_stream = self.client.send_message(a2a_message)
 
-        return (
-            ResponseStream.from_awaitable(_get_stream()).with_result_hook(_post_hook)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        )
-
-    async def _run_before_providers(
-        self,
-        *,
-        session: AgentSession | None,
-        input_messages: list[Message] | None,
-    ) -> tuple[AgentSession | None, SessionContext]:
-        """Run before_run on all context providers and return the active session and context.
-
-        Keyword Args:
-            session: The conversation session (None for stateless invocation).
-            input_messages: Messages to process.
-
-        Returns:
-            A tuple of (active_session, session_context).
-        """
-        active_session = session
-        if active_session is None and self.context_providers:
-            active_session = AgentSession()
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
 
         session_context = SessionContext(
-            session_id=active_session.session_id if active_session else None,
-            service_session_id=active_session.service_session_id if active_session else None,
-            input_messages=input_messages or [],
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
+            input_messages=normalized_messages or [],
+            options={},
         )
 
-        for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
-                continue
-            if active_session is None:
-                raise RuntimeError("Provider session must be available when context providers are configured.")
-            await provider.before_run(
-                agent=self,
-                session=active_session,
-                context=session_context,
-                state=active_session.state.setdefault(provider.source_id, {}),
-            )
-
-        return active_session, session_context
+        response = ResponseStream(
+            self._map_a2a_stream(
+                a2a_stream,
+                background=background,
+                session=provider_session,
+                session_context=session_context,
+            ),
+            finalizer=AgentResponse.from_updates,
+        )
+        if stream:
+            return response
+        return response.get_final_response()
 
     async def _map_a2a_stream(
         self,
         a2a_stream: AsyncIterable[A2AStreamItem],
         *,
         background: bool = False,
+        session: AgentSession | None = None,
+        session_context: SessionContext | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Map raw A2A protocol items to AgentResponseUpdates.
 
@@ -411,23 +339,51 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             background: When False, in-progress task updates are silently
                 consumed (the stream keeps iterating until a terminal state).
                 When True, they are yielded with a continuation token.
+            session: The agent session for context providers.
+            session_context: The session context for context providers.
         """
+        if session_context is None:
+            session_context = SessionContext(input_messages=[], options={})
+
+        # Run before_run providers (forward order)
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            if session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        all_updates: list[AgentResponseUpdate] = []
         async for item in a2a_stream:
             if isinstance(item, A2AMessage):
                 # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
-                yield AgentResponseUpdate(
+                update = AgentResponseUpdate(
                     contents=contents,
                     role="assistant" if item.role == A2ARole.agent else "user",
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
+                all_updates.append(update)
+                yield update
             elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, _update_event = item
                 for update in self._updates_from_task(task, background=background):
+                    all_updates.append(update)
                     yield update
             else:
                 raise NotImplementedError("Only Message and Task responses are supported")
+
+        # Set the response on the context for after_run providers
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+
+        await self._run_after_providers(session=session, context=session_context)
 
     # ------------------------------------------------------------------
     # Task helpers

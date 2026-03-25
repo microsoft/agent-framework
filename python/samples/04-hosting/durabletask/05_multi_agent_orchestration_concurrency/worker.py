@@ -7,8 +7,8 @@ function that runs them concurrently. The orchestration uses OrchestrationAgentE
 to execute agents in parallel and aggregate their responses.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
 
@@ -19,8 +19,10 @@ from collections.abc import Generator
 from typing import Any
 
 from agent_framework import Agent, AgentResponse
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentOrchestrationContext, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import OrchestrationContext, Task, when_all
@@ -43,7 +45,13 @@ def create_physicist_agent() -> "Agent":
     Returns:
         Agent: The configured Physicist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=PHYSICIST_AGENT_NAME,
         instructions="You are an expert in physics. You answer questions from a physics perspective.",
     )
@@ -55,7 +63,13 @@ def create_chemist_agent() -> "Agent":
     Returns:
         Agent: The configured Chemist agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=CHEMIST_AGENT_NAME,
         instructions="You are an expert in chemistry. You answer questions from a chemistry perspective.",
     )
@@ -138,7 +152,7 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,

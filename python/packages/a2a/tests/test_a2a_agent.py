@@ -28,9 +28,10 @@ from agent_framework import (
     BaseHistoryProvider,
     Content,
     Message,
+    SessionContext,
 )
 from agent_framework.a2a import A2AAgent
-from pytest import fixture, raises
+from pytest import fixture, mark, raises
 
 from agent_framework_a2a import A2AContinuationToken
 from agent_framework_a2a._agent import _get_uri_data  # type: ignore
@@ -866,15 +867,19 @@ class TrackingContextProvider(BaseContextProvider):
         self.before_run_session: AgentSession | None = None
         self.after_run_session: AgentSession | None = None
         self.after_run_response: AgentResponse | None = None
+        self.before_run_context: SessionContext | None = None
+        self.after_run_context: SessionContext | None = None
 
     async def before_run(self, *, agent, session, context, state) -> None:
         self.before_run_called = True
         self.before_run_session = session
+        self.before_run_context = context
 
     async def after_run(self, *, agent, session, context, state) -> None:
         self.after_run_called = True
         self.after_run_session = session
         self.after_run_response = context.response
+        self.after_run_context = context
 
 
 async def test_run_invokes_context_providers(mock_a2a_client: MockA2AClient) -> None:
@@ -1127,6 +1132,79 @@ async def test_resume_via_continuation_token_no_context_providers(mock_a2a_clien
     assert isinstance(response, AgentResponse)
     assert response.messages[0].text == "Resumed no providers"
     assert response.continuation_token is None
+
+
+async def test_context_providers_receive_response(mock_a2a_client: MockA2AClient) -> None:
+    """Test that after_run providers can access the response via session context."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Response text")
+    session = agent.create_session()
+
+    await agent.run("Hello", session=session)
+
+    assert provider.after_run_context is not None
+    assert provider.after_run_context.response is not None
+    assert provider.after_run_context.response.text == "Response text"
+
+
+async def test_context_providers_receive_input_messages(mock_a2a_client: MockA2AClient) -> None:
+    """Test that before_run providers can access input messages via session context."""
+    provider = TrackingContextProvider()
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        context_providers=[provider],
+        http_client=None,
+    )
+    mock_a2a_client.add_message_response("msg-1", "Reply")
+    session = agent.create_session()
+
+    await agent.run("Hello world", session=session)
+
+    assert provider.before_run_context is not None
+    assert len(provider.before_run_context.input_messages) > 0
+    assert provider.before_run_context.input_messages[-1].text == "Hello world"
+
+
+@mark.parametrize("messages", [None, []])
+async def test_run_raises_when_no_messages_and_no_continuation_token(
+    mock_a2a_client: MockA2AClient, messages: list[str] | None
+) -> None:
+    """Test that run() raises ValueError when messages is None/empty and no continuation_token is provided."""
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    with raises(ValueError, match="At least one message is required"):
+        await agent.run(messages)
+
+
+async def test_run_with_continuation_token_does_not_require_messages(mock_a2a_client: MockA2AClient) -> None:
+    """Test that run() does not raise when messages is None but a continuation_token is provided."""
+    task = Task(
+        id="task-cont",
+        context_id="ctx-cont",
+        status=TaskStatus(state=TaskState.completed, message=None),
+    )
+    mock_a2a_client.resubscribe_responses.append((task, None))
+
+    agent = A2AAgent(
+        name="Test Agent",
+        client=mock_a2a_client,
+        http_client=None,
+    )
+
+    token = A2AContinuationToken(task_id="task-cont", context_id="ctx-cont")
+    response = await agent.run(None, continuation_token=token)
+    assert response is not None
 
 
 # endregion

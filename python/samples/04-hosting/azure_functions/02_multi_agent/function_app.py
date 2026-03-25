@@ -1,21 +1,22 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host multiple Azure OpenAI agents inside a single Azure Functions app.
+"""Host multiple Foundry-powered agents inside a single Azure Functions app.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create agents bound to a shared Azure OpenAI deployment.
+- FoundryChatClient to create agents bound to a shared Foundry deployment.
 - AgentFunctionApp to register multiple agents and expose dedicated HTTP endpoints.
 - Custom tool functions to demonstrate tool invocation from different agents.
 
-Prerequisites: set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, plus either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import logging
+import os
 from typing import Any
 
-from agent_framework import tool
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
-from azure.identity import AzureCliCredential
+from agent_framework import Agent, tool
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -59,15 +60,21 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 
 # 1. Create multiple agents, each with its own instruction set and tools.
-client = AzureOpenAIChatClient(credential=AzureCliCredential())
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=AzureCliCredential(),
+)
 
-weather_agent = client.as_agent(
+weather_agent = Agent(
+    client=client,
     name="WeatherAgent",
     instructions="You are a helpful weather assistant. Provide current weather information.",
     tools=[get_weather],
 )
 
-math_agent = client.as_agent(
+math_agent = Agent(
+    client=client,
     name="MathAgent",
     instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
     tools=[calculate_tip],

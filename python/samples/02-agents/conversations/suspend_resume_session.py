@@ -2,9 +2,8 @@
 
 import asyncio
 
-from agent_framework import AgentSession
-from agent_framework.azure import AzureAIAgentClient
-from agent_framework.openai import OpenAIChatClient
+from agent_framework import Agent, AgentSession
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -24,11 +23,13 @@ async def suspend_resume_service_managed_session() -> None:
     """Demonstrates how to suspend and resume a service-managed session."""
     print("=== Suspend-Resume Service-Managed Session ===")
 
-    # AzureAIAgentClient supports service-managed sessions.
+    # FoundryChatClient supports service-managed sessions.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
-            name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
+        Agent(
+            client=FoundryChatClient(credential=credential),
+            name="MemoryBot",
+            instructions="You are a helpful assistant that remembers our conversation.",
         ) as agent,
     ):
         # Start a new session for the agent conversation.
@@ -60,8 +61,10 @@ async def suspend_resume_in_memory_session() -> None:
 
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
-    agent = OpenAIChatClient().as_agent(
-        name="MemoryBot", instructions="You are a helpful assistant that remembers our conversation."
+    agent = Agent(
+        client=FoundryChatClient(),
+        name="MemoryBot",
+        instructions="You are a helpful assistant that remembers our conversation.",
     )
 
     # Start a new session for the agent conversation.

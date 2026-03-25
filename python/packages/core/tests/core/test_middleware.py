@@ -28,6 +28,7 @@ from agent_framework._middleware import (
     FunctionMiddleware,
     FunctionMiddlewarePipeline,
     MiddlewareTermination,
+    categorize_middleware,
 )
 from agent_framework._tools import FunctionTool
 
@@ -1681,3 +1682,49 @@ def mock_chat_client() -> Any:
     client = MagicMock(spec=SupportsChatGetResponse)
     client.service_url = MagicMock(return_value="mock://test")
     return client
+
+
+class TestCategorizeMiddleware:
+    """Test cases for categorize_middleware."""
+
+    def test_categorize_middleware_with_tuple(self) -> None:
+        """Test that tuple middleware sources are unpacked, not appended as a single item."""
+        chat_mw = TestChatMiddleware()
+        function_mw = TestFunctionMiddleware()
+        agent_mw = TestAgentMiddleware()
+        result = categorize_middleware((chat_mw, function_mw, agent_mw))
+        assert result["chat"] == [chat_mw]
+        assert result["function"] == [function_mw]
+        assert result["agent"] == [agent_mw]
+
+    def test_categorize_middleware_with_list(self) -> None:
+        """Test that list middleware sources are unpacked correctly."""
+        chat_mw = TestChatMiddleware()
+        function_mw = TestFunctionMiddleware()
+        result = categorize_middleware([chat_mw, function_mw])
+        assert result["chat"] == [chat_mw]
+        assert result["function"] == [function_mw]
+        assert result["agent"] == []
+
+    def test_categorize_middleware_with_none(self) -> None:
+        """Test that None middleware sources are handled."""
+        result = categorize_middleware(None)
+        assert result["chat"] == []
+        assert result["function"] == []
+        assert result["agent"] == []
+
+    def test_categorize_middleware_with_single_item(self) -> None:
+        """Test that a single unwrapped middleware item is appended correctly."""
+        chat_mw = TestChatMiddleware()
+        result = categorize_middleware(chat_mw)
+        assert result["chat"] == [chat_mw]
+        assert result["function"] == []
+        assert result["agent"] == []
+
+    def test_categorize_middleware_with_string_does_not_decompose(self) -> None:
+        """Test that a string is not decomposed character-by-character."""
+        result = categorize_middleware("not_a_middleware")
+        # String should be treated as a single item, not decomposed into characters
+        total_items = len(result["chat"]) + len(result["function"]) + len(result["agent"])
+        assert total_items == 1
+        assert result["agent"] == ["not_a_middleware"]

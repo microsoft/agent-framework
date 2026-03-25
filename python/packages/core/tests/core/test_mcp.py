@@ -42,6 +42,14 @@ skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+def _mcp_result_to_text(result: str | list[Content]) -> str:
+    """Normalize an MCP tool result to text for assertions."""
+    if isinstance(result, str):
+        return result
+    text = "\n".join(content.text for content in result if content.type == "text" and content.text)
+    return text or str(result)
+
+
 # Helper function tests
 def test_normalize_mcp_name():
     """Test MCP name normalization."""
@@ -1401,8 +1409,7 @@ async def test_streamable_http_integration():
         assert hasattr(func, "name")
         assert hasattr(func, "description")
 
-        result = await func.invoke(query="What is Agent Framework?")
-        assert isinstance(result, str)
+        result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert len(result) > 0
 
 
@@ -1430,7 +1437,7 @@ async def test_mcp_connection_reset_integration():
 
         # Get the first function and invoke it
         func = tool.functions[0]
-        first_result = await func.invoke(query="What is Agent Framework?")
+        first_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert first_result is not None
         assert len(first_result) > 0
 
@@ -1456,7 +1463,7 @@ async def test_mcp_connection_reset_integration():
         tool.session.call_tool = call_tool_with_error
 
         # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
-        second_result = await func.invoke(query="What is Agent Framework?")
+        second_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert second_result is not None
         assert len(second_result) > 0
 
@@ -1469,10 +1476,8 @@ async def test_mcp_connection_reset_integration():
         # Verify tools are still available after reconnection
         assert len(tool.functions) > 0
 
-        # Both results should be valid strings (we don't compare content as it may vary)
-        assert isinstance(first_result, str)
+        # Both results should include text (we don't compare content as it may vary)
         assert len(first_result) > 0
-        assert isinstance(second_result, str)
         assert len(second_result) > 0
 
 
@@ -2040,6 +2045,100 @@ async def test_load_tools_with_pagination():
     assert mock_session.list_tools.call_count == 3
     assert len(tool._functions) == 4
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
+
+
+async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
+    """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
+
+    Some MCP servers (e.g. matlab-mcp-core-server) declare zero-argument tools
+    with inputSchema={"type": "object"} and no "properties" key.  OpenAI's API
+    requires "properties" to be present on object schemas, so load_tools must
+    inject an empty "properties" dict when it is missing.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agent_framework._mcp import MCPTool
+
+    tool = MCPTool(name="test_tool")
+
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    tool.load_tools_flag = True
+
+    original_zero_arg_schema = {"type": "object"}
+    original_string_schema = {"type": "string"}
+    original_empty_schema: dict[str, object] = {}
+
+    page = MagicMock()
+    page.tools = [
+        types.Tool(
+            name="zero_arg_tool",
+            description="A tool with no parameters",
+            inputSchema=original_zero_arg_schema,
+        ),
+        types.Tool(
+            name="normal_tool",
+            description="A tool with parameters",
+            inputSchema={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        ),
+        types.Tool(
+            name="string_schema_tool",
+            description="A tool with a non-object schema",
+            inputSchema=original_string_schema,
+        ),
+        types.Tool(
+            name="empty_schema_tool",
+            description="A tool with an empty schema",
+            inputSchema=original_empty_schema,
+        ),
+    ]
+
+    # Simulate a non-conforming MCP server that sends inputSchema=None.
+    # types.Tool requires inputSchema to be a dict, so we use a MagicMock.
+    none_schema_tool = MagicMock()
+    none_schema_tool.name = "none_schema_tool"
+    none_schema_tool.description = "A tool with None inputSchema"
+    none_schema_tool.inputSchema = None
+    page.tools.append(none_schema_tool)
+    page.nextCursor = None
+
+    mock_session.list_tools = AsyncMock(return_value=page)
+
+    await tool.load_tools()
+
+    assert len(tool._functions) == 5
+
+    funcs_by_name = {f.name: f for f in tool._functions}
+
+    # Zero-arg tool must have "properties" injected
+    zero_params = funcs_by_name["zero_arg_tool"].parameters()
+    assert "properties" in zero_params
+    assert zero_params["properties"] == {}
+    assert zero_params["type"] == "object"
+
+    # Normal tool must retain its existing properties
+    normal_params = funcs_by_name["normal_tool"].parameters()
+    assert "properties" in normal_params
+    assert "x" in normal_params["properties"]
+    assert normal_params["required"] == ["x"]
+
+    # Non-object schema must NOT have "properties" injected
+    string_params = funcs_by_name["string_schema_tool"].parameters()
+    assert "properties" not in string_params
+    assert string_params["type"] == "string"
+
+    # Empty schema (no "type" key) must NOT have "properties" injected
+    empty_params = funcs_by_name["empty_schema_tool"].parameters()
+    assert "properties" not in empty_params
+
+    # None inputSchema must produce an empty dict (guard against non-conforming servers)
+    none_params = funcs_by_name["none_schema_tool"].parameters()
+    assert none_params == {}
+
+    # Original inputSchema dicts must not be mutated
+    assert "properties" not in original_zero_arg_schema
+    assert "properties" not in original_string_schema
+    assert "properties" not in original_empty_schema
 
 
 async def test_load_prompts_with_pagination():

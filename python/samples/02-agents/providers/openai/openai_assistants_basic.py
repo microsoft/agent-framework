@@ -44,7 +44,7 @@ async def non_streaming_example() -> None:
     # Create a new assistant via the provider
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
@@ -69,7 +69,7 @@ async def streaming_example() -> None:
     # Create a new assistant via the provider
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )

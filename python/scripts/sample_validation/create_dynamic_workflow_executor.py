@@ -14,7 +14,8 @@ from agent_framework import (
     handler,
 )
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import PermissionRequest, PermissionRequestResult
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import PermissionRequestResult
 from pydantic import BaseModel
 from typing_extensions import Never
 
@@ -36,6 +37,7 @@ class AgentResponseFormat(BaseModel):
     status: str
     output: str
     error: str
+    fix: str
 
 
 @dataclass
@@ -54,15 +56,20 @@ class BatchCompletion:
 
 AgentInstruction = (
     "You are validating exactly one Python sample.\n"
-    "Analyze the sample code and execute it. Based on the execution result, determine if it "
-    "runs successfully, fails, or times out. Feel free to install any required dependencies.\n"
+    "Analyze the sample code and execute it as it is. Based on the execution result, determine "
+    "if it runs successfully, fails, or is missing_setup. Use `missing_setup` if the sample reports "
+    "missing required environment variables. The environment you're given should contain the necessary "
+    "variables. Don't create new environment variables nor modify the sample code.\n"
+    "Feel free to install any required dependencies if needed.\n"
     "The sample can be interactive. If it is interactive, respond to the sample when prompted "
     "based on your analysis of the code. You do not need to consult human on what to respond.\n"
+    "If the sample fails, investigate the error and suggest a fix.\n"
     "Return ONLY valid JSON with this schema:\n"
     "{\n"
-    '  "status": "success|failure|timeout|error",\n'
+    '  "status": "success|failure|missing_setup",\n'
     '  "output": "short summary of the result and what you did if the sample was interactive",\n'
-    '  "error": "error details or empty string"\n'
+    '  "error": "error details or empty string",\n'
+    '  "fix": "suggested code fix if the sample failed, otherwise empty string"\n'
     "}\n\n"
 )
 
@@ -87,16 +94,15 @@ def status_from_text(value: str) -> RunStatus:
     for status in RunStatus:
         if status.value == normalized:
             return status
-    return RunStatus.ERROR
+    return RunStatus.FAILURE
 
 
 def prompt_permission(
     request: PermissionRequest, context: dict[str, str]
 ) -> PermissionRequestResult:
     """Permission handler that always approves."""
-    kind = request.get("kind", "unknown")
     logger.debug(
-        f"[Permission Request: {kind}] ({context})Automatically approved for sample validation."
+        f"[Permission Request: {request.kind}] ({context})Automatically approved for sample validation."
     )
     return PermissionRequestResult(kind="approved")
 
@@ -108,39 +114,73 @@ class CustomAgentExecutor(Executor):
     returned as error responses, otherwise an exception in one agent could crash the entire workflow.
     """
 
+    # Retry in case GitHub Copilot agent encounters transient errors unrelated to the sample execution.
+    RETRY_COUNT = 1
+
     def __init__(self, agent: GitHubCopilotAgent):
         super().__init__(id=agent.id)
         self.agent = agent
+        self._session = agent.create_session()
 
     @handler
     async def handle_task(
         self, sample: SampleInfo, ctx: WorkflowContext[WorkerFreed | RunResult]
     ) -> None:
         """Execute one sample task and notify collector + coordinator."""
-        try:
-            response = await self.agent.run(
-                [
-                    Message(
-                        role="user",
-                        text=f"Validate the following sample:\n\n{sample.relative_path}",
+        current_retry = 0
+        while True:
+            try:
+                response = await self.agent.run(
+                    [
+                        Message(
+                            role="user",
+                            text=f"Validate the following sample:\n\n{sample.relative_path}",
+                        )
+                    ],
+                    session=self._session,
+                )
+                result_payload = parse_agent_json(response.text)
+                result = RunResult(
+                    sample=sample,
+                    status=status_from_text(result_payload.status),
+                    output=result_payload.output,
+                    error=result_payload.error,
+                    fix=result_payload.fix,
+                )
+                break
+            except Exception as ex:
+                if current_retry < self.RETRY_COUNT:
+                    logger.warning(
+                        f"Error executing agent {self.agent.id} (attempt {current_retry + 1}/{self.RETRY_COUNT}): {ex}. Retrying..."
                     )
-                ]
-            )
-            result_payload = parse_agent_json(response.text)
-            result = RunResult(
-                sample=sample,
-                status=status_from_text(result_payload.status),
-                output=result_payload.output,
-                error=result_payload.error,
-            )
-        except Exception as ex:
-            logger.error(f"Error executing agent {self.agent.id}: {ex}")
-            result = RunResult(
-                sample=sample,
-                status=RunStatus.ERROR,
-                output="",
-                error=str(ex),
-            )
+                    try:
+                        current_retry += 1
+                        await self.agent.stop()
+                        await self.agent.start()
+                        self._session = self.agent.create_session()  # Reset session for retry
+                        continue
+                    except Exception as restart_ex:
+                        logger.error(
+                            f"Error restarting agent {self.agent.id}: {restart_ex}. No more retries."
+                        )
+                        result = RunResult(
+                            sample=sample,
+                            status=RunStatus.FAILURE,
+                            output="",
+                            error=f"Original error: {ex}. Restart error: {restart_ex}",
+                            fix="",
+                        )
+                        break
+
+                logger.error(f"Error executing agent {self.agent.id}: {ex}")
+                result = RunResult(
+                    sample=sample,
+                    status=RunStatus.FAILURE,
+                    output="",
+                    error=str(ex),
+                    fix="",
+                )
+                break
 
         await ctx.send_message(result, target_id="collector")
         await ctx.send_message(WorkerFreed(worker_id=self.id), target_id="coordinator")
@@ -252,7 +292,7 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 instructions=AgentInstruction,
                 default_options={
                     "on_permission_request": prompt_permission,
-                    "timeout": 180,
+                    "timeout": 60,
                 },  # type: ignore
             )
             agents.append(agent)

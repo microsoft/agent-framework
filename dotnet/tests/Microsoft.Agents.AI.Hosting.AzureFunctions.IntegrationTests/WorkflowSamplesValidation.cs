@@ -20,6 +20,12 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     private const string DtsPort = "8080";
 
     private static readonly string s_dotnetTargetFramework = GetTargetFramework();
+
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
     private static readonly HttpClient s_sharedHttpClient = new();
     private static readonly IConfiguration s_configuration =
         new ConfigurationBuilder()
@@ -30,7 +36,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
     private static bool s_infrastructureStarted;
     private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
 
-    // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
+    // Timeout for the Azure Functions host to become ready after building.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);
 
     private static readonly string s_samplesPath = Path.GetFullPath(
@@ -419,11 +425,17 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
 
     private async Task RunSampleTestAsync(string samplePath, bool requiresOpenAI, Func<IReadOnlyList<OutputLog>, Task> testAction)
     {
+        // Build the sample project first (it may not have been built as part of the solution)
+        await AzureFunctionsTestHelper.BuildSampleAsync(
+            samplePath, $"-f {s_dotnetTargetFramework} -c {BuildConfiguration}", this._outputHelper);
+
+        // Start the Azure Functions app
         List<OutputLog> logsContainer = [];
         using Process funcProcess = this.StartFunctionApp(samplePath, logsContainer, requiresOpenAI);
         try
         {
-            await this.WaitForAzureFunctionsAsync();
+            await AzureFunctionsTestHelper.WaitForFunctionsReadyAsync(
+                funcProcess, AzureFunctionsPort, s_sharedHttpClient, this._outputHelper, s_functionsReadyTimeout, samplePath);
             await testAction(logsContainer);
         }
         finally
@@ -437,7 +449,7 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         ProcessStartInfo startInfo = new()
         {
             FileName = "dotnet",
-            Arguments = $"run -f {s_dotnetTargetFramework} --port {AzureFunctionsPort}",
+            Arguments = $"run --no-build -f {s_dotnetTargetFramework} -c {BuildConfiguration} --port {AzureFunctionsPort}",
             WorkingDirectory = samplePath,
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -496,29 +508,6 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
         process.BeginOutputReadLine();
 
         return process;
-    }
-
-    private async Task WaitForAzureFunctionsAsync()
-    {
-        this._outputHelper.WriteLine(
-            $"Waiting for Azure Functions Core Tools to be ready at http://localhost:{AzureFunctionsPort}/...");
-        await this.WaitForConditionAsync(
-            condition: async () =>
-            {
-                try
-                {
-                    using HttpRequestMessage request = new(HttpMethod.Head, $"http://localhost:{AzureFunctionsPort}/");
-                    using HttpResponseMessage response = await s_sharedHttpClient.SendAsync(request);
-                    this._outputHelper.WriteLine($"Azure Functions Core Tools response: {response.StatusCode}");
-                    return response.IsSuccessStatusCode;
-                }
-                catch (HttpRequestException)
-                {
-                    return false;
-                }
-            },
-            message: "Azure Functions Core Tools is ready",
-            timeout: s_functionsReadyTimeout);
     }
 
     private async Task RunCommandAsync(string command, string[] args)

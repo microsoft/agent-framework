@@ -216,8 +216,8 @@ class BedrockSettings(TypedDict, total=False):
 
 
 class BedrockChatClient(
-    ChatMiddlewareLayer[BedrockChatOptionsT],
     FunctionInvocationLayer[BedrockChatOptionsT],
+    ChatMiddlewareLayer[BedrockChatOptionsT],
     ChatTelemetryLayer[BedrockChatOptionsT],
     BaseChatClient[BedrockChatOptionsT],
     Generic[BedrockChatOptionsT],

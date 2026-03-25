@@ -6,15 +6,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import (
+    ChatMiddlewareLayer,
     ChatOptions,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationLayer,
     Message,
     SupportsChatGetResponse,
     tool,
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
+from agent_framework.observability import ChatTelemetryLayer
 from anthropic.types.beta import (
     BetaMessage,
     BetaTextBlock,
@@ -23,7 +26,7 @@ from anthropic.types.beta import (
 )
 from pydantic import BaseModel, Field
 
-from agent_framework_anthropic import AnthropicClient
+from agent_framework_anthropic import AnthropicClient, RawAnthropicClient
 from agent_framework_anthropic._chat_client import AnthropicSettings
 
 # Test constants
@@ -64,6 +67,8 @@ def create_test_anthropic_client(
     client.additional_beta_flags = []
     client.chat_middleware = []
     client.function_middleware = []
+    client._cached_chat_middleware_pipeline = None
+    client._cached_function_middleware_pipeline = None
     client.function_invocation_configuration = normalize_function_invocation_configuration(None)
 
     return client
@@ -115,6 +120,19 @@ def test_anthropic_client_init_with_client(mock_anthropic_client: MagicMock) -> 
     assert client.anthropic_client is mock_anthropic_client
     assert client.model_id == "claude-3-5-sonnet-20241022"
     assert isinstance(client, SupportsChatGetResponse)
+
+
+def test_anthropic_client_wraps_raw_client_with_standard_layer_order() -> None:
+    """Test AnthropicClient composes the standard public layer stack around the raw client."""
+    assert issubclass(AnthropicClient, RawAnthropicClient)
+    mro = AnthropicClient.__mro__
+    assert mro.index(FunctionInvocationLayer) < mro.index(ChatMiddlewareLayer)
+    assert mro.index(ChatMiddlewareLayer) < mro.index(ChatTelemetryLayer)
+    assert mro.index(ChatTelemetryLayer) < mro.index(RawAnthropicClient)
+    # RawAnthropicClient must not include the convenience layers
+    assert not issubclass(RawAnthropicClient, FunctionInvocationLayer)
+    assert not issubclass(RawAnthropicClient, ChatMiddlewareLayer)
+    assert not issubclass(RawAnthropicClient, ChatTelemetryLayer)
 
 
 def test_anthropic_client_init_auto_create_client(

@@ -53,7 +53,7 @@ async def tools_on_agent_level() -> None:
     # The agent can use these tools for any query during its lifetime
     agent = await provider.create_agent(
         name="InfoAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful assistant that can provide weather and time information.",
         tools=[get_weather, get_time],  # Tools defined at agent creation
     )
@@ -90,7 +90,7 @@ async def tools_on_run_level() -> None:
     # Agent created with base tools, additional tools can be passed at run time
     agent = await provider.create_agent(
         name="FlexibleAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful assistant.",
         tools=[get_weather],  # Base tool
     )
@@ -127,7 +127,7 @@ async def mixed_tools_example() -> None:
     # Agent created with some base tools
     agent = await provider.create_agent(
         name="ComprehensiveAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a comprehensive assistant that can help with various information requests.",
         tools=[get_weather],  # Base tool available for all queries
     )
