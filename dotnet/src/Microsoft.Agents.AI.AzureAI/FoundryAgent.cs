@@ -2,7 +2,6 @@
 
 using System.ClientModel;
 using System.Diagnostics.CodeAnalysis;
-using System.Text.Json;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
@@ -27,10 +26,9 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// </para>
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
-public sealed class FoundryAgent : AIAgent
+public sealed class FoundryAgent : DelegatingAIAgent
 {
     private readonly AIProjectClient _aiProjectClient;
-    private readonly ChatClientAgent _innerAgent;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryAgent"/> class using the direct Responses API path.
@@ -58,27 +56,12 @@ public sealed class FoundryAgent : AIAgent
         Func<IChatClient, IChatClient>? clientFactory = null,
         ILoggerFactory? loggerFactory = null,
         IServiceProvider? services = null)
+        : base(CreateInnerAgent(
+            CreateProjectClient(projectEndpoint, credential, clientOptions),
+            model, instructions, name, description, tools, clientFactory, loggerFactory, services,
+            out var aiProjectClient))
     {
-        Throw.IfNull(projectEndpoint);
-        Throw.IfNull(credential);
-        Throw.IfNullOrWhitespace(model);
-        Throw.IfNullOrWhitespace(instructions);
-
-        this._aiProjectClient = CreateProjectClient(projectEndpoint, credential, clientOptions);
-
-        ChatClientAgentOptions options = new()
-        {
-            Name = name,
-            Description = description,
-            ChatOptions = new ChatOptions
-            {
-                ModelId = model,
-                Instructions = instructions,
-                Tools = tools,
-            },
-        };
-
-        this._innerAgent = AzureAIProjectChatClientExtensions.CreateResponsesChatClientAgent(this._aiProjectClient, options, clientFactory, loggerFactory, services);
+        this._aiProjectClient = aiProjectClient;
     }
 
     /// <summary>
@@ -97,41 +80,21 @@ public sealed class FoundryAgent : AIAgent
         IList<AITool>? tools = null,
         Func<IChatClient, IChatClient>? clientFactory = null,
         IServiceProvider? services = null)
+        : base(CreateInnerAgentFromEndpoint(
+            CreateProjectClient(agentEndpoint, credential, clientOptions),
+            agentEndpoint, tools, clientFactory, services,
+            out var aiProjectClient))
     {
-        Throw.IfNull(agentEndpoint);
-        Throw.IfNull(credential);
-
-        this._aiProjectClient = CreateProjectClient(agentEndpoint, credential, clientOptions);
-
-        // Extract the agent name from the last non-empty path segment of the URI.
-        AgentReference agentReference = agentEndpoint.Segments[^1].TrimEnd('/');
-
-        ChatClientAgentOptions agentOptions = new()
-        {
-            Name = agentReference.Name,
-            ChatOptions = new() { Tools = tools },
-        };
-
-        IChatClient chatClient = new AzureAIProjectChatClient(this._aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
-
-        if (clientFactory is not null)
-        {
-            chatClient = clientFactory(chatClient);
-        }
-
-        this._innerAgent = new ChatClientAgent(chatClient, agentOptions, services: services);
+        this._aiProjectClient = aiProjectClient;
     }
 
     /// <summary>
     /// Internal constructor used by <c>AsAIAgent</c> extension methods that already have an <see cref="AIProjectClient"/> and a configured <see cref="ChatClientAgent"/>.
     /// </summary>
     internal FoundryAgent(AIProjectClient aiProjectClient, ChatClientAgent innerAgent)
+        : base(Throw.IfNull(innerAgent))
     {
-        Throw.IfNull(aiProjectClient);
-        Throw.IfNull(innerAgent);
-
-        this._aiProjectClient = aiProjectClient;
-        this._innerAgent = innerAgent;
+        this._aiProjectClient = Throw.IfNull(aiProjectClient);
     }
 
     #region Convenience methods
@@ -149,21 +112,10 @@ public sealed class FoundryAgent : AIAgent
 
         var conversation = (await conversationsClient.CreateProjectConversationAsync(options: null, cancellationToken).ConfigureAwait(false)).Value;
 
-        return (ChatClientAgentSession)await this._innerAgent.CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
+        return (ChatClientAgentSession)await ((ChatClientAgent)this.InnerAgent).CreateSessionAsync(conversation.Id, cancellationToken).ConfigureAwait(false);
     }
 
     #endregion
-
-    #region AIAgent overrides
-
-    /// <inheritdoc/>
-    public override string? Name => this._innerAgent.Name;
-
-    /// <inheritdoc/>
-    public override string? Description => this._innerAgent.Description;
-
-    /// <inheritdoc/>
-    protected override string? IdCore => this._innerAgent.Id;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
@@ -173,35 +125,68 @@ public sealed class FoundryAgent : AIAgent
             return this._aiProjectClient;
         }
 
-        if (serviceKey is null && serviceType == typeof(ChatClientAgent))
-        {
-            return this._innerAgent;
-        }
-
-        return this._innerAgent.GetService(serviceType, serviceKey);
+        return base.GetService(serviceType, serviceKey);
     }
 
-    /// <inheritdoc/>
-    protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken)
-        => this._innerAgent.RunAsync(messages, session, options, cancellationToken);
+    #region Private helpers
 
-    /// <inheritdoc/>
-    protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session, AgentRunOptions? options, CancellationToken cancellationToken)
-        => this._innerAgent.RunStreamingAsync(messages, session, options, cancellationToken);
+    private static ChatClientAgent CreateInnerAgent(
+        AIProjectClient aiProjectClient,
+        string model, string instructions,
+        string? name, string? description,
+        IList<AITool>? tools,
+        Func<IChatClient, IChatClient>? clientFactory,
+        ILoggerFactory? loggerFactory,
+        IServiceProvider? services,
+        out AIProjectClient outClient)
+    {
+        Throw.IfNullOrWhitespace(model);
+        Throw.IfNullOrWhitespace(instructions);
 
-    /// <inheritdoc/>
-    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
-        => this._innerAgent.CreateSessionAsync(cancellationToken);
+        outClient = aiProjectClient;
 
-    /// <inheritdoc/>
-    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => this._innerAgent.SerializeSessionAsync(session, jsonSerializerOptions, cancellationToken);
+        ChatClientAgentOptions options = new()
+        {
+            Name = name,
+            Description = description,
+            ChatOptions = new ChatOptions
+            {
+                ModelId = model,
+                Instructions = instructions,
+                Tools = tools,
+            },
+        };
 
-    /// <inheritdoc/>
-    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
-        => this._innerAgent.DeserializeSessionAsync(serializedState, jsonSerializerOptions, cancellationToken);
+        return AzureAIProjectChatClientExtensions.CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
+    }
 
-    #endregion
+    private static ChatClientAgent CreateInnerAgentFromEndpoint(
+        AIProjectClient aiProjectClient,
+        Uri agentEndpoint,
+        IList<AITool>? tools,
+        Func<IChatClient, IChatClient>? clientFactory,
+        IServiceProvider? services,
+        out AIProjectClient outClient)
+    {
+        outClient = aiProjectClient;
+
+        AgentReference agentReference = agentEndpoint.Segments[^1].TrimEnd('/');
+
+        ChatClientAgentOptions agentOptions = new()
+        {
+            Name = agentReference.Name,
+            ChatOptions = new() { Tools = tools },
+        };
+
+        IChatClient chatClient = new AzureAIProjectChatClient(aiProjectClient, agentReference, defaultModelId: null, agentOptions.ChatOptions);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, agentOptions, services: services);
+    }
 
     private static AIProjectClient CreateProjectClient(Uri endpoint, AuthenticationTokenProvider credential, AIProjectClientOptions? clientOptions = null)
     {
@@ -212,4 +197,6 @@ public sealed class FoundryAgent : AIAgent
         clientOptions.AddPolicy(RequestOptionsExtensions.UserAgentPolicy, System.ClientModel.Primitives.PipelinePosition.PerCall);
         return new AIProjectClient(endpoint, credential, clientOptions);
     }
+
+    #endregion
 }

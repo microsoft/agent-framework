@@ -27,9 +27,29 @@ $env:AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4o-mini"
 
 ## Run the sample
 
-Navigate to the ChatClientAgents sample directory and run:
+Navigate to the AgentsWithFoundry sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/AgentsWithFoundry
 dotnet run --project .\Agent_Step01_Basics
 ```
+
+## Alternative: Composable approach
+
+You can also create the same agent by composing the underlying `IChatClient` directly. This gives you full control over the chat client pipeline:
+
+```csharp
+using Azure.AI.Projects;
+using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+AIAgent agent = new ChatClientAgent(
+    chatClient: aiProjectClient.GetProjectOpenAIClient().Responses.AsIChatClient(deploymentName),
+    instructions: "You are good at telling jokes.",
+    name: "JokerAgent");
+```
+
+This approach is useful when you need to customize the chat client pipeline or swap providers (e.g., Anthropic, OpenAI) while keeping the same agent code.

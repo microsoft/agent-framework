@@ -30,7 +30,7 @@ public class FoundryAgentTests
                 model: "gpt-4o-mini",
                 instructions: "Test instructions"));
 
-        Assert.Equal("projectEndpoint", exception.ParamName);
+        Assert.Equal("endpoint", exception.ParamName);
     }
 
     [Fact]
