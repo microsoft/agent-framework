@@ -54,6 +54,7 @@ all = [
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-durabletask",
+    "agent-framework-foundry",
     "agent-framework-foundry-local",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",

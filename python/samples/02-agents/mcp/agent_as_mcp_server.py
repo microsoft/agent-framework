@@ -3,7 +3,7 @@
 from typing import Annotated, Any
 
 import anyio
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -27,7 +27,7 @@ with the following configuration:
             ],
             "env": {
                 "OPENAI_API_KEY": "<OpenAI API key>",
-                "OPENAI_RESPONSES_MODEL_ID": "<OpenAI Responses model ID>",
+                "OPENAI_MODEL": "<OpenAI Responses model ID>",
             }
         }
     }
@@ -56,7 +56,8 @@ def get_item_price(
 async def run() -> None:
     # Define an agent
     # Agent's name and description provide better context for AI model
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="RestaurantAgent",
         description="Answer questions about the menu.",
         tools=[get_specials, get_item_price],

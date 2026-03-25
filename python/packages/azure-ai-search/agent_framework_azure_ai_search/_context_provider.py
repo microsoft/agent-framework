@@ -16,8 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Annotation, Content, Message, SupportsGetEmbeddings
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
 from agent_framework._settings import SecretString, load_settings
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
-from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
 from azure.search.documents.aio import SearchClient
@@ -110,6 +109,8 @@ try:
     _agentic_retrieval_available = True
 except ImportError:
     _agentic_retrieval_available = False
+
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger("agent_framework.azure_ai_search")
 

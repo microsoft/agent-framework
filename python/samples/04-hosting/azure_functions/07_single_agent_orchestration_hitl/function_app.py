@@ -3,28 +3,26 @@
 """Iterate on generated content with a human-in-the-loop Durable orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient for a single writer agent that emits structured JSON.
+- FoundryChatClient for a single writer agent that emits structured JSON.
 - AgentFunctionApp with Durable orchestration, HTTP triggers, and activity triggers.
 - External events that pause the workflow until a human decision arrives or times out.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and
-either `AZURE_OPENAI_API_KEY` or sign in with Azure CLI before running `func start`."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before running `func start`."""
 
 import json
 import logging
+import os
 from collections.abc import Generator, Mapping
 from datetime import timedelta
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
-
-# Load environment variables from .env file
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +55,13 @@ def _create_writer_agent() -> Any:
         "Return your response as JSON with 'title' and 'content' fields."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

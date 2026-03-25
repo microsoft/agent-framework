@@ -30,14 +30,13 @@ See the [README.md](../README.md) file in the parent directory for complete setu
 
 ## Configuration
 
-Update your `local.settings.json` with your Azure OpenAI credentials:
+Update your `local.settings.json` with your Foundry project settings:
 
 ```json
 {
   "Values": {
-    "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME": "your-deployment-name",
-    "AZURE_OPENAI_KEY": "your-api-key-if-not-using-rbac"
+    "FOUNDRY_PROJECT_ENDPOINT": "https://your-project.services.ai.azure.com/api/projects/your-project",
+    "FOUNDRY_MODEL": "your-deployment-name"
   }
 }
 ```
