@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+import os
 
 from agent_framework import (
     Agent,
@@ -21,6 +22,11 @@ from agent_framework import (
     evaluator,
     keyword_check,
 )
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @evaluator
@@ -31,8 +37,15 @@ def is_nonempty(response: str) -> bool:
 
 async def main() -> None:
     # Build a simple planner → executor workflow
-    planner = Agent(model="gpt-4o-mini", instructions="You plan trips. Output a bullet-point plan.")
-    executor_agent = Agent(model="gpt-4o-mini", instructions="You execute travel plans. Book the items listed.")
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
+        credential=AzureCliCredential(),
+    )
+    planner = Agent(client=client, name="planner", instructions="You plan trips. Output a bullet-point plan.")
+    executor_agent = Agent(
+        client=client, name="executor", instructions="You execute travel plans. Book the items listed."
+    )
 
     workflow = WorkflowBuilder(start_executor=planner).add_edge(planner, executor_agent).build()
 

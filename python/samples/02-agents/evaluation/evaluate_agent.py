@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+import os
 
 from agent_framework import (
     Agent,
@@ -20,6 +21,11 @@ from agent_framework import (
     evaluator,
     keyword_check,
 )
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 # A custom check — parameter names determine what data you receive
@@ -31,8 +37,15 @@ def is_helpful(response: str) -> bool:
 
 
 async def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
+        credential=AzureCliCredential(),
+    )
+
     agent = Agent(
-        model="gpt-4o-mini",
+        client=client,
+        name="weather-assistant",
         instructions="You are a helpful weather assistant.",
     )
 

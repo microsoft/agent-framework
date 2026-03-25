@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+import os
 
 from agent_framework import (
     Agent,
@@ -20,6 +21,11 @@ from agent_framework import (
     evaluator,
     tool_calls_present,
 )
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @evaluator
@@ -33,8 +39,15 @@ def response_matches_expected(response: str, expected_output: str) -> float:
 
 
 async def main() -> None:
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
+        credential=AzureCliCredential(),
+    )
+
     agent = Agent(
-        model="gpt-4o-mini",
+        client=client,
+        name="math-tutor",
         instructions="You are a math tutor. Answer concisely.",
     )
 
