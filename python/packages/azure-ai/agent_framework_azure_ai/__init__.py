@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent_provider import AzureAIAgentsProvider
+from ._agent_provider import AzureAIAgentsProvider  # pyright: ignore[reportDeprecated]
 from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
 from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient  # pyright: ignore[reportDeprecated]
 from ._deprecated_azure_openai import (
