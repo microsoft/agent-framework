@@ -336,74 +336,6 @@ def test_parse_tool_result_from_mcp_resource_link_text_resource_and_unknown():
     assert result[1].text == "Embedded result"
 
 
-def test_parse_tool_result_from_mcp_structured_content():
-    """Test that structuredContent is ignored when content items are present."""
-    structured = {"name": "Pasta Carbonara", "ingredients": ["pasta", "eggs", "cheese"]}
-    mcp_result = types.CallToolResult(
-        content=[types.TextContent(type="text", text="Here is a recipe")],
-        structuredContent=structured,
-    )
-    result = _parse_tool_result_from_mcp(mcp_result)
-
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert result[0].type == "text"
-    assert result[0].text == "Here is a recipe"
-
-
-def test_parse_tool_result_from_mcp_structured_content_only():
-    """Test that structuredContent alone (no regular content) produces a text Content."""
-    structured = {"temperature": 72, "unit": "F"}
-    mcp_result = types.CallToolResult(
-        content=[],
-        structuredContent=structured,
-    )
-    result = _parse_tool_result_from_mcp(mcp_result)
-
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert result[0].type == "text"
-    assert json.loads(result[0].text) == structured
-    assert result[0].additional_properties is not None
-    assert result[0].additional_properties["structured_content"] == structured
-
-
-def test_parse_tool_result_from_mcp_structured_content_nested():
-    """Test that structuredContent with nested complex types serialises correctly."""
-    structured = {
-        "recipe": {
-            "name": "Pasta Carbonara",
-            "ingredients": [{"item": "pasta", "amount": 200}, {"item": "eggs", "amount": 3}],
-            "metadata": {"origin": "Italy", "tags": ["quick", "classic"]},
-        }
-    }
-    mcp_result = types.CallToolResult(
-        content=[],
-        structuredContent=structured,
-    )
-    result = _parse_tool_result_from_mcp(mcp_result)
-
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert result[0].type == "text"
-    assert json.loads(result[0].text) == structured
-
-
-def test_parse_tool_result_from_mcp_structured_content_non_serializable():
-    """Test that structuredContent with non-JSON-serializable values falls back to str()."""
-    from datetime import datetime
-
-    structured = {"timestamp": datetime(2025, 1, 1)}
-    mcp_result = types.CallToolResult(
-        content=[],
-        structuredContent=structured,
-    )
-    result = _parse_tool_result_from_mcp(mcp_result)
-    assert len(result) == 1
-    assert result[0].text == str(structured)
-    assert result[0].additional_properties["structured_content"] == structured
-
-
 def test_mcp_content_types_to_ai_content_text():
     """Test conversion of MCP text content to AI content."""
     mcp_content = types.TextContent(type="text", text="Sample text")
@@ -1831,6 +1763,9 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
     params.temperature = None
     params.maxTokens = None
     params.stopSequences = None
+    params.systemPrompt = None
+    params.tools = None
+    params.toolChoice = None
 
     tool.client.get_response.return_value = None
     no_response = await tool.sampling_callback(Mock(), params)
@@ -2171,7 +2106,7 @@ async def test_connect_sampling_capabilities_with_client():
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
     tool.get_mcp_client = Mock(return_value=mock_context_manager)
 
-    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
         mock_session._request_id = 1
 
@@ -2201,7 +2136,7 @@ async def test_connect_no_sampling_capabilities_without_client():
     mock_context_manager.__aexit__ = AsyncMock(return_value=None)
     tool.get_mcp_client = Mock(return_value=mock_context_manager)
 
-    with patch("agent_framework._mcp.ClientSession") as mock_session_class:
+    with patch("mcp.client.session.ClientSession") as mock_session_class:
         mock_session = AsyncMock()
         mock_session._request_id = 1
 

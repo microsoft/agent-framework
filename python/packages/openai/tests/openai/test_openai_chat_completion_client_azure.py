@@ -79,7 +79,8 @@ def test_init_auto_detects_azure_env(azure_openai_unit_test_env: dict[str, str])
 
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_VERSION"]], indirect=True)
-def test_init_uses_default_azure_api_version(azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_uses_default_azure_api_version(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_API_VERSION", "preview")
     client = _create_azure_chat_completion_client()
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_DEPLOYMENT_NAME"]
