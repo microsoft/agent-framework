@@ -186,11 +186,11 @@ public static class AIAgentExtensions
         {
             if (context.IsContinuation)
             {
-                await HandleTaskUpdateAsync(context, eventQueue, cancellationToken).ConfigureAwait(false);
+                await this.HandleTaskUpdateAsync(context, eventQueue, cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                await HandleNewMessageAsync(context, eventQueue, cancellationToken).ConfigureAwait(false);
+                await this.HandleNewMessageAsync(context, eventQueue, cancellationToken).ConfigureAwait(false);
             }
         }
 
