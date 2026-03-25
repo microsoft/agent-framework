@@ -77,4 +77,4 @@ def calculate(expression: str) -> float:
 
         return float(result)
     except (SyntaxError, ValueError) as e:
-        raise ValueError(f"Invalid expression '{expression}': {e}")
+        raise ValueError(f"Invalid expression '{expression}': {e}") from e

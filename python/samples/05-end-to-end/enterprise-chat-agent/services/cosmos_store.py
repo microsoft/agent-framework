@@ -135,11 +135,10 @@ class CosmosConversationStore:
             Thread document or None if not found.
         """
         try:
-            thread = self.container.read_item(
+            return self.container.read_item(
                 item=thread_id,
                 partition_key=thread_id,
             )
-            return thread
         except CosmosResourceNotFoundError:
             return None
 
@@ -254,10 +253,12 @@ class CosmosConversationStore:
             ORDER BY c.updated_at DESC
             OFFSET @offset LIMIT @limit
         """
-        parameters.extend([
-            {"name": "@offset", "value": offset},
-            {"name": "@limit", "value": limit},
-        ])
+        parameters.extend(
+            [
+                {"name": "@offset", "value": offset},
+                {"name": "@limit", "value": limit},
+            ]
+        )
 
         items = list(
             self.container.query_items(

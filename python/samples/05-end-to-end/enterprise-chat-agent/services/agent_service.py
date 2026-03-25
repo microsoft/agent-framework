@@ -14,17 +14,15 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from azure.identity import DefaultAzureCredential
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework_azure_cosmos import CosmosHistoryProvider
-
+from azure.identity import DefaultAzureCredential
 from tools import (
-    get_weather,
     calculate,
+    get_weather,
     search_knowledge_base,
 )
-
 
 _history_provider: Optional[CosmosHistoryProvider] = None
 _agent: Optional[Agent] = None
@@ -38,6 +36,7 @@ def _load_prompt(name: str) -> str:
     """Load a prompt from the prompts directory."""
     prompt_path = _PROMPTS_DIR / f"{name}.txt"
     return prompt_path.read_text(encoding="utf-8")
+
 
 # Microsoft Learn MCP server URL
 MICROSOFT_LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp"
@@ -63,9 +62,7 @@ def get_history_provider() -> CosmosHistoryProvider:
         container_name = os.environ.get("AZURE_COSMOS_CONTAINER_NAME", "messages")
 
         if not endpoint:
-            raise ValueError(
-                "AZURE_COSMOS_ENDPOINT environment variable is required"
-            )
+            raise ValueError("AZURE_COSMOS_ENDPOINT environment variable is required")
 
         if _credential is None:
             _credential = DefaultAzureCredential()
@@ -76,9 +73,9 @@ def get_history_provider() -> CosmosHistoryProvider:
             database_name=database_name,
             container_name=container_name,
             credential=_credential,
-            load_messages=True,      # Load history before each run
-            store_inputs=True,       # Store user messages
-            store_outputs=True,      # Store assistant responses
+            load_messages=True,  # Load history before each run
+            store_inputs=True,  # Store user messages
+            store_outputs=True,  # Store assistant responses
         )
 
         logging.info(
@@ -111,9 +108,7 @@ def get_agent() -> Agent:
         api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21")
 
         if not endpoint:
-            raise ValueError(
-                "AZURE_OPENAI_ENDPOINT environment variable is required"
-            )
+            raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
 
         # Create Azure OpenAI chat client with credential
         global _credential

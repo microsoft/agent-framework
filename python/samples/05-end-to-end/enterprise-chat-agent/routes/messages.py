@@ -8,14 +8,14 @@ from datetime import datetime, timezone
 
 import azure.functions as func
 from agent_framework import AgentSession
-
 from services import (
-    http_request_span,
     cosmos_span,
     get_agent,
     get_history_provider,
     get_mcp_tool,
+    http_request_span,
 )
+
 from routes.threads import get_store
 
 bp = func.Blueprint()
@@ -70,9 +70,7 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
             if not content:
                 span.set_attribute("http.status_code", 400)
                 return func.HttpResponse(
-                    body=json.dumps(
-                        {"error": "Missing 'content' in request body"}
-                    ),
+                    body=json.dumps({"error": "Missing 'content' in request body"}),
                     status_code=400,
                     mimetype="application/json",
                 )
@@ -109,14 +107,20 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
         # Parse tool calls from response if any
         if hasattr(response, "tool_calls") and response.tool_calls:
             for tool_call in response.tool_calls:
-                tool_calls.append({
-                    "tool": getattr(tool_call, "name", str(tool_call)),
-                    "arguments": getattr(tool_call, "arguments", {}),
-                })
+                tool_calls.append(
+                    {
+                        "tool": getattr(tool_call, "name", str(tool_call)),
+                        "arguments": getattr(tool_call, "arguments", {}),
+                    }
+                )
 
         # Update thread metadata with last message preview
         async with cosmos_span("update", "threads", thread_id):
-            preview = response_content[:100] + "..." if len(response_content) > 100 else response_content
+            preview = (
+                response_content[:100] + "..."
+                if len(response_content) > 100
+                else response_content
+            )
             await store.update_thread(
                 thread_id=thread_id,
                 last_message_preview=preview,
@@ -188,11 +192,15 @@ async def get_messages(req: func.HttpRequest) -> func.HttpResponse:
             role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
             # Use the .text property which concatenates all text contents
             content = msg.text if hasattr(msg, "text") else ""
-            logging.info(f"Message: role={role}, content={content[:100] if content else 'empty'}...")
-            message_list.append({
-                "role": role,
-                "content": content,
-            })
+            logging.info(
+                f"Message: role={role}, content={content[:100] if content else 'empty'}..."
+            )
+            message_list.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
 
         logging.info(f"Returning {len(message_list)} serialized messages")
         span.set_attribute("http.status_code", 200)

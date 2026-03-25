@@ -15,10 +15,9 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 
-from opentelemetry.trace import Span, SpanKind, Status, StatusCode
-
 # Import framework's observability - use framework APIs, don't recreate them
 from agent_framework.observability import configure_otel_providers, get_tracer
+from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +107,11 @@ async def http_request_span(
         try:
             yield span
             # Check if status_code was set; determine success based on it
-            status_code = span.attributes.get("http.status_code") if hasattr(
-                span, 'attributes'
-            ) else None
+            status_code = (
+                span.attributes.get("http.status_code")
+                if hasattr(span, "attributes")
+                else None
+            )
             if status_code and status_code >= 400:
                 span.set_status(Status(StatusCode.ERROR))
             else:

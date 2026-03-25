@@ -16,9 +16,9 @@ MCP Tools (via Microsoft Learn MCP Server):
 MCP tools are connected at runtime via MCPStreamableHTTPTool in agent_service.py
 """
 
-from tools.weather import get_weather
 from tools.calculator import calculate
 from tools.knowledge_base import search_knowledge_base
+from tools.weather import get_weather
 
 __all__ = [
     "get_weather",

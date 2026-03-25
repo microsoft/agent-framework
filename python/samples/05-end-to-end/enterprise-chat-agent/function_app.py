@@ -15,9 +15,8 @@ Key Features:
 """
 
 import azure.functions as func
-
+from routes import health_bp, messages_bp, threads_bp
 from services import init_observability
-from routes import threads_bp, messages_bp, health_bp
 
 # Initialize observability once at startup
 init_observability()

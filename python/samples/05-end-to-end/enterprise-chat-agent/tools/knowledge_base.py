@@ -15,31 +15,46 @@ KNOWLEDGE_BASE = [
     {
         "id": "kb_001",
         "title": "Order Status FAQ",
-        "content": "To check your order status, log into your account and visit the 'My Orders' section. You can also track your package using the tracking number sent to your email.",
+        "content": (
+            "To check your order status, log into your account and visit the "
+            "'My Orders' section. Track your package using the tracking number sent to your email."
+        ),
         "category": "orders",
     },
     {
         "id": "kb_002",
         "title": "Return Policy",
-        "content": "Items can be returned within 30 days of purchase. Items must be unused and in original packaging. Refunds are processed within 5-7 business days.",
+        "content": (
+            "Items can be returned within 30 days of purchase. "
+            "Items must be unused and in original packaging. Refunds processed in 5-7 business days."
+        ),
         "category": "returns",
     },
     {
         "id": "kb_003",
         "title": "Shipping Information",
-        "content": "Standard shipping takes 5-7 business days. Express shipping (2-3 days) is available for an additional fee. Free shipping on orders over $50.",
+        "content": (
+            "Standard shipping takes 5-7 business days. "
+            "Express shipping (2-3 days) available for an additional fee. Free shipping on orders over $50."
+        ),
         "category": "shipping",
     },
     {
         "id": "kb_004",
         "title": "Payment Methods",
-        "content": "We accept Visa, Mastercard, American Express, PayPal, and Apple Pay. All transactions are securely processed.",
+        "content": (
+            "We accept Visa, Mastercard, American Express, PayPal, and Apple Pay. "
+            "All transactions are securely processed."
+        ),
         "category": "payments",
     },
     {
         "id": "kb_005",
         "title": "Account Management",
-        "content": "To update your account information, go to Settings > Profile. You can change your email, password, and notification preferences there.",
+        "content": (
+            "To update your account information, go to Settings > Profile. "
+            "You can change your email, password, and notification preferences there."
+        ),
         "category": "account",
     },
 ]
@@ -76,13 +91,15 @@ def search_knowledge_base(
             or query_lower in entry["content"].lower()
             or any(word in entry["content"].lower() for word in query_lower.split())
         ):
-            results.append({
-                "id": entry["id"],
-                "title": entry["title"],
-                "content": entry["content"],
-                "category": entry["category"],
-                "relevance_score": 0.85,  # Simulated score
-            })
+            results.append(
+                {
+                    "id": entry["id"],
+                    "title": entry["title"],
+                    "content": entry["content"],
+                    "category": entry["category"],
+                    "relevance_score": 0.85,  # Simulated score
+                }
+            )
 
     # Sort by relevance (simulated) and limit results
     results.sort(key=lambda x: x["relevance_score"], reverse=True)

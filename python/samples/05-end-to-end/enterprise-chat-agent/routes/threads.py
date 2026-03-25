@@ -7,12 +7,11 @@ import logging
 import uuid
 
 import azure.functions as func
-
 from services import (
     CosmosConversationStore,
-    http_request_span,
     cosmos_span,
     get_history_provider,
+    http_request_span,
 )
 
 bp = func.Blueprint()
@@ -56,9 +55,7 @@ async def create_thread(req: func.HttpRequest) -> func.HttpResponse:
     async with http_request_span("POST", "/threads", user_id=user_id) as span:
         store = get_store()
         async with cosmos_span("create", "threads", thread_id):
-            thread = await store.create_thread(
-                thread_id, user_id, title, metadata
-            )
+            thread = await store.create_thread(thread_id, user_id, title, metadata)
 
         logging.info(f"Created thread {thread_id}")
 
@@ -108,9 +105,7 @@ async def list_threads(req: func.HttpRequest) -> func.HttpResponse:
     except ValueError:
         offset = 0
 
-    async with http_request_span(
-        "GET", "/threads", user_id=user_id
-    ) as span:
+    async with http_request_span("GET", "/threads", user_id=user_id) as span:
         store = get_store()
         async with cosmos_span("query", "threads", "list"):
             threads = await store.list_threads(
@@ -232,12 +227,14 @@ async def debug_list_sessions(req: func.HttpRequest) -> func.HttpResponse:
         sessions = await history_provider.list_sessions()
 
         return func.HttpResponse(
-            body=json.dumps({
-                "sessions": sessions,
-                "count": len(sessions),
-                "source_id": history_provider.source_id,
-                "note": "These are session_ids from the messages container. They should match thread_ids for messages to load correctly."
-            }),
+            body=json.dumps(
+                {
+                    "sessions": sessions,
+                    "count": len(sessions),
+                    "source_id": history_provider.source_id,
+                    "note": "Session IDs from messages container. Should match thread_ids.",
+                }
+            ),
             mimetype="application/json",
         )
     except Exception as e:
