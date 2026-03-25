@@ -707,9 +707,14 @@ class MCPTool:
         if isinstance(message, types.ServerNotification):
             match message.root.method:
                 case "notifications/tools/list_changed":
-                    await self.load_tools()
+                    # Only log here. Calling load_tools() — even as a background task —
+                    # causes a deadlock: load_tools() → _ensure_connected() → send_ping(),
+                    # but the session cannot process the ping while an in-flight call_tool
+                    # request is waiting for its response. Tools will be up-to-date on the
+                    # next explicit load_tools() or connect(reset=True) call.
+                    logger.debug("Tools list changed notification received; reload on next connect.")
                 case "notifications/prompts/list_changed":
-                    await self.load_prompts()
+                    logger.debug("Prompts list changed notification received; reload on next connect.")
                 case _:
                     logger.debug("Unhandled notification: %s", message.root.method)
 
