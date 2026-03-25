@@ -149,20 +149,16 @@ async def main() -> None:
             .add_edge(worker, worker)
         )
 
-        # --- First run: execute and stop after 3 iterations ---
+        # --- First run: execute the workflow ---
         print("\n=== First Run ===\n")
         workflow = workflow_builder.build()
-        event_stream = workflow.run(message=8, stream=True)
 
-        async for event in event_stream:
+        output = None
+        async for event in workflow.run(message=8, stream=True):
             if event.type == "output":
-                print(f"\nWorkflow completed: {event.data}")
-                break
-            if event.type == "superstep_completed":
-                print(f"  [superstep completed, iteration {event.data}]")
-                if event.data >= 3:
-                    print("\n** Stopping after 3 iterations **")
-                    break
+                output = event.data
+
+        print(f"Factor pairs computed: {output}")
 
         # List checkpoints saved in Cosmos DB
         checkpoint_ids = await checkpoint_storage.list_checkpoint_ids(
@@ -188,17 +184,16 @@ async def main() -> None:
         # --- Second run: resume from the latest checkpoint ---
         print("\n=== Resuming from Checkpoint ===\n")
         workflow2 = workflow_builder.build()
-        event_stream2 = workflow2.run(
-            checkpoint_id=latest.checkpoint_id,
-            stream=True,
-        )
 
-        async for event in event_stream2:
+        output2 = None
+        async for event in workflow2.run(checkpoint_id=latest.checkpoint_id, stream=True):
             if event.type == "output":
-                print(f"\nWorkflow completed: {event.data}")
-                break
-            if event.type == "superstep_completed":
-                print(f"  [superstep completed, iteration {event.data}]")
+                output2 = event.data
+
+        if output2:
+            print(f"Resumed workflow produced: {output2}")
+        else:
+            print("Resumed workflow completed (no remaining work — already finished).")
 
 
 if __name__ == "__main__":

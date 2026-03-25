@@ -14,7 +14,7 @@ from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_va
 from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import WorkflowCheckpointException
 from azure.cosmos import PartitionKey
-from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+from azure.cosmos.aio import ContainerProxy, CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -44,8 +44,9 @@ class CosmosCheckpointStorage:
     checkpoints from trusted sources. Loading a malicious checkpoint can execute
     arbitrary code.
 
-    The container is created automatically on first use with partition key
-    ``/workflow_name`` if it does not already exist.
+    The database and container are created automatically on first use
+    if they do not already exist. The container uses partition key
+    ``/workflow_name``.
 
     Example using managed identity / RBAC::
 
@@ -123,7 +124,6 @@ class CosmosCheckpointStorage:
         self._cosmos_client: CosmosClient | None = cosmos_client
         self._container_proxy: ContainerProxy | None = container_client
         self._owns_client = False
-        self._database_client: DatabaseProxy | None = None
 
         if self._container_proxy is not None:
             self.database_name: str = database_name or ""
@@ -157,8 +157,6 @@ class CosmosCheckpointStorage:
                 user_agent_suffix=AGENT_FRAMEWORK_USER_AGENT,
             )
             self._owns_client = True
-
-        self._database_client = self._cosmos_client.get_database_client(self.database_name)
 
     async def save(self, checkpoint: WorkflowCheckpoint) -> CheckpointID:
         """Save a checkpoint to Cosmos DB and return its ID.
@@ -210,7 +208,6 @@ class CosmosCheckpointStorage:
         items = self._container_proxy.query_items(  # type: ignore[union-attr]
             query=query,
             parameters=parameters,
-            enable_cross_partition_query=True,
         )
 
         async for item in items:
@@ -268,7 +265,6 @@ class CosmosCheckpointStorage:
         items = self._container_proxy.query_items(  # type: ignore[union-attr]
             query=query,
             parameters=parameters,
-            enable_cross_partition_query=True,
         )
 
         async for item in items:
@@ -375,13 +371,14 @@ class CosmosCheckpointStorage:
                 raise
 
     async def _ensure_container_proxy(self) -> None:
-        """Get or create the Cosmos DB container for storing checkpoints."""
+        """Get or create the Cosmos DB database and container for storing checkpoints."""
         if self._container_proxy is not None:
             return
-        if self._database_client is None:
-            raise RuntimeError("Cosmos database client is not initialized.")
+        if self._cosmos_client is None:
+            raise RuntimeError("Cosmos client is not initialized.")
 
-        self._container_proxy = await self._database_client.create_container_if_not_exists(
+        database = await self._cosmos_client.create_database_if_not_exists(id=self.database_name)
+        self._container_proxy = await database.create_container_if_not_exists(
             id=self.container_name,
             partition_key=PartitionKey(path="/workflow_name"),
         )

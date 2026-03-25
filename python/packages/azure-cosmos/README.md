@@ -105,11 +105,12 @@ if latest:
   Azure credentials)
 - **Pre-created client**: Pass an existing `CosmosClient` or `ContainerProxy`
 
-### Container Setup
+### Database and Container Setup
 
-The container is created automatically on first use with `/workflow_name` as the
-partition key. You can also pre-create the container in the Azure portal with this
-partition key configuration.
+The database and container are created automatically on first use (via
+`create_database_if_not_exists` and `create_container_if_not_exists`). The container
+uses `/workflow_name` as the partition key. You can also pre-create them in the Azure
+portal with this partition key configuration.
 
 ### Environment Variables
 
@@ -120,4 +121,6 @@ partition key configuration.
 | `AZURE_COSMOS_CONTAINER_NAME` | Container name |
 | `AZURE_COSMOS_KEY` | Account key (optional if using Azure credentials) |
 
-See `samples/workflow_checkpointing.py` for a complete runnable example.
+See `samples/cosmos_workflow_checkpointing.py` for a standalone example, or
+`samples/cosmos_workflow_checkpointing_foundry.py` for an end-to-end example
+with Azure AI Foundry agents.
