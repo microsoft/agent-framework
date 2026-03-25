@@ -2121,7 +2121,7 @@ class TestEvaluateTraces:
             )
 
     async def test_response_ids_path(self) -> None:
-        """evaluate_traces with response_ids delegates to _evaluate_via_responses."""
+        """evaluate_traces with response_ids uses the responses API path."""
         from agent_framework_azure_ai._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()

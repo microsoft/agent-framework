@@ -618,24 +618,6 @@ class FoundryEvals:
 
     # -- Internal evaluation paths --
 
-    async def _evaluate_via_responses(
-        self,
-        response_ids: Sequence[str],
-        evaluators: list[str],
-        eval_name: str,
-    ) -> EvalResults:
-        """Evaluate using Foundry's Responses API retrieval path."""
-        return await _evaluate_via_responses_impl(
-            client=self._client,
-            response_ids=response_ids,
-            evaluators=evaluators,
-            model_deployment=self._model_deployment,
-            eval_name=eval_name,
-            poll_interval=self._poll_interval,
-            timeout=self._timeout,
-            provider=self.name,
-        )
-
     async def _evaluate_via_dataset(
         self,
         items: Sequence[EvalItem],
