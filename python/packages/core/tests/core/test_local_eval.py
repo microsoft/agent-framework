@@ -1037,11 +1037,17 @@ class TestAllPassedSubResults:
         from agent_framework._evaluation import EvalResults
 
         sub_pass = EvalResults(
-            provider="Local", eval_id="e1", run_id="r1", status="completed",
+            provider="Local",
+            eval_id="e1",
+            run_id="r1",
+            status="completed",
             result_counts={"passed": 2, "failed": 0, "errored": 0},
         )
         parent = EvalResults(
-            provider="Local", eval_id="e0", run_id="r0", status="completed",
+            provider="Local",
+            eval_id="e0",
+            run_id="r0",
+            status="completed",
             result_counts=None,
             sub_results={"agent1": sub_pass},
         )
@@ -1052,11 +1058,17 @@ class TestAllPassedSubResults:
         from agent_framework._evaluation import EvalResults
 
         sub_pass = EvalResults(
-            provider="Local", eval_id="e1", run_id="r1", status="completed",
+            provider="Local",
+            eval_id="e1",
+            run_id="r1",
+            status="completed",
             result_counts={"passed": 2, "failed": 0, "errored": 0},
         )
         parent = EvalResults(
-            provider="Local", eval_id="e0", run_id="r0", status="completed",
+            provider="Local",
+            eval_id="e0",
+            run_id="r0",
+            status="completed",
             result_counts={"passed": 1, "failed": 1, "errored": 0},
             sub_results={"agent1": sub_pass},
         )

@@ -29,7 +29,6 @@ from ._foundry_evals import (
     evaluate_foundry_target,
     evaluate_traces,
 )
-from ._foundry_memory_provider import FoundryMemoryProvider
 from ._project_provider import AzureAIProjectAgentProvider  # pyright: ignore[reportDeprecated]
 from ._shared import AzureAISettings
 
@@ -62,7 +61,6 @@ __all__ = [
     "AzureTokenProvider",
     "AzureUserSecurityContext",
     "FoundryEvals",
-    "FoundryMemoryProvider",
     "RawAzureAIClient",
     "RawAzureAIInferenceEmbeddingClient",
     "__version__",

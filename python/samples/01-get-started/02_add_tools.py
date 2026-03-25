@@ -27,6 +27,8 @@ def get_weather(
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
     return f"The weather in {location} is {conditions[randint(0, 3)]} with a high of {randint(10, 30)}°C."
+
+
 # </define_tool>
 
 
