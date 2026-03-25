@@ -20,8 +20,8 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 - **`_context_provider.py`** — Main provider implementation. Overrides `before_run()` to detect
   file attachments, call the CU API, manage session state with multi-document tracking,
   and auto-register retrieval tools for follow-up turns.
-  - **Lazy initialization** — `_ensure_initialized()` creates the CU client on first `before_run()`
-    call, so the provider works with frameworks (e.g. DevUI) that don't call `__aenter__`.
+  - **Eager initialization** — The CU client is created in `__init__()`, following the same
+    pattern as Azure AI Search. `__aenter__` is a no-op; `__aexit__`/`close()` handles cleanup.
   - **Analyzer auto-detection** — When `analyzer_id=None` (default), `_resolve_analyzer_id()`
     selects the CU analyzer based on media type prefix: `audio/` → `prebuilt-audioSearch`,
     `video/` → `prebuilt-videoSearch`, everything else → `prebuilt-documentSearch`.

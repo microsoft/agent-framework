@@ -131,15 +131,8 @@ class TestAsyncContextManager:
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
-        with patch(
-            "agent_framework_azure_ai_contentunderstanding._context_provider.ContentUnderstandingClient",
-        ) as mock_cls:
-            mock_instance = AsyncMock()
-            mock_cls.return_value = mock_instance
-            result = await provider.__aenter__()
-            assert result is provider
-            await provider.__aexit__(None, None, None)
-            mock_instance.close.assert_called_once()
+        result = await provider.__aenter__()
+        assert result is provider
 
     async def test_aexit_closes_client(self) -> None:
         provider = ContentUnderstandingContextProvider(
@@ -150,7 +143,6 @@ class TestAsyncContextManager:
         provider._client = mock_client  # type: ignore[assignment]
         await provider.__aexit__(None, None, None)
         mock_client.close.assert_called_once()
-        assert provider._client is None
 
 
 class TestBeforeRunNewFile:
@@ -874,28 +866,12 @@ class TestErrorHandling:
         assert state["documents"]["error.pdf"]["status"] == "failed"
         assert "Service unavailable" in (state["documents"]["error.pdf"]["error"] or "")
 
-    async def test_lazy_initialization_on_before_run(self) -> None:
-        """before_run lazily initializes _client instead of raising."""
+    async def test_client_created_in_init(self) -> None:
+        """Client is created eagerly in __init__, not lazily."""
         provider = ContentUnderstandingContextProvider(
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
-        assert provider._client is None
-
-        msg = Message(
-            role="user",
-            contents=[
-                Content.from_text("Analyze this"),
-                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
-            ],
-        )
-        context = _make_context([msg])
-        state: dict[str, Any] = {}
-        session = AgentSession()
-
-        # before_run will lazily initialize; the CU call itself may fail
-        # (mock credential) but _client should no longer be None
-        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
         assert provider._client is not None
 
 
@@ -1340,27 +1316,14 @@ class TestFileSearchIntegration:
         assert not any("provided above" in instr for instr in context.instructions)
 
 
-class TestEnsureInitialized:
-    async def test_idempotent_initialization(self) -> None:
-        """Calling _ensure_initialized twice should not re-create the client."""
+class TestClientCreatedInInit:
+    def test_client_is_not_none_after_init(self) -> None:
+        """Client is created eagerly in __init__."""
         provider = ContentUnderstandingContextProvider(
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
-        assert provider._client is None
-
-        with patch(
-            "agent_framework_azure_ai_contentunderstanding._context_provider.ContentUnderstandingClient",
-        ) as mock_cls:
-            mock_instance = AsyncMock()
-            mock_cls.return_value = mock_instance
-
-            await provider._ensure_initialized()
-            assert provider._client is mock_instance
-
-            await provider._ensure_initialized()
-            # Should only be constructed once
-            assert mock_cls.call_count == 1
+        assert provider._client is not None
 
 
 class TestCloseCancel:
@@ -1383,7 +1346,6 @@ class TestCloseCancel:
 
         assert task.cancelled()
         assert len(provider._pending_tasks) == 0
-        assert provider._client is None
 
 
 class TestAnalyzerAutoDetectionE2E:

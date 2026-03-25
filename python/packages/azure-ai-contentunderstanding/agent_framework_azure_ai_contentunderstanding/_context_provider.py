@@ -149,7 +149,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self.max_wait = max_wait
         self.output_sections = output_sections or [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
         self.file_search = file_search
-        self._client: ContentUnderstandingClient | None = None
+        self._client = ContentUnderstandingClient(self._endpoint, self._credential)
         # Background CU analysis tasks keyed by doc_key, resolved on next before_run()
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
         # Documents completed in background that still need vector store upload
@@ -163,7 +163,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self._uploaded_file_ids: list[str] = []
 
     async def __aenter__(self) -> ContentUnderstandingContextProvider:
-        self._client = ContentUnderstandingClient(self._endpoint, self._credential)
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -178,14 +177,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # Clean up vector store resources
         if self.file_search and (self._vector_store_id or self._uploaded_file_ids):
             await self._cleanup_vector_store()
-        if self._client:
-            await self._client.close()
-            self._client = None
-
-    async def _ensure_initialized(self) -> None:
-        """Lazily initialize the CU client if not already done."""
-        if self._client is None:
-            await self.__aenter__()
+        await self._client.close()
 
     async def before_run(
         self,
@@ -199,7 +191,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         This method is called automatically by the framework before each LLM invocation.
         """
-        await self._ensure_initialized()
         documents: dict[str, DocumentEntry] = state.setdefault("documents", {})
 
         # 1. Resolve pending background tasks
@@ -419,10 +410,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         context: SessionContext,
     ) -> None:
         """Analyze a single file via CU with timeout handling."""
-        if not self._client:
-            msg = "ContentUnderstandingContextProvider not initialized. Use 'async with' or call __aenter__."
-            raise RuntimeError(msg)
-
         media_type = content.media_type or "application/octet-stream"
         filename = doc_key
         resolved_analyzer = self._resolve_analyzer_id(media_type)
