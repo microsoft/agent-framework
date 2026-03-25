@@ -12,6 +12,15 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal record AIAgentHostState(JsonElement? ThreadState, bool? CurrentTurnEmitEvents);
 
+internal static class TurnExtensions
+{
+    public static bool ShouldEmitStreamingEvents(this TurnToken token, bool? agentSetting)
+        => token.EmitEvents ?? agentSetting ?? false;
+
+    public static bool ShouldEmitStreamingEvents(bool? turnTokenSetting, bool? agentSetting)
+        => turnTokenSetting ?? agentSetting ?? false;
+}
+
 internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
 {
     private readonly AIAgent _agent;
@@ -104,9 +113,6 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
         }, context, cancellationToken);
     }
 
-    public bool ShouldEmitStreamingEvents(bool? emitEvents)
-        => emitEvents ?? this._options.EmitAgentUpdateEvents ?? false;
-
     private async ValueTask<AgentSession> EnsureSessionAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
         this._session ??= await this._agent.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
 
@@ -175,7 +181,10 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
     }
 
     protected override ValueTask TakeTurnAsync(List<ChatMessage> messages, IWorkflowContext context, bool? emitEvents, CancellationToken cancellationToken = default)
-        => this.ContinueTurnAsync(messages, context, this.ShouldEmitStreamingEvents(emitEvents), cancellationToken);
+        => this.ContinueTurnAsync(messages,
+                                  context,
+                                  TurnExtensions.ShouldEmitStreamingEvents(turnTokenSetting: emitEvents, this._options.EmitAgentUpdateEvents),
+                                  cancellationToken);
 
     private async ValueTask<AgentResponse> InvokeAgentAsync(IEnumerable<ChatMessage> messages, IWorkflowContext context, bool emitEvents, CancellationToken cancellationToken = default)
     {
