@@ -8,6 +8,7 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
+    <InjectSharedRedaction>true</InjectSharedRedaction>
     <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
@@ -20,6 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
+    <PackageReference Include="Microsoft.Extensions.Compliance.Abstractions" />
     <PackageReference Include="OpenAI" />
   </ItemGroup>
 
