@@ -18,8 +18,8 @@ Demonstrate:
 - Steering agent behavior with pre-agent human input
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -29,11 +29,12 @@ from collections.abc import AsyncIterable
 from typing import cast
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -96,14 +97,15 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
     # Create agents for a group discussion
-    optimist = client.as_agent(
+    optimist = Agent(
+        client=client,
         name="optimist",
         instructions=(
             "You are an optimistic team member. You see opportunities and potential "
@@ -112,7 +114,8 @@ async def main() -> None:
         ),
     )
 
-    pragmatist = client.as_agent(
+    pragmatist = Agent(
+        client=client,
         name="pragmatist",
         instructions=(
             "You are a pragmatic team member. You focus on practical implementation "
@@ -121,7 +124,8 @@ async def main() -> None:
         ),
     )
 
-    creative = client.as_agent(
+    creative = Agent(
+        client=client,
         name="creative",
         instructions=(
             "You are a creative team member. You propose innovative solutions and "
@@ -131,7 +135,8 @@ async def main() -> None:
     )
 
     # Orchestrator coordinates the discussion
-    orchestrator = client.as_agent(
+    orchestrator = Agent(
+        client=client,
         name="orchestrator",
         instructions=(
             "You are a discussion manager coordinating a team conversation between participants. "

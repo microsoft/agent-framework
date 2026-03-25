@@ -6,7 +6,7 @@ import os
 from agent_framework import (
     Agent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import MagenticBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -18,12 +18,12 @@ load_dotenv()
 Sample: Build a Magentic orchestration and wrap it as an agent.
 
 The script configures a Magentic workflow with streaming callbacks, then invokes the
-orchestration through `workflow.as_agent(...)` so the entire Magentic loop can be reused
+orchestration through `Agent(client=workflow, ...)` so the entire Magentic loop can be reused
 like any other agent while still emitting callback telemetry.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI credentials configured for `AzureOpenAIResponsesClient` and `AzureOpenAIResponsesClient`.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- OpenAI credentials configured for `FoundryChatClient` and `FoundryChatClient`.
 """
 
 
@@ -35,17 +35,17 @@ async def main() -> None:
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
         # This agent requires the gpt-4o-search-preview model to perform web searches.
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
 
     # Create code interpreter tool using instance method
-    coder_client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    coder_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
     code_interpreter_tool = coder_client.get_code_interpreter_tool()
@@ -63,9 +63,9 @@ async def main() -> None:
         name="MagenticManager",
         description="Orchestrator that coordinates the research and coding workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
@@ -98,7 +98,7 @@ async def main() -> None:
     try:
         # Wrap the workflow as an agent for composition scenarios
         print("\nWrapping workflow as an agent and running...")
-        workflow_agent = workflow.as_agent(name="MagenticWorkflowAgent")
+        workflow_agent = Agent(client=workflow, name="MagenticWorkflowAgent")
 
         last_response_id: str | None = None
         async for update in workflow_agent.run(task, stream=True):

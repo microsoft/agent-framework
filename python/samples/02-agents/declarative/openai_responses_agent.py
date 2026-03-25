@@ -11,15 +11,12 @@ load_dotenv()
 
 async def main():
     """Create an agent from a declarative yaml specification and run it."""
-
     # get the path
     current_path = Path(__file__).parent
     yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "openai" / "OpenAIResponses.yaml"
-
     # load the yaml from the path
     with yaml_path.open("r") as f:
         yaml_str = f.read()
-
     # create the agent from the yaml
     agent = AgentFactory(safe_mode=False).create_agent_from_yaml(yaml_str)
     # use the agent

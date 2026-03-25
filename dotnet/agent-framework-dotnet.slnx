@@ -57,6 +57,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step16_Declarative/Agent_Step16_Declarative.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step17_AdditionalAIContext/Agent_Step17_AdditionalAIContext.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Agent_Step18_CompactionPipeline.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step19_InFunctionLoopCheckpointing/Agent_Step19_InFunctionLoopCheckpointing.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -451,6 +452,10 @@
     <File Path="src/Shared/Samples/TestConfiguration.cs" />
     <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
     <File Path="src/Shared/Samples/XunitLogger.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Redaction/">
+    <File Path="src/Shared/Redaction/README.md" />
+    <File Path="src/Shared/Redaction/ReplacingRedactor.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />

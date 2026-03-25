@@ -1,23 +1,13 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-core",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/02_assistant_agent_with_tool.py
-
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen AssistantAgent vs Agent Framework Agent with function tools.
-
-Demonstrates how to create and attach tools to agents in both frameworks.
-"""
 
 import asyncio
 
 from dotenv import load_dotenv
+
+"""AutoGen AssistantAgent vs Agent Framework Agent with function tools.
+
+Demonstrates how to create and attach tools to agents in both frameworks.
+"""
 
 # Load environment variables from .env file
 load_dotenv()
@@ -64,11 +54,11 @@ async def run_autogen() -> None:
 
 async def run_agent_framework() -> None:
     """Agent Framework agent with @tool decorator."""
-    from agent_framework import tool
+    from agent_framework import Agent, tool
     from agent_framework.openai import OpenAIChatClient
 
     # Define tool with @tool decorator (automatic schema inference)
-    # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
+    # NOTE: approval_mode="never_require" is for sample brevity.
     @tool(approval_mode="never_require")
     def get_weather(location: str) -> str:
         """Get the weather for a location.
@@ -82,8 +72,8 @@ async def run_agent_framework() -> None:
         return f"The weather in {location} is sunny and 72°F."
 
     # Create agent with tool
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.as_agent(
+    client = OpenAIChatClient(model="gpt-4.1-mini")
+    agent = Agent(client=client,
         name="assistant",
         instructions="You are a helpful assistant. Use available tools to answer questions.",
         tools=[get_weather],
