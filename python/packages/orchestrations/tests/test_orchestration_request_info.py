@@ -117,6 +117,7 @@ class TestAgentRequestInfoExecutor:
         agent_response = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         ctx = MagicMock(spec=WorkflowContext)
@@ -135,6 +136,7 @@ class TestAgentRequestInfoExecutor:
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         response = AgentRequestInfoResponse.from_strings(["Additional input"])
@@ -161,6 +163,7 @@ class TestAgentRequestInfoExecutor:
         original_request = AgentExecutorResponse(
             executor_id="test_agent",
             agent_response=agent_response,
+            full_conversation=agent_response.messages,
         )
 
         response = AgentRequestInfoResponse.approve()

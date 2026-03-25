@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - testing deprecated PersistentAgentsClientExtensions
+
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -12,6 +14,7 @@ using Shared.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class AzureAIAgentsPersistentCreateTests
 {
     private const string SkipCodeInterpreterReason = "Azure AI Code Interpreter intermittently fails to execute uploaded files in CI";

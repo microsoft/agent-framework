@@ -50,8 +50,7 @@ def _reset_usage_counters() -> None:
     STREAMING_CALL_COUNT = 0
 
 
-def _create_agent(
-) -> Agent:
+def _create_agent() -> Agent:
     """Create the shared agent used by both demonstrations."""
     return Agent(
         client=OpenAIResponsesClient(),

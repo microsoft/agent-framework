@@ -122,7 +122,7 @@ internal sealed class AFAgentApplication : AgentApplication
             && valueElement.GetProperty("requestJson") is JsonElement requestJsonElement
             && requestJsonElement.ValueKind == JsonValueKind.String)
         {
-            var requestContent = JsonSerializer.Deserialize<FunctionApprovalRequestContent>(requestJsonElement.GetString()!, JsonUtilities.DefaultOptions);
+            var requestContent = JsonSerializer.Deserialize<ToolApprovalRequestContent>(requestJsonElement.GetString()!, JsonUtilities.DefaultOptions);
 
             return new ChatMessage(ChatRole.User, [requestContent!.CreateResponse(approvedJsonElement.ValueKind == JsonValueKind.True)]);
         }
@@ -138,7 +138,7 @@ internal sealed class AFAgentApplication : AgentApplication
     /// <param name="attachments">The list of <see cref="Attachment"/> to which the adaptive cards will be added.</param>
     private static void HandleUserInputRequests(AgentResponse response, ref List<Attachment>? attachments)
     {
-        foreach (FunctionApprovalRequestContent functionApprovalRequest in response.Messages.SelectMany(m => m.Contents).OfType<FunctionApprovalRequestContent>())
+        foreach (ToolApprovalRequestContent functionApprovalRequest in response.Messages.SelectMany(m => m.Contents).OfType<ToolApprovalRequestContent>())
         {
             var functionApprovalRequestJson = JsonSerializer.Serialize(functionApprovalRequest, JsonUtilities.DefaultOptions);
 
@@ -152,7 +152,7 @@ internal sealed class AFAgentApplication : AgentApplication
             });
             card.Body.Add(new AdaptiveTextBlock
             {
-                Text = $"Function: {functionApprovalRequest.FunctionCall.Name}"
+                Text = $"Function: {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}"
             });
             card.Body.Add(new AdaptiveActionSet()
             {

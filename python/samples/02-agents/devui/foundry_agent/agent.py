@@ -9,7 +9,7 @@ import os
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -51,9 +51,9 @@ def get_forecast(
 # Agent instance following Agent Framework conventions
 agent = Agent(
     name="FoundryWeatherAgent",
-    client=AzureAIAgentClient(
-        project_endpoint=os.environ.get("AZURE_AI_PROJECT_ENDPOINT"),
-        model_deployment_name=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
+    client=FoundryChatClient(
+        project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
+        model_model=os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME"),
         credential=AzureCliCredential(),
     ),
     instructions="""

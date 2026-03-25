@@ -43,7 +43,7 @@ async def example_with_automatic_session_creation() -> None:
 
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
@@ -75,7 +75,7 @@ async def example_with_session_persistence() -> None:
 
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )
@@ -120,7 +120,7 @@ async def example_with_existing_session_id() -> None:
 
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )

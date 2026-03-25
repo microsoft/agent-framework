@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -250,7 +252,9 @@ public abstract class ChatHistoryProvider
             return default;
         }
 
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         var subContext = new InvokedContext(context.Agent, context.Session, this._storeInputRequestMessageFilter(context.RequestMessages), this._storeInputResponseMessageFilter(context.ResponseMessages!));
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         return this.StoreChatHistoryAsync(subContext, cancellationToken);
     }
 
@@ -340,6 +344,7 @@ public abstract class ChatHistoryProvider
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="requestMessages">The messages to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="requestMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokingContext(
             AIAgent agent,
             AgentSession? session,
@@ -399,6 +404,7 @@ public abstract class ChatHistoryProvider
         /// that were used by the agent for this invocation.</param>
         /// <param name="responseMessages">The response messages generated during this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/>, <paramref name="requestMessages"/>, or <paramref name="responseMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokedContext(
             AIAgent agent,
             AgentSession? session,

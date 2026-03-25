@@ -15,7 +15,6 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
-    <PackageReference Include="Azure.AI.Projects.OpenAI" />
     <PackageReference Include="Microsoft.Extensions.AI" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" />
     <PackageReference Include="OpenAI" />

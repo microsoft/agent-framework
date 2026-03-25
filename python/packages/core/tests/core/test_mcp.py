@@ -42,6 +42,14 @@ skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+def _mcp_result_to_text(result: str | list[Content]) -> str:
+    """Normalize an MCP tool result to text for assertions."""
+    if isinstance(result, str):
+        return result
+    text = "\n".join(content.text for content in result if content.type == "text" and content.text)
+    return text or str(result)
+
+
 # Helper function tests
 def test_normalize_mcp_name():
     """Test MCP name normalization."""
@@ -1401,8 +1409,7 @@ async def test_streamable_http_integration():
         assert hasattr(func, "name")
         assert hasattr(func, "description")
 
-        result = await func.invoke(query="What is Agent Framework?")
-        assert isinstance(result, str)
+        result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert len(result) > 0
 
 
@@ -1430,7 +1437,7 @@ async def test_mcp_connection_reset_integration():
 
         # Get the first function and invoke it
         func = tool.functions[0]
-        first_result = await func.invoke(query="What is Agent Framework?")
+        first_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert first_result is not None
         assert len(first_result) > 0
 
@@ -1456,7 +1463,7 @@ async def test_mcp_connection_reset_integration():
         tool.session.call_tool = call_tool_with_error
 
         # Invoke the function again - this should trigger automatic reconnection on ClosedResourceError
-        second_result = await func.invoke(query="What is Agent Framework?")
+        second_result = _mcp_result_to_text(await func.invoke(query="What is Agent Framework?"))
         assert second_result is not None
         assert len(second_result) > 0
 
@@ -1469,10 +1476,8 @@ async def test_mcp_connection_reset_integration():
         # Verify tools are still available after reconnection
         assert len(tool.functions) > 0
 
-        # Both results should be valid strings (we don't compare content as it may vary)
-        assert isinstance(first_result, str)
+        # Both results should include text (we don't compare content as it may vary)
         assert len(first_result) > 0
-        assert isinstance(second_result, str)
         assert len(second_result) > 0
 
 

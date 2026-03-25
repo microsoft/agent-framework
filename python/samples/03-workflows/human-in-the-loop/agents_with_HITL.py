@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponse,
@@ -18,7 +19,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
@@ -42,8 +43,8 @@ Demonstrates:
 - Handling human feedback and routing it to the appropriate agents.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -168,21 +169,23 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 async def main() -> None:
     """Run the workflow and bridge human feedback between two agents."""
     # Create the agents
-    writer_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    writer_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         name="writer_agent",
         instructions=("You are a marketing writer."),
         tool_choice="required",
     )
 
-    final_editor_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    final_editor_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            credential=AzureCliCredential(),
+        ),
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

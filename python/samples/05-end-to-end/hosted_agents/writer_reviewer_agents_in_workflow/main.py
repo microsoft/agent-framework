@@ -4,8 +4,8 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 
-from agent_framework import WorkflowBuilder
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, WorkflowBuilder
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from dotenv import load_dotenv
@@ -24,26 +24,24 @@ MODEL_DEPLOYMENT_NAME = os.getenv(
 
 def get_credential():
     """Will use Managed Identity when running in Azure, otherwise falls back to Azure CLI Credential."""
-    return (
-        ManagedIdentityCredential()
-        if os.getenv("MSI_ENDPOINT")
-        else AzureCliCredential()
-    )
+    return ManagedIdentityCredential() if os.getenv("MSI_ENDPOINT") else AzureCliCredential()
 
 
 @asynccontextmanager
 async def create_agents():
     async with get_credential() as credential:
-        client = AzureOpenAIResponsesClient(
+        client = FoundryChatClient(
             project_endpoint=PROJECT_ENDPOINT,
-            deployment_name=MODEL_DEPLOYMENT_NAME,
+            model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
         )
-        writer = client.as_agent(
+        writer = Agent(
+            client=client,
             name="Writer",
             instructions="You are an excellent content writer. You create new content and edit contents based on the feedback.",
         )
-        reviewer = client.as_agent(
+        reviewer = Agent(
+            client=client,
             name="Reviewer",
             instructions="You are an excellent content reviewer. Provide actionable feedback to the writer about the provided content in the most concise manner possible.",
         )
@@ -52,7 +50,9 @@ async def create_agents():
 
 def create_workflow(writer, reviewer):
     workflow = WorkflowBuilder(start_executor=writer).add_edge(writer, reviewer).build()
-    return workflow.as_agent()
+    return Agent(
+        client=workflow,
+    )
 
 
 async def main() -> None:
