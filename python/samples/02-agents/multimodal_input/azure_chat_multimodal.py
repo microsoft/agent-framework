@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Content, Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -21,12 +21,11 @@ def create_sample_image() -> str:
 async def test_image() -> None:
     """Test image analysis with Azure OpenAI."""
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
-    # authentication option. Requires AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+    # authentication option. Requires AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL
     # environment variables to be set.
     # Alternatively, you can pass deployment_name explicitly:
-    # client = AzureOpenAIChatClient(credential=AzureCliCredential(), deployment_name="your-deployment-name")
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
-
+    # client = FoundryChatClient(credential=AzureCliCredential(), model="your-deployment-name")
+    client = FoundryChatClient(credential=AzureCliCredential())
     image_uri = create_sample_image()
     message = Message(
         role="user",
@@ -35,7 +34,6 @@ async def test_image() -> None:
             Content.from_uri(uri=image_uri, media_type="image/png"),
         ],
     )
-
     response = await client.get_response([message])
     print(f"Image Response: {response}")
 

@@ -5,6 +5,8 @@ using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 
 /// <summary>
@@ -231,6 +233,114 @@ public sealed class WorkflowSamplesValidation(ITestOutputHelper outputHelper) : 
                     "BudgetApproval external event receipt not found in logs.");
                 Assert.True(logs.Any(log => log.Message.Contains("Received external event for RequestPort 'ComplianceApproval'")),
                     "ComplianceApproval external event receipt not found in logs.");
+            }
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowMcpToolSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "04_WorkflowMcpTool");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: false, async (logs) =>
+        {
+            // Connect to the MCP endpoint exposed by the Azure Functions host
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport);
+
+            // Verify both workflow tools are listed
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            this._outputHelper.WriteLine($"MCP tools found: {string.Join(", ", tools.Select(t => t.Name))}");
+
+            Assert.Single(tools, t => t.Name == "Translate");
+            Assert.Single(tools, t => t.Name == "OrderLookup");
+
+            // Invoke the Translate workflow via MCP tool (returns a string result)
+            this._outputHelper.WriteLine("Invoking MCP tool 'Translate'...");
+            CallToolResult translateResult = await mcpClient.CallToolAsync(
+                "Translate",
+                arguments: new Dictionary<string, object?> { { "input", "hello world" } });
+
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
+            Assert.NotEmpty(translateResponse);
+            Assert.Contains("HELLO WORLD", translateResponse);
+
+            // Invoke the OrderLookup workflow via MCP tool (returns a POCO serialized as JSON)
+            this._outputHelper.WriteLine("Invoking MCP tool 'OrderLookup'...");
+            CallToolResult orderResult = await mcpClient.CallToolAsync(
+                "OrderLookup",
+                arguments: new Dictionary<string, object?> { { "input", "ORD-2025-42" } });
+
+            Assert.NotEmpty(orderResult.Content);
+            string orderResponse = Assert.IsType<TextContentBlock>(orderResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"OrderLookup MCP tool response: {orderResponse}");
+            Assert.NotEmpty(orderResponse);
+            Assert.Contains("ORD-2025-42", orderResponse);
+
+            // Verify executor activities ran in the logs
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] TranslateText:")), "TranslateText activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] FormatOutput:")), "FormatOutput activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] LookupOrder:")), "LookupOrder activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] EnrichOrder:")), "EnrichOrder activity not found in logs.");
+            }
+        });
+    }
+
+    [Fact]
+    public async Task WorkflowAndAgentsSampleValidationAsync()
+    {
+        string samplePath = Path.Combine(s_samplesPath, "05_WorkflowAndAgents");
+        await this.RunSampleTestAsync(samplePath, requiresOpenAI: true, async (logs) =>
+        {
+            // Connect to the MCP endpoint exposed by the Azure Functions host
+            IClientTransport clientTransport = new HttpClientTransport(new()
+            {
+                Endpoint = new Uri($"http://localhost:{AzureFunctionsPort}/runtime/webhooks/mcp")
+            });
+
+            await using McpClient mcpClient = await McpClient.CreateAsync(clientTransport);
+
+            // Verify both the agent and workflow tools are listed
+            IList<McpClientTool> tools = await mcpClient.ListToolsAsync();
+            this._outputHelper.WriteLine($"MCP tools found: {string.Join(", ", tools.Select(t => t.Name))}");
+
+            Assert.Single(tools, t => t.Name == "Assistant");
+            Assert.Single(tools, t => t.Name == "Translate");
+
+            // Invoke the Translate workflow via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Translate'...");
+            CallToolResult translateResult = await mcpClient.CallToolAsync(
+                "Translate",
+                arguments: new Dictionary<string, object?> { { "input", "hello world" } });
+
+            Assert.NotEmpty(translateResult.Content);
+            string translateResponse = Assert.IsType<TextContentBlock>(translateResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Translate MCP tool response: {translateResponse}");
+            Assert.Contains("HELLO WORLD", translateResponse);
+
+            // Invoke the Assistant agent via MCP tool
+            this._outputHelper.WriteLine("Invoking MCP tool 'Assistant'...");
+            CallToolResult assistantResult = await mcpClient.CallToolAsync(
+                "Assistant",
+                arguments: new Dictionary<string, object?> { { "query", "What is 2 + 2?" } });
+
+            Assert.NotEmpty(assistantResult.Content);
+            string assistantResponse = Assert.IsType<TextContentBlock>(assistantResult.Content[0]).Text;
+            this._outputHelper.WriteLine($"Assistant MCP tool response: {assistantResponse}");
+            Assert.NotEmpty(assistantResponse);
+
+            // Verify workflow executor activities ran in the logs
+            lock (logs)
+            {
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] TranslateText:")), "TranslateText activity not found in logs.");
+                Assert.True(logs.Any(log => log.Message.Contains("[Activity] FormatOutput:")), "FormatOutput activity not found in logs.");
             }
         });
     }

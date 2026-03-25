@@ -10,4 +10,4 @@ and see the [README](https://github.com/microsoft/agent-framework/tree/main/pyth
 
 ## Foundry Local Sample
 
-See the [Foundry Local provider sample](../../samples/02-agents/providers/foundry_local/foundry_local_agent.py) for a runnable example.
+See the [Foundry Local provider sample](../../samples/02-agents/providers/foundry/foundry_local_agent.py) for a runnable example.

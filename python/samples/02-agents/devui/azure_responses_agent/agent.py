@@ -7,13 +7,13 @@ This agent uses the Responses API which supports:
 - Audio inputs
 - And other multimodal content
 
-The Chat Completions API (AzureOpenAIChatClient) does NOT support PDF uploads.
+The Chat Completions API (FoundryChatClient) does NOT support PDF uploads.
 Use this agent when you need to process documents or other file types.
 
 Required environment variables:
 - AZURE_OPENAI_ENDPOINT: Your Azure OpenAI endpoint
-- AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: Deployment name for Responses API
-  (falls back to AZURE_OPENAI_CHAT_DEPLOYMENT_NAME if not set)
+- FOUNDRY_MODEL: Deployment name for Responses API
+  (falls back to FOUNDRY_MODEL if not set)
 - AZURE_OPENAI_API_KEY: Your API key (or use Azure CLI auth)
 """
 
@@ -22,7 +22,7 @@ import os
 from typing import Annotated
 
 from agent_framework import Agent, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 # Get deployment name - try responses-specific env var first, fall back to chat deployment
 _deployment_name = os.environ.get(
-    "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME",
-    os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", ""),
+    "FOUNDRY_MODEL",
+    os.environ.get("FOUNDRY_MODEL", ""),
 )
 
 # Get endpoint - try responses-specific env var first, fall back to default
@@ -89,8 +89,8 @@ agent = Agent(
     For PDFs, you can read and understand the text, tables, and structure.
     For images, you can describe what you see and extract any text.
     """,
-    client=AzureOpenAIResponsesClient(
-        deployment_name=_deployment_name,
+    client=FoundryChatClient(
+        model=_deployment_name,
         endpoint=_endpoint,
         api_version="2025-03-01-preview",  # Required for Responses API
     ),
@@ -117,7 +117,7 @@ def main():
     logger.info("")
     logger.info("Required environment variables:")
     logger.info("  - AZURE_OPENAI_ENDPOINT")
-    logger.info("  - AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    logger.info("  - FOUNDRY_MODEL")
     logger.info("  - AZURE_OPENAI_API_KEY (or use Azure CLI auth)")
     logger.info("")
 
