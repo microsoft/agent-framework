@@ -15,7 +15,6 @@ from azure.ai.contentunderstanding.models import AnalysisResult
 
 from agent_framework_azure_ai_contentunderstanding import (
     AnalysisSection,
-    ContentLimits,
     ContentUnderstandingContextProvider,
 )
 from agent_framework_azure_ai_contentunderstanding._context_provider import SUPPORTED_MEDIA_TYPES
@@ -101,7 +100,6 @@ class TestInit:
         assert provider.analyzer_id is None
         assert provider.max_wait == 5.0
         assert provider.output_sections == [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
-        assert provider.content_limits is not None
         assert provider.source_id == "content_understanding"
 
     def test_custom_values(self) -> None:
@@ -111,23 +109,12 @@ class TestInit:
             analyzer_id="prebuilt-invoice",
             max_wait=10.0,
             output_sections=[AnalysisSection.MARKDOWN],
-            content_limits=ContentLimits(max_pages=50),
             source_id="custom_cu",
         )
         assert provider.analyzer_id == "prebuilt-invoice"
         assert provider.max_wait == 10.0
         assert provider.output_sections == [AnalysisSection.MARKDOWN]
-        assert provider.content_limits is not None
-        assert provider.content_limits.max_pages == 50
         assert provider.source_id == "custom_cu"
-
-    def test_no_content_limits(self) -> None:
-        provider = ContentUnderstandingContextProvider(
-            endpoint="https://test.cognitiveservices.azure.com/",
-            credential=AsyncMock(),
-            content_limits=None,
-        )
-        assert provider.content_limits is None
 
     def test_max_wait_none(self) -> None:
         provider = ContentUnderstandingContextProvider(
@@ -581,54 +568,6 @@ class TestOutputFiltering:
         assert "VendorName" in fields
         assert fields["VendorName"]["value"] is not None
         assert fields["VendorName"]["confidence"] is not None
-
-
-class TestContentLimits:
-    async def test_over_limit_file_size(self, mock_cu_client: AsyncMock) -> None:
-        # Use a very small limit that the test PDF bytes will exceed
-        provider = _make_provider(
-            mock_client=mock_cu_client,
-            content_limits=ContentLimits(max_file_size_mb=0.00001),  # ~10 bytes = reject everything
-        )
-
-        msg = Message(
-            role="user",
-            contents=[
-                Content.from_text("Analyze this"),
-                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "big.pdf"),
-            ],
-        )
-        context = _make_context([msg])
-        state: dict[str, Any] = {}
-        session = AgentSession()
-
-        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
-
-        assert state["documents"]["big.pdf"]["status"] == "failed"
-        assert "exceeds size limit" in (state["documents"]["big.pdf"]["error"] or "")
-
-    async def test_no_limits_allows_any_size(
-        self,
-        mock_cu_client: AsyncMock,
-        pdf_analysis_result: AnalysisResult,
-    ) -> None:
-        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
-        provider = _make_provider(mock_client=mock_cu_client, content_limits=None)
-
-        msg = Message(
-            role="user",
-            contents=[
-                Content.from_text("Analyze this"),
-                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "any_size.pdf"),
-            ],
-        )
-        context = _make_context([msg])
-        state: dict[str, Any] = {}
-        session = AgentSession()
-
-        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
-
-        assert state["documents"]["any_size.pdf"]["status"] == "ready"
 
 
 class TestBinaryStripping:

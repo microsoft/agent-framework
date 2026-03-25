@@ -3,7 +3,7 @@
 import importlib.metadata
 
 from ._context_provider import ContentUnderstandingContextProvider
-from ._models import AnalysisSection, ContentLimits, FileSearchConfig
+from ._models import AnalysisSection, FileSearchConfig
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -12,7 +12,6 @@ except importlib.metadata.PackageNotFoundError:
 
 __all__ = [
     "AnalysisSection",
-    "ContentLimits",
     "ContentUnderstandingContextProvider",
     "FileSearchConfig",
     "__version__",

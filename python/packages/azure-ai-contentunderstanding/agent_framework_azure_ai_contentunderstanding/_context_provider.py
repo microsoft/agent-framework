@@ -22,37 +22,62 @@ from azure.core.credentials_async import AsyncTokenCredential
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
-from ._models import AnalysisSection, ContentLimits, DocumentEntry, FileSearchConfig
+from ._models import AnalysisSection, DocumentEntry, FileSearchConfig
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
 AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
 
+# MIME types used to match against Content.media_type for routing files to CU analysis.
+# Only files whose media_type is set by the client and matches this set will be processed;
+# files without a media_type are ignored.
+#
+# Supported input file types:
+# https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits
 SUPPORTED_MEDIA_TYPES: frozenset[str] = frozenset({
-    # Documents
+    # Documents and images
     "application/pdf",
     "image/jpeg",
     "image/png",
     "image/tiff",
     "image/bmp",
+    "image/heif",
+    "image/heic",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "text/html",
+    # Text
     "text/plain",
+    "text/html",
     "text/markdown",
+    "text/rtf",
+    "text/xml",
+    "application/xml",
+    "message/rfc822",
+    "application/vnd.ms-outlook",
     # Audio
     "audio/wav",
-    "audio/mp3",
     "audio/mpeg",
+    "audio/mp3",
+    "audio/mp4",
     "audio/m4a",
     "audio/flac",
     "audio/ogg",
+    "audio/opus",
+    "audio/webm",
+    "audio/x-ms-wma",
+    "audio/aac",
+    "audio/amr",
+    "audio/3gpp",
     # Video
     "video/mp4",
     "video/quicktime",
     "video/x-msvideo",
     "video/webm",
+    "video/x-flv",
+    "video/x-ms-wmv",
+    "video/x-ms-asf",
+    "video/x-matroska",
 })
 
 # Mapping from filetype's MIME output to our canonical SUPPORTED_MEDIA_TYPES values.
@@ -83,22 +108,26 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     processing for long-running analyses.
 
     Args:
-        endpoint: Azure Content Understanding endpoint URL.
-        credential: Azure credential for authentication.
-        analyzer_id: CU analyzer to use. When ``None`` (default), the analyzer
-            is auto-selected based on the file's media type:
-            audio → ``prebuilt-audioSearch``, video → ``prebuilt-videoSearch``,
-            documents/images → ``prebuilt-documentSearch``.
+        endpoint: Azure AI Foundry endpoint URL
+            (e.g., ``"https://<your-foundry-resource>.services.ai.azure.com/"``).
+        credential: An ``AzureKeyCredential`` for API key auth or an
+            ``AsyncTokenCredential`` (e.g., ``DefaultAzureCredential``) for
+            Microsoft Entra ID auth.
+        analyzer_id: A prebuilt or custom CU analyzer ID. When ``None``
+            (default), a prebuilt analyzer is chosen automatically based on
+            the file's media type: ``prebuilt-documentSearch`` for documents
+            and images, ``prebuilt-audioSearch`` for audio, and
+            ``prebuilt-videoSearch`` for video.
+            Analyzer reference: https://learn.microsoft.com/azure/ai-services/content-understanding/concepts/analyzer-reference
+            Prebuilt analyzers: https://learn.microsoft.com/azure/ai-services/content-understanding/concepts/prebuilt-analyzers
         max_wait: Max seconds to wait for analysis before deferring to background.
             ``None`` waits until complete.
         output_sections: Which CU output sections to pass to LLM.
-        content_limits: File size/page/duration limits. ``None`` disables limits.
         source_id: Unique identifier for message attribution.
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "content_understanding"
-    DEFAULT_MAX_WAIT: ClassVar[float] = 5.0
-    DEFAULT_CONTENT_LIMITS: ClassVar[ContentLimits] = ContentLimits()
+    DEFAULT_MAX_WAIT_SECONDS: ClassVar[float] = 5.0
 
     def __init__(
         self,
@@ -106,9 +135,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         credential: AzureCredentialTypes,
         *,
         analyzer_id: str | None = None,
-        max_wait: float | None = DEFAULT_MAX_WAIT,
+        max_wait: float | None = DEFAULT_MAX_WAIT_SECONDS,
         output_sections: list[AnalysisSection] | None = None,
-        content_limits: ContentLimits | None = DEFAULT_CONTENT_LIMITS,
         file_search: FileSearchConfig | None = None,
         source_id: str = DEFAULT_SOURCE_ID,
     ) -> None:
@@ -118,7 +146,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self.analyzer_id = analyzer_id
         self.max_wait = max_wait
         self.output_sections = output_sections or [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
-        self.content_limits = content_limits
         self.file_search = file_search
         self._client: ContentUnderstandingClient | None = None
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
@@ -353,23 +380,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         return None
 
     # ------------------------------------------------------------------
-    # Content Limit Checks
-    # ------------------------------------------------------------------
-
-    def _check_content_limits(self, content: Content, binary_data: bytes | None) -> str | None:
-        """Check file against content limits. Returns error message or None."""
-        if not self.content_limits:
-            return None
-
-        # File size check
-        if binary_data:
-            size_mb = len(binary_data) / (1024 * 1024)
-            if size_mb > self.content_limits.max_file_size_mb:
-                return f"File exceeds size limit: {size_mb:.1f} MB (max {self.content_limits.max_file_size_mb} MB)"
-
-        return None
-
-    # ------------------------------------------------------------------
     # Analyzer Resolution
     # ------------------------------------------------------------------
 
@@ -407,24 +417,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         media_type = content.media_type or "application/octet-stream"
         filename = doc_key
         resolved_analyzer = self._resolve_analyzer_id(media_type)
-
-        # Check content limits
-        limit_error = self._check_content_limits(content, binary_data)
-        if limit_error:
-            documents[doc_key] = DocumentEntry(
-                status="failed",
-                filename=filename,
-                media_type=media_type,
-                analyzer_id=resolved_analyzer,
-                analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
-                result=None,
-                error=limit_error,
-            )
-            context.extend_instructions(
-                self.source_id,
-                f"File '{filename}' was rejected: {limit_error}",
-            )
-            return
 
         try:
             # Start CU analysis
@@ -667,7 +659,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         meta_items: list[str] = []
         duration = result.get("duration_seconds")
         if duration is not None:
-            mins, secs = divmod(int(duration), 60)  # type: ignore[arg-type]
+            mins, secs = divmod(int(duration), 60)  # type: ignore[call-overload]
             meta_items.append(f"Duration: {mins}:{secs:02d}")
         resolution = result.get("resolution")
         if resolution:

@@ -29,32 +29,6 @@ class AnalysisSection(str, Enum):
     """Document structural hierarchy."""
 
 
-@dataclass
-class ContentLimits:
-    """Configurable limits to constrain input size for CU analysis.
-
-    Defaults are stricter than CU service limits to keep analysis fast and
-    output within LLM context windows.
-
-    Args:
-        max_pages: Maximum number of pages for PDF/TIFF/image documents.
-        max_file_size_mb: Maximum file size in megabytes for all file types.
-        max_audio_duration_s: Maximum audio duration in seconds.
-        max_video_duration_s: Maximum video duration in seconds.
-    """
-
-    max_pages: int = 20
-    """Maximum pages for PDF/TIFF/image documents. Not yet enforced — file size is checked instead."""
-
-    max_file_size_mb: int = 10
-
-    max_audio_duration_s: int = 300
-    """Maximum audio duration in seconds. Not yet enforced — file size is checked instead."""
-
-    max_video_duration_s: int = 120
-    """Maximum video duration in seconds. Not yet enforced — file size is checked instead."""
-
-
 class DocumentEntry(TypedDict):
     """Tracks the analysis state of a single document in session state."""
 
