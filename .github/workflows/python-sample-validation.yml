@@ -335,10 +335,13 @@ jobs:
           name: validation-report-02-agents-ollama
           path: python/samples/sample_validation/reports/
 
-  validate-02-agents-foundry-local:
+  validate-02-agents-foundry:
     name: Validate 02-agents/providers/foundry
     runs-on: ubuntu-latest
     environment: integration
+    env:
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY__PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY__MODEL }}
     defaults:
       run:
         working-directory: python
@@ -352,6 +355,11 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           os: ${{ runner.os }}
+
+      - name: Create .env for samples
+        run: |
+          echo "FOUNDRY_PROJECT_ENDPOINT=$FOUNDRY_PROJECT_ENDPOINT" >> .env
+          echo "FOUNDRY_MODEL=$FOUNDRY_MODEL" >> .env
 
       - name: Run sample validation
         run: |
@@ -688,14 +696,12 @@ jobs:
       - validate-01-get-started
       - validate-02-agents
       - validate-02-agents-openai
-      - validate-02-agents-azure-openai
-      - validate-02-agents-azure-ai
-      - validate-02-agents-azure-ai-agent
+      - validate-02-agents-azure
       - validate-02-agents-anthropic
       - validate-02-agents-github-copilot
       - validate-02-agents-amazon
       - validate-02-agents-ollama
-      - validate-02-agents-foundry-local
+      - validate-02-agents-foundry
       - validate-02-agents-copilotstudio
       - validate-02-agents-custom
       - validate-03-workflows
