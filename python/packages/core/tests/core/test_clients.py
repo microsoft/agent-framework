@@ -83,6 +83,18 @@ def test_openai_chat_completion_client_get_response_is_defined_on_openai_class()
 
     assert OpenAIChatCompletionClient.get_response.__qualname__ == "OpenAIChatCompletionClient.get_response"
     assert "middleware" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_openai_chat_client_init_uses_explicit_parameters() -> None:
+    from agent_framework.openai import OpenAIChatClient
+
+    signature = inspect.signature(OpenAIChatClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:

@@ -29,6 +29,7 @@ from typing import (
 )
 
 from agent_framework._clients import BaseChatClient
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY
@@ -278,6 +279,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -295,6 +299,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -314,6 +321,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -338,6 +348,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -358,9 +371,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw OpenAI Chat client.
 
@@ -391,11 +406,13 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
-            kwargs: Additional keyword arguments forwarded to ``BaseChatClient``.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -452,7 +469,11 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+        )
 
     # region Inner Methods
 
@@ -460,7 +481,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-        **kwargs: Any,
     ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
         """Validate options and prepare the request.
 
@@ -469,7 +489,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         """
         client = self.client
         validated_options = await self._validate_options(options)
-        run_options = await self._prepare_options(messages, validated_options, **kwargs)
+        run_options = await self._prepare_options(messages, validated_options)
         return client, run_options, validated_options
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
@@ -526,7 +546,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         client,
                         run_options,
                         validated_options,
-                    ) = await self._prepare_request(messages, options, **kwargs)
+                    ) = await self._prepare_request(messages, options)
                     try:
                         if "text_format" in run_options:
                             async with client.responses.stream(**run_options) as response:
@@ -560,7 +580,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 return self._parse_response_from_openai(response, options=validated_options)
-            client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+            client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
                     response = await client.responses.parse(stream=False, **run_options)
@@ -1100,7 +1120,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
         # Exclude keys that are not supported or handled separately
@@ -1122,7 +1141,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # messages
         # Handle instructions by prepending to messages as system message
         # Only prepend instructions for the first turn (when no conversation/response ID exists)
-        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        conversation_id = options.get("conversation_id")
         if (instructions := options.get("instructions")) and not conversation_id:
             # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
@@ -1130,7 +1149,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ChatClientInvalidRequestException("Messages are required for chat completions")
-        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        conversation_id = options.get("conversation_id")
         run_options["input"] = request_input
 
         # model id
@@ -1148,7 +1167,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 run_options[new_key] = run_options.pop(old_key)
 
         # Handle different conversation ID formats
-        if conversation_id := self._get_current_conversation_id(options, **kwargs):
+        if conversation_id := options.get("conversation_id"):
             if conversation_id.startswith("resp_"):
                 # For response IDs, set previous_response_id and remove conversation property
                 run_options["previous_response_id"] = conversation_id
@@ -1201,14 +1220,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             if not self.model:
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
-
-    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID, preferring kwargs over options.
-
-        This ensures runtime-updated conversation IDs (for example, from tool execution
-        loops) take precedence over the initial configuration provided in options.
-        """
-        return kwargs.get("conversation_id") or options.get("conversation_id")
 
     def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
@@ -2469,10 +2480,13 @@ class OpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -2488,11 +2502,14 @@ class OpenAIChatClient(  # type: ignore[misc]
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Optional additional properties to include on all requests.
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
-            middleware: Optional middleware to apply to the client.
-            function_invocation_configuration: Optional function invocation configuration override.
         """
         ...
 
@@ -2509,10 +2526,13 @@ class OpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -2535,11 +2555,14 @@ class OpenAIChatClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Optional additional properties to include on all requests.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
-            middleware: Optional middleware to apply to the client.
-            function_invocation_configuration: Optional function invocation configuration override.
         """
         ...
 
@@ -2556,11 +2579,13 @@ class OpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
-        env_file_path: str | None = None,
-        env_file_encoding: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
+        additional_properties: dict[str, Any] | None = None,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
@@ -2590,13 +2615,15 @@ class OpenAIChatClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role to use for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
-            middleware: Optional middleware to apply to the client.
-            function_invocation_configuration: Optional function invocation configuration override.
-            kwargs: Other keyword parameters.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -2654,7 +2681,9 @@ class OpenAIChatClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
         )
 
 

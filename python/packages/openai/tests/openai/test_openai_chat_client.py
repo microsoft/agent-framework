@@ -2968,20 +2968,6 @@ async def test_prepare_options_store_parameter_handling() -> None:
     assert "previous_response_id" not in options
 
 
-async def test_conversation_id_precedence_kwargs_over_options() -> None:
-    """When both kwargs and options contain conversation_id, kwargs wins."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    messages = [Message(role="user", text="Hello")]
-
-    # options has a stale response id, kwargs carries the freshest one
-    opts = {"conversation_id": "resp_old_123"}
-    run_opts = await client._prepare_options(messages, opts, conversation_id="resp_new_456")  # type: ignore
-
-    # Verify kwargs takes precedence and maps to previous_response_id for resp_* IDs
-    assert run_opts.get("previous_response_id") == "resp_new_456"
-    assert "conversation" not in run_opts
-
-
 def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
     mock_response = MagicMock()
     mock_response.id = response_id

@@ -18,6 +18,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework._clients import BaseChatClient
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
@@ -427,7 +428,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -437,7 +441,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: OpenAIChatCompletionOptionsT | ChatOptions[None] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -447,7 +454,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[True],
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     @override
@@ -457,7 +467,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: bool = False,
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the raw OpenAI chat client."""
         super_get_response = cast(
@@ -468,7 +481,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             messages=messages,
             stream=stream,
             options=options,
-            **kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
         )
 
     @override
@@ -1205,10 +1221,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1218,10 +1235,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: OpenAIChatCompletionOptionsT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1231,10 +1249,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[True],
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     @override
@@ -1244,25 +1263,26 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: bool = False,
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the OpenAI chat client with all standard layers enabled."""
         super_get_response = cast(
             "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
             super().get_response,  # type: ignore[misc]
         )
-        effective_options = dict(options) if options is not None else {}
-        effective_options.update(kwargs)
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if middleware is not None:
             effective_client_kwargs["middleware"] = middleware
         return super_get_response(  # type: ignore[no-any-return]
             messages=messages,
             stream=stream,
-            options=effective_options,
+            options=options,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=effective_client_kwargs,
         )
