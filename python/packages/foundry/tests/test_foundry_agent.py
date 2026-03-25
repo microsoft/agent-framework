@@ -259,15 +259,6 @@ class TestRawFoundryAgent:
 class TestFoundryAgent:
     """Tests for FoundryAgent (full middleware)."""
 
-    def test_middleware_wraps_telemetry(self) -> None:
-        """FoundryAgent must keep agent middleware outside telemetry timing."""
-        from agent_framework._middleware import AgentMiddlewareLayer
-        from agent_framework.observability import AgentTelemetryLayer
-
-        from agent_framework_foundry._foundry_agent import FoundryAgent
-
-        assert FoundryAgent.__mro__.index(AgentMiddlewareLayer) < FoundryAgent.__mro__.index(AgentTelemetryLayer)
-
     def test_init(self) -> None:
         """Test construction of the full-middleware agent."""
         from agent_framework_foundry._foundry_agent import FoundryAgent

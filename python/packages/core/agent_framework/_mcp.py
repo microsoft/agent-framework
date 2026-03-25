@@ -242,10 +242,10 @@ class MCPTool:
         except ModuleNotFoundError as ex:
             raise ModuleNotFoundError("`mcp` is required to use MCP Tools. Please install `mcp`.") from ex
         types = runtime_types
-        ClientSession = runtime_client_session
-        RequestContext = runtime_request_context
-        McpError = runtime_mcp_error
-        RequestResponder = runtime_request_responder
+        ClientSession = runtime_client_session  # type: ignore[misc]
+        RequestContext = runtime_request_context  # type: ignore[misc]
+        McpError = runtime_mcp_error  # type: ignore[misc]
+        RequestResponder = runtime_request_responder  # type: ignore[misc]
 
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
