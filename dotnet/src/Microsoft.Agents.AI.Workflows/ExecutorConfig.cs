@@ -6,7 +6,7 @@ namespace Microsoft.Agents.AI.Workflows;
 /// Represents a configuration for an object with a string identifier. For example, <see cref="IIdentified"/> object.
 /// </summary>
 /// <param name="id">A unique identifier for the configurable object.</param>
-public class Config(string id)
+public class ExecutorConfig(string id)
 {
     /// <summary>
     /// Gets a unique identifier for the configurable object.
@@ -23,7 +23,7 @@ public class Config(string id)
 /// <typeparam name="TOptions">The type of options for the configurable object.</typeparam>
 /// <param name="id">A unique identifier for the configurable object.</param>
 /// <param name="options">The options for the configurable object.</param>
-public class Config<TOptions>(string id, TOptions? options = default) : Config(id)
+public class ExecutorConfig<TOptions>(string id, TOptions? options = default) : ExecutorConfig(id)
 {
     /// <summary>
     /// Gets the options for the configured object.

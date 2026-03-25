@@ -195,8 +195,8 @@ class RawFoundryAgent(  # type: ignore[misc]
 
 
 class FoundryAgent(  # type: ignore[misc]
-    AgentTelemetryLayer,
     AgentMiddlewareLayer,
+    AgentTelemetryLayer,
     RawFoundryAgent[FoundryAgentOptionsT],
 ):
     """Microsoft Foundry Agent with full middleware and telemetry support.
