@@ -45,8 +45,7 @@ This folder contains examples demonstrating different ways to create and use age
 Make sure to set the following environment variables before running the examples:
 
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_CHAT_MODEL_ID`: The OpenAI model to use (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
-- `OPENAI_RESPONSES_MODEL_ID`: The OpenAI model to use (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
+- `OPENAI_MODEL`: The OpenAI model to use (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
 - For image processing examples, use a vision-capable model like `gpt-4o` or `gpt-4o-mini`
 
 Optionally, you can set:

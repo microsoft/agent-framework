@@ -3,7 +3,7 @@
 import asyncio
 from typing import Literal
 
-from agent_framework import Agent
+from agent_framework import Agent, Message
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
@@ -40,11 +40,11 @@ async def demo_anthropic_chat_client() -> None:
     print("\n=== Anthropic ChatClient with TypedDict Options ===\n")
 
     # Create Anthropic client
-    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
 
     # Standard options work great:
     response = await client.get_response(
-        "What is the capital of France?",
+        [Message("user", text="What is the capital of France?")],
         options={
             "temperature": 0.5,
             "max_tokens": 1000,
@@ -62,7 +62,7 @@ async def demo_anthropic_agent() -> None:
     """Demonstrate Agent with Anthropic client and typed options."""
     print("\n=== Agent with Anthropic and Typed Options ===\n")
 
-    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
     agent = Agent(
@@ -119,12 +119,12 @@ async def demo_openai_chat_client_reasoning_models() -> None:
     print("\n=== OpenAI ChatClient with TypedDict Options ===\n")
 
     # Create OpenAI client
-    client = OpenAIChatClient[OpenAIReasoningChatOptions](model_id="o3")
+    client = OpenAIChatClient[OpenAIReasoningChatOptions](model="o3")
 
     # With specific options, you get full IDE autocomplete!
     # Try typing `client.get_response("Hello", options={` and see the suggestions
     response = await client.get_response(
-        "What is 2 + 2?",
+        [Message("user", text="What is 2 + 2?")],
         options={
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,

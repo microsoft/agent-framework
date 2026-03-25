@@ -9,13 +9,6 @@ concepts of **Agent Framework** one step at a time.
 pip install agent-framework --pre
 ```
 
-Set the required environment variables:
-
-```bash
-export AZURE_AI_PROJECT_ENDPOINT="https://your-project-endpoint"
-export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"   # optional, defaults to gpt-4o
-```
-
 ## Samples
 
 | # | File | What you'll learn |
