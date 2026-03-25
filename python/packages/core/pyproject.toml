@@ -23,28 +23,20 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    # utilities
     "typing-extensions>=4.15.0,<5",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
-    # telemetry
     "opentelemetry-api>=1.39.0,<2",
-    "opentelemetry-sdk>=1.39.0,<2",
-    "opentelemetry-semantic-conventions-ai>=0.4.13,<0.4.14",
-    # connectors and functions
-    "openai>=1.99.0,<3",
-    "azure-identity>=1,<2",
-    "azure-ai-projects>=2.0.0,<3.0",
-    "mcp[ws]>=1.24.0,<2",
-    "packaging>=24.1,<25",
 ]
 
 [project.optional-dependencies]
 all = [
+    "mcp>=1.24.0,<2",
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-azure-ai-search",
     "agent-framework-anthropic",
+    "agent-framework-openai",
     "agent-framework-claude",
     "agent-framework-azure-ai",
     "agent-framework-azurefunctions",
@@ -54,6 +46,7 @@ all = [
     "agent-framework-declarative",
     "agent-framework-devui",
     "agent-framework-durabletask",
+    "agent-framework-foundry",
     "agent-framework-foundry-local",
     "agent-framework-github-copilot; python_version >= '3.11'",
     "agent-framework-lab",

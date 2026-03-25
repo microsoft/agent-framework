@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from agent_framework import AgentContext, AgentSession, FunctionInvocationContext, tool
+from agent_framework import Agent, AgentContext, AgentSession, FunctionInvocationContext, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -65,7 +65,8 @@ async def main() -> None:
 
     client = OpenAIResponsesClient()
 
-    research_agent = client.as_agent(
+    research_agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions="You are a research assistant. Provide concise answers and store your findings.",
         middleware=[log_session],
@@ -80,7 +81,8 @@ async def main() -> None:
         propagate_session=True,
     )
 
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         name="CoordinatorAgent",
         instructions=(
             "You coordinate research. Use the 'research' tool to start research "

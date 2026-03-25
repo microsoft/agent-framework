@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from agent_framework import Content
+from agent_framework import Agent, Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
 from dotenv import load_dotenv
 
@@ -35,7 +35,8 @@ async def main() -> None:
 
     # Create a agent with the pptx skill enabled
     # Skills also need the code interpreter tool to function
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for creating powerpoint presentations.",
         tools=client.get_code_interpreter_tool(),

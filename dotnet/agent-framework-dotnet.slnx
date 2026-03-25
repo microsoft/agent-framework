@@ -57,6 +57,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step16_Declarative/Agent_Step16_Declarative.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step17_AdditionalAIContext/Agent_Step17_AdditionalAIContext.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Agent_Step18_CompactionPipeline.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step19_InFunctionLoopCheckpointing/Agent_Step19_InFunctionLoopCheckpointing.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -76,6 +77,8 @@
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/04_WorkflowMcpTool/04_WorkflowMcpTool.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/05_WorkflowAndAgents/05_WorkflowAndAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
@@ -309,7 +312,6 @@
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithHostedMCP/AgentWithHostedMCP.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithLocalTools/AgentWithLocalTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTextSearchRag/AgentWithTextSearchRag.csproj" />
-    <Project Path="samples/05-end-to-end/HostedAgents/AgentWithTools/AgentWithTools.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundryMultiAgent/FoundryMultiAgent.csproj" />
     <Project Path="samples/05-end-to-end/HostedAgents/FoundrySingleAgent/FoundrySingleAgent.csproj" />
   </Folder>
@@ -452,6 +454,10 @@
     <File Path="src/Shared/Samples/TestConfiguration.cs" />
     <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
     <File Path="src/Shared/Samples/XunitLogger.cs" />
+  </Folder>
+  <Folder Name="/Solution Items/src/Shared/Redaction/">
+    <File Path="src/Shared/Redaction/README.md" />
+    <File Path="src/Shared/Redaction/ReplacingRedactor.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />

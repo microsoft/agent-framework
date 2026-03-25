@@ -68,10 +68,17 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             throw new InvalidOperationException($"No pending ToolApprovalRequest found with id '{response.RequestId}'.");
         }
 
-        List<ChatMessage> implicitTurnMessages = [new ChatMessage(ChatRole.User, [response])];
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
+        {
+            pendingMessages.Add(new ChatMessage(ChatRole.User, [response]));
 
-        // ContinueTurnAsync owns failing to emit a TurnToken if this response does not clear up all remaining outstanding requests.
-        return this.ContinueTurnAsync(implicitTurnMessages, context, this._currentTurnEmitEvents ?? false, cancellationToken);
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+
+            // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
+            return null;
+        }, context, cancellationToken);
     }
 
     private ValueTask HandleFunctionResultAsync(
@@ -84,8 +91,17 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             throw new InvalidOperationException($"No pending FunctionCall found with id '{result.CallId}'.");
         }
 
-        List<ChatMessage> implicitTurnMessages = [new ChatMessage(ChatRole.Tool, [result])];
-        return this.ContinueTurnAsync(implicitTurnMessages, context, this._currentTurnEmitEvents ?? false, cancellationToken);
+        // Merge the external response with any already-buffered regular messages so mixed-content
+        // resumes can be processed in one invocation.
+        return this.ProcessTurnMessagesAsync(async (pendingMessages, ctx, ct) =>
+        {
+            pendingMessages.Add(new ChatMessage(ChatRole.Tool, [result]));
+
+            await this.ContinueTurnAsync(pendingMessages, ctx, this._currentTurnEmitEvents ?? false, ct).ConfigureAwait(false);
+
+            // Clear the buffered turn messages because they were consumed by ContinueTurnAsync.
+            return null;
+        }, context, cancellationToken);
     }
 
     public bool ShouldEmitStreamingEvents(bool? emitEvents)
@@ -198,7 +214,7 @@ internal sealed class AIAgentHostExecutor : ChatProtocolExecutor
             ExtractUnservicedRequests(response.Messages.SelectMany(message => message.Contents));
         }
 
-        if (this._options.EmitAgentResponseEvents == true)
+        if (this._options.EmitAgentResponseEvents)
         {
             await context.YieldOutputAsync(response, cancellationToken).ConfigureAwait(false);
         }

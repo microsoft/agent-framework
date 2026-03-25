@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -88,7 +88,8 @@ async def scenario_max_iterations():
     client.function_invocation_configuration["max_iterations"] = 3
     print(f"  max_iterations = {client.function_invocation_configuration['max_iterations']}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=(
             "You are a research assistant. Use the search_web tool to answer "
@@ -125,7 +126,8 @@ async def scenario_max_function_calls():
     print(f"  max_iterations    = {client.function_invocation_configuration['max_iterations']}")
     print(f"  max_function_calls = {client.function_invocation_configuration['max_function_calls']}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="ResearchAgent",
         instructions=(
             "You are a research assistant. Use the search_web and get_weather "
@@ -155,7 +157,8 @@ async def scenario_max_invocations():
     print("Scenario 3: max_invocations — lifetime cap on a tool")
     print("=" * 60)
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="APIAgent",
         instructions="Use call_expensive_api when asked to analyze something.",
         tools=[call_expensive_api],
@@ -212,12 +215,14 @@ async def scenario_per_agent_tool_limits():
     agent_b_lookup = tool(name="lookup", approval_mode="never_require", max_invocations=5)(_do_lookup)
 
     client = OpenAIResponsesClient()
-    agent_a = client.as_agent(
+    agent_a = Agent(
+        client=client,
         name="AgentA",
         instructions="Use the lookup tool to answer questions.",
         tools=[agent_a_lookup],
     )
-    agent_b = client.as_agent(
+    agent_b = Agent(
+        client=client,
         name="AgentB",
         instructions="Use the lookup tool to answer questions.",
         tools=[agent_b_lookup],
@@ -270,7 +275,8 @@ async def scenario_combined():
 
     print(f"  premium_lookup.max_invocations = {premium_lookup.max_invocations}")
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MultiToolAgent",
         instructions="Use all available tools to answer comprehensively.",
         tools=[search_web, get_weather, premium_lookup],

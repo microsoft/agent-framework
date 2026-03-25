@@ -71,6 +71,7 @@ internal static partial class WorkflowsJsonUtilities
     [JsonSerializable(typeof(PortableValue))]
     [JsonSerializable(typeof(PortableMessageEnvelope))]
     [JsonSerializable(typeof(InMemoryCheckpointManager))]
+    [JsonSerializable(typeof(CheckpointFileIndexEntry))]
 
     // Runtime State Types
     [JsonSerializable(typeof(ScopeKey))]

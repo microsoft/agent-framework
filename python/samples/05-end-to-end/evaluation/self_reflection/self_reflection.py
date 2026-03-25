@@ -20,7 +20,7 @@ from typing import Any
 import openai
 import pandas as pd
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -87,7 +87,7 @@ DEFAULT_JUDGE_MODEL = "gpt-5.2"
 
 
 def create_openai_client():
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     credential = AzureCliCredential()
     project_client = AIProjectClient(endpoint=endpoint, credential=credential)
     return project_client.get_openai_client()
@@ -97,7 +97,7 @@ def create_async_project_client():
     from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
     from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 
-    return AsyncAIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=AsyncAzureCliCredential())
+    return AsyncAIProjectClient(endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"], credential=AsyncAzureCliCredential())
 
 
 def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCreateResponse:
@@ -321,9 +321,9 @@ async def run_self_reflection_batch(
         load_dotenv(override=True)
 
     # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
-    responses_client = AzureOpenAIResponsesClient(
+    responses_client = FoundryChatClient(
         project_client=project_client,
-        deployment_name=agent_model,
+        model=agent_model,
     )
 
     # Load input data
@@ -368,7 +368,7 @@ async def run_self_reflection_batch(
         try:
             result = await execute_query_with_self_reflection(
                 client=client,
-                agent=responses_client.as_agent(instructions=row["system_instruction"]),
+                agent=Agent(client=responses_client, instructions=row["system_instruction"]),
                 eval_object=eval_object,
                 full_user_query=row["full_prompt"],
                 context=row["context_document"],
