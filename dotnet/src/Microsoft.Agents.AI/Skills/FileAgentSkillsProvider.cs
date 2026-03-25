@@ -88,7 +88,7 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
 
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<FileAgentSkillsProvider>();
 
-        this._loader = new FileAgentSkillLoader(this._logger);
+        this._loader = new FileAgentSkillLoader(this._logger, options?.AllowedResourceExtensions);
         this._skills = this._loader.DiscoverAndLoadSkills(skillPaths);
 
         this._skillsInstructionPrompt = BuildSkillsInstructionPrompt(options, this._skills);
@@ -174,15 +174,24 @@ public sealed partial class FileAgentSkillsProvider : AIContextProvider
         {
             try
             {
-                promptTemplate = string.Format(optionsInstructions, string.Empty);
+                _ = string.Format(optionsInstructions, string.Empty);
             }
             catch (FormatException ex)
             {
                 throw new ArgumentException(
-                    "The provided SkillsInstructionPrompt is not a valid format string. It must contain a '{0}' placeholder and escape any literal '{' or '}' by doubling them ('{{' or '}}').",
+                    "The provided SkillsInstructionPrompt is not a valid format string.",
                     nameof(options),
                     ex);
             }
+
+            if (optionsInstructions.IndexOf("{0}", StringComparison.Ordinal) < 0)
+            {
+                throw new ArgumentException(
+                    "The provided SkillsInstructionPrompt must contain a '{0}' placeholder for the generated skills list.",
+                    nameof(options));
+            }
+
+            promptTemplate = optionsInstructions;
         }
 
         if (skills.Count == 0)

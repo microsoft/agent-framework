@@ -496,6 +496,7 @@ class JoinExecutor(DeclarativeActionExecutor):
         ctx: WorkflowContext[ActionComplete],
     ) -> None:
         """Simply pass through to continue the workflow."""
+        await self._ensure_state_initialized(ctx, trigger)
         await ctx.send_message(ActionComplete())
 
 

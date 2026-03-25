@@ -1,24 +1,16 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/01_round_robin_group_chat.py
-
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
 
-Demonstrates sequential agent orchestration where agents take turns processing
-the task in a round-robin fashion.
-"""
 
 import asyncio
 
 from agent_framework import Message
 from dotenv import load_dotenv
+
+"""AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
+
+Demonstrates sequential agent orchestration where agents take turns processing
+the task in a round-robin fashion.
+"""
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,7 +90,7 @@ async def run_agent_framework() -> None:
     print("[Agent Framework] Sequential conversation:")
     async for event in workflow.run("Create a brief summary about electric vehicles", stream=True):
         if event.type == "output" and isinstance(event.data, list):
-            for message in event.data:
+            for message in event.data:  # type: ignore
                 if isinstance(message, Message) and message.role == "assistant" and message.text:
                     print(f"---------- {message.author_name} ----------")
                     print(message.text)
@@ -144,9 +136,7 @@ async def run_agent_framework_with_cycle() -> None:
         if last_message and "APPROVED" in last_message.text:
             await context.yield_output("Content approved.")
         else:
-            await context.send_message(
-                AgentExecutorRequest(messages=response.full_conversation, should_respond=True)
-            )
+            await context.send_message(AgentExecutorRequest(messages=response.full_conversation, should_respond=True))
 
     workflow = (
         WorkflowBuilder(start_executor=researcher)

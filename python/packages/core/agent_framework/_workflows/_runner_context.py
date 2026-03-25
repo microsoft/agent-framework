@@ -99,11 +99,11 @@ class RunnerContext(Protocol):
     If checkpoint storage is not configured, checkpoint methods may raise.
     """
 
-    async def send_message(self, WorkflowMessage: WorkflowMessage) -> None:
+    async def send_message(self, message: WorkflowMessage) -> None:
         """Send a WorkflowMessage from the executor to the context.
 
         Args:
-            WorkflowMessage: The WorkflowMessage to be sent.
+            message: The WorkflowMessage to be sent.
         """
         ...
 
@@ -288,9 +288,9 @@ class InProcRunnerContext:
         self._streaming: bool = False
 
     # region Messaging and Events
-    async def send_message(self, WorkflowMessage: WorkflowMessage) -> None:
-        self._messages.setdefault(WorkflowMessage.source_id, [])
-        self._messages[WorkflowMessage.source_id].append(WorkflowMessage)
+    async def send_message(self, message: WorkflowMessage) -> None:
+        self._messages.setdefault(message.source_id, [])
+        self._messages[message.source_id].append(message)
 
     async def drain_messages(self) -> dict[str, list[WorkflowMessage]]:
         messages = copy(self._messages)

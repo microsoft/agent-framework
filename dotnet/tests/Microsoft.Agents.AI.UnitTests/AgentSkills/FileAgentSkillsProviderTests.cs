@@ -108,6 +108,8 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         // Assert
         Assert.NotNull(result.Instructions);
         Assert.StartsWith("Custom template:", result.Instructions);
+        Assert.Contains("custom-prompt-skill", result.Instructions);
+        Assert.Contains("Custom prompt", result.Instructions);
     }
 
     [Fact]
@@ -123,6 +125,42 @@ public sealed class FileAgentSkillsProviderTests : IDisposable
         var ex = Assert.Throws<ArgumentException>(() => new FileAgentSkillsProvider(this._testRoot, options));
         Assert.Contains("SkillsInstructionPrompt", ex.Message);
         Assert.Equal("options", ex.ParamName);
+    }
+
+    [Fact]
+    public void Constructor_PromptWithoutPlaceholder_ThrowsArgumentException()
+    {
+        // Arrange -- valid format string but missing the required placeholder
+        var options = new FileAgentSkillsProviderOptions
+        {
+            SkillsInstructionPrompt = "No placeholder here"
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() => new FileAgentSkillsProvider(this._testRoot, options));
+        Assert.Contains("{0}", ex.Message);
+        Assert.Equal("options", ex.ParamName);
+    }
+
+    [Fact]
+    public async Task Constructor_PromptWithPlaceholder_AppliesCustomTemplateAsync()
+    {
+        // Arrange — valid custom template with {0} placeholder
+        this.CreateSkill("custom-tpl-skill", "Custom template skill", "Body.");
+        var options = new FileAgentSkillsProviderOptions
+        {
+            SkillsInstructionPrompt = "== Skills ==\n{0}\n== End =="
+        };
+        var provider = new FileAgentSkillsProvider(this._testRoot, options);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — the custom template wraps the skill list
+        Assert.NotNull(result.Instructions);
+        Assert.StartsWith("== Skills ==", result.Instructions);
+        Assert.Contains("custom-tpl-skill", result.Instructions);
+        Assert.Contains("== End ==", result.Instructions);
     }
 
     [Fact]

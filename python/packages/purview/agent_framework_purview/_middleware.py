@@ -67,6 +67,7 @@ class PurviewPolicyMiddleware(AgentMiddleware):
         call_next: Callable[[], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
+        session_id: str | None = None
         try:
             # Pre (prompt) check
             session_id = self._get_agent_session_id(context)
@@ -106,8 +107,8 @@ class PurviewPolicyMiddleware(AgentMiddleware):
             if context.result and not context.stream:
                 should_block_response, _ = await self._processor.process_messages(
                     context.result.messages,  # type: ignore[union-attr]
-                    Activity.UPLOAD_TEXT,
-                    session_id=session_id,
+                    Activity.DOWNLOAD_TEXT,
+                    session_id=session_id_response,
                     user_id=resolved_user_id,
                 )
                 if should_block_response:
@@ -173,6 +174,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
         call_next: Callable[[], Awaitable[None]],
     ) -> None:  # type: ignore[override]
         resolved_user_id: str | None = None
+        session_id: str | None = None
         try:
             session_id = context.options.get("conversation_id") if context.options else None
             should_block_prompt, resolved_user_id = await self._processor.process_messages(
@@ -210,7 +212,7 @@ class PurviewChatPolicyMiddleware(ChatMiddleware):
                 messages = getattr(result_obj, "messages", None)
                 if messages:
                     should_block_response, _ = await self._processor.process_messages(
-                        messages, Activity.UPLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
+                        messages, Activity.DOWNLOAD_TEXT, session_id=session_id_response, user_id=resolved_user_id
                     )
                     if should_block_response:
                         from agent_framework import ChatResponse, Message

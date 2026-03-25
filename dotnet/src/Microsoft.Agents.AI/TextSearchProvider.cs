@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.Diagnostics;
 
@@ -31,6 +32,18 @@ namespace Microsoft.Agents.AI;
 /// to the current request messages when forming the search input. This can improve search relevance by providing
 /// multi-turn context to the retrieval layer without permanently altering the conversation history.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Search results retrieved from external sources are injected into the LLM context and may
+/// contain adversarial content designed to manipulate LLM behavior via indirect prompt injection. Developers should be aware that:
+/// <list type="bullet">
+/// <item><description>The search query may be constructed from user input or LLM-generated content, both of which are untrusted.
+/// Implementers of the search delegate should validate search inputs and apply appropriate access controls to search results.</description></item>
+/// <item><description>Retrieved documents are formatted and injected as messages in the AI request context. If the external data source
+/// is compromised, adversarial content could influence the LLM's responses.</description></item>
+/// <item><description>When using <see cref="TextSearchProviderOptions.TextSearchBehavior.OnDemandFunctionCalling"/>, the AI model controls
+/// when and what to search for — the search query text is AI-generated and should be treated as untrusted input by the search implementation.</description></item>
+/// </list>
+/// </para>
 /// </remarks>
 public sealed class TextSearchProvider : MessageAIContextProvider
 {
@@ -40,6 +53,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     private const string DefaultCitationsPrompt = "Include citations to the source document with document name and link if document name and link is available.";
 
     private readonly ProviderSessionState<TextSearchProviderState> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> _searchAsync;
     private readonly ILogger<TextSearchProvider>? _logger;
     private readonly AITool[] _tools;
@@ -49,6 +63,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     private readonly string _contextPrompt;
     private readonly string _citationsPrompt;
     private readonly Func<IList<TextSearchResult>, string>? _contextFormatter;
+    private readonly Redactor _redactor;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TextSearchProvider"/> class.
@@ -61,7 +76,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         Func<string, CancellationToken, Task<IEnumerable<TextSearchResult>>> searchAsync,
         TextSearchProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         this._sessionState = new ProviderSessionState<TextSearchProviderState>(
             _ => new TextSearchProviderState(),
@@ -76,6 +91,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         this._contextPrompt = options?.ContextPrompt ?? DefaultContextPrompt;
         this._citationsPrompt = options?.CitationsPrompt ?? DefaultCitationsPrompt;
         this._contextFormatter = options?.ContextFormatter;
+        this._redactor = options?.EnableSensitiveTelemetryData == true ? NullRedactor.Instance : (options?.Redactor ?? new ReplacingRedactor("<redacted>"));
 
         // Create the on-demand search tool (only used if behavior is OnDemandFunctionCalling)
         this._tools =
@@ -88,7 +104,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(AIContextProvider.InvokingContext context, CancellationToken cancellationToken = default)
@@ -167,7 +183,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
 
             if (this._logger?.IsEnabled(LogLevel.Trace) is true)
             {
-                this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", input, formatted);
+                this._logger.LogTrace("TextSearchProvider: Search Results\nInput:{Input}\nOutput:{MessageText}", this.SanitizeLogData(input), this.SanitizeLogData(formatted));
             }
 
             return [new ChatMessage(ChatRole.User, formatted)];
@@ -236,7 +252,7 @@ public sealed class TextSearchProvider : MessageAIContextProvider
 
             if (this._logger.IsEnabled(LogLevel.Trace))
             {
-                this._logger.LogTrace("TextSearchProvider Input:{UserQuestion}\nOutput:{MessageText}", userQuestion, outputText);
+                this._logger.LogTrace("TextSearchProvider Input:{UserQuestion}\nOutput:{MessageText}", this.SanitizeLogData(userQuestion), this.SanitizeLogData(outputText));
             }
         }
 
@@ -311,6 +327,8 @@ public sealed class TextSearchProvider : MessageAIContextProvider
         /// </remarks>
         public object? RawRepresentation { get; set; }
     }
+
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
 
     /// <summary>
     /// Represents the per-session state of a <see cref="TextSearchProvider"/> stored in the <see cref="AgentSession.StateBag"/>.

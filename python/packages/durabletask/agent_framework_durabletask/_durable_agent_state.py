@@ -1318,9 +1318,17 @@ class DurableAgentStateUnknownContent(DurableAgentStateContent):
 
     @staticmethod
     def from_unknown_content(content: Any) -> DurableAgentStateUnknownContent:
+        if isinstance(content, Content):
+            return DurableAgentStateUnknownContent(content=content.to_dict())
         return DurableAgentStateUnknownContent(content=content)
 
     def to_ai_content(self) -> Content:
         if not self.content:
             raise Exception("The content is missing and cannot be converted to valid AI content.")
+        content_value: Any = self.content
+        if isinstance(content_value, dict) and "type" in content_value:
+            try:
+                return Content.from_dict(cast(dict[str, Any], content_value))
+            except (ValueError, TypeError):
+                pass
         return Content(type=self.type, additional_properties={"content": self.content})  # type: ignore

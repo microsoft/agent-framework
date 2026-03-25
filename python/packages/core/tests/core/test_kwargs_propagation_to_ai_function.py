@@ -6,11 +6,13 @@ from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
 
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FunctionInvocationContext,
     FunctionInvocationLayer,
     Message,
     ResponseStream,
@@ -82,8 +84,8 @@ class _MockBaseChatClient(BaseChatClient[Any]):
 
 
 class FunctionInvokingMockClient(
-    ChatMiddlewareLayer[Any],
     FunctionInvocationLayer[Any],
+    ChatMiddlewareLayer[Any],
     ChatTelemetryLayer[Any],
     _MockBaseChatClient,
 ):
@@ -97,6 +99,7 @@ class TestKwargsPropagationToFunctionTool:
 
     async def test_kwargs_propagate_to_tool_with_kwargs(self) -> None:
         """Test that kwargs passed to get_response() are available in @tool **kwargs."""
+        # TODO(Copilot): Remove this legacy coverage once runtime ``**kwargs`` tool injection is removed.
         captured_kwargs: dict[str, Any] = {}
 
         @tool(approval_mode="never_require")
@@ -149,6 +152,7 @@ class TestKwargsPropagationToFunctionTool:
 
     async def test_kwargs_not_forwarded_to_tool_without_kwargs(self) -> None:
         """Test that kwargs are NOT forwarded to @tool that doesn't accept **kwargs."""
+        # TODO(Copilot): Remove this legacy coverage once runtime ``**kwargs`` tool injection is removed.
 
         @tool(approval_mode="never_require")
         def simple_tool(x: int) -> str:
@@ -185,6 +189,7 @@ class TestKwargsPropagationToFunctionTool:
 
     async def test_kwargs_isolated_between_function_calls(self) -> None:
         """Test that kwargs are consistent across multiple function call invocations."""
+        # TODO(Copilot): Remove this legacy coverage once runtime ``**kwargs`` tool injection is removed.
         invocation_kwargs: list[dict[str, Any]] = []
 
         @tool(approval_mode="never_require")
@@ -235,6 +240,7 @@ class TestKwargsPropagationToFunctionTool:
 
     async def test_streaming_response_kwargs_propagation(self) -> None:
         """Test that kwargs propagate to @tool in streaming mode."""
+        # TODO(Copilot): Remove this legacy coverage once runtime ``**kwargs`` tool injection is removed.
         captured_kwargs: dict[str, Any] = {}
 
         @tool(approval_mode="never_require")
@@ -287,3 +293,59 @@ class TestKwargsPropagationToFunctionTool:
         assert "streaming_session" in captured_kwargs, f"Expected 'streaming_session' in {captured_kwargs}"
         assert captured_kwargs["streaming_session"] == "session-xyz"
         assert captured_kwargs["correlation_id"] == "corr-123"
+
+    async def test_agent_run_injects_function_invocation_context(self) -> None:
+        """Test that Agent.run injects FunctionInvocationContext for ctx-based tools."""
+        captured_context_kwargs: dict[str, Any] = {}
+        captured_client_kwargs: dict[str, Any] = {}
+        captured_options: dict[str, Any] = {}
+
+        @tool(approval_mode="never_require")
+        def capture_context_tool(x: int, ctx: FunctionInvocationContext) -> str:
+            captured_context_kwargs.update(ctx.kwargs)
+            return f"result: x={x}"
+
+        class CapturingFunctionInvokingMockClient(FunctionInvokingMockClient):
+            async def _get_non_streaming_response(
+                self,
+                *,
+                messages: MutableSequence[Message],
+                options: dict[str, Any],
+                **kwargs: Any,
+            ) -> ChatResponse:
+                captured_options.update(options)
+                captured_client_kwargs.update(kwargs)
+                return await super()._get_non_streaming_response(messages=messages, options=options, **kwargs)
+
+        client = CapturingFunctionInvokingMockClient()
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_1",
+                                name="capture_context_tool",
+                                arguments='{"x": 42}',
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Done!")]),
+        ]
+
+        agent = Agent(client=client, tools=[capture_context_tool])
+        result = await agent.run(
+            [Message(role="user", text="Test")],
+            function_invocation_kwargs={"tool_request_id": "tool-123"},
+            client_kwargs={"client_request_id": "client-456"},
+        )
+
+        assert captured_context_kwargs["tool_request_id"] == "tool-123"
+        assert "client_request_id" not in captured_context_kwargs
+        assert captured_client_kwargs["client_request_id"] == "client-456"
+        assert "tool_request_id" not in captured_client_kwargs
+        assert "additional_function_arguments" not in captured_options
+        assert result.messages[-1].text == "Done!"

@@ -38,7 +38,7 @@ confusion and to mirror how the concurrent builder uses explicit dispatcher/aggr
 
 import logging
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 from agent_framework import Message, SupportsAgentRun
 from agent_framework._workflows._agent_executor import (
@@ -143,6 +143,7 @@ class SequentialBuilder:
         *,
         participants: Sequence[SupportsAgentRun | Executor],
         checkpoint_storage: CheckpointStorage | None = None,
+        chain_only_agent_responses: bool = False,
         intermediate_outputs: bool = False,
     ) -> None:
         """Initialize the SequentialBuilder.
@@ -150,10 +151,14 @@ class SequentialBuilder:
         Args:
             participants: Sequence of agent or executor instances to run sequentially.
             checkpoint_storage: Optional checkpoint storage for enabling workflow state persistence.
+            chain_only_agent_responses: If True, only agent responses are chained between agents.
+                By default, the full conversation context is passed to the next agent. This also applies
+                to Executor -> Agent transitions if the executor sends `AgentExecutorResponse`.
             intermediate_outputs: If True, enables intermediate outputs from agent participants.
         """
         self._participants: list[SupportsAgentRun | Executor] = []
         self._checkpoint_storage: CheckpointStorage | None = checkpoint_storage
+        self._chain_only_agent_responses: bool = chain_only_agent_responses
         self._request_info_enabled: bool = False
         self._request_info_filter: set[str] | None = None
         self._intermediate_outputs: bool = intermediate_outputs
@@ -225,6 +230,10 @@ class SequentialBuilder:
 
         participants: list[Executor | SupportsAgentRun] = self._participants
 
+        context_mode: Literal["full", "last_agent", "custom"] | None = (
+            "last_agent" if self._chain_only_agent_responses else None
+        )
+
         executors: list[Executor] = []
         for p in participants:
             if isinstance(p, Executor):
@@ -234,9 +243,9 @@ class SequentialBuilder:
                     not self._request_info_filter or resolve_agent_id(p) in self._request_info_filter
                 ):
                     # Handle request info enabled agents
-                    executors.append(AgentApprovalExecutor(p))
+                    executors.append(AgentApprovalExecutor(p, context_mode=context_mode))
                 else:
-                    executors.append(AgentExecutor(p))
+                    executors.append(AgentExecutor(p, context_mode=context_mode))
             else:
                 raise TypeError(f"Participants must be SupportsAgentRun or Executor instances. Got {type(p).__name__}.")
 

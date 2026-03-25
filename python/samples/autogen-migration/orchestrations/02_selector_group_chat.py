@@ -1,24 +1,16 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/02_selector_group_chat.py
-
 # Copyright (c) Microsoft. All rights reserved.
-"""AutoGen SelectorGroupChat vs Agent Framework GroupChatBuilder.
 
-Demonstrates LLM-based speaker selection where an orchestrator decides
-which agent should speak next based on the conversation context.
-"""
 
 import asyncio
 
 from agent_framework import Message
 from dotenv import load_dotenv
+
+"""AutoGen SelectorGroupChat vs Agent Framework GroupChatBuilder.
+
+Demonstrates LLM-based speaker selection where an orchestrator decides
+which agent should speak next based on the conversation context.
+"""
 
 # Load environment variables from .env file
 load_dotenv()
@@ -113,7 +105,7 @@ async def run_agent_framework() -> None:
     print("[Agent Framework] Group chat conversation:")
     async for event in workflow.run("How do I connect to a PostgreSQL database using Python?", stream=True):
         if event.type == "output" and isinstance(event.data, list):
-            for message in event.data:
+            for message in event.data:  # type: ignore
                 if isinstance(message, Message) and message.role == "assistant" and message.text:
                     print(f"---------- {message.author_name} ----------")
                     print(message.text)
