@@ -63,7 +63,6 @@ async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
 from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
     AnalysisSection,
-    ContentLimits,
 )
 
 cu = ContentUnderstandingContextProvider(
@@ -76,10 +75,6 @@ cu = ContentUnderstandingContextProvider(
         AnalysisSection.FIELDS,
         AnalysisSection.FIELD_GROUNDING,
     ],
-    content_limits=ContentLimits(         # default: 20 pages, 10 MB, 5 min audio, 2 min video
-        max_pages=50,
-        max_file_size_mb=50,
-    ),
 )
 ```
 
