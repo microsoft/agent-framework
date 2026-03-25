@@ -11,7 +11,6 @@ env:
   # GitHub Copilot configuration
   GITHUB_COPILOT_MODEL: claude-opus-4.6
   COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: read
