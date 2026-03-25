@@ -834,6 +834,51 @@ def test_agent_response_value_raises_on_invalid_schema():
     assert "score" in error_fields, "Expected 'score' gt constraint error"
 
 
+def test_chat_response_value_multi_chunk_json():
+    """Test that ChatResponse.value correctly parses JSON split across multiple text Content objects.
+
+    When streaming responses arrive as multiple text chunks, Message.text joins
+    them with spaces which corrupts JSON. The value property must concatenate
+    without spaces so model_validate_json succeeds.
+    """
+    # Simulate a JSON response split across multiple text content chunks
+    # (as would happen with streaming)
+    chunks = [
+        Content.from_text(text='{"resp'),
+        Content.from_text(text='onse": "He'),
+        Content.from_text(text='llo"}'),
+    ]
+    message = Message(role="assistant", contents=chunks)
+    response = ChatResponse(messages=message, response_format=OutputModel)
+
+    # Message.text joins with spaces, which would break JSON parsing
+    assert " " in message.text  # confirms the space-join behavior
+
+    # But value should still parse correctly
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
+def test_agent_response_value_multi_chunk_json():
+    """Test that AgentResponse.value correctly parses JSON split across multiple text Content objects.
+
+    Same as the ChatResponse test but for AgentResponse, which has its own
+    value property implementation.
+    """
+    chunks = [
+        Content.from_text(text='{"resp'),
+        Content.from_text(text='onse": "He'),
+        Content.from_text(text='llo"}'),
+    ]
+    message = Message(role="assistant", contents=chunks)
+    response = AgentResponse(messages=message, response_format=OutputModel)
+
+    assert " " in message.text  # confirms the space-join behavior
+
+    assert response.value is not None
+    assert response.value.response == "Hello"
+
+
 # region ChatResponseUpdate
 
 

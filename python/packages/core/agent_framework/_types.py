@@ -2180,7 +2180,16 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+            # Concatenate text contents without spaces to preserve structured
+            # output (JSON). Message.text uses " ".join which is correct for
+            # natural language but corrupts JSON keys/values.
+            raw_text = "".join(
+                c.text
+                for msg in self.messages
+                for c in msg.contents
+                if c.type == "text" and c.text is not None
+            )
+            self._value = cast(ResponseModelT, self._response_format.model_validate_json(raw_text))
             self._value_parsed = True
         return self._value
 
@@ -2442,7 +2451,16 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             and isinstance(self._response_format, type)
             and issubclass(self._response_format, BaseModel)
         ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+            # Concatenate text contents without spaces to preserve structured
+            # output (JSON). Message.text uses " ".join which is correct for
+            # natural language but corrupts JSON keys/values.
+            raw_text = "".join(
+                c.text
+                for msg in self.messages
+                for c in msg.contents
+                if c.type == "text" and c.text is not None
+            )
+            self._value = cast(ResponseModelT, self._response_format.model_validate_json(raw_text))
             self._value_parsed = True
         return self._value
 
