@@ -56,7 +56,8 @@ internal static class WorkflowFactory
     /// between runs, clearing accumulated state so each run starts fresh.
     ///
     /// Without <see cref="IResettableExecutor"/>, attempting to reuse a workflow containing
-    /// shared stateful executor instances would throw an <see cref="InvalidOperationException"/>.
+    /// shared executor instances that do not implement this interface would throw an
+    /// <see cref="InvalidOperationException"/>.
     /// </summary>
     [YieldsOutput(typeof(string))]
     private sealed class ConcurrentAggregationExecutor() :
