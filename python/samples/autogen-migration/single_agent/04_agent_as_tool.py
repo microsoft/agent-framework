@@ -1,23 +1,14 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/04_agent_as_tool.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from dotenv import load_dotenv
+
 """AutoGen vs Agent Framework: Agent-as-a-Tool pattern.
 
 Demonstrates hierarchical agent architectures where one agent delegates
 work to specialized sub-agents wrapped as tools.
 """
-
-import asyncio
-
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -107,6 +98,7 @@ async def run_agent_framework() -> None:
                 if content.type == "function_call":
                     # Accumulate function call content as it streams in
                     call_id = content.call_id
+                    assert call_id is not None, "Function call content must have a call_id"
                     if call_id in accumulated_calls:
                         # Add to existing call (arguments stream in gradually)
                         accumulated_calls[call_id] = accumulated_calls[call_id] + content

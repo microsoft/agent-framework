@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated, Any, Literal
 
-from agent_framework import SupportsChatGetResponse, tool
+from agent_framework import Message, SupportsChatGetResponse, tool
 from agent_framework.azure import (
     AzureAIAgentClient,
     AzureOpenAIAssistantsClient,
@@ -117,35 +117,37 @@ async def main(client_name: ClientName = "openai_chat") -> None:
     client = get_client(client_name)
 
     # 1. Configure prompt and streaming mode.
-    message = "What's the weather in Amsterdam and in Paris?"
+    message = Message("user", text="What's the weather in Amsterdam and in Paris?")
     stream = os.getenv("STREAM", "false").lower() == "true"
     print(f"Client: {client_name}")
-    print(f"User: {message}")
+    print(f"User: {message.text}")
 
     # 2. Run with context-managed clients.
     if isinstance(client, OpenAIAssistantsClient | AzureOpenAIAssistantsClient | AzureAIAgentClient):
         async with client:
             if stream:
-                response_stream = client.get_response(message, stream=True, options={"tools": get_weather})
+                response_stream = client.get_response([message], stream=True, options={"tools": get_weather})
                 print("Assistant: ", end="")
                 async for chunk in response_stream:
                     if chunk.text:
                         print(chunk.text, end="")
                 print("")
             else:
-                print(f"Assistant: {await client.get_response(message, stream=False, options={'tools': get_weather})}")
+                print(
+                    f"Assistant: {await client.get_response([message], stream=False, options={'tools': get_weather})}"
+                )
         return
 
     # 3. Run with non-context-managed clients.
     if stream:
-        response_stream = client.get_response(message, stream=True, options={"tools": get_weather})
+        response_stream = client.get_response([message], stream=True, options={"tools": get_weather})
         print("Assistant: ", end="")
         async for chunk in response_stream:
             if chunk.text:
                 print(chunk.text, end="")
         print("")
     else:
-        print(f"Assistant: {await client.get_response(message, stream=False, options={'tools': get_weather})}")
+        print(f"Assistant: {await client.get_response([message], stream=False, options={'tools': get_weather})}")
 
 
 if __name__ == "__main__":

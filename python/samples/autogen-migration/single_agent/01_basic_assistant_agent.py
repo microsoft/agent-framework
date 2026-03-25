@@ -1,24 +1,15 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/single_agent/01_basic_assistant_agent.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+
+from dotenv import load_dotenv
+
 """Basic AutoGen AssistantAgent vs Agent Framework Agent.
 
 Both samples expect OpenAI-compatible environment variables (OPENAI_API_KEY or
 Azure OpenAI configuration). Update the prompts or client wiring to match your
 model of choice before running.
 """
-
-import asyncio
-
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()

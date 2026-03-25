@@ -6,7 +6,6 @@ These samples demonstrate how to build and host AI agents using the [Azure AI Ag
 
 | Sample | Description |
 |--------|-------------|
-| [`AgentWithTools`](./AgentWithTools/) | Foundry tools (MCP + code interpreter) via `UseFoundryTools` |
 | [`AgentWithLocalTools`](./AgentWithLocalTools/) | Local C# function tool execution (Seattle hotel search) |
 | [`AgentThreadAndHITL`](./AgentThreadAndHITL/) | Human-in-the-loop with `ApprovalRequiredAIFunction` and thread persistence |
 | [`AgentWithHostedMCP`](./AgentWithHostedMCP/) | Hosted MCP server tool (Microsoft Learn search) |
@@ -40,19 +39,18 @@ Most samples require one or more of these environment variables:
 |----------|---------|-------------|
 | `AZURE_OPENAI_ENDPOINT` | Most samples | Your Azure OpenAI resource endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Most samples | Chat model deployment name (defaults to `gpt-4o-mini`) |
-| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithTools, AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Azure AI Foundry project endpoint |
-| `MCP_TOOL_CONNECTION_ID` | AgentWithTools | Foundry MCP tool connection name |
+| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Azure AI Foundry project endpoint |
 | `MODEL_DEPLOYMENT_NAME` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Chat model deployment name (defaults to `gpt-4o-mini`) |
 
 See each sample's README for the specific variables required.
 
 ## Azure AI Foundry Setup (for samples that use Foundry)
 
-Some samples (`AgentWithTools`, `AgentWithLocalTools`) connect to an Azure AI Foundry project. If you're using these samples, you'll need additional setup.
+Some samples (`AgentWithLocalTools`, `FoundrySingleAgent`, `FoundryMultiAgent`) connect to an Azure AI Foundry project. If you're using these samples, you'll need additional setup.
 
 ### Azure AI Developer Role
 
-The `UseFoundryTools` extension requires the **Azure AI Developer** role on the Cognitive Services resource. Even if you created the project, you may not have this role by default.
+Some Foundry operations require the **Azure AI Developer** role on the Cognitive Services resource. Even if you created the project, you may not have this role by default.
 
 ```powershell
 az role assignment create `
@@ -64,23 +62,6 @@ az role assignment create `
 > **Note**: You need **Owner** or **User Access Administrator** permissions on the resource to assign roles. If you don't have this, you may need to request JIT (Just-In-Time) elevated access via [Azure PIM](https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadmigratedresource).
 
 For more details on permissions, see [Azure AI Foundry Permissions](https://aka.ms/FoundryPermissions).
-
-### Creating an MCP Tool Connection
-
-The `AgentWithTools` sample requires an MCP tool connection configured in your Foundry project:
-
-1. Go to the [Azure AI Foundry portal](https://ai.azure.com)
-2. Navigate to your project
-3. Go to **Connected resources** → **+ New connection** → **Model Context Protocol tool**
-4. Fill in:
-   - **Name**: `SampleMCPTool` (or any name you prefer)
-   - **Remote MCP Server endpoint**: `https://learn.microsoft.com/api/mcp`
-   - **Authentication**: `Unauthenticated`
-5. Click **Connect**
-
-The connection **name** (e.g., `SampleMCPTool`) is used as the `MCP_TOOL_CONNECTION_ID` environment variable.
-
-> **Important**: Use only the connection **name**, not the full ARM resource ID.
 
 ## Running a Sample
 
@@ -109,14 +90,6 @@ Each sample includes a `Dockerfile` and `agent.yaml` for deployment. To deploy y
 ### `PermissionDenied` — lacks `agents/write` data action
 
 Assign the **Azure AI Developer** role to your user. See [Azure AI Developer Role](#azure-ai-developer-role) above.
-
-### `Project connection ... was not found`
-
-Make sure `MCP_TOOL_CONNECTION_ID` contains only the connection **name** (e.g., `SampleMCPTool`), not the full ARM resource ID path.
-
-### `AZURE_AI_PROJECT_ENDPOINT must be set`
-
-The `UseFoundryTools` extension requires `AZURE_AI_PROJECT_ENDPOINT`. Set it to your Foundry project endpoint (e.g., `https://your-resource.services.ai.azure.com/api/projects/your-project`).
 
 ### Multi-framework error when running `dotnet run`
 
