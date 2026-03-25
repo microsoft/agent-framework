@@ -1,25 +1,16 @@
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#     "autogen-agentchat",
-#     "autogen-ext[openai]",
-# ]
-# ///
-# Run with any PEP 723 compatible runner, e.g.:
-#   uv run samples/autogen-migration/orchestrations/03_swarm.py
-
 # Copyright (c) Microsoft. All rights reserved.
+
+import asyncio
+from typing import Any
+
+from agent_framework import Agent, AgentResponseUpdate, WorkflowEvent
+from dotenv import load_dotenv
+
 """AutoGen Swarm pattern vs Agent Framework HandoffBuilder.
 
 Demonstrates agent handoff coordination where agents can transfer control
 to other specialized agents based on the task requirements.
 """
-
-import asyncio
-from typing import Any
-
-from agent_framework import AgentResponseUpdate, WorkflowEvent
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
@@ -119,10 +110,10 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create triage agent
-    triage_agent = client.as_agent(
+    triage_agent = Agent(client=client,
         name="triage",
         instructions=(
             "You are a triage agent. Analyze the user's request and route to the appropriate specialist:\n"
@@ -133,14 +124,14 @@ async def run_agent_framework() -> None:
     )
 
     # Create billing specialist
-    billing_agent = client.as_agent(
+    billing_agent = Agent(client=client,
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
     )
 
     # Create technical support specialist
-    tech_support = client.as_agent(
+    tech_support = Agent(client=client,
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",

@@ -21,15 +21,15 @@ Run:
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
 from redisvl.extensions.cache.embeddings import EmbeddingsCache
 from redisvl.utils.vectorize import OpenAITextVectorizer
 
-# Load environment variables from .env file
-load_dotenv()
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Default Redis URL for local Redis Stack.
 # Override via the REDIS_URL environment variable for remote or authenticated instances.
@@ -64,14 +64,15 @@ async def main() -> None:
     )
 
     # Create chat client for the agent
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "

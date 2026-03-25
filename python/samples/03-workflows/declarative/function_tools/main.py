@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
-from agent_framework import FileCheckpointStorage, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, FileCheckpointStorage, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_declarative import ExternalInputRequest, ExternalInputResponse, WorkflowFactory
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -69,12 +69,13 @@ def get_item_price(name: Annotated[str, Field(description="Menu item name")]) ->
 
 async def main():
     # Create agent with tools
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
-    menu_agent = client.as_agent(
+    menu_agent = Agent(
+        client=client,
         name="MenuAgent",
         instructions="Answer questions about menu items, specials, and prices.",
         tools=[get_menu, get_specials, get_item_price],
