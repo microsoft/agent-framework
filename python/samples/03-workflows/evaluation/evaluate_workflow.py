@@ -61,8 +61,8 @@ async def main() -> None:
     for r in results:
         print(f"{r.provider}: {r.passed}/{r.total} passed (overall)")
         for agent_name, sub in r.sub_results.items():
-            print(f"  {agent_name}: {sub.passed}/{sub.total}")
-
+            error = f" (error: {sub.error})" if sub.error else ""
+            print(f"  {agent_name}: {sub.passed}/{sub.total} {error}")
 
 if __name__ == "__main__":
     asyncio.run(main())
