@@ -406,6 +406,8 @@ async def run_self_reflection_batch(
 
     print("=" * 60)
 
+    await credential.close()
+
 
 async def main():
     """CLI entry point."""

@@ -22,7 +22,7 @@ from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals
 from agent_framework_orchestrations import SequentialBuilder
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,11 +53,7 @@ async def main() -> None:
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=deployment,
-        credential=AzureCliCredential(),
-    )
+    client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # 2. Create agents for a sequential workflow
     # Use store=False so agents don't chain conversation state via previous_response_id.

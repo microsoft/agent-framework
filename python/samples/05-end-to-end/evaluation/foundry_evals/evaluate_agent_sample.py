@@ -19,7 +19,7 @@ from agent_framework import Agent, AgentEvalConverter, ConversationSplit, evalua
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -51,13 +51,8 @@ async def main() -> None:
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
     # 2. Create an agent with tools
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=deployment,
-        credential=AzureCliCredential(),
-    )
     agent = Agent(
-        client=client,
+        client=FoundryChatClient(project_client=project_client, model=deployment),
         name="travel-assistant",
         instructions=(
             "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."

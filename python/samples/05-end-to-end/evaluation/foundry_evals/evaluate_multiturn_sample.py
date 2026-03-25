@@ -20,7 +20,7 @@ import os
 from agent_framework import Content, ConversationSplit, EvalItem, FunctionTool, Message
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
