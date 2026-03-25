@@ -164,8 +164,8 @@ jobs:
           name: validation-report-02-agents-openai
           path: python/samples/sample_validation/reports/
 
-  validate-02-agents-azure-openai:
-    name: Validate 02-agents/providers/azure_openai
+  validate-02-agents-azure:
+    name: Validate 02-agents/providers/azure
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -196,93 +196,13 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_openai --save-report --report-name 02-agents-azure-openai
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure --save-report --report-name 02-agents-azure
 
       - name: Upload validation report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: validation-report-02-agents-azure-openai
-          path: python/samples/sample_validation/reports/
-
-  validate-02-agents-azure-ai:
-    name: Validate 02-agents/providers/azure_ai
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
-      BING_CONNECTION_ID: ${{ secrets.BING_CONNECTION_ID }}
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup environment
-        uses: ./.github/actions/sample-validation-setup
-        with:
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          os: ${{ runner.os }}
-
-      - name: Create .env for samples
-        run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME=$AZURE_AI_CHAT_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME=$AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME" >> .env
-          echo "BING_CONNECTION_ID=$BING_CONNECTION_ID" >> .env
-
-      - name: Run sample validation
-        run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_ai --save-report --report-name 02-agents-azure-ai
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: validation-report-02-agents-azure-ai
-          path: python/samples/sample_validation/reports/
-
-  validate-02-agents-azure-ai-agent:
-    name: Validate 02-agents/providers/azure_ai_agent
-    runs-on: ubuntu-latest
-    environment: integration
-    env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ vars.AZURE_AI_PROJECT_ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup environment
-        uses: ./.github/actions/sample-validation-setup
-        with:
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          os: ${{ runner.os }}
-
-      - name: Create .env for samples
-        run: |
-          echo "AZURE_AI_PROJECT_ENDPOINT=$AZURE_AI_PROJECT_ENDPOINT" >> .env
-          echo "AZURE_AI_MODEL_DEPLOYMENT_NAME=$AZURE_AI_MODEL_DEPLOYMENT_NAME" >> .env
-
-      - name: Run sample validation
-        run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/azure_ai_agent --save-report --report-name 02-agents-azure-ai-agent
-
-      - name: Upload validation report
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: validation-report-02-agents-azure-ai-agent
+          name: validation-report-02-agents-azure
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-anthropic:
@@ -416,8 +336,7 @@ jobs:
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-foundry-local:
-    name: Validate 02-agents/providers/foundry_local
-    if: false # Temporarily disabled - requires local Foundry setup
+    name: Validate 02-agents/providers/foundry
     runs-on: ubuntu-latest
     environment: integration
     defaults:
@@ -436,13 +355,13 @@ jobs:
 
       - name: Run sample validation
         run: |
-          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry_local --save-report --report-name 02-agents-foundry-local
+          cd scripts && uv run python -m sample_validation --subdir 02-agents/providers/foundry --save-report --report-name 02-agents-foundry
 
       - name: Upload validation report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: validation-report-02-agents-foundry-local
+          name: validation-report-02-agents-foundry
           path: python/samples/sample_validation/reports/
 
   validate-02-agents-copilotstudio:
