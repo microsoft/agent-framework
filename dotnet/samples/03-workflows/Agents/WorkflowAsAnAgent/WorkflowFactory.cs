@@ -11,11 +11,13 @@ internal static class WorkflowFactory
     /// <summary>
     /// Creates a workflow that uses two language agents to process input concurrently.
     ///
-    /// The executors in this workflow are provided as shared instances, meaning the same
-    /// executor objects are reused across multiple workflow runs. Stateful executors must
-    /// implement <see cref="IResettableExecutor"/> so the framework can clear their state
-    /// between runs. Framework-provided executors like <see cref="ChatForwardingExecutor"/>
-    /// already implement this interface.
+    /// In this workflow, the <c>Start</c> <see cref="ChatForwardingExecutor"/> and the
+    /// <see cref="ConcurrentAggregationExecutor"/> are provided as shared instances, meaning
+    /// the same executor objects are reused across multiple workflow runs. The language agents
+    /// (French and English) are created via a factory and instantiated per workflow run.
+    /// Stateful shared executors must implement <see cref="IResettableExecutor"/> so the
+    /// framework can clear their state between runs. Framework-provided executors like
+    /// <see cref="ChatForwardingExecutor"/> already implement this interface.
     /// </summary>
     /// <param name="chatClient">The chat client to use for the agents</param>
     /// <returns>A workflow that processes input using two language agents</returns>
