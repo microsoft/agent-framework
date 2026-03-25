@@ -48,7 +48,7 @@ async def create_vector_store(client: OpenAIChatClient) -> tuple[str, Content]:
     """Create a vector store with sample documents for testing."""
     file = await client.client.files.create(
         file=("todays_weather.txt", b"The weather today is sunny with a high of 75F."),
-        purpose="user_data",
+        purpose="assistants",
     )
     vector_store = await client.client.vector_stores.create(
         name="knowledge_base",
