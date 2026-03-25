@@ -63,9 +63,9 @@ class TestFileSearchConfig:
         client = AsyncMock()
         config = FileSearchConfig(openai_client=client)
         assert config.openai_client is client
-        assert config.vector_store_name == "cu_extracted_docs"
+        assert config.vector_store_id is None
 
-    def test_custom_name(self) -> None:
+    def test_custom_vector_store_id(self) -> None:
         client = AsyncMock()
-        config = FileSearchConfig(openai_client=client, vector_store_name="my_store")
-        assert config.vector_store_name == "my_store"
+        config = FileSearchConfig(openai_client=client, vector_store_id="vs_abc123")
+        assert config.vector_store_id == "vs_abc123"

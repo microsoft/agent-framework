@@ -54,8 +54,12 @@ class FileSearchConfig:
         openai_client: An async OpenAI client (``AsyncOpenAI`` or ``AsyncAzureOpenAI``)
             used to create files and vector stores. Must support
             ``client.files.create()`` and ``client.vector_stores.*`` APIs.
-        vector_store_name: Display name for the auto-created vector store.
+        vector_store_id: An existing OpenAI vector store ID to use instead of
+            auto-creating one. When provided, the provider uploads files to this
+            store but does **not** delete it on close (the caller owns its lifecycle).
+            When ``None`` (default), a new ephemeral vector store is created
+            automatically and cleaned up on close.
     """
 
     openai_client: Any
-    vector_store_name: str = "cu_extracted_docs"
+    vector_store_id: str | None = None

@@ -91,7 +91,6 @@ async def main() -> None:
         max_wait=60.0,
         file_search=FileSearchConfig(
             openai_client=openai_client,
-            vector_store_name="cu_large_doc_demo",
         ),
     )
 

@@ -38,7 +38,9 @@ into the Agent Framework as a context provider. It automatically analyzes file a
   - **file_search RAG** — When `FileSearchConfig` is provided, CU-extracted markdown is
     uploaded to an OpenAI vector store and a `file_search` tool is registered on the context
     instead of injecting the full document content. This enables token-efficient retrieval
-    for large documents.
+    for large documents. Supports both auto-created ephemeral vector stores (default) and
+    user-provided pre-existing stores via `FileSearchConfig.vector_store_id`. Auto-created
+    stores are deleted on `close()`; user-provided stores are left intact (caller owns lifecycle).
 - **`_models.py`** — `AnalysisSection` enum, `ContentLimits` dataclass, `DocumentEntry` TypedDict,
   `FileSearchConfig` dataclass.
 
@@ -50,7 +52,7 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 - Configurable timeout (`max_wait`) with `asyncio.create_task()` background fallback.
 - Strips supported binary attachments from `input_messages` to prevent LLM API errors.
 - Explicit `analyzer_id` always overrides auto-detection (user preference wins).
-- Vector store resources are cleaned up in `close()` / `__aexit__`.
+- Vector store resources are cleaned up in `close()` / `__aexit__` (only auto-created stores are deleted; user-provided stores are preserved).
 
 ## Samples
 

@@ -74,7 +74,6 @@ cu = ContentUnderstandingContextProvider(
     max_wait=10.0,
     file_search=FileSearchConfig(
         openai_client=_openai_client,
-        vector_store_name="devui_cu_file_search",
     ),
 )
 
