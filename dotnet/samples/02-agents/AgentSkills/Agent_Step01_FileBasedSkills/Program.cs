@@ -20,11 +20,10 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 
 // --- Skills Provider ---
 // Discovers skills from the 'skills' directory containing SKILL.md files.
-// The script executor runs file-based scripts (e.g. Python) as local subprocesses.
-var skillsProvider = new AgentSkillsProviderBuilder()
-    .UseFileSkill(Path.Combine(AppContext.BaseDirectory, "skills"))
-    .UseFileScriptExecutor(SubprocessScriptExecutor.ExecuteAsync)
-    .Build();
+// The script runner runs file-based scripts (e.g. Python) as local subprocesses.
+var skillsProvider = new AgentSkillsProvider(
+    Path.Combine(AppContext.BaseDirectory, "skills"),
+    SubprocessScriptExecutor.ExecuteAsync);
 // --- Agent Setup ---
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetResponsesClient()

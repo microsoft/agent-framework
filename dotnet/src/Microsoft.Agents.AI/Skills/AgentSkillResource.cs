@@ -1,9 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
@@ -39,8 +39,8 @@ public abstract class AgentSkillResource
     /// <summary>
     /// Reads the resource content asynchronously.
     /// </summary>
-    /// <param name="arguments">Arguments for the resource read operation.</param>
+    /// <param name="serviceProvider">Optional service provider for dependency injection.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The resource content.</returns>
-    public abstract Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default);
 }

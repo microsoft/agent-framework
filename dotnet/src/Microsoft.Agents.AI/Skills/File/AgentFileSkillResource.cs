@@ -1,10 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.AI;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -33,7 +33,7 @@ internal sealed class AgentFileSkillResource : AgentSkillResource
     /// <inheritdoc/>
 #pragma warning disable CA1725 // Parameter names should match base declaration
 #pragma warning disable RCS1168 // Parameter name differs from base name
-    public override async Task<object?> ReadAsync(AIFunctionArguments _, CancellationToken cancellationToken = default)
+    public override async Task<object?> ReadAsync(IServiceProvider? _, CancellationToken cancellationToken = default)
 #pragma warning restore RCS1168 // Parameter name differs from base name
 #pragma warning restore CA1725 // Parameter names should match base declaration
     {

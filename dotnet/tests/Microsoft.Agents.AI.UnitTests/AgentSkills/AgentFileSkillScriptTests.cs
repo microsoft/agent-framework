@@ -13,62 +13,62 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class AgentFileSkillScriptTests
 {
     [Fact]
-    public async Task ExecuteAsync_SkillIsNotAgentFileSkill_ThrowsInvalidOperationExceptionAsync()
+    public async Task RunAsync_SkillIsNotAgentFileSkill_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        static Task<object?> ExecutorAsync(AgentFileSkill s, AgentFileSkillScript sc, AIFunctionArguments a, CancellationToken ct) => Task.FromResult<object?>("result");
-        var script = CreateScript("test-script", "/path/to/script.py", ExecutorAsync);
+        static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, AIFunctionArguments a, CancellationToken ct) => Task.FromResult<object?>("result");
+        var script = CreateScript("test-script", "/path/to/script.py", RunnerAsync);
         var nonFileSkill = new TestAgentSkill("my-skill", "A skill", "Instructions.");
 
         // Act & Assert
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => script.ExecuteAsync(nonFileSkill, new AIFunctionArguments(), CancellationToken.None));
+            () => script.RunAsync(nonFileSkill, new AIFunctionArguments(), CancellationToken.None));
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithAgentFileSkill_DelegatesToExecutorAsync()
+    public async Task RunAsync_WithAgentFileSkill_DelegatesToRunnerAsync()
     {
         // Arrange
-        var executorCalled = false;
-        Task<object?> executorAsync(AgentFileSkill skill, AgentFileSkillScript scriptArg, AIFunctionArguments args, CancellationToken ct)
+        var runnerCalled = false;
+        Task<object?> runnerAsync(AgentFileSkill skill, AgentFileSkillScript scriptArg, AIFunctionArguments args, CancellationToken ct)
         {
-            executorCalled = true;
+            runnerCalled = true;
             return Task.FromResult<object?>("executed");
         }
-        var script = CreateScript("run-me", "/scripts/run-me.sh", executorAsync);
+        var script = CreateScript("run-me", "/scripts/run-me.sh", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("my-skill", "A file skill"),
             "---\nname: my-skill\n---\nContent",
             "/skills/my-skill");
 
         // Act
-        var result = await script.ExecuteAsync(fileSkill, new AIFunctionArguments(), CancellationToken.None);
+        var result = await script.RunAsync(fileSkill, new AIFunctionArguments(), CancellationToken.None);
 
         // Assert
-        Assert.True(executorCalled);
+        Assert.True(runnerCalled);
         Assert.Equal("executed", result);
     }
 
     [Fact]
-    public async Task ExecuteAsync_ExecutorReceivesCorrectArgumentsAsync()
+    public async Task RunAsync_RunnerReceivesCorrectArgumentsAsync()
     {
         // Arrange
         AgentFileSkill? capturedSkill = null;
         AgentFileSkillScript? capturedScript = null;
-        Task<object?> executorAsync(AgentFileSkill skill, AgentFileSkillScript scriptArg, AIFunctionArguments args, CancellationToken ct)
+        Task<object?> runnerAsync(AgentFileSkill skill, AgentFileSkillScript scriptArg, AIFunctionArguments args, CancellationToken ct)
         {
             capturedSkill = skill;
             capturedScript = scriptArg;
             return Task.FromResult<object?>(null);
         }
-        var script = CreateScript("capture", "/scripts/capture.py", executorAsync);
+        var script = CreateScript("capture", "/scripts/capture.py", runnerAsync);
         var fileSkill = new AgentFileSkill(
             new AgentSkillFrontmatter("owner-skill", "Owner"),
             "Content",
             "/skills/owner-skill");
 
         // Act
-        await script.ExecuteAsync(fileSkill, new AIFunctionArguments(), CancellationToken.None);
+        await script.RunAsync(fileSkill, new AIFunctionArguments(), CancellationToken.None);
 
         // Assert
         Assert.Same(fileSkill, capturedSkill);
@@ -79,8 +79,8 @@ public sealed class AgentFileSkillScriptTests
     public void Script_HasCorrectNameAndPath()
     {
         // Arrange & Act
-        static Task<object?> ExecutorAsync(AgentFileSkill s, AgentFileSkillScript sc, AIFunctionArguments a, CancellationToken ct) => Task.FromResult<object?>(null);
-        var script = CreateScript("my-script", "/path/to/my-script.py", ExecutorAsync);
+        static Task<object?> RunnerAsync(AgentFileSkill s, AgentFileSkillScript sc, AIFunctionArguments a, CancellationToken ct) => Task.FromResult<object?>(null);
+        var script = CreateScript("my-script", "/path/to/my-script.py", RunnerAsync);
 
         // Assert
         Assert.Equal("my-script", script.Name);
@@ -90,12 +90,12 @@ public sealed class AgentFileSkillScriptTests
     /// <summary>
     /// Helper to create an <see cref="AgentFileSkillScript"/> via reflection since the constructor is internal.
     /// </summary>
-    private static AgentFileSkillScript CreateScript(string name, string fullPath, AgentFileSkillScriptExecutor executor)
+    private static AgentFileSkillScript CreateScript(string name, string fullPath, AgentFileSkillScriptRunner executor)
     {
         var ctor = typeof(AgentFileSkillScript).GetConstructor(
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
             null,
-            [typeof(string), typeof(string), typeof(AgentFileSkillScriptExecutor)],
+            [typeof(string), typeof(string), typeof(AgentFileSkillScriptRunner)],
             null) ?? throw new InvalidOperationException("Could not find internal constructor.");
 
         return (AgentFileSkillScript)ctor.Invoke([name, fullPath, executor]);

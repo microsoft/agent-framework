@@ -20,7 +20,7 @@ namespace Microsoft.Agents.AI;
 /// skills for which it returns <see langword="false"/> are excluded and logged at debug level.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
+internal sealed partial class FilteringAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly Func<AgentSkill, bool> _predicate;
     private readonly ILogger<FilteringAgentSkillsSource> _logger;

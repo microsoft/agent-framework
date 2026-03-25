@@ -15,7 +15,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
     private static readonly string[] s_customExtensions = [".custom"];
     private static readonly string[] s_validExtensions = [".md", ".json", ".custom"];
     private static readonly string[] s_mixedValidInvalidExtensions = [".md", "json"];
-    private static readonly AgentFileSkillScriptExecutor s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
 
@@ -447,7 +447,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         var resource = skills[0].Resources!.First(r => r.Name == "refs/doc.md");
 
         // Act
-        var content = await resource.ReadAsync([]);
+        var content = await resource.ReadAsync();
 
         // Assert
         Assert.Equal("Document content here.", content);

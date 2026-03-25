@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 /// </summary>
 public sealed class AgentSkillsProviderTests : IDisposable
 {
-    private static readonly AgentFileSkillScriptExecutor s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
     private readonly string _testRoot;
     private readonly TestAIAgent _agent = new();
 
@@ -67,11 +67,11 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("provider-skill", result.Instructions);
         Assert.Contains("Provider skill test", result.Instructions);
 
-        // Should have load_skill and read_skill_resource tools
+        // Should have load_skill tool (no resources, so no read_skill_resource)
         Assert.NotNull(result.Tools);
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
         Assert.Contains("load_skill", toolNames);
-        Assert.Contains("read_skill_resource", toolNames);
+        Assert.DoesNotContain("read_skill_resource", toolNames);
     }
 
     [Fact]
@@ -98,7 +98,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         this.CreateSkill("custom-prompt-skill", "Custom prompt", "Body.");
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Custom template: {skills}\n{runner_instructions}"
+            SkillsInstructionPrompt = "Custom template: {skills}\n{resource_instructions}\n{script_instructions}"
         };
         var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
         var inputContext = new AIContext();
@@ -120,7 +120,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "No skills placeholder here {runner_instructions}"
+            SkillsInstructionPrompt = "No skills placeholder here {resource_instructions} {script_instructions}"
         };
 
         // Act & Assert
@@ -136,13 +136,13 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Has skills {skills} but no runner instructions"
+            SkillsInstructionPrompt = "Has skills {skills} but no runner instructions {resource_instructions}"
         };
 
         // Act & Assert
         var ex = Assert.Throws<ArgumentException>(() =>
             new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
-        Assert.Contains("{runner_instructions}", ex.Message);
+        Assert.Contains("{script_instructions}", ex.Message);
         Assert.Equal("options", ex.ParamName);
     }
 
@@ -152,7 +152,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var options = new AgentSkillsProviderOptions
         {
-            SkillsInstructionPrompt = "Skills: {skills}\nRunner: {runner_instructions}"
+            SkillsInstructionPrompt = "Skills: {skills}\nResources: {resource_instructions}\nRunner: {script_instructions}"
         };
 
         // Act — should not throw
@@ -160,6 +160,22 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert
         Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Constructor_PromptWithoutResourceInstructionsPlaceholder_ThrowsArgumentException()
+    {
+        // Arrange
+        var options = new AgentSkillsProviderOptions
+        {
+            SkillsInstructionPrompt = "Has skills {skills} and runner {script_instructions} but no resource instructions"
+        };
+
+        // Act & Assert
+        var ex = Assert.Throws<ArgumentException>(() =>
+            new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options));
+        Assert.Contains("{resource_instructions}", ex.Message);
+        Assert.Equal("options", ex.ParamName);
     }
 
     [Fact]
@@ -223,7 +239,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
         Assert.Contains("existing_tool", toolNames);
         Assert.Contains("load_skill", toolNames);
-        Assert.Contains("read_skill_resource", toolNames);
     }
 
     [Fact]
@@ -257,8 +272,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         [
             new TestAgentSkill("concurrent-skill", "Concurrent test", "Body.")
         ]);
-        var cachingSource = new CachingAgentSkillsSource(source);
-        var provider = new AgentSkillsProvider(cachingSource);
+        var provider = new AgentSkillsProvider(source);
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
@@ -268,7 +282,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
             .ToArray();
         await Task.WhenAll(tasks);
 
-        // Assert — GetSkillsAsync should have been called exactly once
+        // Assert — GetSkillsAsync should have been called exactly once (provider-level caching)
         Assert.Equal(1, source.GetSkillsCallCount);
     }
 
@@ -298,7 +312,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var toolNames = result.Tools!.Select(t => t.Name).ToList();
         Assert.Contains("run_skill_script", toolNames);
         Assert.Contains("load_skill", toolNames);
-        Assert.Contains("read_skill_resource", toolNames);
     }
 
     [Fact]
@@ -339,8 +352,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var options = new AgentFileSkillsSourceOptions();
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot, options)
-            .UseFileScriptExecutor(s_noOpExecutor)
-            .UseCache(false)
+            .UseFileScriptRunner(s_noOpExecutor)
+            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -365,8 +378,8 @@ public sealed class AgentSkillsProviderTests : IDisposable
         var options = new AgentFileSkillsSourceOptions();
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkills(new[] { dir1, dir2 }, options)
-            .UseFileScriptExecutor(s_noOpExecutor)
-            .UseCache(false)
+            .UseFileScriptRunner(s_noOpExecutor)
+            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -432,7 +445,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task Builder_UseFileScriptExecutorAfterUseFileSkills_ExecutorIsUsedAsync()
+    public async Task Builder_UseFileScriptRunnerAfterUseFileSkills_RunnerIsUsedAsync()
     {
         // Arrange — create a skill with a script file
         string skillDir = Path.Combine(this._testRoot, "builder-skill");
@@ -446,10 +459,10 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         var executorCalled = false;
 
-        // Act — call UseFileScriptExecutor AFTER UseFileSkill (the bug scenario)
+        // Act — call UseFileScriptRunner AFTER UseFileSkill (the bug scenario)
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(this._testRoot)
-            .UseFileScriptExecutor((skill, script, args, ct) =>
+            .UseFileScriptRunner((skill, script, args, ct) =>
             {
                 executorCalled = true;
                 return Task.FromResult<object?>("executed");
@@ -493,7 +506,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         ]);
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseCache(false)
+            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -516,7 +529,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
         ]);
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
-            .UseCache(true)
             .Build();
 
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
@@ -525,7 +537,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
         await provider.InvokingAsync(invokingContext, CancellationToken.None);
 
-        // Assert — source should be called exactly once
+        // Assert — source should be called exactly once (caching is on by default)
         Assert.Equal(1, source.GetSkillsCallCount);
     }
 
@@ -549,58 +561,6 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert — default behavior caches
         Assert.Equal(1, source.GetSkillsCallCount);
-    }
-
-    [Fact]
-    public async Task Build_PreservesSourceRegistrationOrderAsync()
-    {
-        // Arrange — register file skills
-        string dir1 = Path.Combine(this._testRoot, "dir1");
-        string dir2 = Path.Combine(this._testRoot, "dir2");
-        CreateSkillIn(dir1, "file-skill-1", "First file skill", "Body 1.");
-        CreateSkillIn(dir2, "file-skill-2", "Second file skill", "Body 2.");
-
-        var provider = new AgentSkillsProviderBuilder()
-            .UseFileSkills([dir1, dir2])
-            .UseFileScriptExecutor(s_noOpExecutor)
-            .UseCache(false)
-            .Build();
-
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — both skills should be present in alphabetical order in the prompt
-        Assert.NotNull(result.Instructions);
-        Assert.Contains("file-skill-1", result.Instructions);
-        Assert.Contains("file-skill-2", result.Instructions);
-    }
-
-    [Fact]
-    public async Task Build_WithCustomSource_AllSkillsDiscoveredAsync()
-    {
-        // Arrange — use a custom source with multiple skills
-        var customSource = new CountingAgentSkillsSource(
-        [
-            new TestAgentSkill("custom-skill", "Custom source skill", "Body custom."),
-            new TestAgentSkill("another-skill", "Another skill", "Body another."),
-        ]);
-
-        var provider = new AgentSkillsProviderBuilder()
-            .UseSource(customSource)
-            .UseCache(false)
-            .Build();
-
-        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
-
-        // Act
-        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
-
-        // Assert — all skills from the source are present
-        Assert.NotNull(result.Instructions);
-        Assert.Contains("custom-skill", result.Instructions);
-        Assert.Contains("another-skill", result.Instructions);
     }
 
     [Fact]
@@ -659,12 +619,32 @@ public sealed class AgentSkillsProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreNotSharedAsync()
+    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreSharedWhenCachedAsync()
     {
-        // Arrange — verify tools are built fresh per invocation (statelessness)
-        this.CreateSkill("fresh-tools-skill", "Fresh tools test", "Body.");
+        // Arrange — with default caching, tools should be the same reference
+        this.CreateSkill("cached-tools-skill", "Cached tools test", "Body.");
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
         var provider = new AgentSkillsProvider(source);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result1 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var result2 = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — tool lists should be the same reference (cached)
+        Assert.NotNull(result1.Tools);
+        Assert.NotNull(result2.Tools);
+        Assert.Same(result1.Tools, result2.Tools);
+    }
+
+    [Fact]
+    public async Task InvokingCoreAsync_MultipleInvocations_ToolsAreNotSharedWhenCachingDisabledAsync()
+    {
+        // Arrange — with caching disabled, tools should be rebuilt per invocation
+        this.CreateSkill("fresh-tools-skill", "Fresh tools test", "Body.");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor);
+        var options = new AgentSkillsProviderOptions { DisableCaching = true };
+        var provider = new AgentSkillsProvider(source, options);
         var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
 
         // Act
@@ -675,6 +655,71 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.NotNull(result1.Tools);
         Assert.NotNull(result2.Tools);
         Assert.NotSame(result1.Tools, result2.Tools);
+    }
+
+    [Fact]
+    public async Task Constructor_SingleDirectory_DiscoverFileSkillsAsync()
+    {
+        // Arrange
+        this.CreateSkill("file-ctor-skill", "File ctor test", "File body.");
+        var provider = new AgentSkillsProvider(this._testRoot, s_noOpExecutor);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("file-ctor-skill", result.Instructions);
+        Assert.NotNull(result.Tools);
+        Assert.Contains(result.Tools!, t => t.Name == "load_skill");
+    }
+
+    [Fact]
+    public async Task Constructor_MultipleDirectories_DiscoverFileSkillsAsync()
+    {
+        // Arrange
+        string dir1 = Path.Combine(this._testRoot, "dir1");
+        string dir2 = Path.Combine(this._testRoot, "dir2");
+        Directory.CreateDirectory(dir1);
+        Directory.CreateDirectory(dir2);
+        CreateSkillIn(dir1, "skill-a", "Skill A", "Body A.");
+        CreateSkillIn(dir2, "skill-b", "Skill B", "Body B.");
+
+        var provider = new AgentSkillsProvider(new[] { dir1, dir2 }, s_noOpExecutor);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("skill-a", result.Instructions);
+        Assert.Contains("skill-b", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_MultipleDirectories_DeduplicatesSkillsByNameAsync()
+    {
+        // Arrange — same skill name in two directories
+        string dir1 = Path.Combine(this._testRoot, "dup1");
+        string dir2 = Path.Combine(this._testRoot, "dup2");
+        Directory.CreateDirectory(dir1);
+        Directory.CreateDirectory(dir2);
+        CreateSkillIn(dir1, "dup-skill", "First", "Body 1.");
+        CreateSkillIn(dir2, "dup-skill", "Second", "Body 2.");
+
+        var provider = new AgentSkillsProvider(new[] { dir1, dir2 }, s_noOpExecutor);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+        var content = await loadSkillTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "dup-skill" }));
+
+        // Assert — only first occurrence should survive
+        Assert.NotNull(content);
+        Assert.Contains("Body 1.", content!.ToString()!);
     }
 
     /// <summary>
@@ -697,5 +742,24 @@ public sealed class AgentSkillsProviderTests : IDisposable
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
         }
+    }
+
+    private sealed class TestAgentSkill : AgentSkill
+    {
+        private readonly string _content;
+
+        public TestAgentSkill(string name, string description, string content)
+        {
+            this.Frontmatter = new AgentSkillFrontmatter(name, description);
+            this._content = content;
+        }
+
+        public override AgentSkillFrontmatter Frontmatter { get; }
+
+        public override string Content => this._content;
+
+        public override IReadOnlyList<AgentSkillResource>? Resources => null;
+
+        public override IReadOnlyList<AgentSkillScript>? Scripts => null;
     }
 }

@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 {
     private static readonly string[] s_rubyExtension = new[] { ".rb" };
-    private static readonly AgentFileSkillScriptExecutor s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
+    private static readonly AgentFileSkillScriptRunner s_noOpExecutor = (skill, script, args, ct) => Task.FromResult<object?>(null);
 
     private readonly string _testRoot;
 
@@ -134,7 +134,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_WithExecutor_ScriptsCanExecuteAsync()
+    public async Task GetSkillsAsync_WithRunner_ScriptsCanRunAsync()
     {
         // Arrange
         CreateSkillWithScript(this._testRoot, "exec-skill", "Executor test", "Body.", "scripts/test.py", "print('ok')");
@@ -152,7 +152,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
 
         // Act
         var skills = await source.GetSkillsAsync(CancellationToken.None);
-        var scriptResult = await skills[0].Scripts![0].ExecuteAsync(skills[0], new AIFunctionArguments(), CancellationToken.None);
+        var scriptResult = await skills[0].Scripts![0].RunAsync(skills[0], new AIFunctionArguments(), CancellationToken.None);
 
         // Assert
         Assert.True(executorCalled);
@@ -204,7 +204,7 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
             ["value"] = 26.2,
             ["factor"] = 1.60934
         };
-        await skills[0].Scripts![0].ExecuteAsync(skills[0], arguments, CancellationToken.None);
+        await skills[0].Scripts![0].RunAsync(skills[0], arguments, CancellationToken.None);
 
         // Assert
         Assert.NotNull(capturedArgs);

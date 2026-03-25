@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI;
 /// await the same in-flight task. If the load fails, the field is reset so future callers can retry.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
+internal sealed class CachingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private Task<IList<AgentSkill>>? _loadTask;
 

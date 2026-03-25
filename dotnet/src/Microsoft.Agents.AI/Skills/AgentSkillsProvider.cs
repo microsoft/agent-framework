@@ -22,7 +22,7 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// This provider implements the progressive disclosure pattern from the
-/// <see href="https://agentskills.io/specification">Agent Skills specification</see>:
+/// <see href="https://agentskills.io/">Agent Skills specification</see>:
 /// </para>
 /// <list type="number">
 /// <item><description><strong>Advertise</strong> — skill names and descriptions are injected into the system prompt.</description></item>
@@ -40,9 +40,14 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     private const string SkillsPlaceholder = "{skills}";
 
     /// <summary>
-    /// Placeholder token for the runner/script instructions in the prompt template.
+    /// Placeholder token for the script instructions in the prompt template.
     /// </summary>
-    private const string RunnerInstructionsPlaceholder = "{runner_instructions}";
+    private const string ScriptInstructionsPlaceholder = "{script_instructions}";
+
+    /// <summary>
+    /// Placeholder token for the resource instructions in the prompt template.
+    /// </summary>
+    private const string ResourceInstructionsPlaceholder = "{resource_instructions}";
 
     private const string DefaultSkillsInstructionPrompt =
         """
@@ -56,18 +61,65 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         When a task aligns with a skill's domain, follow these steps in exact order:
         - Use `load_skill` to retrieve the skill's instructions.
         - Follow the provided guidance.
-        - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
-           (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
-        {runner_instructions}
+        {resource_instructions}
+        {script_instructions}
         Only load what is needed, when it is needed.
         """;
 
     private readonly AgentSkillsSource _source;
     private readonly AgentSkillsProviderOptions? _options;
     private readonly ILogger<AgentSkillsProvider> _logger;
+    private Task<AIContext>? _contextTask;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class.
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
+    /// that discovers file-based skills from a single directory.
+    /// Duplicate skill names are automatically deduplicated (first occurrence wins).
+    /// </summary>
+    /// <param name="skillPath">Path to search for skills.</param>
+    /// <param name="scriptRunner">The delegate that runs file-based scripts.</param>
+    /// <param name="fileOptions">Optional options that control skill discovery behavior.</param>
+    /// <param name="options">Optional provider configuration.</param>
+    /// <param name="loggerFactory">Optional logger factory.</param>
+    public AgentSkillsProvider(
+        string skillPath,
+        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillsSourceOptions? fileOptions = null,
+        AgentSkillsProviderOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
+        : this([Throw.IfNull(skillPath)], scriptRunner, fileOptions, options, loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
+    /// that discovers file-based skills from multiple directories.
+    /// Duplicate skill names are automatically deduplicated (first occurrence wins).
+    /// </summary>
+    /// <param name="skillPaths">Paths to search for skills.</param>
+    /// <param name="scriptRunner">The delegate that runs file-based scripts.</param>
+    /// <param name="fileOptions">Optional options that control skill discovery behavior.</param>
+    /// <param name="options">Optional provider configuration.</param>
+    /// <param name="loggerFactory">Optional logger factory.</param>
+    public AgentSkillsProvider(
+        IEnumerable<string> skillPaths,
+        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillsSourceOptions? fileOptions = null,
+        AgentSkillsProviderOptions? options = null,
+        ILoggerFactory? loggerFactory = null)
+        : this(
+            new DeduplicatingAgentSkillsSource(
+                new AgentFileSkillsSource(skillPaths, Throw.IfNull(scriptRunner), fileOptions, loggerFactory),
+                loggerFactory),
+            options,
+            loggerFactory)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
+    /// from a custom <see cref="AgentSkillsSource"/>. Unlike other constructors, this one does not
+    /// apply automatic deduplication, allowing callers to customize deduplication behavior via the source pipeline.
     /// </summary>
     /// <param name="source">The skill source providing skills.</param>
     /// <param name="options">Optional configuration.</param>
@@ -87,6 +139,16 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
     {
+        if (this._options?.DisableCaching == true)
+        {
+            return await this.CreateContextAsync(context, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await this.GetOrCreateContextAsync(context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<AIContext> CreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
+    {
         var skills = await this._source.GetSkillsAsync(cancellationToken).ConfigureAwait(false);
         if (skills is not { Count: > 0 })
         {
@@ -94,15 +156,39 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         }
 
         bool hasScripts = skills.Any(s => s.Scripts is { Count: > 0 });
+        bool hasResources = skills.Any(s => s.Resources is { Count: > 0 });
 
         return new AIContext
         {
-            Instructions = this.BuildSkillsInstructions(skills, includeScriptInstructions: hasScripts),
-            Tools = this.BuildTools(skills, hasScripts),
+            Instructions = this.BuildSkillsInstructions(skills, includeScriptInstructions: hasScripts, hasResources),
+            Tools = this.BuildTools(skills, hasScripts, hasResources),
         };
     }
 
-    private IList<AIFunction> BuildTools(IList<AgentSkill> skills, bool hasScripts)
+    private async Task<AIContext> GetOrCreateContextAsync(InvokingContext context, CancellationToken cancellationToken)
+    {
+        var tcs = new TaskCompletionSource<AIContext>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        if (Interlocked.CompareExchange(ref this._contextTask, tcs.Task, null) is { } existing)
+        {
+            return await existing.ConfigureAwait(false);
+        }
+
+        try
+        {
+            var result = await this.CreateContextAsync(context, cancellationToken).ConfigureAwait(false);
+            tcs.SetResult(result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            this._contextTask = null;
+            tcs.TrySetException(ex);
+            throw;
+        }
+    }
+
+    private IList<AIFunction> BuildTools(IList<AgentSkill> skills, bool hasScripts, bool hasResources)
     {
         IList<AIFunction> tools =
         [
@@ -110,12 +196,16 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
                 (string skillName) => this.LoadSkill(skills, skillName),
                 name: "load_skill",
                 description: "Loads the full content of a specific skill"),
-            AIFunctionFactory.Create(
+        ];
+
+        if (hasResources)
+        {
+            tools.Add(AIFunctionFactory.Create(
                 (string skillName, string resourceName, IServiceProvider? serviceProvider, CancellationToken cancellationToken = default) =>
                     this.ReadSkillResourceAsync(skills, skillName, resourceName, serviceProvider, cancellationToken),
                 name: "read_skill_resource",
-                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."),
-        ];
+                description: "Reads a resource associated with a skill, such as references, assets, or dynamic data."));
+        }
 
         if (!hasScripts)
         {
@@ -136,7 +226,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         return [.. tools, scriptFunction];
     }
 
-    private string? BuildSkillsInstructions(IList<AgentSkill> skills, bool includeScriptInstructions)
+    private string? BuildSkillsInstructions(IList<AgentSkill> skills, bool includeScriptInstructions, bool includeResourceInstructions)
     {
         string promptTemplate = this._options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
 
@@ -149,13 +239,21 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
             sb.AppendLine("  </skill>");
         }
 
+        string resourceInstruction = includeResourceInstructions
+            ? """
+            - Use `read_skill_resource` to read any referenced resources, using the name exactly as listed
+               (e.g. `"style-guide"` not `"style-guide.md"`, `"references/FAQ.md"` not `"FAQ.md"`).
+            """
+            : string.Empty;
+
         string scriptInstruction = includeScriptInstructions
             ? "- Use `run_skill_script` to run referenced scripts, using the name exactly as listed."
             : string.Empty;
 
         return new StringBuilder(promptTemplate)
             .Replace(SkillsPlaceholder, sb.ToString().TrimEnd())
-            .Replace(RunnerInstructionsPlaceholder, scriptInstruction)
+            .Replace(ResourceInstructionsPlaceholder, resourceInstruction)
+            .Replace(ScriptInstructionsPlaceholder, scriptInstruction)
             .ToString();
     }
 
@@ -203,7 +301,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
         try
         {
-            return await resource.ReadAsync(new AIFunctionArguments() { Services = serviceProvider }, cancellationToken).ConfigureAwait(false);
+            return await resource.ReadAsync(serviceProvider, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -238,7 +336,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
         try
         {
-            return await script.ExecuteAsync(skill, new AIFunctionArguments(arguments) { Services = serviceProvider }, cancellationToken).ConfigureAwait(false);
+            return await script.RunAsync(skill, new AIFunctionArguments(arguments) { Services = serviceProvider }, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -259,10 +357,17 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
                 paramName);
         }
 
-        if (template.IndexOf(RunnerInstructionsPlaceholder, StringComparison.Ordinal) < 0)
+        if (template.IndexOf(ResourceInstructionsPlaceholder, StringComparison.Ordinal) < 0)
         {
             throw new ArgumentException(
-                $"The custom prompt template must contain the '{RunnerInstructionsPlaceholder}' placeholder for script runner instructions.",
+                $"The custom prompt template must contain the '{ResourceInstructionsPlaceholder}' placeholder for resource instructions.",
+                paramName);
+        }
+
+        if (template.IndexOf(ScriptInstructionsPlaceholder, StringComparison.Ordinal) < 0)
+        {
+            throw new ArgumentException(
+                $"The custom prompt template must contain the '{ScriptInstructionsPlaceholder}' placeholder for script instructions.",
                 paramName);
         }
     }

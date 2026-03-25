@@ -9,7 +9,7 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Represents the frontmatter metadata for an agent skill.
+/// Represents the YAML frontmatter metadata parsed from a SKILL.md file.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -17,10 +17,6 @@ namespace Microsoft.Agents.AI;
 /// <see href="https://agentskills.io/specification">Agent Skills specification</see>.
 /// It contains the minimal metadata needed to advertise a skill in the system prompt
 /// without loading the full skill content.
-/// </para>
-/// <para>
-/// Instances can be parsed from the YAML frontmatter of a SKILL.md file (see <see cref="AgentFileSkillsSource"/>)
-/// or constructed programmatically.
 /// </para>
 /// <para>
 /// The constructor validates the name and description against specification rules

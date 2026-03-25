@@ -37,11 +37,11 @@ public abstract class AgentSkillScript
     public string? Description { get; }
 
     /// <summary>
-    /// Executes the script with the given arguments.
+    /// Runs the script with the given arguments.
     /// </summary>
     /// <param name="skill">The skill that owns this script.</param>
     /// <param name="arguments">Arguments for script execution.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The script execution result.</returns>
-    public abstract Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
 }

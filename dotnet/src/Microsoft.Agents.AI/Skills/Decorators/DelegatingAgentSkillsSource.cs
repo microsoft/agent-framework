@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// filtering, etc.) while delegating core operations to an underlying source.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public abstract class DelegatingAgentSkillsSource : AgentSkillsSource
+internal abstract class DelegatingAgentSkillsSource : AgentSkillsSource
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="DelegatingAgentSkillsSource"/> class with the specified inner source.

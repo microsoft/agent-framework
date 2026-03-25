@@ -6,7 +6,7 @@ This sample demonstrates how to use **file-based Agent Skills** with a `ChatClie
 
 - Discovering skills from `SKILL.md` files on disk via `AgentFileSkillsSource`
 - The progressive disclosure pattern: advertise → load → read resources → run scripts
-- Using the `AgentSkillsProviderBuilder` with `UseFileSkill` and `UseFileScriptExecutor`
+- Using the `AgentSkillsProvider` constructor with a skill directory path and script executor
 - Running file-based scripts (Python) via a subprocess-based executor
 
 ## Skills Included

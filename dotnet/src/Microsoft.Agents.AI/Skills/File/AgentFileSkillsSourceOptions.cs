@@ -7,7 +7,7 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Configuration options for <see cref="AgentFileSkillsSource"/>.
+/// Configuration options for file-based skill sources.
 /// </summary>
 /// <remarks>
 /// Use this class to configure file-based skill discovery without relying on

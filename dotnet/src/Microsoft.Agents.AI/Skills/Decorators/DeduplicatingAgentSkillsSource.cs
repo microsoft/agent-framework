@@ -12,10 +12,10 @@ using Microsoft.Shared.DiagnosticIds;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// A skill source decorator that removes duplicate skills by name (case-insensitive), keeping only the first occurrence.
+/// A skill source decorator that removes duplicate skills by name, keeping only the first occurrence.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
+internal sealed partial class DeduplicatingAgentSkillsSource : DelegatingAgentSkillsSource
 {
     private readonly ILogger<DeduplicatingAgentSkillsSource> _logger;
 

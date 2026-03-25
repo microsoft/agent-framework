@@ -20,13 +20,16 @@ public sealed class AgentSkillsProviderBuilderTests
     }
 
     [Fact]
-    public void Build_NoSourceConfigured_ThrowsInvalidOperationException()
+    public void Build_NoSourceConfigured_Succeeds()
     {
         // Arrange
         var builder = new AgentSkillsProviderBuilder();
 
-        // Act & Assert
-        Assert.Throws<InvalidOperationException>(() => builder.Build());
+        // Act
+        var provider = builder.Build();
+
+        // Assert
+        Assert.NotNull(provider);
     }
 
     [Fact]
@@ -66,13 +69,13 @@ public sealed class AgentSkillsProviderBuilderTests
     }
 
     [Fact]
-    public void UseFileScriptExecutor_NullExecutor_ThrowsArgumentNullException()
+    public void UseFileScriptRunner_NullRunner_ThrowsArgumentNullException()
     {
         // Arrange
         var builder = new AgentSkillsProviderBuilder();
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => builder.UseFileScriptExecutor(null!));
+        Assert.Throws<ArgumentNullException>(() => builder.UseFileScriptRunner(null!));
     }
 
     [Fact]
@@ -115,7 +118,7 @@ public sealed class AgentSkillsProviderBuilderTests
             new TestAgentSkill("skill-a", "A", "Instructions."));
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(countingSource)
-            .UseCache(false)
+            .UseOptions(o => o.DisableCaching = true)
             .Build();
 
         // Act
@@ -134,7 +137,6 @@ public sealed class AgentSkillsProviderBuilderTests
             new TestAgentSkill("skill-a", "A", "Instructions."));
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(countingSource)
-            .UseCache(true)
             .Build();
 
         // Act
@@ -156,9 +158,8 @@ public sealed class AgentSkillsProviderBuilderTests
         // Act — all fluent methods should return the same builder
         var result = builder
             .UseSource(source)
-            .UseCache(true)
             .UseScriptApproval(false)
-            .UsePromptTemplate("Skills:\n{skills}\n{runner_instructions}");
+            .UsePromptTemplate("Skills:\n{skills}\n{resource_instructions}\n{script_instructions}");
 
         // Assert
         Assert.Same(builder, result);

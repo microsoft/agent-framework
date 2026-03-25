@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -26,7 +27,7 @@ namespace Microsoft.Agents.AI;
 /// Resource and script paths are checked against path traversal and symlink escape attacks.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed partial class AgentFileSkillsSource : AgentSkillsSource
+internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     private const string SkillFileName = "SKILL.md";
     private const int MaxSearchDepth = 2;
@@ -55,22 +56,22 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private readonly IEnumerable<string> _skillPaths;
     private readonly HashSet<string> _allowedResourceExtensions;
     private readonly HashSet<string> _allowedScriptExtensions;
-    private readonly AgentFileSkillScriptExecutor _scriptExecutor;
+    private readonly AgentFileSkillScriptRunner _scriptRunner;
     private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkillsSource"/> class.
     /// </summary>
     /// <param name="skillPath">Path to search for skills.</param>
-    /// <param name="scriptExecutor">Executor for file-based scripts.</param>
+    /// <param name="scriptRunner">Runner for file-based scripts.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentFileSkillsSource(
         string skillPath,
-        AgentFileSkillScriptExecutor scriptExecutor,
+        AgentFileSkillScriptRunner scriptRunner,
         AgentFileSkillsSourceOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : this([skillPath], scriptExecutor, options, loggerFactory)
+        : this([skillPath], scriptRunner, options, loggerFactory)
     {
     }
 
@@ -78,12 +79,12 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentFileSkillsSource"/> class.
     /// </summary>
     /// <param name="skillPaths">Paths to search for skills.</param>
-    /// <param name="scriptExecutor">Executor for file-based scripts.</param>
+    /// <param name="scriptRunner">Runner for file-based scripts.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentFileSkillsSource(
         IEnumerable<string> skillPaths,
-        AgentFileSkillScriptExecutor scriptExecutor,
+        AgentFileSkillScriptRunner scriptRunner,
         AgentFileSkillsSourceOptions? options = null,
         ILoggerFactory? loggerFactory = null)
     {
@@ -102,8 +103,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
             resolvedOptions.AllowedScriptExtensions ?? s_defaultScriptExtensions,
             StringComparer.OrdinalIgnoreCase);
 
-        this._scriptExecutor = Throw.IfNull(scriptExecutor);
-
+        this._scriptRunner = Throw.IfNull(scriptRunner);
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentFileSkillsSource>();
     }
 
@@ -286,10 +286,10 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// Scans a skill directory for resource files matching the configured extensions.
     /// </summary>
     /// <remarks>
-    /// Recursively walks <paramref name="skillDirectoryFullPath"/> and collects
-    /// files whose extension matches the allowed set, excluding <c>SKILL.md</c> itself.
-    /// Each candidate is validated against path-traversal and symlink-escape checks; unsafe files
-    /// are skipped with a warning.
+    /// Recursively walks <paramref name="skillDirectoryFullPath"/> and collects files whose extension
+    /// matches the allowed set, excluding <c>SKILL.md</c> itself. Each candidate
+    /// is validated against path-traversal and symlink-escape checks; unsafe files are skipped with
+    /// a warning.
     /// </remarks>
     private List<AgentFileSkillResource> DiscoverResourceFiles(string skillDirectoryFullPath, string skillName)
     {
@@ -423,7 +423,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 
             // Compute relative path and normalize to forward slashes
             string relativePath = NormalizePath(resolvedFilePath.Substring(normalizedSkillDirectoryFullPath.Length));
-            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptExecutor));
+            scripts.Add(new AgentFileSkillScript(relativePath, resolvedFilePath, this._scriptRunner));
         }
 
         return scripts;

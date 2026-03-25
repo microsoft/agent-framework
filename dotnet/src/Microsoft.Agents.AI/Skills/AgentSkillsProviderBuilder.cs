@@ -10,7 +10,7 @@ using Microsoft.Shared.Diagnostics;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by one or more skill sources.
+/// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by a composite source.
 /// </summary>
 /// <remarks>
 /// <code>
@@ -22,62 +22,45 @@ namespace Microsoft.Agents.AI;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentSkillsProviderBuilder
 {
-    private readonly List<Func<AgentFileSkillScriptExecutor?, ILoggerFactory?, AgentSkillsSource>> _sourceFactories = [];
+    private readonly List<Func<AgentFileSkillScriptRunner?, ILoggerFactory?, AgentSkillsSource>> _sourceFactories = [];
     private AgentSkillsProviderOptions? _options;
     private ILoggerFactory? _loggerFactory;
-    private AgentFileSkillScriptExecutor? _scriptExecutor;
+    private AgentFileSkillScriptRunner? _scriptRunner;
     private Func<AgentSkill, bool>? _filter;
-    private bool _cacheSkills = true;
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from a filesystem directory.
     /// </summary>
-    /// <remarks>
-    /// The script executor is resolved using the following fallback order:
-    /// <list type="number">
-    /// <item><description>The <paramref name="scriptExecutor"/> passed to this method, if provided.</description></item>
-    /// <item><description>The builder-level executor set via <see cref="UseFileScriptExecutor"/>.</description></item>
-    /// </list>
-    /// If neither is available, <see cref="Build"/> throws <see cref="InvalidOperationException"/>.
-    /// </remarks>
     /// <param name="skillPath">Path to search for skills.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
-    /// <param name="scriptExecutor">
-    /// Optional executor for file-based scripts. When provided, overrides the builder-level executor
-    /// set via <see cref="UseFileScriptExecutor"/> for this source.
+    /// <param name="scriptRunner">
+    /// Optional runner for file-based scripts. When provided, overrides the builder-level runner
+    /// set via <see cref="UseFileScriptRunner"/>.
     /// </param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFileSkill(string skillPath, AgentFileSkillsSourceOptions? options = null, AgentFileSkillScriptExecutor? scriptExecutor = null)
+    public AgentSkillsProviderBuilder UseFileSkill(string skillPath, AgentFileSkillsSourceOptions? options = null, AgentFileSkillScriptRunner? scriptRunner = null)
     {
-        return this.UseFileSkills([skillPath], options, scriptExecutor);
+        return this.UseFileSkills([skillPath], options, scriptRunner);
     }
 
     /// <summary>
     /// Adds a file-based skill source that discovers skills from multiple filesystem directories.
     /// </summary>
-    /// <remarks>
-    /// The script executor is resolved using the following fallback order:
-    /// <list type="number">
-    /// <item><description>The <paramref name="scriptExecutor"/> passed to this method, if provided.</description></item>
-    /// <item><description>The builder-level executor set via <see cref="UseFileScriptExecutor"/>.</description></item>
-    /// </list>
-    /// If neither is available, <see cref="Build"/> throws <see cref="InvalidOperationException"/>.
-    /// </remarks>
     /// <param name="skillPaths">Paths to search for skills.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
-    /// <param name="scriptExecutor">
-    /// Optional executor for file-based scripts. When provided, overrides the builder-level executor
-    /// set via <see cref="UseFileScriptExecutor"/> for this source.
+    /// <param name="scriptRunner">
+    /// Optional runner for file-based scripts. When provided, overrides the builder-level runner
+    /// set via <see cref="UseFileScriptRunner"/>.
     /// </param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFileSkills(IEnumerable<string> skillPaths, AgentFileSkillsSourceOptions? options = null, AgentFileSkillScriptExecutor? scriptExecutor = null)
+    public AgentSkillsProviderBuilder UseFileSkills(IEnumerable<string> skillPaths, AgentFileSkillsSourceOptions? options = null, AgentFileSkillScriptRunner? scriptRunner = null)
     {
-        this._sourceFactories.Add((builderScriptExecutor, loggerFactory) =>
+        this._sourceFactories.Add((builderScriptRunner, loggerFactory) =>
         {
-            var resolvedExecutor = scriptExecutor
-                ?? builderScriptExecutor
-                ?? throw new InvalidOperationException($"File-based skill sources require a script executor. Call {nameof(this.UseFileScriptExecutor)} or pass an executor to {nameof(this.UseFileSkill)}/{nameof(this.UseFileSkills)}.");
-            return new AgentFileSkillsSource(skillPaths, resolvedExecutor, options, loggerFactory);
+            var resolvedRunner = scriptRunner
+                ?? builderScriptRunner
+                ?? throw new InvalidOperationException($"File-based skill sources require a script runner. Call {nameof(this.UseFileScriptRunner)} or pass a runner to {nameof(this.UseFileSkill)}/{nameof(this.UseFileSkills)}.");
+            return new AgentFileSkillsSource(skillPaths, resolvedRunner, options, loggerFactory);
         });
         return this;
     }
@@ -97,8 +80,9 @@ public sealed class AgentSkillsProviderBuilder
     /// <summary>
     /// Sets a custom system prompt template.
     /// </summary>
-    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list
-    /// and <c>{runner_instructions}</c> for optional script runner instructions.</param>
+    /// <param name="promptTemplate">The prompt template with <c>{skills}</c> placeholder for the skills list,
+    /// <c>{resource_instructions}</c> for optional resource instructions,
+    /// and <c>{script_instructions}</c> for optional script instructions.</param>
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
     {
@@ -118,13 +102,13 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Sets the executor for file-based skill scripts.
+    /// Sets the runner for file-based skill scripts.
     /// </summary>
-    /// <param name="executor">The delegate that executes file-based scripts.</param>
+    /// <param name="runner">The delegate that runs file-based scripts.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseFileScriptExecutor(AgentFileSkillScriptExecutor executor)
+    public AgentSkillsProviderBuilder UseFileScriptRunner(AgentFileSkillScriptRunner runner)
     {
-        this._scriptExecutor = Throw.IfNull(executor);
+        this._scriptRunner = Throw.IfNull(runner);
         return this;
     }
 
@@ -157,17 +141,6 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Enables or disables skill caching after the first load.
-    /// </summary>
-    /// <param name="enabled"><see langword="true"/> to cache skills (default); <see langword="false"/> to reload from sources on every call.</param>
-    /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseCache(bool enabled = true)
-    {
-        this._cacheSkills = enabled;
-        return this;
-    }
-
-    /// <summary>
     /// Configures the <see cref="AgentSkillsProviderOptions"/> using the provided delegate.
     /// </summary>
     /// <param name="configure">A delegate to configure the options.</param>
@@ -185,15 +158,10 @@ public sealed class AgentSkillsProviderBuilder
     /// <returns>A configured <see cref="AgentSkillsProvider"/>.</returns>
     public AgentSkillsProvider Build()
     {
-        if (this._sourceFactories.Count == 0)
-        {
-            throw new InvalidOperationException("At least one skill source must be configured.");
-        }
-
         var resolvedSources = new List<AgentSkillsSource>(this._sourceFactories.Count);
         foreach (var factory in this._sourceFactories)
         {
-            resolvedSources.Add(factory(this._scriptExecutor, this._loggerFactory));
+            resolvedSources.Add(factory(this._scriptRunner, this._loggerFactory));
         }
 
         AgentSkillsSource source;
@@ -203,22 +171,16 @@ public sealed class AgentSkillsProviderBuilder
         }
         else
         {
-            source = new AggregateAgentSkillsSource(resolvedSources);
+            source = new AggregatingAgentSkillsSource(resolvedSources);
         }
 
-        // Apply user-specified filter, then dedup, then optionally cache.
+        // Apply user-specified filter, then dedup.
         if (this._filter != null)
         {
             source = new FilteringAgentSkillsSource(source, this._filter, this._loggerFactory);
         }
 
-        // Wrap with dedup (first) then caching so duplicates are resolved before the result is cached.
         source = new DeduplicatingAgentSkillsSource(source, this._loggerFactory);
-
-        if (this._cacheSkills)
-        {
-            source = new CachingAgentSkillsSource(source);
-        }
 
         return new AgentSkillsProvider(source, this._options, this._loggerFactory);
     }

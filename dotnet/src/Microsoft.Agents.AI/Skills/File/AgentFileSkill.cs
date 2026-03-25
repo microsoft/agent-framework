@@ -49,13 +49,9 @@ public sealed class AgentFileSkill : AgentSkill
     /// </summary>
     public string Path { get; }
 
-    /// <summary>
-    /// Gets the resources discovered for this skill. Returns an empty list when the skill has no resources.
-    /// </summary>
+    /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillResource> Resources => this._resources;
 
-    /// <summary>
-    /// Gets the scripts discovered for this skill. Returns an empty list when the skill has no scripts.
-    /// </summary>
+    /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillScript> Scripts => this._scripts;
 }
