@@ -64,5 +64,6 @@ async def main() -> None:
             error = f" (error: {sub.error})" if sub.error else ""
             print(f"  {agent_name}: {sub.passed}/{sub.total} {error}")
 
+
 if __name__ == "__main__":
     asyncio.run(main())

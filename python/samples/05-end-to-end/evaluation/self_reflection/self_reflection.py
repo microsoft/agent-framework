@@ -29,7 +29,9 @@ Self-Reflection LLM Runner
 
 Reflexion: language agents with verbal reinforcement learning.
 Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023.
-In Proceedings of the 37th International Conference on Neural Information Processing Systems (NIPS '23). Curran Associates Inc., Red Hook, NY, USA, Article 377, 8634–8652.
+In Proceedings of the 37th International Conference on Neural Information
+Processing Systems (NIPS '23). Curran Associates Inc., Red Hook, NY, USA,
+Article 377, 8634–8652.
 https://arxiv.org/abs/2303.11366
 
 This module implements a self-reflection loop for LLM responses using groundedness evaluation.
@@ -233,10 +235,7 @@ async def run_self_reflection_batch(
         limit: Optional limit to process only the first N prompts
     """
     # Load environment variables
-    if env_file and os.path.exists(env_file):
-        load_dotenv(env_file, override=True)
-    else:
-        load_dotenv(override=True)
+    load_dotenv(env_file, override=True) if env_file else load_dotenv(override=True)
 
     from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
 
@@ -375,9 +374,8 @@ async def run_self_reflection_batch(
             perfect_scores = sum(1 for s in best_scores if s == 5)
             print("\nGroundedness Scores:")
             print(f"  Average best score: {avg_score:.2f}/5")
-            print(
-                f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({100 * perfect_scores / len(best_scores):.1f}%)"
-            )
+            pct = 100 * perfect_scores / len(best_scores)
+            print(f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({pct:.1f}%)")
 
             # Calculate improvement metrics
             if iteration_scores_list:
@@ -395,9 +393,8 @@ async def run_self_reflection_batch(
                     print(f"  Average first score: {avg_first_score:.2f}/5")
                     print(f"  Average final score: {avg_last_score:.2f}/5")
                     print(f"  Average improvement: +{avg_improvement:.2f}")
-                    print(
-                        f"  Responses that improved: {improved_count}/{len(improvements)} ({100 * improved_count / len(improvements):.1f}%)"
-                    )
+                    pct = 100 * improved_count / len(improvements)
+                    print(f"  Responses that improved: {improved_count}/{len(improvements)} ({pct:.1f}%)")
 
             # Show iteration statistics
             if iterations:
