@@ -7,7 +7,7 @@ orchestration function that routes execution based on spam detection results. Ac
 handle side effects (spam handling and email sending).
 
 Prerequisites:
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
@@ -17,12 +17,14 @@ import logging
 import os
 from collections.abc import Generator
 from typing import Any, cast
+from urllib.parse import urljoin
 
 from agent_framework import Agent, AgentResponse
 from agent_framework.azure import DurableAIAgentOrchestrationContext, DurableAIAgentWorker
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
+from azure.identity.aio import get_bearer_token_provider as get_async_bearer_token_provider
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from durabletask.task import ActivityContext, OrchestrationContext, Task
@@ -66,13 +68,14 @@ def create_spam_agent() -> "Agent":
     Returns:
         Agent: The configured Spam Detection agent
     """
-    _client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AsyncAzureCliCredential(),
-    )
     return Agent(
-        client=_client,
+        client=OpenAIChatCompletionClient(
+            model=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+            api_key=get_async_bearer_token_provider(
+                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
+            ),
+            base_url=urljoin(os.environ["AZURE_OPENAI_ENDPOINT"], "/openai/v1/"),
+        ),
         name=SPAM_AGENT_NAME,
         instructions="You are a spam detection assistant that identifies spam emails.",
     )
@@ -84,13 +87,14 @@ def create_email_agent() -> "Agent":
     Returns:
         Agent: The configured Email Assistant agent
     """
-    _client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AsyncAzureCliCredential(),
-    )
     return Agent(
-        client=_client,
+        client=OpenAIChatCompletionClient(
+            model=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+            api_key=get_async_bearer_token_provider(
+                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
+            ),
+            base_url=urljoin(os.environ["AZURE_OPENAI_ENDPOINT"], "/openai/v1/"),
+        ),
         name=EMAIL_AGENT_NAME,
         instructions="You are an email assistant that helps users draft responses to emails with professionalism.",
     )

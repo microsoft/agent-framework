@@ -291,7 +291,12 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     """Skip tests based on markers and environment availability."""
     foundry_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
     foundry_available = all(os.getenv(var) for var in foundry_vars)
+    azure_openai_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    azure_openai_available = all(os.getenv(var) for var in azure_openai_vars)
     skip_foundry = pytest.mark.skip(reason=f"Missing required environment variables: {', '.join(foundry_vars)}")
+    skip_azure_openai = pytest.mark.skip(
+        reason=f"Missing required environment variables: {', '.join(azure_openai_vars)}"
+    )
 
     # Check DTS availability
     dts_available = _check_dts_available()
@@ -304,6 +309,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "requires_azure_openai" in item.keywords and not foundry_available:
             item.add_marker(skip_foundry)
+        sample_marker = item.get_closest_marker("sample")
+        sample_name = sample_marker.args[0] if sample_marker and sample_marker.args else None
+        if sample_name == "06_multi_agent_orchestration_conditionals" and not azure_openai_available:
+            item.add_marker(skip_azure_openai)
         if "requires_dts" in item.keywords and not dts_available:
             item.add_marker(skip_dts)
         if "requires_redis" in item.keywords and not redis_available:
@@ -330,10 +339,18 @@ def dts_available(dts_endpoint: str) -> bool:
     return False
 
 
-@pytest.fixture(scope="session")
-def check_foundry_env() -> None:
-    """Verify Foundry environment variables are set."""
-    required_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
+@pytest.fixture(scope="module")
+def check_sample_env(request: pytest.FixtureRequest) -> None:
+    """Verify the environment variables required by the current sample are set."""
+    sample_marker = request.node.get_closest_marker("sample")  # type: ignore[union-attr]
+    if not sample_marker:
+        pytest.fail("Test class must have @pytest.mark.sample() marker")
+
+    sample_name = cast(str, sample_marker.args[0])  # type: ignore[union-attr]
+    if sample_name == "06_multi_agent_orchestration_conditionals":
+        required_vars = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    else:
+        required_vars = ["FOUNDRY_PROJECT_ENDPOINT", "FOUNDRY_MODEL"]
     missing = [var for var in required_vars if not os.getenv(var)]
 
     if missing:
@@ -350,7 +367,7 @@ def unique_taskhub() -> str:
 @pytest.fixture(scope="module")
 def worker_process(
     dts_available: bool,
-    check_foundry_env: None,
+    check_sample_env: None,
     dts_endpoint: str,
     unique_taskhub: str,
     request: pytest.FixtureRequest,

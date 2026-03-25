@@ -204,6 +204,8 @@ jobs:
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       FUNCTIONS_WORKER_RUNTIME: "python"
@@ -238,6 +240,7 @@ jobs:
           packages/azurefunctions/tests/integration_tests
           packages/durabletask/tests/integration_tests
           -m integration
+          -n logical --dist worksteal
           -x
           --timeout=360 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5

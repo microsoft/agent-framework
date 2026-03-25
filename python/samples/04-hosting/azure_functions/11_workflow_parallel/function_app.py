@@ -21,7 +21,7 @@ Key architectural points:
 - Mixed agent/executor fan-outs execute concurrently
 
 Prerequisites:
-- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`
+- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
 - Sign in with Azure CLI (`az login`) for `AzureCliCredential`
 - Ensure Azurite and the Durable Task Scheduler emulator are running
 """
@@ -31,6 +31,7 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin
 
 from agent_framework import (
     Agent,
@@ -43,8 +44,8 @@ from agent_framework import (
     handler,
 )
 from agent_framework.azure import AgentFunctionApp
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework.openai import OpenAIChatCompletionClient
+from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 from typing_extensions import Never
 
@@ -359,10 +360,11 @@ def _create_workflow() -> Workflow:
                        └─> statistics_processor ─┤
                                                  └──> final_report
     """
-    chat_client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["FOUNDRY_MODEL"],
-        credential=AzureCliCredential(),
+    credential = AzureCliCredential()
+    chat_client = OpenAIChatCompletionClient(
+        model=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+        api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
+        base_url=urljoin(os.environ["AZURE_OPENAI_ENDPOINT"], "/openai/v1/"),
     )
 
     # Create agents for parallel analysis
