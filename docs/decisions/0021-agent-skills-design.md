@@ -1,7 +1,7 @@
 status: proposed
 date: 2026-03-23
 contact: sergeymenshykh
-deciders: rbarreto, westey-m
+deciders: rbarreto, westey-m, eavanvalkenburg
 ---
 
 # Agent Skills: Multi-Source Architecture
@@ -29,7 +29,7 @@ Skills are presented to the model as up to three tools that progressively disclo
 - **`read_skill_resource(skillName, resourceName)`** — reads a supplementary resource (file-based or code-defined) associated with a skill
 - **`run_skill_script(skillName, scriptName, arguments?)`** — executes a script associated with a skill; only registered when at least one skill contains scripts
 
-Each tool delegates to the corresponding method on the resolved `AgentSkill` — calling `Resource.ReadAsync()` or `Script.ExecuteAsync()` respectively.
+Each tool delegates to the corresponding method on the resolved `AgentSkill` — calling `Resource.ReadAsync()` or `Script.RunAsync()` respectively.
 
 If skills have no scripts defined, the `run_skill_script` tool is **not advertised** to the model and instructions related to script execution are **not included** in the default skills instructions.
 
@@ -50,14 +50,14 @@ public abstract class AgentSkillResource
 {
     public string Name { get; }
     public string? Description { get; }
-    public abstract Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default);
 }
 
 public abstract class AgentSkillScript
 {
     public string Name { get; }
     public string? Description { get; }
-    public abstract Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
 }
 
 public abstract class AgentSkillsSource
@@ -88,7 +88,7 @@ The type hierarchy at a glance:
 AgentSkill (abstract)                   AgentSkillsSource (abstract)
 ├── AgentFileSkill                      ├── AgentFileSkillsSource          (public)
 └── [Programmatic]                      ├── AgentInMemorySkillsSource      (public)
-    ├── AgentInlineSkill                ├── AggregateAgentSkillsSource     (public)
+    ├── AgentInlineSkill                ├── AggregatingAgentSkillsSource     (public)
     └── AgentClassSkill (abstract)      └── DelegatingAgentSkillsSource    (abstract, public)
                                             ├── FilteringAgentSkillsSource  (public)
 AgentSkillResource (abstract)               ├── CachingAgentSkillsSource    (public)
@@ -133,28 +133,28 @@ internal sealed class AgentFileSkillResource : AgentSkillResource
 
     public string FullPath { get; }
 
-    public override Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default)
+    public override Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
         return File.ReadAllTextAsync(FullPath, Encoding.UTF8, cancellationToken);
     }
 }
 ```
 
-**`AgentFileSkillScript`** — A file-based skill script that represents a script file on disk. Delegates execution to an external `AgentFileSkillScriptExecutor` callback (e.g., runs Python/shell via `Process.Start`). Throws `NotSupportedException` if no executor is configured:
+**`AgentFileSkillScript`** — A file-based skill script that represents a script file on disk. Delegates execution to an external `AgentFileSkillScriptRunner` callback (e.g., runs Python/shell via `Process.Start`). Throws `NotSupportedException` if no executor is configured:
 
 ```csharp
-public delegate Task<object?> AgentFileSkillScriptExecutor(
+public delegate Task<object?> AgentFileSkillScriptRunner(
     AgentFileSkill skill, AgentFileSkillScript script,
     AIFunctionArguments arguments, CancellationToken cancellationToken);
 
 public sealed class AgentFileSkillScript : AgentSkillScript
 {
-    private readonly AgentFileSkillScriptExecutor _executor;
+    private readonly AgentFileSkillScriptRunner _executor;
 
-    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillScriptExecutor executor)
+    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillScriptRunner executor)
         : base(name) { ... }
 
-    public override async Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, ...)
+    public override async Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, ...)
     {
 
         return await _executor(fileSkill, this, arguments, cancellationToken);
@@ -162,7 +162,7 @@ public sealed class AgentFileSkillScript : AgentSkillScript
 }
 ```
 
-The executor can be provided at the **provider level** via `AgentSkillsProviderBuilder.UseFileScriptExecutor(executor)` and optionally overridden for a **particular file skill** or for a **set of skills** at the file skill source level, giving fine-grained control over how different scripts are executed.
+The executor can be provided at the **provider level** via `AgentSkillsProviderBuilder.UseFileScriptRunner(executor)` and optionally overridden for a **particular file skill** or for a **set of skills** at the file skill source level, giving fine-grained control over how different scripts are executed.
 
 **`AgentFileSkillsSource`** — A skill source that discovers skills from filesystem directories containing `SKILL.md` files. Recursively scans directories (max 2 levels), validates frontmatter, and enforces path traversal and symlink security checks:
 
@@ -171,7 +171,7 @@ public sealed partial class AgentFileSkillsSource : AgentSkillsSource
 {
     public AgentFileSkillsSource(
         IEnumerable<string> skillPaths,
-        AgentFileSkillScriptExecutor scriptExecutor,
+        AgentFileSkillScriptRunner scriptRunner,
         AgentFileSkillsSourceOptions? options = null,
         ILoggerFactory? loggerFactory = null) { ... }
 }
@@ -200,7 +200,7 @@ skills/
 ```
 
 ```csharp
-var source = new AgentFileSkillsSource(skillPaths: ["./skills"], scriptExecutor: SubprocessExecutor.RunAsync);
+var source = new AgentFileSkillsSource(skillPaths: ["./skills"], scriptRunner: SubprocessScriptRunner.RunAsync);
 
 var provider = new AgentSkillsProvider(source);
 
@@ -229,7 +229,7 @@ public sealed class AgentInMemorySkillsSource : AgentSkillsSource
 
 Inline skills are built at runtime via the `AgentInlineSkill` class and its fluent API. They are ideal for quick, agent-specific skill definitions where a full class hierarchy would be overkill.
 
-**`AgentInlineSkill`** — A skill defined entirely in code. Resources can be static values, delegates, or pre-built `AIFunction` instances; scripts can be delegates or `AIFunction` instances. Constructed with name, description, and instructions, then extended with resources and scripts:
+**`AgentInlineSkill`** — A skill defined entirely in code. Resources can be static values or functions; scripts are always functions. Constructed with name, description, and instructions, then extended with resources and scripts:
 
 ```csharp
 public sealed class AgentInlineSkill : AgentSkill
@@ -239,36 +239,47 @@ public sealed class AgentInlineSkill : AgentSkill
 
     public AgentInlineSkill AddResource(object value, string name, string? description = null);
     public AgentInlineSkill AddResource(Delegate handler, string name, string? description = null);
-    public AgentInlineSkill AddResource(AIFunction function);
     public AgentInlineSkill AddScript(Delegate handler, string name, string? description = null);
-    public AgentInlineSkill AddScript(AIFunction function);
 }
 ```
 
-**`AgentInlineSkillResource`** — A skill resource backed by a static value, a delegate, or a pre-built `AIFunction`. Static resources return a fixed value; delegate-based resources use `AIFunctionFactory` for automatic parameter marshaling; `AIFunction`-based resources use the function's name and description directly:
+**`AgentInlineSkillResource`** — A skill resource that wraps a static value:
 
 ```csharp
 public sealed class AgentInlineSkillResource : AgentSkillResource
 {
     public AgentInlineSkillResource(object value, string name, string? description = null)
-        : base(name, description) { _value = value; }
-
-    public AgentInlineSkillResource(Delegate handler, string name, string? description = null)
-        : base(name, description) { _function = AIFunctionFactory.Create(handler, name: name); }
-
-    public AgentInlineSkillResource(AIFunction function)
-        : base(function.Name, function.Description) { _function = function; }
-
-    public override async Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default)
+        : base(name, description)
     {
-        if (_function is not null)
-            return await _function.InvokeAsync(arguments, cancellationToken);
-        return _value;
+        _value = value;
+    }
+
+    public override Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<object?>(_value);
     }
 }
 ```
 
-**`AgentInlineSkillScript`** — A skill script backed by a delegate or a pre-built `AIFunction`. Delegate-based scripts use `AIFunctionFactory` for automatic parameter marshaling; `AIFunction`-based scripts use the function's name and description directly:
+**`AgentInlineSkillResource`** — A skill resource backed by a delegate. The delegate is invoked via an `AIFunction` each time `ReadAsync` is called, producing a dynamic (computed) value:
+
+```csharp
+public sealed class AgentInlineSkillResource : AgentSkillResource
+{
+    public AgentInlineSkillResource(Delegate handler, string name, string? description = null)
+        : base(name, description)
+    {
+        _function = AIFunctionFactory.Create(handler, name: name);
+    }
+
+    public override async Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
+    {
+        return await _function.InvokeAsync(new AIFunctionArguments() { Services = serviceProvider }, cancellationToken);
+    }
+}
+```
+
+**`AgentInlineSkillScript`** — A skill script backed by a delegate via an `AIFunction`:
 
 ```csharp
 public sealed class AgentInlineSkillScript : AgentSkillScript
@@ -276,14 +287,14 @@ public sealed class AgentInlineSkillScript : AgentSkillScript
     private readonly AIFunction _function;
 
     public AgentInlineSkillScript(Delegate handler, string name, string? description = null)
-        : base(name, description) { _function = AIFunctionFactory.Create(handler, name: name); }
-
-    public AgentInlineSkillScript(AIFunction function)
-        : base(function.Name, function.Description) { _function = function; }
+        : base(name, description)
+    {
+        _function = AIFunctionFactory.Create(handler, name: name);
+    }
 
     public JsonElement? ParametersSchema => _function.JsonSchema;
 
-    public override async Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, ...)
+    public override async Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, ...)
     {
         return await _function.InvokeAsync(arguments, cancellationToken);
     }
@@ -431,7 +442,7 @@ var fileSource = new CachingAgentSkillsSource(new AgentFileSkillsSource(["./skil
 var codeSource = new AgentInMemorySkillsSource([myCodeSkill]);
 
 var compositeSource = new FilteringAgentSkillsSource(
-    new AggregateAgentSkillsSource([fileSource, codeSource]),
+    new AggregatingAgentSkillsSource([fileSource, codeSource]),
     filter: s => s.Frontmatter.Name != "internal");
 
 var provider = new AgentSkillsProvider(compositeSource);
@@ -498,7 +509,7 @@ var provider = new AgentSkillsProviderBuilder()
     .UseFileSkill("./skills")                           // file-based source
     .UseInlineSkills(codeSkill)                            // code-defined source
     .UseClassSkills(new ClassSkill())                    // class-based source
-    .UseFileScriptExecutor(SubprocessExecutor.RunAsync) // script runner
+    .UseFileScriptRunner(SubprocessScriptRunner.RunAsync) // script runner
     .UseScriptApproval()                                // optional human-in-the-loop
     .UsePromptTemplate(customTemplate)                  // optional prompt customization
     .UseFilter(s => s.Frontmatter.Name != "internal")   // optional skill filtering
@@ -552,7 +563,7 @@ public sealed class CloudSkillResource : AgentSkillResource
 
     /// <inheritdoc/>
     public override async Task<object?> ReadAsync(
-        AIFunctionArguments arguments,
+        IServiceProvider? serviceProvider = null,
         CancellationToken cancellationToken = default)
     {
         return await _httpClient.GetStringAsync(BlobUri, cancellationToken).ConfigureAwait(false);
@@ -586,7 +597,7 @@ public sealed class CloudSkillScript : AgentSkillScript
     public Uri FunctionUri { get; }
 
     /// <inheritdoc/>
-    public override async Task<object?> ExecuteAsync(
+    public override async Task<object?> RunAsync(
         AgentSkill skill,
         AIFunctionArguments arguments,
         CancellationToken cancellationToken = default)
@@ -710,7 +721,7 @@ var provider = new AgentSkillsProviderBuilder()
         new Uri("https://my-service.example.com/skills/catalog"),
         httpClient))
     // Mix with other source types if needed:
-    .UseFileSkill("/local/skills", scriptExecutor)
+    .UseFileSkill("/local/skills", scriptRunner)
     .UseInlineSkills(someInlineSkill)
     .Build();
 ```
@@ -727,7 +738,7 @@ Two approaches were considered for representing executable scripts within skills
 ### Option A — Custom `AgentSkillScript` abstract base class (original design)
 
 Scripts are modeled as a custom `AgentSkillScript` abstract class with `Name`, `Description`, and
-`ExecuteAsync(AgentSkill, AIFunctionArguments, CancellationToken)`. Concrete implementations:
+`RunAsync(AgentSkill, AIFunctionArguments, CancellationToken)`. Concrete implementations:
 `AgentInlineSkillScript` (wraps a delegate/`AIFunction`) and `AgentFileSkillScript` (wraps a file path + executor delegate).
 
 ```csharp
@@ -736,7 +747,7 @@ public abstract class AgentSkillScript
 {
     public string Name { get; }
     public string? Description { get; }
-    public abstract Task<object?> ExecuteAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default);
 }
 
 // AgentSkill exposes scripts as:
@@ -755,14 +766,14 @@ public override IReadOnlyList<AgentSkillScript>? Scripts { get; } =
 ];
 
 // Provider executes scripts by passing the owning skill:
-await script.ExecuteAsync(skill, arguments, cancellationToken);
+await script.RunAsync(skill, arguments, cancellationToken);
 ```
 
 **Pros:**
 
-- **Explicit skill context at execution time.** `ExecuteAsync` receives the owning `AgentSkill`, so any script can access skill metadata or resources during execution without requiring construction-time wiring.
+- **Explicit skill context at execution time.** `RunAsync` receives the owning `AgentSkill`, so any script can access skill metadata or resources during execution without requiring construction-time wiring.
 - **Self-contained abstraction.** A dedicated type communicates clearly that scripts are a skills-framework concept, separate from general-purpose AI functions.
-- **Easier extensibility for custom script types.** Third-party implementations can subclass `AgentSkillScript` and access the owning skill in `ExecuteAsync` without special setup.
+- **Easier extensibility for custom script types.** Third-party implementations can subclass `AgentSkillScript` and access the owning skill in `RunAsync` without special setup.
 
 **Cons:**
 
@@ -819,6 +830,7 @@ public sealed class AgentFileSkillScript : AIFunction
 
 - **No owning-skill context in invocation signature.** `AIFunction.InvokeAsync` does not accept an `AgentSkill` parameter, so `AgentFileSkillScript` must capture its owning skill via an internal setter during construction. This adds a construction-order dependency: the skill must set the back-reference on its scripts.
 - **Custom script types lose automatic skill access.** Third-party `AIFunction` subclasses that need the owning skill must implement their own mechanism (e.g., constructor injection, closure capture) instead of receiving it as a method parameter.
+- **Semantic overloading.** `AIFunction` now means both "a tool the model can call" and "a script within a skill", which could blur the distinction for framework users.
 
 ## Resource Representation: `AgentSkillResource` vs `AIFunction`
 
@@ -827,7 +839,7 @@ Two approaches were considered for representing skill resources (supplementary c
 ### Option A — Custom `AgentSkillResource` abstract base class (original design)
 
 Resources are modeled as a custom `AgentSkillResource` abstract class with `Name`, `Description`, and
-`ReadAsync(AIFunctionArguments, CancellationToken)`. Concrete implementations:
+`ReadAsync(IServiceProvider?, CancellationToken)`. Concrete implementations:
 `AgentInlineSkillResource` (static value, delegate, or `AIFunction` wrapper) and `AgentFileSkillResource` (reads file content from disk).
 
 ```csharp
@@ -836,7 +848,7 @@ public abstract class AgentSkillResource
 {
     public string Name { get; }
     public string? Description { get; }
-    public abstract Task<object?> ReadAsync(AIFunctionArguments arguments, CancellationToken cancellationToken = default);
+    public abstract Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default);
 }
 
 // AgentSkill exposes resources as:
@@ -858,7 +870,7 @@ public override IReadOnlyList<AgentSkillResource>? Resources { get; } =
 ];
 
 // Provider reads resources via:
-await resource.ReadAsync(arguments, cancellationToken);
+await resource.ReadAsync(serviceProvider, cancellationToken);
 ```
 
 **Pros:**
@@ -872,7 +884,7 @@ await resource.ReadAsync(arguments, cancellationToken);
 - **Parallel abstraction.** `AgentSkillResource` and `AIFunction` serve overlapping purposes (named callable that returns data), creating two parallel hierarchies.
 - **Friction for consumers.** Users who already have `AIFunction` instances must wrap them in `AgentInlineSkillResource`, adding ceremony.
 
-### Option B — Reuse `AIFunction` directly (adopted)
+### Option B — Reuse `AIFunction` directly
 
 Resources are represented as `AIFunction`. `AgentSkill.Resources` returns `IReadOnlyList<AIFunction>?`.
 `AgentInlineSkillResource` becomes an `AIFunction` subclass (retained as a convenience for the static-value
@@ -925,3 +937,24 @@ internal sealed class AgentFileSkillResource : AIFunction
 - **Static values require a wrapper.** Unlike the original `ReadAsync` which could return a stored value directly, `AIFunction.InvokeAsync` implies invocation. `AgentInlineSkillResource` is retained as a convenience subclass to handle the static-value case, so this is not eliminated — just moved to a different class.
 
 ## Decision Outcome
+
+### 1. Keep `AgentSkillResource` and `AgentSkillScript` (Option A for both sections)
+
+We are staying with the custom `AgentSkillResource` and `AgentSkillScript` model classes instead of reusing `AIFunction`:
+
+- **Resources have no parameters.** If a consumer provides an `AIFunction` with parameters, those parameters will never be advertised to the LLM, and the resulting call will fail.
+- **Approval breaks for `AIFunction`-based representations.** When a resource or script represented by an `AIFunction` is configured with approval, the second approval invocation will not work correctly.
+- **Injecting the owning skill into an `AIFunction`-based script is problematic.** Constructor injection would introduce a circular reference between the skill and the script. An internal property setter is possible but adds coupling.
+
+### 2. Make all agent skill classes internal
+
+All agent-skill-related classes are made `internal` to minimize the public API surface while the feature matures. We can reconsider and promote types to `public` later based on community signal.
+
+This leaves two public entry points:
+
+- **`AgentSkillsProvider`** — use directly when all skills come from a single source and filtering is not needed.
+- **`AgentSkillsProviderBuilder`** — use when mixing skill types or when filtering support is required.
+
+### 3. Caching at provider level
+
+Caching of tools and instructions is implemented inside `AgentSkillsProvider` rather than as an external decorator. Recreating tools and instructions on every provider call is wasteful, and a caching decorator sitting outside the provider would not have the information needed to cache them effectively.
