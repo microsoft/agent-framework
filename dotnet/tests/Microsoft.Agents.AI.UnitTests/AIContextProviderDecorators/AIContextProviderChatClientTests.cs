@@ -343,6 +343,8 @@ public class AIContextProviderChatClientTests
         // Assert: each call should see exactly 2 tools (1 baseline + 1 injected)
         Assert.Equal(3, toolCountsSeenByInner.Count);
         Assert.All(toolCountsSeenByInner, count => Assert.Equal(2, count));
+    }
+
     [Fact]
     public async Task GetStreamingResponseAsync_SharedOptions_OriginalToolsNotMutatedAsync()
     {
