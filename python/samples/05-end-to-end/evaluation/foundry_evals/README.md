@@ -18,7 +18,7 @@ These samples demonstrate evaluating agent-framework agents using Azure AI Found
 The dev inner loop. Two patterns from simplest to most control:
 
 1. **`evaluate_agent()`** — One call: runs agent → converts → evaluates
-2. **`evaluate_dataset()`** — Run agent yourself, convert with `AgentEvalConverter`, inspect/modify, then evaluate
+2. **`FoundryEvals.evaluate()`** — Run agent yourself, convert with `AgentEvalConverter`, inspect/modify, then evaluate
 
 ```bash
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_agent_sample.py
@@ -28,8 +28,8 @@ uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_agent_sample.py
 
 Evaluate what already happened — zero changes to agent code:
 
-1. **`evaluate_responses()`** — Evaluate Responses API responses by ID
-2. **`evaluate_traces()`** — Evaluate from OTel traces in App Insights
+1. **`evaluate_traces(response_ids=...)`** — Evaluate Responses API responses by ID
+2. **`evaluate_traces(agent_id=...)`** — Evaluate agent behavior from OTel traces in App Insights
 
 ```bash
 uv run samples/05-end-to-end/evaluation/foundry_evals/evaluate_traces_sample.py

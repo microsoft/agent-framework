@@ -11,7 +11,7 @@ a different aspect of agent behavior:
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
@@ -20,7 +20,7 @@ import os
 from agent_framework import Content, ConversationSplit, EvalItem, FunctionTool, Message
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -94,8 +94,8 @@ def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAS
 
 async def main() -> None:
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 

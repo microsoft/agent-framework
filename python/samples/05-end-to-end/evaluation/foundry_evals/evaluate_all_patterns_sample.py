@@ -38,11 +38,11 @@ from agent_framework import (
     keyword_check,
     tool_called_check,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals
 from agent_framework_orchestrations import GroupChatBuilder, SequentialBuilder
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -87,9 +87,10 @@ def print_workflow_results(results) -> None:
 def create_agent(project_client, deployment) -> Agent:
     """Create a travel assistant agent."""
     return Agent(
-        client=AzureOpenAIResponsesClient(
-            project_client=project_client,
-            deployment_name=deployment,
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=deployment,
+            credential=AzureCliCredential(),
         ),
         name="travel-assistant",
         instructions="You are a helpful travel assistant. Use your tools to answer questions.",
@@ -99,9 +100,10 @@ def create_agent(project_client, deployment) -> Agent:
 
 def create_workflow(project_client, deployment) -> Workflow:
     """Create a researcher → planner sequential workflow."""
-    client = AzureOpenAIResponsesClient(
-        project_client=project_client,
-        deployment_name=deployment,
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=deployment,
+        credential=AzureCliCredential(),
     )
     researcher = Agent(
         client=client,
@@ -460,9 +462,10 @@ def create_iterative_workflow(project_client, deployment) -> Workflow:
     The writer drafts a response, the reviewer critiques it, and the
     writer revises — running 2 rounds so each agent is invoked twice.
     """
-    client = AzureOpenAIResponsesClient(
-        project_client=project_client,
-        deployment_name=deployment,
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=deployment,
+        credential=AzureCliCredential(),
     )
     writer = Agent(
         client=client,
@@ -520,8 +523,8 @@ async def demo_iterative_workflow(project_client, deployment) -> None:
 
 async def main() -> None:
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 

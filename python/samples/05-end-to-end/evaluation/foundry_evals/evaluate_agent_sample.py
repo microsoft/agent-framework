@@ -9,17 +9,17 @@ This sample demonstrates three patterns:
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
 import os
 
 from agent_framework import Agent, AgentEvalConverter, ConversationSplit, evaluate_agent
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,18 +44,20 @@ def get_flight_price(origin: str, destination: str) -> str:
 async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
     # 2. Create an agent with tools
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=deployment,
+        credential=AzureCliCredential(),
+    )
     agent = Agent(
-        client=AzureOpenAIResponsesClient(
-            project_client=project_client,
-            deployment_name=deployment,
-        ),
+        client=client,
         name="travel-assistant",
         instructions=(
             "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."

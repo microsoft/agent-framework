@@ -13,7 +13,7 @@ Prerequisites:
 - An Azure AI Foundry project with a deployed model
 - Response IDs from prior agent runs (for Pattern 1)
 - OTel traces exported to App Insights (for Pattern 2)
-- Set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
@@ -21,7 +21,7 @@ import os
 
 from agent_framework_azure_ai import FoundryEvals, evaluate_traces
 from azure.ai.projects.aio import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,8 +30,8 @@ load_dotenv()
 async def main() -> None:
     # 1. Set up the Azure AI project client
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
@@ -39,7 +39,7 @@ async def main() -> None:
     # =========================================================================
     # Pattern 1: evaluate_traces(response_ids=...) — By response ID
     # =========================================================================
-    # If your agent uses the Responses API (e.g., AzureOpenAIResponsesClient),
+    # If your agent uses the Responses API (e.g., FoundryChatClient),
     # each run produces a response_id. Pass those IDs to evaluate_traces()
     # and Foundry retrieves the full conversation for evaluation.
     print("=" * 60)
