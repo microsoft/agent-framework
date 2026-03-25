@@ -636,6 +636,20 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         if format_type in {"json_object", "text"}:
             return {"type": format_type}
 
+        # Handle raw JSON schemas (e.g. {"type": "object", "properties": {...}})
+        # by wrapping them in the expected json_schema envelope.
+        if "properties" in response_format:
+            schema = dict(response_format)
+            if schema.get("type") == "object" and "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            name = str(schema.pop("title", None) or "response")
+            return {
+                "type": "json_schema",
+                "name": name,
+                "schema": schema,
+                "strict": True,
+            }
+
         raise ChatClientInvalidRequestException("Unsupported response_format provided for Responses client.")
 
     def _get_conversation_id(
