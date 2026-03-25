@@ -283,6 +283,7 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
     url = cast(str | None, part.get("url") or part.get("uri"))
     data = cast(str | None, part.get("data"))
     binary_id = cast(str | None, part.get("id"))
+    filename = cast(str | None, part.get("filename"))
 
     if isinstance(source, dict):
         source_dict = cast(dict[str, Any], source)
@@ -302,20 +303,28 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
             data = cast(str | None, source_dict.get("data") or data)
             binary_id = cast(str | None, source_dict.get("id") or binary_id)
 
+    additional_props: dict[str, Any] | None = {"filename": filename} if filename else None
+
     if isinstance(url, str) and url:
-        return Content.from_uri(uri=url, media_type=mime_type)
+        return Content.from_uri(uri=url, media_type=mime_type, additional_properties=additional_props)
 
     if isinstance(data, str) and data:
         if data.startswith("data:"):
-            return Content.from_uri(uri=data, media_type=mime_type)
+            return Content.from_uri(uri=data, media_type=mime_type, additional_properties=additional_props)
         try:
             decoded = base64.b64decode(data, validate=True)
-            return Content.from_data(data=decoded, media_type=mime_type or "application/octet-stream")
+            return Content.from_data(
+                data=decoded, media_type=mime_type or "application/octet-stream", additional_properties=additional_props
+            )
         except (binascii.Error, ValueError):
             logger.debug("Strict base64 decode failed for AG-UI media payload (mime_type=%s).", mime_type)
             try:
                 decoded = base64.b64decode(data)
-                return Content.from_data(data=decoded, media_type=mime_type or "application/octet-stream")
+                return Content.from_data(
+                    data=decoded,
+                    media_type=mime_type or "application/octet-stream",
+                    additional_properties=additional_props,
+                )
             except (binascii.Error, ValueError):
                 logger.warning(
                     "Failed to decode AG-UI media payload as base64; falling back to data URI (mime_type=%s).",
@@ -326,10 +335,13 @@ def _parse_multimodal_media_part(part: dict[str, Any]) -> Content | None:
                 return Content.from_uri(
                     uri=f"data:{mime_type or 'application/octet-stream'};base64,{data}",
                     media_type=mime_type,
+                    additional_properties=additional_props,
                 )
 
     if isinstance(binary_id, str) and binary_id:
-        return Content.from_uri(uri=f"ag-ui://binary/{binary_id}", media_type=mime_type)
+        return Content.from_uri(
+            uri=f"ag-ui://binary/{binary_id}", media_type=mime_type, additional_properties=additional_props
+        )
 
     return None
 

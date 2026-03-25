@@ -2321,6 +2321,7 @@ def test_prepare_content_for_openai_function_result_with_rich_items() -> None:
 
     assert result["type"] == "function_call_output"
     assert result["call_id"] == "call_rich"
+    assert result["status"] == "completed"
     # Output should be a list with text and image parts
     output = result["output"]
     assert isinstance(output, list)
@@ -2344,6 +2345,75 @@ def test_prepare_content_for_openai_function_result_without_items() -> None:
     assert result["type"] == "function_call_output"
     assert result["call_id"] == "call_plain"
     assert result["output"] == "Simple result"
+    assert result["status"] == "completed"
+
+
+def test_prepare_content_for_openai_function_call_status_defaults_to_completed() -> None:
+    """Test _prepare_content_for_openai defaults function_call status to 'completed'."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_call(
+        call_id="call_1",
+        name="get_weather",
+        arguments='{"location": "Seattle"}',
+    )
+
+    result = client._prepare_content_for_openai("assistant", content, {})  # type: ignore
+
+    assert result["type"] == "function_call"
+    assert result["call_id"] == "call_1"
+    assert result["status"] == "completed"
+
+
+def test_prepare_content_for_openai_function_call_preserves_explicit_status() -> None:
+    """Test _prepare_content_for_openai preserves explicit function_call status from additional_properties."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_call(
+        call_id="call_2",
+        name="get_weather",
+        arguments='{"location": "Seattle"}',
+        additional_properties={"status": "in_progress"},
+    )
+
+    result = client._prepare_content_for_openai("assistant", content, {})  # type: ignore
+
+    assert result["type"] == "function_call"
+    assert result["call_id"] == "call_2"
+    assert result["status"] == "in_progress"
+
+
+def test_prepare_content_for_openai_function_result_status_defaults_to_completed() -> None:
+    """Test _prepare_content_for_openai defaults function_call_output status to 'completed'."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_3",
+        result="42",
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_3"
+    assert result["status"] == "completed"
+
+
+def test_prepare_content_for_openai_function_result_preserves_explicit_status() -> None:
+    """Test _prepare_content_for_openai preserves explicit function_call_output status."""
+    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+
+    content = Content.from_function_result(
+        call_id="call_4",
+        result="partial",
+        additional_properties={"status": "incomplete"},
+    )
+
+    result = client._prepare_content_for_openai("user", content, {})  # type: ignore
+
+    assert result["type"] == "function_call_output"
+    assert result["call_id"] == "call_4"
+    assert result["status"] == "incomplete"
 
 
 def test_parse_chunk_from_openai_code_interpreter() -> None:
