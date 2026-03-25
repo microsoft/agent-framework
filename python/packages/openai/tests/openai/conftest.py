@@ -9,6 +9,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pytest import fixture
 
 
+def _reset_env(monkeypatch, env_names: list[str]) -> None:  # type: ignore
+    for env_name in env_names:
+        monkeypatch.delenv(env_name, raising=False)  # type: ignore
+
+
 # region Connector Settings fixtures
 @fixture
 def exclude_list(request: Any) -> list[str]:
@@ -30,6 +35,27 @@ def openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
 
     if override_env_param_dict is None:
         override_env_param_dict = {}
+
+    _reset_env(
+        monkeypatch,
+        [
+            "OPENAI_API_KEY",
+            "OPENAI_ORG_ID",
+            "OPENAI_MODEL",
+            "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_TEXT_MODEL_ID",
+            "OPENAI_TEXT_TO_IMAGE_MODEL_ID",
+            "OPENAI_AUDIO_TO_TEXT_MODEL_ID",
+            "OPENAI_TEXT_TO_AUDIO_MODEL_ID",
+            "OPENAI_REALTIME_MODEL_ID",
+            "OPENAI_BASE_URL",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_API_VERSION",
+        ],
+    )
 
     env_vars = {
         "OPENAI_API_KEY": "test-dummy-key",
@@ -62,6 +88,27 @@ def azure_openai_unit_test_env(monkeypatch, exclude_list, override_env_param_dic
 
     if override_env_param_dict is None:
         override_env_param_dict = {}
+
+    _reset_env(
+        monkeypatch,
+        [
+            "OPENAI_API_KEY",
+            "OPENAI_ORG_ID",
+            "OPENAI_MODEL",
+            "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_TEXT_MODEL_ID",
+            "OPENAI_TEXT_TO_IMAGE_MODEL_ID",
+            "OPENAI_AUDIO_TO_TEXT_MODEL_ID",
+            "OPENAI_TEXT_TO_AUDIO_MODEL_ID",
+            "OPENAI_REALTIME_MODEL_ID",
+            "OPENAI_BASE_URL",
+            "AZURE_OPENAI_ENDPOINT",
+            "AZURE_OPENAI_BASE_URL",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_DEPLOYMENT_NAME",
+            "AZURE_OPENAI_API_VERSION",
+        ],
+    )
 
     env_vars = {
         "AZURE_OPENAI_ENDPOINT": "https://test-endpoint.openai.azure.com",

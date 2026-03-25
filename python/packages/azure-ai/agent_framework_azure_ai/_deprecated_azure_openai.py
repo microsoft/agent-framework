@@ -363,6 +363,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         super().__init__(
             async_client=async_client,
             model=responses_deployment_name,
+            api_version=azure_openai_settings.get("api_version"),
             instruction_role=instruction_role,
             default_headers=default_headers,
             middleware=middleware,  # type: ignore[arg-type]
@@ -575,6 +576,7 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         super().__init__(
             async_client=async_client,
             model=chat_deployment_name,
+            api_version=azure_openai_settings.get("api_version"),
             instruction_role=instruction_role,
             default_headers=default_headers,
             additional_properties=additional_properties,

@@ -223,7 +223,7 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
             should_close_client = True
 
         # Initialize parent with OpenAI client from project
-        super().__init__(
+        super().__init__(  # type: ignore
             async_client=project_client.get_openai_client(),
             model=azure_ai_settings.get("model"),  # type: ignore[arg-type]
             additional_properties=additional_properties,
