@@ -1756,16 +1756,15 @@ async def test_mcp_tool_message_handler_cancel_and_replace():
 
     # Second notification — should cancel the first and replace it.
     await tool.message_handler(notification)
-    assert first_task.cancelled() or first_task.cancelling()
-
-    # Await the cancelled task so its done-callback cleans up the set.
+    # Yield to the event loop so the cancellation is processed.
     with contextlib.suppress(asyncio.CancelledError):
         await first_task
+
+    assert first_task.cancelled()
 
     assert len(tool._pending_reload_tasks) == 1
     second_task = next(iter(tool._pending_reload_tasks))
     assert second_task is not first_task
-    assert first_task.cancelled()
 
     # Unblock and let the second task finish.
     release.set()
