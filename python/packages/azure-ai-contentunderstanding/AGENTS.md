@@ -25,6 +25,16 @@ into the Agent Framework as a context provider. It automatically analyzes file a
   - **Analyzer auto-detection** — When `analyzer_id=None` (default), `_resolve_analyzer_id()`
     selects the CU analyzer based on media type prefix: `audio/` → `prebuilt-audioSearch`,
     `video/` → `prebuilt-videoSearch`, everything else → `prebuilt-documentSearch`.
+  - **Multi-segment merging** — CU splits long video/audio into multiple scene segments
+    (each a separate `contents[]` entry with its own `startTimeMs`, `endTimeMs`, `markdown`,
+    and `fields`). `_extract_sections()` merges all segments:
+    - Duration: global `min(startTimeMs)` → `max(endTimeMs)`
+    - Markdown: concatenated with `---` separators
+    - Fields: same-named fields across segments are collected into a list with per-segment
+      `segment` index; single-occurrence fields remain as a plain dict (backward-compatible)
+    - Metadata (kind, resolution): taken from the first segment
+  - **Speaker diarization (not identification)** — CU transcripts label speakers as
+    `<Speaker 1>`, `<Speaker 2>`, etc. CU does **not** identify speakers by name.
   - **file_search RAG** — When `FileSearchConfig` is provided, CU-extracted markdown is
     uploaded to an OpenAI vector store and a `file_search` tool is registered on the context
     instead of injecting the full document content. This enables token-efficient retrieval

@@ -46,6 +46,7 @@ async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
 - **Output filtering** — Passes only relevant sections (markdown, fields) to the LLM, reducing token usage by >90%.
 - **Auto-registered tools** — `list_documents()` and `get_analyzed_document()` tools let the LLM query status and retrieve cached content on follow-up turns.
 - **All CU modalities** — Documents, images, audio, and video via prebuilt or custom analyzers.
+- **Multi-segment video/audio merging** — CU splits long video/audio into multiple scene segments. The provider automatically merges all segments: markdown is concatenated, fields are collected per-segment, and duration spans the full range. Speaker names are not identified by CU (only `<Speaker N>` diarization labels).
 
 ## Supported File Types
 
@@ -115,6 +116,31 @@ uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
 | [devui_file_search_agent/](samples/devui_file_search_agent/) | Web UI combining CU + file_search RAG for large documents |
 | [large_doc_file_search.py](samples/large_doc_file_search.py) | CU extraction + OpenAI vector store RAG |
 | [invoice_processing.py](samples/invoice_processing.py) | Structured field extraction with `prebuilt-invoice` analyzer |
+
+## Multi-Segment Video/Audio Processing
+
+Azure Content Understanding splits long video and audio files into multiple scene/segment
+`contents` entries. For example, a 60-second video may be returned as 3 segments:
+
+| Segment | `startTimeMs` | `endTimeMs` | Content |
+|---------|--------------|-------------|---------|
+| `contents[0]` | 1000 | 14000 | Scene 1 transcript + summary |
+| `contents[1]` | 15000 | 31000 | Scene 2 transcript + summary |
+| `contents[2]` | 32000 | 49000 | Scene 3 transcript + summary |
+
+The context provider merges these automatically:
+- **Duration**: computed from global `min(startTimeMs)` to `max(endTimeMs)`
+- **Markdown**: concatenated across all segments (separated by `---`)
+- **Fields**: when the same field (e.g. `Summary`) appears in multiple segments,
+  values are collected into a list with per-segment indices
+- **Metadata** (kind, resolution): taken from the first segment
+
+### Speaker Identification Limitation
+
+CU performs **speaker diarization** (distinguishing different speakers as `<Speaker 1>`,
+`<Speaker 2>`, etc.) but does **not** perform **speaker identification** (mapping speakers
+to real names). If your application needs named speakers, provide the mapping in the
+agent's instructions or integrate a separate speaker recognition service.
 
 ## Links
 

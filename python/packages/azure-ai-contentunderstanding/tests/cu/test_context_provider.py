@@ -977,7 +977,27 @@ class TestMultiModalFixtures:
         provider = _make_provider()
         result = provider._extract_sections(video_analysis_result)
         assert "markdown" in result
-        assert "Product Demo" in str(result["markdown"])
+        # All 3 segments should be concatenated
+        md = str(result["markdown"])
+        assert "Contoso Product Demo" in md
+        assert "real-time monitoring" in md
+        assert "contoso.com/cloud-manager" in md
+        # Duration should span all segments: (42000 - 1000) / 1000 = 41.0
+        assert result.get("duration_seconds") == 41.0
+        # kind from first segment
+        assert result.get("kind") == "audioVisual"
+        # resolution from first segment
+        assert result.get("resolution") == "640x480"
+        # Fields merged across 3 segments: Summary appears 3 times
+        fields = result.get("fields")
+        assert isinstance(fields, dict)
+        assert "Summary" in fields
+        # Multi-segment field should be a list of per-segment entries
+        summary = fields["Summary"]
+        assert isinstance(summary, list)
+        assert len(summary) == 3
+        assert summary[0]["segment"] == 0
+        assert summary[2]["segment"] == 2
 
     def test_image_fixture_loads(self, image_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()

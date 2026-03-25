@@ -572,42 +572,78 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # ------------------------------------------------------------------
 
     def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
-        """Extract configured sections from a CU analysis result."""
+        """Extract configured sections from a CU analysis result.
+
+        For multi-segment results (e.g. video split into scenes), this method
+        iterates **all** ``contents`` entries and merges them:
+        - ``duration_seconds``: computed from the global min(startTimeMs) to max(endTimeMs)
+        - ``markdown``: concatenated across segments with separator
+        - ``fields``: merged; when the same field name appears in multiple segments,
+          values are collected into a per-segment list
+        - ``kind`` / ``resolution``: taken from the first segment
+        """
         extracted: dict[str, object] = {}
         contents = result.contents
         if not contents:
             return extracted
 
-        content = contents[0]
-
-        # Extract media metadata (kind, duration, dimensions) when present.
-        kind = getattr(content, "kind", None)
+        # --- Media metadata (merged across all segments) ---
+        first = contents[0]
+        kind = getattr(first, "kind", None)
         if kind:
             extracted["kind"] = kind
-        start_ms = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
-        end_ms = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
-        if start_ms is not None and end_ms is not None:
-            extracted["duration_seconds"] = round((end_ms - start_ms) / 1000, 1)
-        width = getattr(content, "width", None)
-        height = getattr(content, "height", None)
+        width = getattr(first, "width", None)
+        height = getattr(first, "height", None)
         if width and height:
             extracted["resolution"] = f"{width}x{height}"
 
-        if AnalysisSection.MARKDOWN in self.output_sections and content.markdown:
-            extracted["markdown"] = content.markdown
+        # Compute total duration from the global time span of all segments.
+        global_start: int | None = None
+        global_end: int | None = None
+        for content in contents:
+            s = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
+            e = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
+            if s is not None:
+                global_start = s if global_start is None else min(global_start, s)
+            if e is not None:
+                global_end = e if global_end is None else max(global_end, e)
+        if global_start is not None and global_end is not None:
+            extracted["duration_seconds"] = round((global_end - global_start) / 1000, 1)
 
-        if AnalysisSection.FIELDS in self.output_sections and content.fields:
-            fields: dict[str, dict[str, object]] = {}
-            for name, field in content.fields.items():
-                value: object = None
-                for attr in ("value_string", "value_number", "value_date", "value"):
-                    value = getattr(field, attr, None)
-                    if value is not None:
-                        break
-                confidence = getattr(field, "confidence", None)
-                field_type = getattr(field, "type", None)
-                fields[name] = {"type": field_type, "value": value, "confidence": confidence}
-            extracted["fields"] = fields
+        # --- Markdown (concatenated) ---
+        if AnalysisSection.MARKDOWN in self.output_sections:
+            md_parts: list[str] = []
+            for content in contents:
+                if content.markdown:
+                    md_parts.append(content.markdown)
+            if md_parts:
+                extracted["markdown"] = "\n\n---\n\n".join(md_parts)
+
+        # --- Fields (merged across segments) ---
+        if AnalysisSection.FIELDS in self.output_sections:
+            merged_fields: dict[str, list[dict[str, object]]] = {}
+            for seg_idx, content in enumerate(contents):
+                if not content.fields:
+                    continue
+                for name, field in content.fields.items():
+                    value: object = None
+                    for attr in ("value_string", "value_number", "value_date", "value"):
+                        value = getattr(field, attr, None)
+                        if value is not None:
+                            break
+                    confidence = getattr(field, "confidence", None)
+                    field_type = getattr(field, "type", None)
+                    entry = {"type": field_type, "value": value, "confidence": confidence}
+                    if len(contents) > 1:
+                        entry["segment"] = seg_idx
+                    merged_fields.setdefault(name, []).append(entry)
+
+            # Flatten single-occurrence fields for backward compat
+            fields: dict[str, dict[str, object] | list[dict[str, object]]] = {}
+            for name, entries in merged_fields.items():
+                fields[name] = entries[0] if len(entries) == 1 else entries
+            if fields:
+                extracted["fields"] = fields
 
         return extracted
 
