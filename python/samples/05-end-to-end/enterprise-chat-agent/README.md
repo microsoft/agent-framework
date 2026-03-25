@@ -133,10 +133,32 @@ curl -X POST http://localhost:7071/api/threads/{thread_id}/messages \
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/api/threads` | Create a new conversation thread |
+| `GET` | `/api/threads` | List all threads (with optional filters) |
 | `GET` | `/api/threads/{thread_id}` | Get thread metadata |
 | `DELETE` | `/api/threads/{thread_id}` | Delete a thread |
 | `POST` | `/api/threads/{thread_id}/messages` | Send a message and get response |
 | `GET` | `/api/threads/{thread_id}/messages` | Get conversation history |
+
+### Query Parameters for List Threads
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `user_id` | string | Filter threads by user ID |
+| `status` | string | Filter by status: `active`, `archived`, `deleted` |
+| `limit` | int | Max threads to return (default 50, max 100) |
+| `offset` | int | Skip N threads for pagination |
+
+**Examples:**
+```bash
+# List all threads
+GET /api/threads
+
+# List threads for a specific user
+GET /api/threads?user_id=user_1234
+
+# List active threads with pagination
+GET /api/threads?status=active&limit=20&offset=0
+```
 
 ## Tool Selection Demo
 
@@ -174,6 +196,76 @@ User: "Tell me a joke"
 | `get_weather` | Current weather data | Weather queries |
 | `calculate` | Safe math evaluation | Calculations, tips, conversions |
 
+## Streaming Responses
+
+### Current Approach
+
+This sample uses **buffered responses** - the agent processes the entire message and returns the complete response at once. This works well with Azure Functions and is simpler to implement.
+
+### Streaming Support in Agent Framework
+
+The Agent Framework supports streaming via `ResponseStream`:
+
+```python
+from agent_framework import Agent, AgentSession
+
+# Enable streaming
+response_stream = await agent.run(
+    prompt="Hello, world!",
+    session=session,
+    stream=True  # Returns ResponseStream instead of Response
+)
+
+# Iterate over chunks as they arrive
+async for chunk in response_stream:
+    print(chunk.content, end="", flush=True)
+```
+
+### Why This Sample Doesn't Use Streaming
+
+**Azure Functions buffers HTTP responses** - even with Server-Sent Events (SSE) or chunked transfer encoding, Azure Functions collects the entire response before sending it to the client. This means true streaming isn't achievable without additional infrastructure.
+
+### Streaming Alternatives
+
+If you need true streaming for a production chat experience, consider these options:
+
+| Option | Description | Pros | Cons |
+|--------|-------------|------|------|
+| **FastAPI/Starlette** | Deploy as a container with native async streaming | True SSE streaming, simple to implement | Need container hosting (App Service, ACA) |
+| **Azure Container Apps** | Host a streaming-capable web framework | Native streaming, auto-scaling | More infrastructure to manage |
+| **Azure Web PubSub** | Real-time messaging service | True real-time, scalable | Additional service cost, more complexity |
+| **Azure SignalR** | Managed SignalR service | WebSocket support, .NET integration | Adds dependency |
+
+#### FastAPI Streaming Example
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from agent_framework import Agent, AgentSession
+
+app = FastAPI()
+
+@app.post("/api/threads/{thread_id}/messages/stream")
+async def send_message_stream(thread_id: str, request: MessageRequest):
+    async def generate():
+        session = AgentSession(session_id=thread_id)
+        response_stream = await agent.run(
+            prompt=request.content,
+            session=session,
+            stream=True
+        )
+        async for chunk in response_stream:
+            yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+```
+
+### Recommendation
+
+- **For demos/prototypes**: Use buffered responses (this sample) with a typing indicator in the UI
+- **For production chat UIs**: Consider FastAPI on Azure Container Apps or Web PubSub for true streaming
+
 ## Project Structure
 
 ```text
@@ -184,38 +276,35 @@ enterprise-chat-agent/
 ├── requirements.txt          # Python dependencies
 ├── local.settings.json.example
 ├── host.json                 # Azure Functions host config
-├── function_app.py           # HTTP trigger endpoints
-├── cosmos_store.py           # Cosmos DB conversation store
+├── function_app.py           # Azure Functions entry point
+├── demo.http                 # API test requests
+├── demo-ui.html              # Browser-based demo UI
+├── services/
+│   ├── agent_service.py      # ChatAgent + CosmosHistoryProvider
+│   ├── cosmos_store.py       # Thread metadata storage
+│   └── observability.py      # OpenTelemetry instrumentation
+├── routes/
+│   ├── threads.py            # Thread CRUD endpoints
+│   ├── messages.py           # Message endpoint
+│   └── health.py             # Health check
 ├── tools/
-│   ├── __init__.py
 │   ├── weather.py            # Weather tool
 │   ├── calculator.py         # Calculator tool
 │   ├── knowledge_base.py     # Knowledge base search tool
 │   └── microsoft_docs.py     # Microsoft Docs MCP integration
-├── infra/                    # Infrastructure as Code (Bicep)
-│   ├── main.bicep            # Main deployment template
-│   ├── main.parameters.json  # Parameter file
-│   ├── abbreviations.json    # Resource naming abbreviations
-│   └── core/
-│       ├── database/
-│       │   └── cosmos-nosql.bicep
-│       ├── host/
-│       │   └── function-app.bicep
-│       ├── monitor/
-│       │   └── monitoring.bicep
-│       └── storage/
-│           └── storage-account.bicep
-└── demo.http                 # Test requests
+└── infra/                    # Infrastructure as Code (Bicep)
+    ├── main.bicep            # Main deployment template
+    └── core/                 # Modular Bicep components
 ```
 
 ## Design Documentation
 
 See [DESIGN.md](./DESIGN.md) for:
 
-- Detailed architecture decisions
+- Architecture diagrams and message processing flow
 - Cosmos DB data model and partition strategy
-- Thread-based conversation isolation
-- Phased implementation plan
+- Observability span hierarchy (framework vs custom)
+- Tool selection and MCP integration details
 - Security considerations
 
 ## Related Resources

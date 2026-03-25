@@ -6,8 +6,14 @@
         "isEnabled": true,
         "excludedTypes": "Request"
       }
+    },
+    "logLevel": {
+      "default": "Information",
+      "azure.cosmos": "Warning",
+      "azure.core.pipeline.policies.http_logging_policy": "Warning"
     }
   },
+  "telemetryMode": "OpenTelemetry",
   "extensionBundle": {
     "id": "Microsoft.Azure.Functions.ExtensionBundle",
     "version": "[4.*, 5.0.0)"

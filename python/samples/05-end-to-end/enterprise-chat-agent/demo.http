@@ -34,6 +34,21 @@ Content-Type: application/json
 ### Get thread details
 GET {{baseUrl}}/threads/{{threadId}}
 
+### List all threads
+GET {{baseUrl}}/threads
+
+### List threads for a specific user
+GET {{baseUrl}}/threads?user_id=user_1234
+
+### List active threads only
+GET {{baseUrl}}/threads?status=active
+
+### List threads with pagination
+GET {{baseUrl}}/threads?limit=10&offset=0
+
+### List threads with all filters
+GET {{baseUrl}}/threads?user_id=user_1234&status=active&limit=20
+
 ### ============================================================
 ### Tool Selection Examples
 ### ============================================================

@@ -56,6 +56,11 @@ def init_observability() -> None:
     - OTEL_SERVICE_NAME: Service name (default: agent_framework)
     """
     try:
+        # Reduce verbose logging from httpx/httpcore (HTTP transport details)
+        # These generate 100+ traces per request with DEBUG logging
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+
         configure_otel_providers()
         logger.info("Observability initialized successfully")
     except Exception as e:

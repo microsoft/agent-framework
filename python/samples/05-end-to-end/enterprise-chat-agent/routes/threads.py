@@ -70,6 +70,74 @@ async def create_thread(req: func.HttpRequest) -> func.HttpResponse:
         )
 
 
+@bp.route(route="threads", methods=["GET"])
+async def list_threads(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    List all conversation threads.
+
+    Query Parameters:
+        user_id: Filter by user ID (optional)
+        status: Filter by status - 'active', 'archived', 'deleted' (optional)
+        limit: Maximum number of threads to return (default 50, max 100)
+        offset: Number of threads to skip for pagination (default 0)
+
+    Request:
+        GET /api/threads
+        GET /api/threads?user_id=user_1234
+        GET /api/threads?status=active&limit=20
+
+    Response:
+        200 OK
+        {
+            "threads": [...],
+            "count": 10,
+            "limit": 50,
+            "offset": 0
+        }
+    """
+    user_id = req.params.get("user_id")
+    status = req.params.get("status")
+
+    try:
+        limit = min(int(req.params.get("limit", 50)), 100)
+    except ValueError:
+        limit = 50
+
+    try:
+        offset = max(int(req.params.get("offset", 0)), 0)
+    except ValueError:
+        offset = 0
+
+    async with http_request_span(
+        "GET", "/threads", user_id=user_id
+    ) as span:
+        store = get_store()
+        async with cosmos_span("query", "threads", "list"):
+            threads = await store.list_threads(
+                user_id=user_id,
+                status=status,
+                limit=limit,
+                offset=offset,
+            )
+
+        result = {
+            "threads": threads,
+            "count": len(threads),
+            "limit": limit,
+            "offset": offset,
+        }
+
+        logging.info(
+            f"Listed {len(threads)} threads (user_id={user_id}, status={status})"
+        )
+
+        span.set_attribute("http.status_code", 200)
+        return func.HttpResponse(
+            body=json.dumps(result),
+            mimetype="application/json",
+        )
+
+
 @bp.route(route="threads/{thread_id}", methods=["GET"])
 async def get_thread(req: func.HttpRequest) -> func.HttpResponse:
     """
@@ -148,3 +216,34 @@ async def delete_thread(req: func.HttpRequest) -> func.HttpResponse:
 
         span.set_attribute("http.status_code", 204)
         return func.HttpResponse(status_code=204)
+
+
+@bp.route(route="debug/sessions", methods=["GET"])
+async def debug_list_sessions(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Debug endpoint to list all session_ids that have messages in CosmosHistoryProvider.
+    This helps diagnose mismatches between thread_ids and session_ids.
+
+    GET /api/debug/sessions
+    """
+    history_provider = get_history_provider()
+
+    try:
+        sessions = await history_provider.list_sessions()
+
+        return func.HttpResponse(
+            body=json.dumps({
+                "sessions": sessions,
+                "count": len(sessions),
+                "source_id": history_provider.source_id,
+                "note": "These are session_ids from the messages container. They should match thread_ids for messages to load correctly."
+            }),
+            mimetype="application/json",
+        )
+    except Exception as e:
+        logging.error(f"Failed to list sessions: {e}")
+        return func.HttpResponse(
+            body=json.dumps({"error": str(e)}),
+            status_code=500,
+            mimetype="application/json",
+        )

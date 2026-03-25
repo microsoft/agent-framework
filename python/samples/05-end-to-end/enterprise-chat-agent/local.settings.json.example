@@ -13,5 +13,9 @@
     "ENABLE_SENSITIVE_DATA": "false",
     "OTLP_ENDPOINT": "http://localhost:4317",
     "OTEL_SERVICE_NAME": "enterprise-chat-agent"
+  },
+  "Host": {
+    "CORS": "*",
+    "CORSCredentials": false
   }
 }

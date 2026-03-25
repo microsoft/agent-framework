@@ -216,3 +216,58 @@ class CosmosConversationStore:
         """
         thread = await self.get_thread(thread_id)
         return thread is not None
+
+    async def list_threads(
+        self,
+        user_id: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        List all threads with optional filters.
+
+        Args:
+            user_id: Filter by user ID (optional).
+            status: Filter by status - 'active', 'archived', 'deleted' (optional).
+            limit: Maximum number of threads to return (default 50).
+            offset: Number of threads to skip for pagination.
+
+        Returns:
+            List of thread documents sorted by updated_at descending.
+        """
+        # Build query with optional filters
+        conditions = ["c.type = 'thread'"]
+        parameters = []
+
+        if user_id:
+            conditions.append("c.user_id = @user_id")
+            parameters.append({"name": "@user_id", "value": user_id})
+
+        if status:
+            conditions.append("c.status = @status")
+            parameters.append({"name": "@status", "value": status})
+
+        query = f"""
+            SELECT * FROM c
+            WHERE {' AND '.join(conditions)}
+            ORDER BY c.updated_at DESC
+            OFFSET @offset LIMIT @limit
+        """
+        parameters.extend([
+            {"name": "@offset", "value": offset},
+            {"name": "@limit", "value": limit},
+        ])
+
+        items = list(
+            self.container.query_items(
+                query=query,
+                parameters=parameters,
+                enable_cross_partition_query=True,
+            )
+        )
+
+        logging.info(
+            f"Listed {len(items)} threads (user_id={user_id}, status={status})"
+        )
+        return items

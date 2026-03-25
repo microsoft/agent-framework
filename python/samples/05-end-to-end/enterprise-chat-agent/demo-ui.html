@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Chat Agent Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            display: flex;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: #1a1a2e;
+            color: white;
+            display: flex;
+            flex-direction: column;
+        }
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #333;
+        }
+        .sidebar-header h2 { font-size: 16px; margin-bottom: 15px; }
+        .new-chat-btn {
+            width: 100%;
+            padding: 12px;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .new-chat-btn:hover { background: #3a7bc8; }
+        .thread-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        .thread-item {
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 5px;
+            font-size: 13px;
+        }
+        .thread-item:hover { background: #2a2a4e; }
+        .thread-item.active { background: #3a3a5e; }
+        .thread-item .title { font-weight: 500; margin-bottom: 4px; }
+        .thread-item .preview {
+            color: #888;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .thread-item .time { color: #666; font-size: 11px; }
+
+        /* Main chat area */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+        .chat-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #e0e0e0;
+            font-weight: 600;
+        }
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 20px;
+            max-width: 80%;
+        }
+        .message.user {
+            margin-left: auto;
+            background: #4a90d9;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 18px 18px 4px 18px;
+        }
+        .message.assistant {
+            background: #f0f0f0;
+            padding: 12px 16px;
+            border-radius: 18px 18px 18px 4px;
+        }
+        .message .content { white-space: pre-wrap; line-height: 1.5; }
+
+        /* Typing indicator animation */
+        .typing-dots {
+            display: flex;
+            gap: 4px;
+            padding: 8px 4px;
+        }
+        .typing-dots span {
+            width: 8px;
+            height: 8px;
+            background: #888;
+            border-radius: 50%;
+            animation: typing-bounce 1.4s infinite ease-in-out both;
+        }
+        .typing-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dots span:nth-child(2) { animation-delay: -0.16s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0s; }
+        @keyframes typing-bounce {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        .message .tools {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+            font-size: 12px;
+            color: #666;
+        }
+        .tool-badge {
+            display: inline-block;
+            background: #e8f4fd;
+            color: #1976d2;
+            padding: 2px 8px;
+            border-radius: 12px;
+            margin-right: 5px;
+            font-size: 11px;
+        }
+
+        /* Input area */
+        .input-area {
+            padding: 20px;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+        }
+        .input-area input:focus { border-color: #4a90d9; }
+        .input-area button {
+            padding: 12px 24px;
+            background: #4a90d9;
+            color: white;
+            border: none;
+            border-radius: 24px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .input-area button:hover { background: #3a7bc8; }
+        .input-area button:disabled { background: #ccc; cursor: not-allowed; }
+
+        /* Empty state */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #888;
+        }
+        .empty-state h3 { margin-bottom: 10px; }
+
+        /* Loading */
+        .loading { opacity: 0.6; }
+        .typing {
+            display: inline-block;
+            padding: 12px 16px;
+            background: #f0f0f0;
+            border-radius: 18px;
+        }
+        .typing::after {
+            content: '...';
+            animation: dots 1.5s infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        /* Error/Status banner */
+        .status-banner {
+            padding: 10px 20px;
+            background: #fff3cd;
+            color: #856404;
+            border-bottom: 1px solid #ffc107;
+            font-size: 13px;
+            display: none;
+        }
+        .status-banner.error {
+            background: #f8d7da;
+            color: #721c24;
+            border-color: #f5c6cb;
+        }
+        .status-banner.success {
+            background: #d4edda;
+            color: #155724;
+            border-color: #c3e6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>💬 Enterprise Chat</h2>
+            <button class="new-chat-btn" onclick="createThread()">+ New Chat</button>
+        </div>
+        <div class="thread-list" id="threadList">
+            <!-- Threads loaded here -->
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="status-banner" id="statusBanner"></div>
+        <div class="chat-header" id="chatHeader">Select or create a chat</div>
+        <div class="messages" id="messages">
+            <div class="empty-state">
+                <h3>👋 Welcome!</h3>
+                <p>Create a new chat to get started</p>
+            </div>
+        </div>
+        <div class="input-area">
+            <input type="text" id="messageInput" placeholder="Type your message..."
+                   onkeypress="if(event.key==='Enter') sendMessage()" disabled>
+            <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:7071/api';
+        let currentThreadId = null;
+
+        function showStatus(message, type = 'info') {
+            const banner = document.getElementById('statusBanner');
+            banner.textContent = message;
+            banner.className = 'status-banner ' + type;
+            banner.style.display = 'block';
+            if (type === 'success') {
+                setTimeout(() => banner.style.display = 'none', 3000);
+            }
+        }
+
+        function hideStatus() {
+            document.getElementById('statusBanner').style.display = 'none';
+        }
+
+        // Load threads on startup
+        async function loadThreads() {
+            try {
+                const res = await fetch(`${API_BASE}/threads`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                const data = await res.json();
+                renderThreadList(data.threads || []);
+                hideStatus();
+            } catch (e) {
+                console.error('Failed to load threads:', e);
+                showStatus(`Cannot connect to API (${API_BASE}). Make sure: 1) func start is running, 2) CORS is enabled in local.settings.json`, 'error');
+            }
+        }
+
+        function renderThreadList(threads) {
+            const list = document.getElementById('threadList');
+            if (threads.length === 0) {
+                list.innerHTML = '<div style="padding:20px;color:#666;text-align:center;font-size:13px;">No chats yet</div>';
+                return;
+            }
+            list.innerHTML = threads.map(t => `
+                <div class="thread-item ${t.id === currentThreadId ? 'active' : ''}" onclick="selectThread('${t.id}')">
+                    <div class="title">${t.title || 'New Chat'}</div>
+                    <div class="preview">${t.last_message_preview || 'No messages'}</div>
+                    <div class="time">${new Date(t.created_at).toLocaleDateString()}</div>
+                </div>
+            `).join('');
+        }
+
+        async function createThread() {
+            try {
+                showStatus('Creating new chat...', 'info');
+                const res = await fetch(`${API_BASE}/threads`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: 'demo_user',
+                        title: 'New Chat'
+                    })
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                const thread = await res.json();
+                currentThreadId = thread.id;
+                await loadThreads();
+                selectThread(thread.id);
+                showStatus('Chat created!', 'success');
+            } catch (e) {
+                showStatus('Failed to create thread: ' + e.message, 'error');
+            }
+        }
+
+        async function selectThread(threadId) {
+            currentThreadId = threadId;
+            document.getElementById('messageInput').disabled = false;
+            document.getElementById('sendBtn').disabled = false;
+            document.getElementById('chatHeader').textContent = `Chat: ${threadId}`;
+
+            // Update active state
+            document.querySelectorAll('.thread-item').forEach(el => {
+                el.classList.toggle('active', el.onclick.toString().includes(threadId));
+            });
+
+            await loadMessages();
+        }
+
+        async function loadMessages() {
+            if (!currentThreadId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/threads/${currentThreadId}/messages`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                console.log('API response:', JSON.stringify(data, null, 2));
+                console.log('Messages array:', data.messages);
+                renderMessages(data.messages || []);
+            } catch (e) {
+                console.error('Failed to load messages:', e);
+                showStatus('Failed to load messages: ' + e.message, 'error');
+            }
+        }
+
+        function renderMessages(messages) {
+            const container = document.getElementById('messages');
+            // Filter out messages with empty content
+            const validMessages = messages.filter(m => m.content && m.content.trim());
+            console.log('Rendering messages:', validMessages);
+            if (validMessages.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <h3>🤖 Ready to help!</h3>
+                        <p>Try asking about weather, calculations, or Azure docs</p>
+                    </div>`;
+                return;
+            }
+            container.innerHTML = validMessages.map(m => `
+                <div class="message ${m.role}">
+                    <div class="content">${escapeHtml(m.content)}</div>
+                </div>
+            `).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            if (!content || !currentThreadId) return;
+
+            input.value = '';
+            input.disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+            hideStatus();
+
+            // Clear empty state if present and add user message
+            const messagesEl = document.getElementById('messages');
+            const emptyState = messagesEl.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+
+            messagesEl.innerHTML += `<div class="message user"><div class="content">${escapeHtml(content)}</div></div>`;
+
+            // Add typing indicator
+            messagesEl.innerHTML += `
+                <div class="message assistant" id="typing-indicator">
+                    <div class="content typing-dots">
+                        <span></span><span></span><span></span>
+                    </div>
+                </div>`;
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+
+            try {
+                // Use non-streaming endpoint (Azure Functions buffers anyway)
+                const res = await fetch(`${API_BASE}/threads/${currentThreadId}/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || `HTTP ${res.status}`);
+                }
+
+                // Remove typing indicator
+                document.getElementById('typing-indicator')?.remove();
+
+                // Add assistant response
+                let toolsHtml = '';
+                if (data.tool_calls && data.tool_calls.length > 0) {
+                    toolsHtml = `<div class="tools">Tools: ${data.tool_calls.map(t =>
+                        `<span class="tool-badge">${t.tool}</span>`
+                    ).join('')}</div>`;
+                }
+
+                messagesEl.innerHTML += `
+                    <div class="message assistant">
+                        <div class="content">${escapeHtml(data.content || 'No response')}</div>
+                        ${toolsHtml}
+                    </div>`;
+                messagesEl.scrollTop = messagesEl.scrollHeight;
+
+                // Refresh thread list to update preview
+                loadThreads();
+            } catch (e) {
+                document.getElementById('typing-indicator')?.remove();
+                messagesEl.innerHTML += `<div class="message assistant"><div class="content" style="color:#c00;">Error: ${escapeHtml(e.message)}</div></div>`;
+                showStatus('Failed to send message: ' + e.message, 'error');
+            }
+
+            input.disabled = false;
+            document.getElementById('sendBtn').disabled = false;
+            input.focus();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        loadThreads();
+    </script>
+</body>
+</html>

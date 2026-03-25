@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 
 import azure.functions as func
+from agent_framework import AgentSession
 
 from services import (
     http_request_span,
@@ -86,6 +87,10 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
         # Get agent (configured with CosmosHistoryProvider and local tools)
         agent = get_agent()
 
+        # Create session with thread_id so CosmosHistoryProvider uses it
+        session = AgentSession(session_id=thread_id)
+        logging.info(f"Running agent with session_id={session.session_id}")
+
         # Run agent with MCP tools for Microsoft Learn documentation
         # The agent combines:
         # - Local tools: get_weather, calculate, search_knowledge_base
@@ -93,7 +98,7 @@ async def send_message(req: func.HttpRequest) -> func.HttpResponse:
         async with get_mcp_tool() as mcp:
             response = await agent.run(
                 content,
-                session_id=thread_id,
+                session=session,  # Pass session object, not session_id
                 tools=mcp,  # Add MCP tools for this run
             )
 
@@ -174,14 +179,22 @@ async def get_messages(req: func.HttpRequest) -> func.HttpResponse:
         async with cosmos_span("query", "messages", thread_id):
             messages = await history_provider.get_messages(session_id=thread_id)
 
+        logging.info(f"Retrieved {len(messages)} messages for thread {thread_id}")
+
         # Convert Message objects to serializable dicts
+        # Message has .role (str) and .text (property that concatenates all TextContent)
         message_list = []
         for msg in messages:
+            role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
+            # Use the .text property which concatenates all text contents
+            content = msg.text if hasattr(msg, "text") else ""
+            logging.info(f"Message: role={role}, content={content[:100] if content else 'empty'}...")
             message_list.append({
-                "role": msg.role.value if hasattr(msg.role, "value") else str(msg.role),
-                "content": msg.content if hasattr(msg, "content") else str(msg),
+                "role": role,
+                "content": content,
             })
 
+        logging.info(f"Returning {len(message_list)} serialized messages")
         span.set_attribute("http.status_code", 200)
         return func.HttpResponse(
             body=json.dumps({"messages": message_list}),
