@@ -50,7 +50,7 @@ internal static class Configured
 /// A representation of a preconfigured, lazy-instantiatable instance of <typeparamref name="TSubject"/>.
 /// </summary>
 /// <typeparam name="TSubject">The type of the preconfigured subject.</typeparam>
-/// <param name="factoryAsync">A factory to intantiate the subject when desired.</param>
+/// <param name="factoryAsync">A factory to instantiate the subject when desired.</param>
 /// <param name="id">The unique identifier for the configured subject.</param>
 /// <param name="raw"></param>
 internal class Configured<TSubject>(Func<ExecutorConfig, string, ValueTask<TSubject>> factoryAsync, string id, object? raw = null)
@@ -87,7 +87,7 @@ internal class Configured<TSubject>(Func<ExecutorConfig, string, ValueTask<TSubj
 /// </summary>
 /// <typeparam name="TSubject">The type of the preconfigured subject.</typeparam>
 /// <typeparam name="TOptions">The type of configuration options for the preconfigured subject.</typeparam>
-/// <param name="factoryAsync">A factory to intantiate the subject when desired.</param>
+/// <param name="factoryAsync">A factory to instantiate the subject when desired.</param>
 /// <param name="id">The unique identifier for the configured subject.</param>
 /// <param name="options">Additional configuration options for the subject.</param>
 /// <param name="raw"></param>
