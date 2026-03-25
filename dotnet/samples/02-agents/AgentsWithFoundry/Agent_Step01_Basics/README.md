@@ -47,7 +47,7 @@ using Microsoft.Extensions.AI;
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 AIAgent agent = new ChatClientAgent(
-    chatClient: aiProjectClient.GetProjectOpenAIClient().Responses.AsIChatClient(deploymentName),
+    chatClient: aiProjectClient.GetProjectOpenAIClient().GetProjectResponsesClient().AsIChatClient(deploymentName),
     instructions: "You are good at telling jokes.",
     name: "JokerAgent");
 ```
