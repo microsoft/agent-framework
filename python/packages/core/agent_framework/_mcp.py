@@ -800,7 +800,7 @@ class MCPTool:
             message: The message from the MCP server (request responder, notification, or exception).
         """
         if isinstance(message, Exception):
-            logger.error("Error from MCP server: %s", message, exc_info=True)
+            logger.error("Error from MCP server: %s", message, exc_info=message)
             return
         if isinstance(message, types.ServerNotification):
             match message.root.method:
@@ -967,9 +967,12 @@ class MCPTool:
 
     async def _close_on_owner(self) -> None:
         # Cancel any pending reload tasks before tearing down the session.
-        for task in list(self._pending_reload_tasks):
+        tasks = list(self._pending_reload_tasks)
+        for task in tasks:
             task.cancel()
         self._pending_reload_tasks.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         await self._safe_close_exit_stack()
         self._exit_stack = AsyncExitStack()

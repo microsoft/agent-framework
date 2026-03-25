@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 # type: ignore[reportPrivateUsage]
 import asyncio
+import contextlib
 import logging
 import os
 from contextlib import _AsyncGeneratorContextManager  # type: ignore
@@ -1594,6 +1595,48 @@ async def test_mcp_tool_message_handler_reload_failure_is_logged(caplog: pytest.
     assert len(reload_warnings) == 1
     assert reload_warnings[0].levelname == "WARNING"
     assert reload_warnings[0].exc_info is not None
+
+
+async def test_mcp_tool_message_handler_cancel_and_replace():
+    """Sending two notifications in quick succession cancels the first reload task."""
+    tool = MCPStdioTool(name="test_tool", command="python")
+
+    release = asyncio.Event()
+    call_count = 0
+
+    async def blocking_load_tools():
+        nonlocal call_count
+        call_count += 1
+        await release.wait()
+
+    tool.load_tools = blocking_load_tools  # type: ignore[assignment]
+
+    notification = Mock(spec=types.ServerNotification)
+    notification.root = Mock()
+    notification.root.method = "notifications/tools/list_changed"
+
+    # First notification — starts a blocking reload task.
+    await tool.message_handler(notification)
+    assert len(tool._pending_reload_tasks) == 1
+    first_task = next(iter(tool._pending_reload_tasks))
+
+    # Second notification — should cancel the first and replace it.
+    await tool.message_handler(notification)
+    assert first_task.cancelled() or first_task.cancelling()
+
+    # Await the cancelled task so its done-callback cleans up the set.
+    with contextlib.suppress(asyncio.CancelledError):
+        await first_task
+
+    assert len(tool._pending_reload_tasks) == 1
+    second_task = next(iter(tool._pending_reload_tasks))
+    assert second_task is not first_task
+    assert first_task.cancelled()
+
+    # Unblock and let the second task finish.
+    release.set()
+    await asyncio.wait_for(asyncio.gather(*tool._pending_reload_tasks), timeout=1)
+    assert len(tool._pending_reload_tasks) == 0
 
 
 async def test_mcp_tool_sampling_callback_no_client():
