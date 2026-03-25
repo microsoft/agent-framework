@@ -18,7 +18,7 @@ for real-time information retrieval and current data access.
 
 
 async def main() -> None:
-    client = OpenAIChatClient(model_id="gpt-4o-search-preview")
+    client = OpenAIChatClient(model="gpt-4o-search-preview")
 
     # Create web search tool with location context
     web_search_tool = client.get_web_search_tool(

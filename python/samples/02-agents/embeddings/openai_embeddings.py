@@ -21,7 +21,7 @@ Prerequisites:
 
 async def main() -> None:
     """Generate embeddings with OpenAI."""
-    client = OpenAIEmbeddingClient(model_id="text-embedding-3-small")
+    client = OpenAIEmbeddingClient(model="text-embedding-3-small")
 
     # 1. Generate a single embedding.
     result = await client.get_embeddings(["Hello, world!"])

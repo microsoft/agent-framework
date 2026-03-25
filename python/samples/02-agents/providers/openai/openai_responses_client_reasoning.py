@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient, OpenAIResponsesOptions
 from dotenv import load_dotenv
 
@@ -23,7 +24,8 @@ In this case they are here: https://platform.openai.com/docs/api-reference/respo
 """
 
 
-agent = OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5").as_agent(
+agent = Agent(
+    client=OpenAIResponsesClient[OpenAIResponsesOptions](model_id="gpt-5"),
     name="MathHelper",
     instructions="You are a personal math tutor. When asked a math question, "
     "reason over how best to approach the problem and share your thought process.",

@@ -11,7 +11,7 @@ All of these samples are set up to run in Azure Functions. Azure Functions has a
 
 - Install [Azurite storage emulator](https://learn.microsoft.com/en-us/azure/storage/common/storage-install-azurite?toc=%2Fazure%2Fstorage%2Fblobs%2Ftoc.json&bc=%2Fazure%2Fstorage%2Fblobs%2Fbreadcrumb%2Ftoc.json&tabs=visual-studio%2Cblob-storage)
 
-- Create an [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-foundry/models/openai) resource. Note the Azure OpenAI endpoint, deployment name, and the key (or ensure you can authenticate with `AzureCliCredential`).
+- Create an [Azure AI Foundry project](https://learn.microsoft.com/azure/ai-foundry/) with an OpenAI model deployment. Note the Foundry project endpoint and deployment name, and ensure you can authenticate with `AzureCliCredential`.
 
 - Install a tool to execute HTTP calls, for example the [REST Client extension](https://marketplace.visualstudio.com/items?itemName=humao.rest-client)
 
@@ -39,8 +39,7 @@ source .venv/bin/activate
 
     - Install Python dependencies – from the sample directory, run `pip install -r requirements.txt` (or the equivalent in your active virtual environment).
 
-    - Copy `local.settings.json.template` to `local.settings.json`, then update `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` for Azure OpenAI authentication. The samples use `AzureCliCredential` by default, so ensure you're logged in via `az login`.
-        - Alternatively, you can use API key authentication by setting `AZURE_OPENAI_API_KEY` and updating the code to use `AzureOpenAIChatClient()` without the credential parameter.
+    - Copy `local.settings.json.template` to `local.settings.json`, then update `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`. The samples use `AzureCliCredential`, so ensure you're logged in via `az login`.
         - Keep `TASKHUB_NAME` set to `default` unless you plan to change the durable task hub name.
 
     - Run the command `func start` from the root of the sample

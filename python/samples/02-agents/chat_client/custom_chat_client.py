@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from typing import Any, ClassVar, TypeAlias, TypedDict
 
 from agent_framework import (
+    Agent,
     BaseChatClient,
     ChatMiddlewareLayer,
     ChatResponse,
@@ -159,7 +160,8 @@ async def main() -> None:
     print(f"Direct response: {direct_response.messages[0].text}")
 
     # Create an agent using the custom chat client
-    echo_agent = echo_client.as_agent(
+    echo_agent = Agent(
+        client=echo_client,
         name="EchoAgent",
         instructions="You are a helpful assistant that echoes back what users say.",
     )

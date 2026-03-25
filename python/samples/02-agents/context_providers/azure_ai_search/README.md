@@ -8,13 +8,13 @@ This folder contains examples demonstrating how to use the Azure AI Search conte
 
 | File | Description |
 |------|-------------|
-| [`azure_ai_with_search_context_agentic.py`](azure_ai_with_search_context_agentic.py) | **Agentic mode** (recommended for most scenarios): Uses Knowledge Bases in Azure AI Search for query planning and multi-hop reasoning. Provides more accurate results through intelligent retrieval with automatic query reformulation. Slightly slower with more token consumption for query planning. [Learn more](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720) |
-| [`azure_ai_with_search_context_semantic.py`](azure_ai_with_search_context_semantic.py) | **Semantic mode** (fast queries): Fast hybrid search combining vector and keyword search with semantic ranking. Returns raw search results as context. Best for scenarios where speed is critical and simple retrieval is sufficient. |
+| [`search_context_agentic.py`](search_context_agentic.py) | **Agentic mode** (recommended for most scenarios): Uses Knowledge Bases in Azure AI Search for query planning and multi-hop reasoning. Provides more accurate results through intelligent retrieval with automatic query reformulation. Slightly slower with more token consumption for query planning. [Learn more](https://techcommunity.microsoft.com/blog/azure-ai-foundry-blog/foundry-iq-boost-response-relevance-by-36-with-agentic-retrieval/4470720) |
+| [`search_context_semantic.py`](search_context_semantic.py) | **Semantic mode** (fast queries): Fast hybrid search combining vector and keyword search with semantic ranking. Returns raw search results as context. Best for scenarios where speed is critical and simple retrieval is sufficient. |
 
 ## Installation
 
 ```bash
-pip install agent-framework-azure-ai-search agent-framework-azure-ai
+pip install agent-framework-foundry-search agent-framework-foundry
 ```
 
 ## Prerequisites

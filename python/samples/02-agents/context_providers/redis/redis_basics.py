@@ -30,8 +30,8 @@ Run:
 import asyncio
 import os
 
-from agent_framework import Message, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.redis import RedisContextProvider
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -99,11 +99,11 @@ def search_flights(origin_airport_code: str, destination_airport_code: str, deta
     )
 
 
-def create_chat_client() -> AzureOpenAIResponsesClient:
+def create_chat_client() -> FoundryChatClient:
     """Create an Azure OpenAI Responses client using a Foundry project endpoint."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    return FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -121,7 +121,7 @@ async def main() -> None:
     # Create a provider with partition scope and OpenAI embeddings
 
     # Please set OPENAI_API_KEY to use the OpenAI vectorizer.
-    # For chat responses, also set AZURE_AI_PROJECT_ENDPOINT and AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME.
+    # For chat responses, also set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL.
 
     # We attach an embedding vectorizer so the provider can perform hybrid (text + vector)
     # retrieval. If you prefer text-only retrieval, instantiate RedisContextProvider without the
@@ -206,7 +206,8 @@ async def main() -> None:
     client = create_chat_client()
     # Create agent wired to the Redis context provider. The provider automatically
     # persists conversational details and surfaces relevant context on each turn.
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "
@@ -249,7 +250,8 @@ async def main() -> None:
     # Create agent exposing the flight search tool. Tool outputs are captured by the
     # provider and become retrievable context for later turns.
     client = create_chat_client()
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="MemoryEnhancedAssistant",
         instructions=(
             "You are a helpful assistant. Personalize replies using provided context. "

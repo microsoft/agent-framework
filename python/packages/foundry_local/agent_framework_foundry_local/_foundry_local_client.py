@@ -15,7 +15,7 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework.observability import ChatTelemetryLayer
-from agent_framework.openai._chat_client import RawOpenAIChatClient
+from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
 from foundry_local import FoundryLocalManager
 from foundry_local.models import DeviceType
 from openai import AsyncOpenAI
@@ -126,21 +126,21 @@ class FoundryLocalSettings(TypedDict, total=False):
             (Env var FOUNDRY_LOCAL_MODEL_ID)
     """
 
-    model_id: str | None
+    model: str | None
 
 
 class FoundryLocalClient(
     FunctionInvocationLayer[FoundryLocalChatOptionsT],
     ChatMiddlewareLayer[FoundryLocalChatOptionsT],
     ChatTelemetryLayer[FoundryLocalChatOptionsT],
-    RawOpenAIChatClient[FoundryLocalChatOptionsT],
+    RawOpenAIChatCompletionClient[FoundryLocalChatOptionsT],
     Generic[FoundryLocalChatOptionsT],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
 
     def __init__(
         self,
-        model_id: str | None = None,
+        model: str | None = None,
         *,
         bootstrap: bool = True,
         timeout: float | None = None,
@@ -155,7 +155,7 @@ class FoundryLocalClient(
         """Initialize a FoundryLocalClient.
 
         Keyword Args:
-            model_id: The Foundry Local model ID or alias to use. If not provided,
+            model: The Foundry Local model ID or alias to use. If not provided,
                 it will be loaded from the FoundryLocalSettings.
             bootstrap: Whether to start the Foundry Local service if not already running.
                 Default is True.
@@ -180,7 +180,7 @@ class FoundryLocalClient(
             .. code-block:: python
 
                 # Create a FoundryLocalClient with a specific model ID:
-                from agent_framework_foundry_local import FoundryLocalClient
+                from agent_framework.foundry import FoundryLocalClient
 
                 client = FoundryLocalClient(model_id="phi-4-mini")
 
@@ -225,7 +225,7 @@ class FoundryLocalClient(
 
                 # Using custom ChatOptions with type safety:
                 from typing import TypedDict
-                from agent_framework_foundry_local import FoundryLocalChatOptions
+                from agent_framework.foundry import FoundryLocalChatOptions
 
                 class MyOptions(FoundryLocalChatOptions, total=False):
                     my_custom_option: str
@@ -242,25 +242,23 @@ class FoundryLocalClient(
         settings = load_settings(
             FoundryLocalSettings,
             env_prefix="FOUNDRY_LOCAL_",
-            required_fields=["model_id"],
-            model_id=model_id,
+            required_fields=["model"],
+            model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        model_id_setting: str = settings["model_id"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+        model_setting: str = settings["model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=model_id_setting,
+            alias_or_model_id=model_setting,
             device=device,
         )
         if model_info is None:
             message = (
-                f"Model with ID or alias '{model_id_setting}:{device.value}' not found in Foundry Local."
+                f"Model with ID or alias '{model_setting}:{device.value}' not found in Foundry Local."
                 if device
-                else (
-                    f"Model with ID or alias '{model_id_setting}' for your current device not found in Foundry Local."
-                )
+                else (f"Model with ID or alias '{model_setting}' for your current device not found in Foundry Local.")
             )
             raise ValueError(message)
         if prepare_model:
@@ -268,8 +266,8 @@ class FoundryLocalClient(
             manager.load_model(alias_or_model_id=model_info.id, device=device)
 
         super().__init__(
-            model_id=model_info.id,
-            client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
+            model=model_info.id,
+            async_client=AsyncOpenAI(base_url=manager.endpoint, api_key=manager.api_key),
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,

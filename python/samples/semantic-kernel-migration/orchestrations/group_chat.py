@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIChatClient, AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -130,8 +130,7 @@ class ChatCompletionGroupChatManager(GroupChatManager):
             chat_history,
             settings=PromptExecutionSettings(response_format=BooleanResult),
         )
-        result = BooleanResult.model_validate_json(response.content)
-        return result
+        return BooleanResult.model_validate_json(response.content)
 
     @override
     async def select_next_agent(
@@ -235,19 +234,19 @@ async def run_agent_framework_example(task: str) -> str:
             "Gather concise facts or considerations that help plan a community hackathon. "
             "Keep your responses factual and scannable."
         ),
-        client=AzureOpenAIChatClient(credential=credential),
+        client=FoundryChatClient(credential=credential),
     )
 
     planner = Agent(
         name="Planner",
         description="Turns the collected notes into a concrete action plan.",
         instructions=("Propose a structured action plan that accounts for logistics, roles, and timeline."),
-        client=AzureOpenAIResponsesClient(credential=credential),
+        client=FoundryChatClient(credential=credential),
     )
 
     workflow = GroupChatBuilder(
         participants=[researcher, planner],
-        orchestrator_agent=AzureOpenAIChatClient(credential=credential).as_agent(),
+        orchestrator_agent=Agent(client=FoundryChatClient(credential=credential)),
     ).build()
 
     final_response = ""

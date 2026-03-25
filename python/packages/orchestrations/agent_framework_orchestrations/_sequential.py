@@ -11,7 +11,8 @@ workflow where:
 - The workflow finishes with the final context produced by the last participant
 
 Typical wiring:
-    input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) -> ... -> participantN -> _EndWithConversation
+    input -> _InputToConversation -> participant1 -> (agent? -> _ResponseToConversation) ->
+    ... -> participantN -> _EndWithConversation
 
 Notes:
 - Participants can mix SupportsAgentRun and Executor objects
@@ -34,7 +35,7 @@ These adapters are first-class executors by design so they are type-checked at e
 observable (ExecutorInvoke/Completed events), and easily testable/reusable. Their IDs are
 deterministic and self-describing (for example, "to-conversation:writer") to reduce event-log
 confusion and to mirror how the concurrent builder uses explicit dispatcher/aggregator nodes.
-"""  # noqa: E501
+"""
 
 import logging
 from collections.abc import Sequence
