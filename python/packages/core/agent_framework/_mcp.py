@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-# pyright: reportAttributeAccessIssue=false, reportCallIssue=false, reportConstantRedefinition=false, reportGeneralTypeIssues=false, reportInvalidTypeForm=false, reportMatchNotExhaustive=false, reportOptionalCall=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownVariableType=false
 import asyncio
 import base64
 import json
@@ -16,8 +15,6 @@ from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
-import httpx
-from anyio import ClosedResourceError
 from opentelemetry import propagate
 
 from ._tools import FunctionTool
@@ -30,18 +27,14 @@ else:
     from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
     from mcp import types
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
-    from mcp.shared.exceptions import McpError
     from mcp.shared.session import RequestResponder
 
     from ._clients import SupportsChatGetResponse
-else:
-    ClientSession = Any
-    RequestContext = Any
-    RequestResponder = Any
-    McpError = Exception
+
 
 logger = logging.getLogger(__name__)
 
@@ -231,22 +224,6 @@ class MCPTool:
         self._tools_loaded: bool = False
         self._prompts_loaded: bool = False
 
-        global types, ClientSession, RequestContext, McpError, RequestResponder
-
-        try:
-            from mcp import types as runtime_types
-            from mcp.client.session import ClientSession as runtime_client_session
-            from mcp.shared.context import RequestContext as runtime_request_context
-            from mcp.shared.exceptions import McpError as runtime_mcp_error
-            from mcp.shared.session import RequestResponder as runtime_request_responder
-        except ModuleNotFoundError as ex:
-            raise ModuleNotFoundError("`mcp` is required to use MCP Tools. Please install `mcp`.") from ex
-        types = runtime_types
-        ClientSession = runtime_client_session  # type: ignore[misc]
-        RequestContext = runtime_request_context  # type: ignore[misc]
-        McpError = runtime_mcp_error  # type: ignore[misc]
-        RequestResponder = runtime_request_responder  # type: ignore[misc]
-
     def __str__(self) -> str:
         return f"MCPTool(name={self.name}, description={self.description})"
 
@@ -255,6 +232,8 @@ class MCPTool:
         mcp_type: types.GetPromptResult,
     ) -> str:
         """Parse an MCP GetPromptResult directly into a string representation."""
+        from mcp import types
+
         parts: list[str] = []
         for message in mcp_type.messages:
             content = message.content
@@ -310,6 +289,8 @@ class MCPTool:
         mcp_type: types.CallToolResult,
     ) -> list[Content]:
         """Parse an MCP CallToolResult into a list of Content items."""
+        from mcp import types
+
         result: list[Content] = []
         for item in mcp_type.content:
             match item:
@@ -372,9 +353,13 @@ class MCPTool:
         ],
     ) -> list[Content]:
         """Parse an MCP type into an Agent Framework type."""
-        mcp_types = mcp_type if isinstance(mcp_type, Sequence) else [mcp_type]
+        from mcp import types
+
+        mcp_content_types: Sequence[Any] = (
+            cast(Sequence[Any], mcp_type) if isinstance(mcp_type, Sequence) else [mcp_type]
+        )  # type: ignore[redundant-cast]
         return_types: list[Content] = []
-        for mcp_type in mcp_types:
+        for mcp_type in mcp_content_types:
             match mcp_type:
                 case types.TextContent():
                     return_types.append(Content.from_text(text=mcp_type.text, raw_representation=mcp_type))
@@ -438,6 +423,8 @@ class MCPTool:
                                     ),
                                 )
                             )
+                case _:
+                    pass
         return return_types
 
     def _prepare_content_for_mcp(
@@ -447,6 +434,8 @@ class MCPTool:
         types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource | types.ResourceLink | None
     ):
         """Prepare an Agent Framework content type for MCP."""
+        from mcp import types
+
         if content.type == "text":
             return types.TextContent(type="text", text=content.text)  # type: ignore[attr-defined]
         if content.type == "data":
@@ -464,7 +453,7 @@ class MCPTool:
                             content.additional_properties.get("uri", "af://binary")
                             if content.additional_properties
                             else "af://binary"
-                        ),  # type: ignore[reportArgumentType]
+                        ),  # type: ignore[arg-type]
                     ),
                 )
             return None
@@ -474,7 +463,7 @@ class MCPTool:
             )
             return types.ResourceLink(
                 type="resource_link",
-                uri=content.uri,  # type: ignore[reportArgumentType,attr-defined]
+                uri=content.uri,  # type: ignore[arg-type,attr-defined]
                 mimeType=content.media_type,  # type: ignore[attr-defined]
                 name=resource_name,
             )
@@ -690,7 +679,7 @@ class MCPTool:
                     error_msg = f"MCP server failed to initialize: {ex}"
                 raise ToolException(error_msg, inner_exception=ex) from ex
             self.session = session
-        elif self.session._request_id == 0:  # type: ignore[reportPrivateUsage]
+        elif self.session._request_id == 0:  # type: ignore[attr-defined]
             # If the session is not initialized, we need to reinitialize it
             await self.session.initialize()
         logger.debug("Connected to MCP server: %s", self.session)
@@ -733,6 +722,8 @@ class MCPTool:
         Returns:
             Either a CreateMessageResult with the generated message or ErrorData if generation fails.
         """
+        from mcp import types
+
         if not self.client:
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
@@ -808,6 +799,8 @@ class MCPTool:
         Args:
             message: The message from the MCP server (request responder, notification, or exception).
         """
+        from mcp import types
+
         if isinstance(message, Exception):
             logger.error("Error from MCP server: %s", message, exc_info=message)
             return
@@ -834,7 +827,7 @@ class MCPTool:
             ):
                 return "never_require"
             return None
-        return self.approval_mode  # type: ignore[reportReturnType]
+        return self.approval_mode  # type: ignore[return-value]
 
     async def load_prompts(self) -> None:
         """Load prompts from the MCP server.
@@ -845,6 +838,8 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from mcp import types
+
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
@@ -893,6 +888,8 @@ class MCPTool:
         Raises:
             ToolExecutionException: If the MCP server is not connected.
         """
+        from mcp import types
+
         # Track existing function names to prevent duplicates
         existing_names = {func.name for func in self._functions}
 
@@ -1006,6 +1003,9 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, tools are not loaded,
                 or the tool call fails.
         """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
         if not self.load_tools_flag:
             raise ToolExecutionException(
                 "Tools are not loaded for this server, please set load_tools=True in the constructor."
@@ -1071,7 +1071,8 @@ class MCPTool:
                         inner_exception=cl_ex,
                     ) from cl_ex
             except McpError as mcp_exc:
-                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+                error_message = mcp_exc.error.message
+                raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
             except Exception as ex:
                 raise ToolExecutionException(f"Failed to call tool '{tool_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to call tool '{tool_name}' after retries.")
@@ -1092,6 +1093,9 @@ class MCPTool:
             ToolExecutionException: If the MCP server is not connected, prompts are not loaded,
                 or the prompt call fails.
         """
+        from anyio import ClosedResourceError
+        from mcp.shared.exceptions import McpError
+
         if not self.load_prompts_flag:
             raise ToolExecutionException(
                 "Prompts are not loaded for this server, please set load_prompts=True in the constructor."
@@ -1123,7 +1127,8 @@ class MCPTool:
                         inner_exception=cl_ex,
                     ) from cl_ex
             except McpError as mcp_exc:
-                raise ToolExecutionException(mcp_exc.error.message, inner_exception=mcp_exc) from mcp_exc
+                error_message = mcp_exc.error.message
+                raise ToolExecutionException(error_message, inner_exception=mcp_exc) from mcp_exc
             except Exception as ex:
                 raise ToolExecutionException(f"Failed to call prompt '{prompt_name}'.", inner_exception=ex) from ex
         raise ToolExecutionException(f"Failed to get prompt '{prompt_name}' after retries.")
@@ -1346,7 +1351,7 @@ class MCPStreamableHTTPTool(MCPTool):
         terminate_on_close: bool | None = None,
         client: SupportsChatGetResponse | None = None,
         additional_properties: dict[str, Any] | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: AsyncClient | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the MCP streamable HTTP tool.
@@ -1354,7 +1359,7 @@ class MCPStreamableHTTPTool(MCPTool):
         Note:
             The arguments are used to create a streamable HTTP client using the
             new ``mcp.client.streamable_http.streamable_http_client`` API.
-            If an httpx.AsyncClient is provided via ``http_client``, it will be used directly.
+            If an asyncClient is provided via ``http_client``, it will be used directly.
             Otherwise, the ``streamable_http_client`` API will create and manage a default client.
 
         Args:
@@ -1390,10 +1395,10 @@ class MCPStreamableHTTPTool(MCPTool):
             additional_properties: Additional properties.
             terminate_on_close: Close the transport when the MCP client is terminated.
             client: The chat client to use for sampling.
-            http_client: Optional httpx.AsyncClient to use. If not provided, the
+            http_client: Optional asyncClient to use. If not provided, the
                 ``streamable_http_client`` API will create and manage a default client.
                 To configure headers, timeouts, or other HTTP client settings, create
-                and pass your own ``httpx.AsyncClient`` instance.
+                and pass your own ``asyncClient`` instance.
             kwargs: Additional keyword arguments (accepted for backward compatibility but not used).
         """
         super().__init__(
@@ -1413,7 +1418,7 @@ class MCPStreamableHTTPTool(MCPTool):
         )
         self.url = url
         self.terminate_on_close = terminate_on_close
-        self._httpx_client: httpx.AsyncClient | None = http_client
+        self._httpx_client: AsyncClient | None = http_client
 
     def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
         """Get an MCP streamable HTTP client.
