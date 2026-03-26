@@ -50,7 +50,7 @@ async def main() -> None:
         # Create agent with default response_format (WeatherInfo)
         agent = await provider.create_agent(
             name="StructuredReporter",
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             instructions="Return structured JSON based on the requested format.",
             default_options={"response_format": WeatherInfo},
         )

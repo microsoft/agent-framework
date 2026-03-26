@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -90,6 +92,56 @@ public sealed class ChatClientAgentOptions
     public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether to persist chat history only at the end of the full agent run
+    /// rather than after each individual service call.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default, <see cref="ChatClientAgent"/> persists request and response messages either via
+    /// a <see cref="ChatHistoryProvider"/>, or the underlying AI service's chat history storage.
+    /// Persistence is done immediately after each call to the AI service within the function invocation loop.
+    /// When storing in the underlying AI service, the session's <see cref="ChatClientAgentSession.ConversationId"/>
+    /// is also updated after each service call, keeping it in sync with the service-side conversation state.
+    /// </para>
+    /// <para>
+    /// Setting this property to <see langword="true"/> causes messages to be marked during the function
+    /// invocation loop but persisted only at the end of the full agent run, providing atomic run semantics.
+    /// Updating the <see cref="ChatClientAgentSession.ConversationId"/> is likewise deferred and
+    /// updated only at the end of the run, consistent with atomic run semantics.
+    /// A <see cref="ChatHistoryPersistingChatClient"/> decorator is inserted into the chat client pipeline
+    /// in mark-only mode, and the <see cref="ChatClientAgent"/> persists only the marked messages at the
+    /// end of the run.
+    /// </para>
+    /// <para>
+    /// When this option is <see langword="false"/> (the default), the <see cref="ChatHistoryPersistingChatClient"/>
+    /// decorator persists messages and updates the <see cref="ChatClientAgentSession.ConversationId"/>
+    /// immediately after each service call. This may leave chat history in a state where
+    /// <see cref="FunctionResultContent"/> is required to start a new run if the last successful service
+    /// call returned <see cref="FunctionCallContent"/>.
+    /// </para>
+    /// <para>
+    /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When using a custom chat client stack, you can add a <see cref="ChatHistoryPersistingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseChatHistoryPersisting"/>
+    /// extension method.
+    /// </para>
+    /// <para>
+    /// Note that when using single threaded service stored chat history, like OpenAI Conversations,
+    /// there is only one id, so even if the conversation id is not updated after each service call,
+    /// the chat history will still contain intermediate messages. Setting this property to <see langword="true"/>
+    /// in this case will therefore have no real effect. Setting this property to <see langword="true"/> when using
+    /// OpenAI Responses with response ids on the other hand, allows atomic run semantics, since
+    /// each service request produces a new response id, and if the run fails mid-loop, the session will
+    /// still contain the pre-run respnose id, allowing the next run to start with a clean slate.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool PersistChatHistoryAtEndOfRun { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -105,5 +157,6 @@ public sealed class ChatClientAgentOptions
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
+            PersistChatHistoryAtEndOfRun = this.PersistChatHistoryAtEndOfRun,
         };
 }

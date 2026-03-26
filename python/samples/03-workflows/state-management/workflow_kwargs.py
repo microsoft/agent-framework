@@ -5,8 +5,8 @@ import json
 import os
 from typing import Annotated, Any, cast
 
-from agent_framework import Message, tool
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -28,7 +28,7 @@ Key Concepts:
 - Works with Sequential, Concurrent, GroupChat, Handoff, and Magentic patterns
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - Environment variables configured
 """
 
@@ -81,14 +81,15 @@ async def main() -> None:
     print("=" * 70)
 
     # Create chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
     # Create agent with tools that use kwargs
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions=(
             "You are a helpful assistant. Use the available tools to help users. "

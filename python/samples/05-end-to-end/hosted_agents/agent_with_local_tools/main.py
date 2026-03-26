@@ -11,18 +11,14 @@ import os
 from datetime import datetime
 from typing import Annotated
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
-from dotenv import load_dotenv
-
-load_dotenv(override=True)
 
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file
-PROJECT_ENDPOINT = os.getenv(
-    "PROJECT_ENDPOINT"
-)  # e.g., "https://<project>.services.ai.azure.com"
+PROJECT_ENDPOINT = os.getenv("PROJECT_ENDPOINT")  # e.g., "https://<project>.services.ai.azure.com"
 MODEL_DEPLOYMENT_NAME = os.getenv(
     "MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"
 )  # Your model deployment name e.g., "gpt-4.1-mini"
@@ -90,14 +86,10 @@ def get_available_hotels(
         nights = (check_out - check_in).days
 
         # Filter hotels by price
-        available_hotels = [
-            hotel for hotel in SEATTLE_HOTELS if hotel["price_per_night"] <= max_price
-        ]
+        available_hotels = [hotel for hotel in SEATTLE_HOTELS if hotel["price_per_night"] <= max_price]
 
         if not available_hotels:
-            return (
-                f"No hotels found in Seattle within your budget of ${max_price}/night."
-            )
+            return f"No hotels found in Seattle within your budget of ${max_price}/night."
 
         # Build response
         result = f"Available hotels in Seattle from {check_in_date} to {check_out_date} ({nights} nights):\n\n"
@@ -117,22 +109,19 @@ def get_available_hotels(
 
 def get_credential():
     """Will use Managed Identity when running in Azure, otherwise falls back to Azure CLI Credential."""
-    return (
-        ManagedIdentityCredential()
-        if os.getenv("MSI_ENDPOINT")
-        else AzureCliCredential()
-    )
+    return ManagedIdentityCredential() if os.getenv("MSI_ENDPOINT") else AzureCliCredential()
 
 
 async def main():
     """Main function to run the agent as a web server."""
     async with get_credential() as credential:
-        client = AzureOpenAIResponsesClient(
+        client = FoundryChatClient(
             project_endpoint=PROJECT_ENDPOINT,
-            deployment_name=MODEL_DEPLOYMENT_NAME,
+            model=MODEL_DEPLOYMENT_NAME,
             credential=credential,
         )
-        agent = client.as_agent(
+        agent = Agent(
+            client=client,
             name="SeattleHotelAgent",
             instructions="""You are a helpful travel assistant specializing in finding hotels in Seattle, Washington.
 

@@ -137,7 +137,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model="gpt-4o-search-preview"),
     )
 
     # Create code interpreter tool using static method

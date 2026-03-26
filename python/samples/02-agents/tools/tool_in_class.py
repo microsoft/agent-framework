@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -49,7 +49,8 @@ async def main():
     # Applying the tool decorator to one of the methods of the class
     add_function = tool(description="Add two numbers.")(tools.add)
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="ToolAgent",
         instructions="Use the provided tools.",
     )
