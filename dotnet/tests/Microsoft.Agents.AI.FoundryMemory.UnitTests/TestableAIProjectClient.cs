@@ -97,11 +97,13 @@ internal sealed class MockHttpMessageHandler : HttpMessageHandler
     public string? LastRequestUri { get; private set; }
     public string? LastRequestBody { get; private set; }
     public HttpMethod? LastRequestMethod { get; private set; }
+    public System.Net.Http.Headers.HttpRequestHeaders? LastRequestHeaders { get; private set; }
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         this.LastRequestUri = request.RequestUri?.ToString();
         this.LastRequestMethod = request.Method;
+        this.LastRequestHeaders = request.Headers;
 
         if (request.Content != null)
         {

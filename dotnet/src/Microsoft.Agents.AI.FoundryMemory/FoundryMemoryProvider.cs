@@ -2,9 +2,12 @@
 
 using System;
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +41,8 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private readonly int _maxMemories;
     private readonly int _updateDelay;
     private readonly bool _enableSensitiveTelemetryData;
+
+    private static readonly ModelReaderWriterOptions s_wireOptions = new("W");
 
     private readonly AIProjectClient _client;
     private readonly ILogger<FoundryMemoryProvider>? _logger;
@@ -128,12 +133,13 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 searchOptions.Items.Add(item);
             }
 
-            ClientResult<MemoryStoreSearchResponse> result = await this._client.MemoryStores.SearchMemoriesAsync(
+            BinaryContent searchContent = BinaryContent.Create(ModelReaderWriter.Write(searchOptions, s_wireOptions, AzureAIProjectsContext.Default));
+            ClientResult searchResult = await this._client.MemoryStores.SearchMemoriesAsync(
                 this._memoryStoreName,
-                searchOptions,
-                cancellationToken).ConfigureAwait(false);
+                searchContent,
+                cancellationToken.ToRequestOptions()).ConfigureAwait(false);
 
-            MemoryStoreSearchResponse response = result.Value;
+            MemoryStoreSearchResponse response = (MemoryStoreSearchResponse)searchResult;
 
             List<string> memories = response.Memories
                 .Select(m => m.MemoryItem?.Content ?? string.Empty)
@@ -215,12 +221,13 @@ public sealed class FoundryMemoryProvider : AIContextProvider
                 updateOptions.Items.Add(item);
             }
 
-            ClientResult<MemoryUpdateResult> result = await this._client.MemoryStores.UpdateMemoriesAsync(
+            BinaryContent updateContent = BinaryContent.Create(ModelReaderWriter.Write(updateOptions, s_wireOptions, AzureAIProjectsContext.Default));
+            ClientResult updateResult = await this._client.MemoryStores.UpdateMemoriesAsync(
                 this._memoryStoreName,
-                updateOptions,
-                cancellationToken).ConfigureAwait(false);
+                updateContent,
+                cancellationToken.ToRequestOptions()).ConfigureAwait(false);
 
-            MemoryUpdateResult response = result.Value;
+            MemoryUpdateResult response = (MemoryUpdateResult)updateResult;
 
             if (response.UpdateId is not null)
             {
@@ -264,7 +271,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
         try
         {
-            await this._client.MemoryStores.DeleteScopeAsync(this._memoryStoreName, scope.Scope, cancellationToken).ConfigureAwait(false);
+            await this._client.MemoryStores.DeleteScopeAsync(this._memoryStoreName, CreateScopeContent(scope.Scope), cancellationToken.ToRequestOptions()).ConfigureAwait(false);
 
             if (this._logger?.IsEnabled(LogLevel.Information) is true)
             {
@@ -361,12 +368,12 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            ClientResult<MemoryUpdateResult> result = await this._client.MemoryStores.GetUpdateResultAsync(
+            ClientResult result = await this._client.MemoryStores.GetUpdateResultAsync(
                 this._memoryStoreName,
                 updateId,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken.ToRequestOptions()).ConfigureAwait(false);
 
-            MemoryUpdateResult response = result.Value;
+            MemoryUpdateResult response = (MemoryUpdateResult)result;
             MemoryStoreUpdateStatus status = response.Status;
 
             if (this._logger?.IsEnabled(LogLevel.Debug) is true)
@@ -415,6 +422,19 @@ public sealed class FoundryMemoryProvider : AIContextProvider
 
     private static bool IsAllowedRole(ChatRole role) =>
         role == ChatRole.User || role == ChatRole.Assistant || role == ChatRole.System;
+
+    private static BinaryContent CreateScopeContent(string scope)
+    {
+        using MemoryStream stream = new();
+        using (Utf8JsonWriter writer = new(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("scope", scope);
+            writer.WriteEndObject();
+        }
+
+        return BinaryContent.Create(BinaryData.FromBytes(stream.ToArray()));
+    }
 
     private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
 
