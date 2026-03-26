@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
-AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105
+AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
 
 
 RESPONSE_TYPE = Union[
