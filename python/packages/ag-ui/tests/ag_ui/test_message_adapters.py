@@ -1669,3 +1669,94 @@ def test_agui_fresh_approval_is_still_processed():
     assert len(approval_contents) == 1, "Fresh approval should produce function_approval_response"
     assert approval_contents[0].approved is True
     assert approval_contents[0].function_call.name == "get_datetime"
+
+
+class TestReasoningRoundTrip:
+    """Tests for reasoning message handling in inbound/outbound adapters."""
+
+    def test_reasoning_skipped_on_inbound(self):
+        """Reasoning messages from prior snapshot are not forwarded to the LLM."""
+        messages_input = [
+            {"id": "u1", "role": "user", "content": "Hello"},
+            {"id": "r1", "role": "reasoning", "content": "Thinking..."},
+            {"id": "a1", "role": "assistant", "content": "Hi there"},
+        ]
+
+        result = agui_messages_to_agent_framework(messages_input)
+
+        roles = [m.role if hasattr(m.role, "value") else str(m.role) for m in result]
+        assert "reasoning" not in roles
+        assert len(result) == 2
+
+    def test_reasoning_preserved_in_snapshot_format(self):
+        """Reasoning messages retain their role through snapshot normalization."""
+        messages_input = [
+            {"id": "u1", "role": "user", "content": "Hello"},
+            {"id": "r1", "role": "reasoning", "content": "Thinking about this..."},
+            {"id": "a1", "role": "assistant", "content": "Answer"},
+        ]
+
+        result = agui_messages_to_snapshot_format(messages_input)
+
+        reasoning_msgs = [m for m in result if m.get("role") == "reasoning"]
+        assert len(reasoning_msgs) == 1
+        assert reasoning_msgs[0]["content"] == "Thinking about this..."
+
+    def test_reasoning_with_encrypted_value_in_snapshot_format(self):
+        """Reasoning with encryptedValue passes through snapshot normalization."""
+        messages_input = [
+            {
+                "id": "r1",
+                "role": "reasoning",
+                "content": "visible",
+                "encryptedValue": "secret-data",
+            },
+        ]
+
+        result = agui_messages_to_snapshot_format(messages_input)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "reasoning"
+        assert result[0]["encryptedValue"] == "secret-data"
+
+    def test_reasoning_encrypted_value_snake_case_normalized(self):
+        """Snake-case encrypted_value is normalized to encryptedValue in snapshot format."""
+        messages_input = [
+            {
+                "id": "r1",
+                "role": "reasoning",
+                "content": "visible",
+                "encrypted_value": "snake-case-data",
+            },
+        ]
+
+        result = agui_messages_to_snapshot_format(messages_input)
+
+        assert len(result) == 1
+        assert result[0]["encryptedValue"] == "snake-case-data"
+        assert "encrypted_value" not in result[0]
+
+    def test_multi_turn_with_reasoning_in_prior_snapshot(self):
+        """Second turn with reasoning from prior snapshot does not corrupt messages."""
+        messages_input = [
+            {"id": "u1", "role": "user", "content": "First question"},
+            {"id": "r1", "role": "reasoning", "content": "Prior reasoning"},
+            {"id": "a1", "role": "assistant", "content": "First answer"},
+            {"id": "u2", "role": "user", "content": "Follow-up question"},
+        ]
+
+        result = agui_messages_to_agent_framework(messages_input)
+
+        roles = [m.role if hasattr(m.role, "value") else str(m.role) for m in result]
+        # Reasoning is filtered out, other messages preserved in order
+        assert roles == ["user", "assistant", "user"]
+        # Content not corrupted
+        texts = []
+        for m in result:
+            for c in m.contents or []:
+                if hasattr(c, "text") and c.text:
+                    texts.append(c.text)
+        assert "First question" in texts
+        assert "First answer" in texts
+        assert "Follow-up question" in texts
+        assert "Prior reasoning" not in texts

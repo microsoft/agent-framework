@@ -1346,3 +1346,158 @@ class TestEmitContentMcpRouting:
 
         assert len(events) == 5
         assert isinstance(events[0], ReasoningStartEvent)
+
+
+class TestReasoningInSnapshot:
+    """Tests for reasoning message inclusion in MESSAGES_SNAPSHOT."""
+
+    def test_reasoning_persisted_to_flow_state(self):
+        """_emit_text_reasoning with flow persists reasoning into flow.reasoning_messages."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_persist",
+            text="Let me think step by step.",
+        )
+
+        _emit_text_reasoning(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["id"] == "reason_persist"
+        assert flow.reasoning_messages[0]["role"] == "reasoning"
+        assert flow.reasoning_messages[0]["content"] == "Let me think step by step."
+        assert "encryptedValue" not in flow.reasoning_messages[0]
+
+    def test_reasoning_with_encrypted_value_persisted(self):
+        """Reasoning with protected_data preserves encryptedValue in flow state."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_enc",
+            text="visible reasoning",
+            protected_data="encrypted-data-123",
+        )
+
+        _emit_text_reasoning(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["encryptedValue"] == "encrypted-data-123"
+
+    def test_snapshot_includes_reasoning(self):
+        """_build_messages_snapshot includes reasoning messages from flow state."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        flow.accumulated_text = "Here is my answer."
+        flow.reasoning_messages = [
+            {"id": "r1", "role": "reasoning", "content": "Thinking..."},
+        ]
+
+        snapshot = _build_messages_snapshot(flow, [])
+
+        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        assert "reasoning" in roles
+
+    def test_snapshot_preserves_reasoning_encrypted_value(self):
+        """Snapshot reasoning with encryptedValue is preserved end-to-end."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        content = Content.from_text_reasoning(
+            id="reason_e2e",
+            text="visible",
+            protected_data="secret-data",
+        )
+        _emit_text_reasoning(content, flow)
+
+        text_content = Content.from_text("Final answer.")
+        _emit_text(text_content, flow)
+
+        snapshot = _build_messages_snapshot(flow, [])
+
+        reasoning_msgs = [
+            m
+            for m in snapshot.messages
+            if (m.get("role") if isinstance(m, dict) else getattr(m, "role", None)) == "reasoning"
+        ]
+        assert len(reasoning_msgs) == 1
+        msg = reasoning_msgs[0]
+        if isinstance(msg, dict):
+            assert msg["content"] == "visible"
+            assert msg["encryptedValue"] == "secret-data"
+
+    def test_emit_content_routes_reasoning_with_flow(self):
+        """_emit_content passes flow to _emit_text_reasoning for persistence."""
+        flow = FlowState()
+        content = Content.from_text_reasoning(text="routed reasoning")
+
+        _emit_content(content, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "routed reasoning"
+
+    def test_reasoning_without_flow_does_not_error(self):
+        """Calling _emit_text_reasoning without flow still works (backward compat)."""
+        content = Content.from_text_reasoning(text="no flow")
+
+        events = _emit_text_reasoning(content)
+
+        assert len(events) == 5
+        assert isinstance(events[0], ReasoningStartEvent)
+
+    def test_snapshot_reasoning_ordering(self):
+        """Reasoning messages appear after assistant text in snapshot."""
+        from agent_framework_ag_ui._agent_run import _build_messages_snapshot
+
+        flow = FlowState()
+        reasoning_content = Content.from_text_reasoning(id="r1", text="Thinking...")
+        _emit_text_reasoning(reasoning_content, flow)
+
+        text_content = Content.from_text("Answer")
+        _emit_text(text_content, flow)
+
+        snapshot = _build_messages_snapshot(flow, [{"id": "u1", "role": "user", "content": "Hi"}])
+
+        # user -> assistant text -> reasoning
+        assert len(snapshot.messages) == 3
+        roles = [m.get("role") if isinstance(m, dict) else getattr(m, "role", None) for m in snapshot.messages]
+        assert roles == ["user", "assistant", "reasoning"]
+
+    def test_reasoning_accumulates_incremental_deltas(self):
+        """Multiple reasoning deltas with the same id accumulate into one entry."""
+        flow = FlowState()
+        content1 = Content.from_text_reasoning(id="reason_inc", text="First ")
+        content2 = Content.from_text_reasoning(id="reason_inc", text="second ")
+        content3 = Content.from_text_reasoning(id="reason_inc", text="third.")
+
+        _emit_text_reasoning(content1, flow)
+        _emit_text_reasoning(content2, flow)
+        _emit_text_reasoning(content3, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["id"] == "reason_inc"
+        assert flow.reasoning_messages[0]["content"] == "First second third."
+
+    def test_reasoning_accumulates_distinct_message_ids(self):
+        """Reasoning entries with different ids are stored separately."""
+        flow = FlowState()
+        content_a = Content.from_text_reasoning(id="a", text="alpha")
+        content_b = Content.from_text_reasoning(id="b", text="beta")
+
+        _emit_text_reasoning(content_a, flow)
+        _emit_text_reasoning(content_b, flow)
+
+        assert len(flow.reasoning_messages) == 2
+        assert flow.reasoning_messages[0]["content"] == "alpha"
+        assert flow.reasoning_messages[1]["content"] == "beta"
+
+    def test_reasoning_encrypted_value_updated_on_later_delta(self):
+        """encryptedValue is set even when it arrives with a later delta."""
+        flow = FlowState()
+        content1 = Content.from_text_reasoning(id="enc_late", text="part1 ")
+        content2 = Content.from_text_reasoning(id="enc_late", text="part2", protected_data="encrypted-payload")
+
+        _emit_text_reasoning(content1, flow)
+        _emit_text_reasoning(content2, flow)
+
+        assert len(flow.reasoning_messages) == 1
+        assert flow.reasoning_messages[0]["content"] == "part1 part2"
+        assert flow.reasoning_messages[0]["encryptedValue"] == "encrypted-payload"
