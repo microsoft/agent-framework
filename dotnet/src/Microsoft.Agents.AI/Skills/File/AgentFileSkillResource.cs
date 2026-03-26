@@ -31,11 +31,7 @@ internal sealed class AgentFileSkillResource : AgentSkillResource
     public string FullPath { get; }
 
     /// <inheritdoc/>
-#pragma warning disable CA1725 // Parameter names should match base declaration
-#pragma warning disable RCS1168 // Parameter name differs from base name
-    public override async Task<object?> ReadAsync(IServiceProvider? _, CancellationToken cancellationToken = default)
-#pragma warning restore RCS1168 // Parameter name differs from base name
-#pragma warning restore CA1725 // Parameter names should match base declaration
+    public override async Task<object?> ReadAsync(IServiceProvider? serviceProvider = null, CancellationToken cancellationToken = default)
     {
 #if NET8_0_OR_GREATER
         return await File.ReadAllTextAsync(this.FullPath, Encoding.UTF8, cancellationToken).ConfigureAwait(false);
