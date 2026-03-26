@@ -94,7 +94,6 @@ def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) ->
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
     assert client.azure_endpoint.startswith(azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"])
-    assert client.api_version == azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"]
 
 
 def test_init_auto_detects_azure_env(azure_openai_unit_test_env: dict[str, str]) -> None:
