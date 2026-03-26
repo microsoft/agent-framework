@@ -306,9 +306,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     ) -> None:
         """Initialize a raw OpenAI Responses client with Azure routing.
 
-        This overload describes the Azure shape. Explicit Azure inputs force Azure routing,
-        and missing Azure values fall back to ``AZURE_OPENAI_*`` values from ``env_file_path``
-        or the process environment.
+        This overload describes the Azure shape. Passing ``azure_endpoint`` or
+        ``credential`` forces Azure routing, and missing Azure values fall back to
+        ``AZURE_OPENAI_*`` values from ``env_file_path`` or the process environment.
         """
         ...
 
@@ -351,8 +351,9 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 to pass the full ``.../openai/v1`` base URL directly.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version. When not provided explicitly, Azure routing falls
-                back to ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
@@ -366,7 +367,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         Notes:
             Environment resolution and routing precedence are:
 
-            1. Explicit Azure inputs (``azure_endpoint``, ``api_version``, or ``credential``)
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
@@ -2463,9 +2464,9 @@ class OpenAIChatClient(  # type: ignore[misc]
     ) -> None:
         """Initialize an OpenAI Responses client with Azure routing.
 
-        This overload describes the Azure shape. Explicit Azure inputs force Azure routing,
-        and missing Azure values fall back to ``AZURE_OPENAI_*`` values from ``env_file_path``
-        or the process environment.
+        This overload describes the Azure shape. Passing ``azure_endpoint`` or
+        ``credential`` forces Azure routing, and missing Azure values fall back to
+        ``AZURE_OPENAI_*`` values from ``env_file_path`` or the process environment.
         """
         ...
 
@@ -2508,8 +2509,9 @@ class OpenAIChatClient(  # type: ignore[misc]
                 to pass the full ``.../openai/v1`` base URL directly.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version. When not provided explicitly, Azure routing falls
-                back to ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
             default_headers: Default HTTP headers that are merged into each request.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
@@ -2525,7 +2527,7 @@ class OpenAIChatClient(  # type: ignore[misc]
         Notes:
             Environment resolution and routing precedence are:
 
-            1. Explicit Azure inputs (``azure_endpoint``, ``api_version``, or ``credential``)
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 

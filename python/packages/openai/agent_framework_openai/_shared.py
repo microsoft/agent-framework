@@ -173,7 +173,7 @@ def load_openai_service_settings(
 
     The generic OpenAI clients primarily read from ``OPENAI_*`` variables. Azure-specific
     environment variables are used only when an explicit Azure signal is present
-    (``azure_endpoint``, ``api_version``, or ``credential``) or when no explicit
+    (``azure_endpoint`` or ``credential``) or when no explicit
     OpenAI API key is available.
     """
     # Merge APP_INFO into the headers
@@ -186,7 +186,8 @@ def load_openai_service_settings(
     api_key_str = api_key if not callable(api_key) else None
 
     azure_client = isinstance(client, AsyncAzureOpenAI)
-    use_azure = azure_client or endpoint is not None or api_version is not None or credential is not None
+    use_azure = azure_client or endpoint is not None or credential is not None
+    checked_openai = False
     if not use_azure:
         openai_settings_kwargs: dict[str, Any] = {
             "api_key": api_key_str,
@@ -221,27 +222,7 @@ def load_openai_service_settings(
             if base_url := openai_settings.get("base_url"):
                 client_args["base_url"] = base_url
             return openai_settings, AsyncOpenAI(**client_args), False  # type: ignore[return-value]
-        if (
-            endpoint is None
-            and credential is None
-            and _get_env_setting(
-                "AZURE_OPENAI_ENDPOINT",
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-            is None
-            and _get_env_setting(
-                "AZURE_OPENAI_BASE_URL",
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            )
-            is None
-        ):
-            raise SettingNotFoundError(
-                "OpenAI credentials are required. Provide the 'api_key' parameter or set 'OPENAI_API_KEY'. "
-                "To use Azure OpenAI instead, pass 'azure_endpoint' or set 'AZURE_OPENAI_ENDPOINT' or "
-                "'AZURE_OPENAI_BASE_URL'."
-            )
+        checked_openai = True
 
     azure_settings = load_settings(
         AzureOpenAISettings,
@@ -278,7 +259,13 @@ def load_openai_service_settings(
         client_args["azure_deployment"] = model
     else:
         deployment_env_guidance = ", ".join(f"'{env_var}'" for env_var in azure_deployment_env_vars)
-        raise ValueError(
+        if checked_openai:
+            raise SettingNotFoundError(
+                "OpenAI credentials are required. Provide the 'api_key' parameter or set 'OPENAI_API_KEY'. "
+                "To use Azure OpenAI instead, pass 'azure_endpoint' or set 'AZURE_OPENAI_ENDPOINT' or "
+                "'AZURE_OPENAI_BASE_URL'."
+            )
+        raise SettingNotFoundError(
             "Azure OpenAI client requires a deployment name, which can be provided via the 'model' parameter, "
             f"the {deployment_env_guidance} environment variable, or the '{openai_model_env_var}' "
             "environment variable."

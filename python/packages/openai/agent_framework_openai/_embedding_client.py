@@ -114,8 +114,10 @@ class RawOpenAIEmbeddingClient(
         """Initialize a raw OpenAI embedding client with Azure routing.
 
         Use this overload when you want Azure OpenAI embeddings. Passing
-        ``azure_endpoint``, ``api_version``, or ``credential`` is an explicit Azure
-        signal and forces Azure routing even when ``OPENAI_API_KEY`` is also present.
+        ``azure_endpoint`` or ``credential`` is an explicit Azure signal and forces
+        Azure routing even when ``OPENAI_API_KEY`` is also present. ``api_version``
+        configures Azure requests after Azure routing is selected, but it does not
+        select Azure on its own.
         The constructor reads the deployment name from the explicit ``model``
         argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
         falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
@@ -168,8 +170,9 @@ class RawOpenAIEmbeddingClient(
                 to pass the full ``.../openai/v1`` base URL directly.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version. When not provided explicitly, Azure routing falls
-                back to ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
@@ -182,7 +185,7 @@ class RawOpenAIEmbeddingClient(
         Notes:
             Environment resolution and routing precedence are:
 
-            1. Explicit Azure inputs (``azure_endpoint``, ``api_version``, or ``credential``)
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
@@ -364,8 +367,10 @@ class OpenAIEmbeddingClient(
         """Initialize an OpenAI embedding client with Azure routing.
 
         Use this overload when you want Azure OpenAI embeddings. Passing
-        ``azure_endpoint``, ``api_version``, or ``credential`` is an explicit Azure
-        signal and forces Azure routing even when ``OPENAI_API_KEY`` is also present.
+        ``azure_endpoint`` or ``credential`` is an explicit Azure signal and forces
+        Azure routing even when ``OPENAI_API_KEY`` is also present. ``api_version``
+        configures Azure requests after Azure routing is selected, but it does not
+        select Azure on its own.
         The constructor reads the deployment name from the explicit ``model``
         argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
         falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
@@ -419,8 +424,9 @@ class OpenAIEmbeddingClient(
                 to pass the full ``.../openai/v1`` base URL directly.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version. When not provided explicitly, Azure routing falls
-                back to ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
             otel_provider_name: Override the OpenTelemetry provider name.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
@@ -430,7 +436,7 @@ class OpenAIEmbeddingClient(
         Notes:
             Environment resolution and routing precedence are:
 
-            1. Explicit Azure inputs (``azure_endpoint``, ``api_version``, or ``credential``)
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 

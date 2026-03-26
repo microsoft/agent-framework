@@ -122,6 +122,19 @@ def test_openai_api_key_wins_over_azure_env(monkeypatch, azure_openai_unit_test_
     assert client.azure_endpoint is None
 
 
+def test_api_version_alone_does_not_override_openai_api_key(
+    monkeypatch, azure_openai_unit_test_env: dict[str, str]
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
+
+    client = OpenAIChatClient(api_version="2024-10-21")
+
+    assert client.model == "gpt-5"
+    assert not isinstance(client.client, AsyncAzureOpenAI)
+    assert client.azure_endpoint is None
+
+
 def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
