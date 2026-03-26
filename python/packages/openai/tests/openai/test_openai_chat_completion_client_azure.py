@@ -116,9 +116,13 @@ def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_
 def test_init_with_credential_wraps_async_token_credential(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
+    class TestAsyncTokenCredential(AsyncTokenCredential):
+        async def get_token(self, *scopes: str, **kwargs: object):
+            raise NotImplementedError
+
     monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
-    credential = MagicMock(spec=AsyncTokenCredential)
+    credential = TestAsyncTokenCredential()
     token_provider = MagicMock()
 
     with patch("azure.identity.aio.get_bearer_token_provider", return_value=token_provider) as mock_provider:
