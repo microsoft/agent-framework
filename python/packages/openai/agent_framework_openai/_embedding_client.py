@@ -217,7 +217,8 @@ class RawOpenAIEmbeddingClient(
             }
         else:
             self.default_headers = None
-        self._use_azure_client = use_azure_client
+        if use_azure_client:
+            self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
         super().__init__(**kwargs)
 
@@ -438,17 +439,7 @@ class OpenAIEmbeddingClient(
             api_version=api_version,
             default_headers=default_headers,
             async_client=async_client,
+            otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        if isinstance(self.client, AsyncAzureOpenAI) or self._use_azure_client:
-            self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
-        if otel_provider_name is not None:
-            self.OTEL_PROVIDER_NAME = otel_provider_name  # type: ignore[misc]
-
-        if not self.model:
-            raise ValueError(
-                "An embedding model or Azure OpenAI deployment name is required. "
-                "Set via the 'model' parameter, 'OPENAI_EMBEDDING_MODEL', "
-                "'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME', or 'AZURE_OPENAI_DEPLOYMENT_NAME'."
-            )
