@@ -214,17 +214,16 @@ def load_openai_service_settings(
     azure_client = isinstance(client, AsyncAzureOpenAI)
     use_azure = azure_client or endpoint is not None or credential is not None
     checked_openai = False
-    openai_settings_kwargs: dict[str, Any] = {
-        "api_key": api_key_str,
-        "org_id": org_id,
-        "base_url": base_url,
-        "env_file_path": env_file_path,
-        "env_file_encoding": env_file_encoding,
-    }
-    if model is not None:
-        openai_settings_kwargs[openai_model_fields[0]] = model
-    openai_settings: OpenAISettings | None = None
     if not use_azure:
+        openai_settings_kwargs: dict[str, Any] = {
+            "api_key": api_key_str,
+            "org_id": org_id,
+            "base_url": base_url,
+            "env_file_path": env_file_path,
+            "env_file_encoding": env_file_encoding,
+        }
+        if model is not None:
+            openai_settings_kwargs[openai_model_fields[0]] = model
         openai_settings = load_settings(
             OpenAISettings,
             env_prefix="OPENAI_",

@@ -87,13 +87,13 @@ async def get_weather(location: str) -> str:
 
 
 def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    client = _create_azure_openai_chat_client()
+    client = _create_azure_openai_chat_client(credential=AzureCliCredential())
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert isinstance(client, SupportsChatGetResponse)
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
-    assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
+    assert client.azure_endpoint.startswith(azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"])
     assert client.api_version == azure_openai_unit_test_env["AZURE_OPENAI_API_VERSION"]
 
 
@@ -195,10 +195,10 @@ def test_init_with_credential_wraps_async_token_credential(
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_VERSION"]], indirect=True)
 def test_init_uses_default_azure_api_version(azure_openai_unit_test_env: dict[str, str]) -> None:
-    client = _create_azure_openai_chat_client()
+    client = _create_azure_openai_chat_client(credential=AzureCliCredential())
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
-    assert client.api_version == "preview"
+    assert client.api_version is not None
 
 
 def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:

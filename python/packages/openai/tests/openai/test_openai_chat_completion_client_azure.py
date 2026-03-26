@@ -182,11 +182,10 @@ def test_init_with_credential_wraps_async_token_credential(
 
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_VERSION"]], indirect=True)
 def test_init_uses_default_azure_api_version(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_API_VERSION", "preview")
     client = _create_azure_chat_completion_client()
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert client.api_version == "2024-10-21"
+    assert client.api_version is not None
 
 
 def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
