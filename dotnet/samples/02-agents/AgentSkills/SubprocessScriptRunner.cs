@@ -80,42 +80,40 @@ internal static class SubprocessScriptRunner
             }
         }
 
+        Process? process = null;
         try
         {
-            using var process = Process.Start(startInfo);
+            process = Process.Start(startInfo);
             if (process is null)
             {
                 return $"Error: Failed to start process for script '{script.Name}'.";
             }
 
-            try
+            Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+
+            string output = await outputTask.ConfigureAwait(false);
+            string error = await errorTask.ConfigureAwait(false);
+
+            if (!string.IsNullOrEmpty(error))
             {
-                Task<string> outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-                Task<string> errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-                await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-
-                string output = await outputTask.ConfigureAwait(false);
-                string error = await errorTask.ConfigureAwait(false);
-
-                if (!string.IsNullOrEmpty(error))
-                {
-                    output += $"\nStderr:\n{error}";
-                }
-
-                if (process.ExitCode != 0)
-                {
-                    output += $"\nScript exited with code {process.ExitCode}";
-                }
-
-                return string.IsNullOrEmpty(output) ? "(no output)" : output.Trim();
+                output += $"\nStderr:\n{error}";
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+
+            if (process.ExitCode != 0)
             {
-                // Kill the process on cancellation to avoid leaving orphaned subprocesses.
-                process.Kill(entireProcessTree: true);
-                throw;
+                output += $"\nScript exited with code {process.ExitCode}";
             }
+
+            return string.IsNullOrEmpty(output) ? "(no output)" : output.Trim();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Kill the process on cancellation to avoid leaving orphaned subprocesses.
+            process?.Kill(entireProcessTree: true);
+            throw;
         }
         catch (OperationCanceledException)
         {
@@ -124,6 +122,10 @@ internal static class SubprocessScriptRunner
         catch (Exception ex)
         {
             return $"Error: Failed to execute script '{script.Name}': {ex.Message}";
+        }
+        finally
+        {
+            process?.Dispose();
         }
     }
 
