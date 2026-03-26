@@ -267,8 +267,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     if uploaded:
                         context.extend_instructions(
                             self.source_id,
-                            "A document has been analyzed using Azure Content Understanding "
-                            "and indexed in a vector store. Use file_search to retrieve relevant sections.",
+                            f"The user just uploaded '{entry['filename']}'. It has been analyzed "
+                            "using Azure Content Understanding and indexed in a vector store. "
+                            f"When using file_search, include '{entry['filename']}' in your query "
+                            "to retrieve content from this specific document.",
                         )
                     elif entry.get("error"):
                         # Upload failed (not timeout — actual error)
@@ -294,8 +296,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     )
                     context.extend_instructions(
                         self.source_id,
-                        "A document has been analyzed using Azure Content Understanding. "
+                        f"The user just uploaded '{entry['filename']}'. It has been analyzed "
+                        "using Azure Content Understanding. "
                         "The document content (markdown) and extracted fields (JSON) are provided above. "
+                        "If the user's question is ambiguous, prioritize this most recently uploaded document. "
                         "Use specific field values and cite page numbers when answering.",
                     )
 
@@ -304,6 +308,13 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             context.extend_tools(
                 self.source_id,
                 [self.file_search.file_search_tool],
+            )
+            context.extend_instructions(
+                self.source_id,
+                "Tool usage guidelines:\n"
+                "- Use file_search ONLY when answering questions about document content.\n"
+                "- Use list_documents() for status queries (e.g. 'list docs', 'what's uploaded?').\n"
+                "- Do NOT call file_search for status queries — it wastes tokens.",
             )
 
     # ------------------------------------------------------------------

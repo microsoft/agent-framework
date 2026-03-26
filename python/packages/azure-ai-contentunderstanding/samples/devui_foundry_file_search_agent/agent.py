@@ -72,7 +72,7 @@ _sync_openai.close()
 
 _file_search_tool = client.get_file_search_tool(
     vector_store_ids=[_vector_store.id],
-    max_num_results=10,  # limit chunks to reduce input token usage (default: 50)
+    max_num_results=3,  # limit chunks to reduce input token usage
 )
 
 # --- CU context provider with file_search ---
@@ -94,9 +94,8 @@ agent = client.as_agent(
         "You are a helpful document analysis assistant with RAG capabilities. "
         "When a user uploads files, they are automatically analyzed using Azure Content Understanding "
         "and indexed in a vector store for efficient retrieval. "
-        "Use file_search to find relevant sections from uploaded documents. "
-        "Use list_documents() to check which documents are ready, pending, or failed. "
-        "Use get_analyzed_document() to retrieve the full content of a specific document. "
+        "Analysis takes time (seconds for documents, longer for audio/video) — if a document "
+        "is still pending, let the user know and suggest they ask again shortly. "
         "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
         "Multiple files can be uploaded and queried in the same conversation. "
         "When answering, cite specific content from the documents."
