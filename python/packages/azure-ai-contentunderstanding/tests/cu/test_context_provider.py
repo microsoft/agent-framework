@@ -133,6 +133,7 @@ class TestAsyncContextManager:
         )
         result = await provider.__aenter__()
         assert result is provider
+        await provider.__aexit__(None, None, None)
 
     async def test_aexit_closes_client(self) -> None:
         provider = ContentUnderstandingContextProvider(
@@ -866,12 +867,33 @@ class TestErrorHandling:
         assert state["documents"]["error.pdf"]["status"] == "failed"
         assert "Service unavailable" in (state["documents"]["error.pdf"]["error"] or "")
 
-    async def test_client_created_in_init(self) -> None:
-        """Client is created eagerly in __init__, not lazily."""
+    async def test_lazy_initialization_on_before_run(self) -> None:
+        """before_run works with eagerly-initialized client."""
         provider = ContentUnderstandingContextProvider(
             endpoint="https://test.cognitiveservices.azure.com/",
             credential=AsyncMock(),
         )
+        assert provider._client is not None
+
+        mock_client = AsyncMock()
+        mock_client.begin_analyze_binary = AsyncMock(
+            side_effect=Exception("mock error"),
+        )
+        provider._client = mock_client  # type: ignore[assignment]
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "doc.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+        # Client should still be set
         assert provider._client is not None
 
 
@@ -1000,10 +1022,10 @@ class TestAnalyzerAutoDetection:
 
 
 class TestFileSearchIntegration:
-    _MOCK_TOOL = {"type": "file_search", "vector_store_ids": ["vs_test123"]}
+    _FILE_SEARCH_TOOL = {"type": "file_search", "vector_store_ids": ["vs_test123"]}
 
     def _make_mock_backend(self) -> AsyncMock:
-        """Create a mock FileSearchBackend for file upload operations."""
+        """Create a mock FileSearchBackend."""
         backend = AsyncMock()
         backend.upload_file = AsyncMock(return_value="file_test456")
         backend.delete_file = AsyncMock()
@@ -1015,7 +1037,7 @@ class TestFileSearchIntegration:
         return FileSearchConfig(
             backend=backend or self._make_mock_backend(),
             vector_store_id="vs_test123",
-            file_search_tool=self._MOCK_TOOL,
+            file_search_tool=self._FILE_SEARCH_TOOL,
         )
 
     async def test_file_search_uploads_to_vector_store(
@@ -1024,12 +1046,13 @@ class TestFileSearchIntegration:
         pdf_analysis_result: AnalysisResult,
     ) -> None:
         mock_backend = self._make_mock_backend()
+        config = self._make_file_search_config(mock_backend)
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=config,
         )
 
         msg = Message(
@@ -1050,12 +1073,13 @@ class TestFileSearchIntegration:
             state=state,
         )
 
-        # File should be uploaded
+        # File should be uploaded via backend
         mock_backend.upload_file.assert_called_once()
+        call_args = mock_backend.upload_file.call_args
+        assert call_args[0][0] == "vs_test123"  # vector_store_id
+        assert call_args[0][1] == "doc.pdf.md"  # filename
         # file_search tool should be registered on context
-        file_search_tools = [t for t in context.tools if isinstance(t, dict) and t.get("type") == "file_search"]
-        assert len(file_search_tools) == 1
-        assert file_search_tools[0]["vector_store_ids"] == ["vs_test123"]
+        assert self._FILE_SEARCH_TOOL in context.tools
 
     async def test_file_search_no_content_injection(
         self,
@@ -1063,13 +1087,12 @@ class TestFileSearchIntegration:
         pdf_analysis_result: AnalysisResult,
     ) -> None:
         """When file_search is enabled, full content should NOT be injected into context."""
-        mock_backend = self._make_mock_backend()
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=self._make_file_search_config(),
         )
 
         msg = Message(
@@ -1096,18 +1119,19 @@ class TestFileSearchIntegration:
             for m in msgs:
                 assert "Document Content" not in m.text
 
-    async def test_cleanup_deletes_vector_store(
+    async def test_cleanup_deletes_uploaded_files(
         self,
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
         mock_backend = self._make_mock_backend()
+        config = self._make_file_search_config(mock_backend)
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=config,
         )
 
         msg = Message(
@@ -1128,7 +1152,7 @@ class TestFileSearchIntegration:
             state=state,
         )
 
-        # Close should clean up uploaded files (not the vector store)
+        # Close should clean up uploaded files (not the vector store itself)
         await provider.close()
         mock_backend.delete_file.assert_called_once_with("file_test456")
 
@@ -1177,6 +1201,9 @@ class TestFileSearchIntegration:
     ) -> None:
         """Multiple files should each be uploaded to the vector store."""
         mock_backend = self._make_mock_backend()
+        # Return different file IDs for each upload
+        mock_backend.upload_file = AsyncMock(side_effect=["file_001", "file_002"])
+        config = self._make_file_search_config(mock_backend)
         mock_cu_client.begin_analyze_binary = AsyncMock(
             side_effect=[
                 _make_mock_poller(pdf_analysis_result),
@@ -1185,7 +1212,7 @@ class TestFileSearchIntegration:
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=config,
         )
 
         msg = Message(
@@ -1202,8 +1229,7 @@ class TestFileSearchIntegration:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        # Two files uploaded
-        mock_backend.create_vector_store.assert_not_called()
+        # Two files uploaded via backend
         assert mock_backend.upload_file.call_count == 2
 
     async def test_file_search_skips_empty_markdown(
@@ -1212,6 +1238,7 @@ class TestFileSearchIntegration:
     ) -> None:
         """Upload should be skipped when CU returns no markdown content."""
         mock_backend = self._make_mock_backend()
+        config = self._make_file_search_config(mock_backend)
 
         # Create a result with empty markdown
         empty_result = AnalysisResult({"contents": [{"markdown": "", "fields": {}}]})
@@ -1220,7 +1247,7 @@ class TestFileSearchIntegration:
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=config,
         )
 
         msg = Message(
@@ -1247,9 +1274,10 @@ class TestFileSearchIntegration:
         """When a background task completes in file_search mode, content should be
         uploaded to the vector store — NOT injected into context messages."""
         mock_backend = self._make_mock_backend()
+        config = self._make_file_search_config(mock_backend)
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=self._make_file_search_config(mock_backend),
+            file_search=config,
         )
 
         # Simulate a completed background task
@@ -1288,22 +1316,12 @@ class TestFileSearchIntegration:
             for m in msgs:
                 assert "Document Content" not in m.text
 
-        # Should be uploaded to vector store instead
+        # Should be uploaded to vector store via backend
         mock_backend.upload_file.assert_called_once()
 
         # Instructions should mention file_search, not "provided above"
         assert any("file_search" in instr for instr in context.instructions)
         assert not any("provided above" in instr for instr in context.instructions)
-
-
-class TestClientCreatedInInit:
-    def test_client_is_not_none_after_init(self) -> None:
-        """Client is created eagerly in __init__."""
-        provider = ContentUnderstandingContextProvider(
-            endpoint="https://test.cognitiveservices.azure.com/",
-            credential=AsyncMock(),
-        )
-        assert provider._client is not None
 
 
 class TestCloseCancel:

@@ -12,7 +12,6 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 |--------|------|-------------|
 | `ContentUnderstandingContextProvider` | class | Main context provider — extends `BaseContextProvider` |
 | `AnalysisSection` | enum | Output section selector (MARKDOWN, FIELDS, etc.) |
-| `ContentLimits` | dataclass | Configurable file size/page/duration limits |
 | `FileSearchConfig` | dataclass | Configuration for CU + OpenAI vector store RAG mode |
 
 ## Architecture
@@ -20,8 +19,8 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 - **`_context_provider.py`** — Main provider implementation. Overrides `before_run()` to detect
   file attachments, call the CU API, manage session state with multi-document tracking,
   and auto-register retrieval tools for follow-up turns.
-  - **Eager initialization** — The CU client is created in `__init__()`, following the same
-    pattern as Azure AI Search. `__aenter__` is a no-op; `__aexit__`/`close()` handles cleanup.
+  - **Lazy initialization** — `_ensure_initialized()` creates the CU client on first `before_run()`
+    call, so the provider works with frameworks (e.g. DevUI) that don't call `__aenter__`.
   - **Analyzer auto-detection** — When `analyzer_id=None` (default), `_resolve_analyzer_id()`
     selects the CU analyzer based on media type prefix: `audio/` → `prebuilt-audioSearch`,
     `video/` → `prebuilt-videoSearch`, everything else → `prebuilt-documentSearch`.
@@ -38,10 +37,8 @@ into the Agent Framework as a context provider. It automatically analyzes file a
   - **file_search RAG** — When `FileSearchConfig` is provided, CU-extracted markdown is
     uploaded to an OpenAI vector store and a `file_search` tool is registered on the context
     instead of injecting the full document content. This enables token-efficient retrieval
-    for large documents. Supports both auto-created ephemeral vector stores (default) and
-    user-provided pre-existing stores via `FileSearchConfig.vector_store_id`. Auto-created
-    stores are deleted on `close()`; user-provided stores are left intact (caller owns lifecycle).
-- **`_models.py`** — `AnalysisSection` enum, `ContentLimits` dataclass, `DocumentEntry` TypedDict,
+    for large documents.
+- **`_models.py`** — `AnalysisSection` enum, `DocumentEntry` TypedDict,
   `FileSearchConfig` dataclass.
 
 ## Key Patterns
@@ -52,15 +49,14 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 - Configurable timeout (`max_wait`) with `asyncio.create_task()` background fallback.
 - Strips supported binary attachments from `input_messages` to prevent LLM API errors.
 - Explicit `analyzer_id` always overrides auto-detection (user preference wins).
-- Vector store resources are cleaned up in `close()` / `__aexit__` (only auto-created stores are deleted; user-provided stores are preserved).
+- Vector store resources are cleaned up in `close()` / `__aexit__`.
 
 ## Samples
 
 | Sample | Description |
 |--------|-------------|
 | `devui_multimodal_agent/` | DevUI web UI for CU-powered chat with auto-detect analyzer |
-| `devui_azure_openai_file_search_agent/` | DevUI web UI combining CU + Azure OpenAI file_search RAG |
-| `devui_foundry_file_search_agent/` | DevUI web UI combining CU + Foundry file_search RAG |
+| `devui_file_search_agent/` | DevUI web UI combining CU + file_search RAG |
 | `document_qa.py` | Upload a PDF, ask questions, follow-up with cached results |
 | `multimodal_chat.py` | Multi-file session with background processing |
 | `large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |

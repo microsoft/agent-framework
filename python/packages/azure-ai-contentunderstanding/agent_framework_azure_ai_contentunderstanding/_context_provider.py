@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Azure Content Understanding context provider using BaseContextProvider.
+
+This module provides ``ContentUnderstandingContextProvider``, built on the
+:class:`BaseContextProvider` hooks pattern.  It automatically detects file
+attachments, analyzes them via the Azure Content Understanding API, and
+injects structured results into the LLM context.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,16 +16,29 @@ import hashlib
 import json
 import logging
 import mimetypes
+import sys
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import filetype
-from agent_framework import BaseContextProvider, Content, FunctionTool, Message, SessionContext
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    BaseContextProvider,
+    Content,
+    FunctionTool,
+    Message,
+    SessionContext,
+)
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisResult
-from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
+
+if sys.version_info >= (3, 11):
+    from typing import Self  # pragma: no cover
+else:
+    from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -26,7 +47,7 @@ from ._models import AnalysisSection, DocumentEntry, FileSearchConfig
 
 logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
-AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
+AzureCredentialTypes = AzureKeyCredential | TokenCredential | AsyncTokenCredential
 
 # MIME types used to match against Content.media_type for routing files to CU analysis.
 # Only files whose media_type is set by the client and matches this set will be processed;
@@ -105,7 +126,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     Automatically detects supported file attachments in the agent's input,
     analyzes them via CU, and injects the structured results (markdown, fields)
     into the LLM context. Supports multiple documents per session with background
-    processing for long-running analyses.
+    processing for long-running analyses. Optionally integrates with a vector
+    store backend for ``file_search``-based RAG retrieval on LLM clients that
+    support it.
 
     Args:
         endpoint: Azure AI Foundry endpoint URL
@@ -125,8 +148,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         output_sections: Which CU output sections to pass to LLM.
             Defaults to ``[AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]``.
         file_search: Optional configuration for uploading CU-extracted markdown to
-            an OpenAI vector store for token-efficient RAG retrieval. When provided,
-            full content injection is replaced by ``file_search`` tool registration.
+            a vector store for token-efficient RAG retrieval. When provided, full
+            content injection is replaced by ``file_search`` tool registration.
+            The ``FileSearchConfig`` abstraction is backend-agnostic — use
+            ``FileSearchConfig.from_openai()`` or ``FileSearchConfig.from_foundry()``
+            for supported providers, or supply a custom ``FileSearchBackend``
+            implementation for other vector store services.
         source_id: Unique identifier for message attribution.
     """
 
@@ -151,18 +178,28 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self.max_wait = max_wait
         self.output_sections = output_sections or [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
         self.file_search = file_search
-        self._client = ContentUnderstandingClient(self._endpoint, self._credential)
+        self._client = ContentUnderstandingClient(
+            self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
+        )
         # Background CU analysis tasks keyed by doc_key, resolved on next before_run()
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
         # Documents completed in background that still need vector store upload
         self._pending_uploads: list[tuple[str, DocumentEntry]] = []
-        # Uploaded file IDs for file_search mode, tracked for cleanup on close()
+        # Uploaded file IDs for file_search mode, tracked for cleanup on close().
+        # Works with any FileSearchBackend (OpenAI, Foundry, or custom).
         self._uploaded_file_ids: list[str] = []
 
-    async def __aenter__(self) -> ContentUnderstandingContextProvider:
+    async def __aenter__(self) -> Self:
+        """Async context manager entry."""
         return self
 
-    async def __aexit__(self, *args: object) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Async context manager exit — cleanup clients."""
         await self.close()
 
     async def close(self) -> None:
@@ -171,7 +208,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if not task.done():
                 task.cancel()
         self._pending_tasks.clear()
-        # Clean up uploaded files (vector store itself is caller-managed)
+        # Clean up uploaded files; the vector store itself is caller-managed.
         if self.file_search and self._uploaded_file_ids:
             await self._cleanup_uploaded_files()
         await self._client.close()
@@ -202,7 +239,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # 2. Detect and strip supported file attachments from input
         new_files = self._detect_and_strip_files(context)
 
-        # 3. Analyze new files
+        # 3. Analyze new files using CU
         for doc_key, content_item, binary_data in new_files:
             await self._analyze_file(doc_key, content_item, binary_data, documents, context)
 
@@ -244,7 +281,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                         "Use specific field values and cite page numbers when answering.",
                     )
 
-        # 6. Register file_search tool
+        # 6. Register file_search tool (for LLM clients that support it)
         if self.file_search:
             context.extend_tools(
                 self.source_id,
@@ -662,9 +699,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         # For audio: promote Summary field as prose before markdown
         fields_raw = result.get("fields")
-        fields: dict[str, object] = (
-            cast(dict[str, object], fields_raw) if isinstance(fields_raw, dict) else {}
-        )
+        fields: dict[str, object] = cast(dict[str, object], fields_raw) if isinstance(fields_raw, dict) else {}
         if is_audio and fields:
             summary_field = fields.get("Summary")
             if isinstance(summary_field, dict):
@@ -701,8 +736,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         """Register document tools on the context.
 
         In file_search mode, only ``list_documents`` is registered (for status
-        checking) — the LLM uses ``file_search`` for content retrieval instead
-        of ``get_analyzed_document``.
+        checking) — the LLM uses a backend-specific ``file_search`` tool for
+        content retrieval instead of ``get_analyzed_document``.
         """
         tools: list[FunctionTool] = [self._make_list_documents_tool(documents)]
         if not self.file_search:
@@ -783,7 +818,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # ------------------------------------------------------------------
 
     async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> bool:
-        """Upload CU-extracted markdown to the user's vector store.
+        """Upload CU-extracted markdown to the caller's vector store.
+
+        Delegates to the configured ``FileSearchBackend`` (OpenAI, Foundry,
+        or a custom implementation).
 
         Returns:
             True if the upload succeeded, False otherwise.
@@ -814,7 +852,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             return False
 
     async def _cleanup_uploaded_files(self) -> None:
-        """Delete files uploaded by this provider. The vector store is caller-managed."""
+        """Delete files uploaded by this provider via the configured backend.
+
+        The vector store itself is caller-managed and is not deleted here.
+        """
         if not self.file_search:
             return
 
