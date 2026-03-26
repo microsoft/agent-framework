@@ -446,12 +446,6 @@ class OpenAIEmbeddingClient(
         if otel_provider_name is not None:
             self.OTEL_PROVIDER_NAME = otel_provider_name  # type: ignore[misc]
 
-        # Validate that the client was created successfully (from explicit args or env vars)
-        if self.client is None:
-            raise ValueError(
-                "OpenAI or Azure OpenAI credentials are required. Set via the 'api_key' or 'credential' parameter, "
-                "or the 'OPENAI_API_KEY' or 'AZURE_OPENAI_API_KEY' environment variable."
-            )
         if not self.model:
             raise ValueError(
                 "An embedding model or Azure OpenAI deployment name is required. "
