@@ -42,7 +42,7 @@ Environment variables:
 
 # Path to a sample PDF — uses the shared sample asset if available,
 # otherwise falls back to a public URL
-SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "sample.pdf"
+SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
 
 
 async def main() -> None:

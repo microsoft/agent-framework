@@ -24,6 +24,11 @@ skip_if_cu_integration_tests_disabled = pytest.mark.skipif(
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
+# Shared sample asset — same PDF used by samples and integration tests
+INVOICE_PDF_PATH = (
+    Path(__file__).resolve().parents[4] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
+)
+
 
 @pytest.mark.flaky
 @pytest.mark.integration
@@ -36,7 +41,7 @@ async def test_analyze_pdf_binary() -> None:
     endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
     analyzer_id = os.environ.get("AZURE_CONTENTUNDERSTANDING_ANALYZER_ID", "prebuilt-documentSearch")
 
-    pdf_path = Path(__file__).parent / "test_data" / "invoice.pdf"
+    pdf_path = INVOICE_PDF_PATH
     assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
     pdf_bytes = pdf_path.read_bytes()
 
@@ -73,7 +78,7 @@ async def test_before_run_e2e() -> None:
 
     endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
 
-    pdf_path = Path(__file__).parent / "test_data" / "invoice.pdf"
+    pdf_path = INVOICE_PDF_PATH
     assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
     pdf_bytes = pdf_path.read_bytes()
 
@@ -195,7 +200,7 @@ async def test_before_run_data_uri_content() -> None:
 
     endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
 
-    pdf_path = Path(__file__).parent / "test_data" / "invoice.pdf"
+    pdf_path = INVOICE_PDF_PATH
     assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
     pdf_bytes = pdf_path.read_bytes()
     b64 = base64.b64encode(pdf_bytes).decode("ascii")

@@ -41,7 +41,7 @@ Environment variables:
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
-SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "sample.pdf"
+SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
 
 
 async def main() -> None:
