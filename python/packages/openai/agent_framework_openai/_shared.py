@@ -203,7 +203,7 @@ def load_openai_service_settings(
         )
         if client:
             return openai_settings, client, False  # type: ignore[return-value]
-        if openai_settings.get("api_key") is not None:
+        if openai_settings.get("api_key") is not None or api_key_callable is not None:
             resolved_model = openai_settings.get(openai_model_field)
             if not resolved_model:
                 raise SettingNotFoundError(
@@ -212,9 +212,9 @@ def load_openai_service_settings(
                 )
 
             client_args: dict[str, Any] = {
-                "api_key": openai_settings["api_key"].get_secret_value()  # type: ignore[reportOptionalMemberAccess, union-attr]
-                if "api_key" in openai_settings
-                else api_key_callable,
+                "api_key": api_key_callable
+                if api_key_callable is not None
+                else openai_settings["api_key"].get_secret_value(),  # type: ignore[reportOptionalMemberAccess, union-attr]
                 "organization": openai_settings.get("org_id"),
                 "default_headers": merged_headers,
             }
@@ -289,6 +289,9 @@ def _resolve_azure_credential_to_token_provider(
     credential: AzureCredentialTypes | AzureTokenProvider,
 ) -> AzureTokenProvider:
     """Resolve an Azure credential or token provider for Azure OpenAI auth."""
+    if callable(credential):
+        return credential
+
     try:
         from azure.core.credentials import TokenCredential
         from azure.core.credentials_async import AsyncTokenCredential
@@ -303,8 +306,6 @@ def _resolve_azure_credential_to_token_provider(
         return get_async_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)
     if isinstance(credential, TokenCredential):
         return get_bearer_token_provider(credential, AZURE_OPENAI_TOKEN_SCOPE)  # type: ignore[arg-type]
-    if callable(credential):
-        return credential
     raise ValueError(
         "The 'credential' parameter must be an Azure TokenCredential, AsyncTokenCredential, or a "
         "callable token provider."

@@ -49,6 +49,18 @@ def test_openai_construction_from_env(openai_unit_test_env: dict[str, str]) -> N
     assert client.model == openai_unit_test_env["OPENAI_EMBEDDING_MODEL"]
 
 
+def test_with_callable_api_key() -> None:
+    """Test OpenAIEmbeddingClient initialization with callable API key."""
+
+    async def get_api_key() -> str:
+        return "test-api-key-123"
+
+    client = OpenAIEmbeddingClient(model="text-embedding-3-small", api_key=get_api_key)
+
+    assert client.model == "text-embedding-3-small"
+    assert client.client is not None
+
+
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_openai_construction_missing_api_key_raises(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError, match="Exactly one of 'base_url', 'endpoint'"):
