@@ -302,7 +302,7 @@ async def _poll_eval_run(
         await asyncio.sleep(min(max(poll_interval, 1.0), remaining, 60.0))
 
 
-def _extract_result_counts(run: RunRetrieveResponse | Any) -> dict[str, int] | None:
+def _extract_result_counts(run: RunRetrieveResponse) -> dict[str, int] | None:
     """Extract result_counts from an eval run as a plain dict."""
     counts = getattr(run, "result_counts", None)
     if counts is None:
@@ -318,7 +318,7 @@ def _extract_result_counts(run: RunRetrieveResponse | Any) -> dict[str, int] | N
     return result or None
 
 
-def _extract_per_evaluator(run: RunRetrieveResponse | Any) -> dict[str, dict[str, int]]:
+def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]]:
     """Extract per-evaluator result breakdowns from an eval run."""
     per_eval: dict[str, dict[str, int]] = {}
     per_testing_criteria = getattr(run, "per_testing_criteria_results", None)
