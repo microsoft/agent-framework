@@ -6,7 +6,9 @@ Provides ``FoundryEvals``, an ``Evaluator`` implementation backed by Azure AI
 Foundry's built-in evaluators. See docs/decisions/0018-foundry-evals-integration.md
 for the design rationale.
 
-Typical usage::
+Example:
+
+.. code-block:: python
 
     from agent_framework import evaluate_agent
     from agent_framework_azure_ai import FoundryEvals
@@ -37,10 +39,10 @@ from agent_framework._evaluation import (
     EvalResults,
     EvalScoreResult,
 )
+from openai import AsyncOpenAI
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
-    from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +335,8 @@ async def _fetch_output_items(
 
     Converts the provider-specific ``OutputItemListResponse`` objects into
     provider-agnostic ``EvalItemResult`` instances with per-evaluator scores,
-    error categorization, and token usage.
+    error categorization, and token usage.  Uses async pagination to handle
+    eval runs with more items than a single page.
     """
     items: list[EvalItemResult] = []
     try:
@@ -342,7 +345,7 @@ async def _fetch_output_items(
             eval_id=eval_id,
         )
 
-        for oi in output_items_page:
+        async for oi in output_items_page:
             item_id = getattr(oi, "id", "") or ""
             status = getattr(oi, "status", "unknown") or "unknown"
 
@@ -441,7 +444,7 @@ def _resolve_openai_client(
         client = project_client.get_openai_client()
         if client is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
-        if not hasattr(client, "__aenter__"):
+        if not isinstance(client, AsyncOpenAI):
             raise TypeError(
                 "project_client.get_openai_client() returned a sync client. "
                 "FoundryEvals requires an async AIProjectClient (from azure.ai.projects.aio)."
@@ -505,19 +508,24 @@ class FoundryEvals:
     ``evaluate_workflow()`` functions from ``agent_framework``.
 
     Also provides constants for built-in evaluator names for IDE
-    autocomplete and typo prevention::
+    autocomplete and typo prevention:
+
+    .. code-block:: python
 
         from agent_framework_azure_ai import FoundryEvals
 
         evaluators = [FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY]
 
-    The simplest usage::
+    Examples:
+        Basic usage:
 
-        from agent_framework import evaluate_agent
-        from agent_framework_azure_ai import FoundryEvals
+        .. code-block:: python
 
-        evals = FoundryEvals(project_client=client, model_deployment="gpt-4o")
-        results = await evaluate_agent(agent=agent, queries=queries, evaluators=evals)
+            from agent_framework import evaluate_agent
+            from agent_framework_azure_ai import FoundryEvals
+
+            evals = FoundryEvals(project_client=client, model_deployment="gpt-4o")
+            results = await evaluate_agent(agent=agent, queries=queries, evaluators=evals)
 
     **Evaluator selection:**
 
@@ -733,7 +741,9 @@ async def evaluate_traces(
     Returns:
         ``EvalResults`` with status, result counts, and portal link.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         results = await evaluate_traces(
             response_ids=[response.response_id],
@@ -814,7 +824,9 @@ async def evaluate_foundry_target(
     Returns:
         ``EvalResults`` with status, result counts, and portal link.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         results = await evaluate_foundry_target(
             target={"type": "azure_ai_agent", "name": "my-agent"},

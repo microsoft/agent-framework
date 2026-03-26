@@ -8,7 +8,9 @@ libraries, etc.).  Also includes ``LocalEvaluator`` and built-in check
 functions for fast, API-free evaluation during inner-loop development and
 CI smoke tests.
 
-Typical usage — cloud evaluator::
+Cloud evaluator example:
+
+.. code-block:: python
 
     from agent_framework import evaluate_agent, EvalResults
     from agent_framework_azure_ai import FoundryEvals
@@ -17,7 +19,9 @@ Typical usage — cloud evaluator::
     results = await evaluate_agent(agent=agent, queries=["Hello"], evaluators=evals)
     results.assert_passed()
 
-Typical usage — local evaluator::
+Local evaluator example:
+
+.. code-block:: python
 
     from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
 
@@ -92,13 +96,17 @@ ConversationSplitter = Union[
 """Type accepted by ``EvalItem.split_messages(split=...)``.
 
 Either a built-in ``ConversationSplit`` enum value **or** a callable with
-signature::
+signature:
+
+.. code-block:: python
 
     def my_splitter(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
         '''Return (query_messages, response_messages).'''
 
 Custom splitters let you evaluate domain-specific boundaries — for example,
-splitting just before a memory-retrieval tool call to evaluate recall quality::
+splitting just before a memory-retrieval tool call to evaluate recall quality:
+
+.. code-block:: python
 
     def split_before_memory(conversation):
         for i, msg in enumerate(conversation):
@@ -369,7 +377,9 @@ class EvalResults:
         sub_results: Per-agent breakdown for workflow evaluations, keyed by
             agent/executor name.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         results = await evaluate_agent(agent=my_agent, queries=["Hello"], evaluators=evals)
         for r in results:
@@ -474,7 +484,9 @@ class Evaluator(Protocol):
     scorers, etc.) implements this protocol. The provider encapsulates all
     connection details, evaluator selection, and execution logic.
 
-    Example implementation::
+    Example implementation:
+
+    .. code-block:: python
 
         class MyEvaluator:
             def __init__(self, name: str = "my-evaluator"):
@@ -526,7 +538,9 @@ class AgentEvalConverter:
     def convert_message(message: Message) -> list[dict[str, Any]]:
         """Convert a single ``Message`` to Foundry agent evaluator format.
 
-        Uses typed content lists as required by Foundry evaluators::
+        Uses typed content lists as required by Foundry evaluators:
+
+        .. code-block:: python
 
             {"role": "assistant", "content": [{"type": "tool_call", ...}]}
 
@@ -831,7 +845,9 @@ def keyword_check(*keywords: str, case_sensitive: bool = False) -> EvalCheck:
     Returns:
         A check function for use with ``LocalEvaluator``.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         check = keyword_check("weather", "temperature")
     """
@@ -860,7 +876,9 @@ def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> 
     Returns:
         A check function for use with ``LocalEvaluator``.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         check = tool_called_check("get_weather", "get_flight_price")
     """
@@ -933,7 +951,9 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
     appears at least once in the conversation.  Does not check arguments or
     ordering.  Extra (unexpected) tool calls are not penalized.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         local = LocalEvaluator(tool_calls_present)
         results = await evaluate_agent(
@@ -973,7 +993,9 @@ def tool_call_args_match(item: EvalItem) -> CheckResult:
     the actual arguments contain all expected key-value pairs (subset
     match — extra actual arguments are OK).
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         local = LocalEvaluator(tool_call_args_match)
         results = await evaluate_agent(
@@ -1183,7 +1205,9 @@ def evaluator(
     Return ``bool``, ``float`` (≥0.5 = pass), ``dict`` with ``score`` or
     ``passed`` key, or ``CheckResult``.
 
-    Can be used as a decorator (with or without arguments) or called directly::
+    Can be used as a decorator (with or without arguments) or called directly:
+
+    .. code-block:: python
 
         # Decorator — no args
         @evaluator
@@ -1268,25 +1292,30 @@ class LocalEvaluator:
     Implements the ``Evaluator`` protocol. Each check function is applied
     to every item. An item passes only if all checks pass.
 
-    Example::
+    Examples:
+        Basic usage:
 
-        from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
+        .. code-block:: python
 
-        local = LocalEvaluator(
-            keyword_check("weather"),
-            tool_called_check("get_weather"),
-        )
-        results = await evaluate_agent(agent=agent, queries=queries, evaluators=local)
+            from agent_framework import LocalEvaluator, keyword_check, evaluate_agent
 
-    To mix with cloud evaluators::
+            local = LocalEvaluator(
+                keyword_check("weather"),
+                tool_called_check("get_weather"),
+            )
+            results = await evaluate_agent(agent=agent, queries=queries, evaluators=local)
 
-        from agent_framework_azure_ai import FoundryEvals
+        Mixing with cloud evaluators:
 
-        results = await evaluate_agent(
-            agent=agent,
-            queries=queries,
-            evaluators=[local, FoundryEvals(project_client=client, model_deployment="gpt-4o")],
-        )
+        .. code-block:: python
+
+            from agent_framework_azure_ai import FoundryEvals
+
+            results = await evaluate_agent(
+                agent=agent,
+                queries=queries,
+                evaluators=[local, FoundryEvals(project_client=client, model_deployment="gpt-4o")],
+            )
     """
 
     def __init__(self, *checks: EvalCheck):
@@ -1428,41 +1457,50 @@ async def evaluate_agent(
     Raises:
         ValueError: If neither ``queries`` nor ``responses`` is provided.
 
-    Example — run and evaluate::
+    Examples:
+        Run and evaluate:
 
-        results = await evaluate_agent(
-            agent=my_agent,
-            queries="What's the weather?",
-            evaluators=evals,
-        )
+        .. code-block:: python
 
-    Example — evaluate existing responses::
+            results = await evaluate_agent(
+                agent=my_agent,
+                queries="What's the weather?",
+                evaluators=evals,
+            )
 
-        response = await agent.run([Message("user", ["What's the weather?"])])
-        results = await evaluate_agent(
-            agent=agent,
-            responses=response,
-            queries="What's the weather?",
-            evaluators=evals,
-        )
+        Evaluate existing responses:
 
-    Example — with ground-truth expected answers::
+        .. code-block:: python
 
-        results = await evaluate_agent(
-            agent=my_agent,
-            queries=["What's 2+2?", "Capital of France?"],
-            expected_output=["4", "Paris"],
-            evaluators=evals,
-        )
+            response = await agent.run([Message("user", ["What's the weather?"])])
+            results = await evaluate_agent(
+                agent=agent,
+                responses=response,
+                queries="What's the weather?",
+                evaluators=evals,
+            )
 
-    Example — with expected tool calls::
+        With ground-truth expected answers:
 
-        results = await evaluate_agent(
-            agent=my_agent,
-            queries="What's the weather in NYC?",
-            expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
-            evaluators=evals,
-        )
+        .. code-block:: python
+
+            results = await evaluate_agent(
+                agent=my_agent,
+                queries=["What's 2+2?", "Capital of France?"],
+                expected_output=["4", "Paris"],
+                evaluators=evals,
+            )
+
+        With expected tool calls:
+
+        .. code-block:: python
+
+            results = await evaluate_agent(
+                agent=my_agent,
+                queries="What's the weather in NYC?",
+                expected_tool_calls=[ExpectedToolCall("get_weather", {"location": "NYC"})],
+                evaluators=evals,
+            )
     """
     # Normalize singular values to lists
     if isinstance(queries, str):
@@ -1637,7 +1675,9 @@ async def evaluate_workflow(
     Returns:
         A list of ``EvalResults``, one per evaluator provider.
 
-    Example::
+    Example:
+
+    .. code-block:: python
 
         from agent_framework_azure_ai import FoundryEvals
 
