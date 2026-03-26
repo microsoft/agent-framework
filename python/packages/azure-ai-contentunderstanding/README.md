@@ -108,7 +108,8 @@ uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
 | [document_qa.py](samples/document_qa.py) | Upload a PDF, ask questions, follow-up with cached results |
 | [multimodal_chat.py](samples/multimodal_chat.py) | Multi-file session with status tracking |
 | [devui_multimodal_agent/](samples/devui_multimodal_agent/) | Web UI for file upload + CU-powered chat |
-| [devui_file_search_agent/](samples/devui_file_search_agent/) | Web UI combining CU + file_search RAG for large documents |
+| [devui_azure_openai_file_search_agent/](samples/devui_azure_openai_file_search_agent/) | Web UI combining CU + Azure OpenAI file_search RAG |
+| [devui_foundry_file_search_agent/](samples/devui_foundry_file_search_agent/) | Web UI combining CU + Foundry file_search RAG |
 | [large_doc_file_search.py](samples/large_doc_file_search.py) | CU extraction + OpenAI vector store RAG |
 | [invoice_processing.py](samples/invoice_processing.py) | Structured field extraction with `prebuilt-invoice` analyzer |
 

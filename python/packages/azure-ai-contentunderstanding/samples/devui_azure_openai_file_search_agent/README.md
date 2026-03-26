@@ -26,7 +26,7 @@ Interactive web UI for uploading and chatting with documents, images, audio, and
 
 3. Run with DevUI:
    ```bash
-   devui packages/azure-ai-contentunderstanding/samples/devui_file_search_agent
+   devui packages/azure-ai-contentunderstanding/samples/devui_azure_openai_file_search_agent
    ```
 
 4. Open the DevUI URL in your browser and start uploading files.

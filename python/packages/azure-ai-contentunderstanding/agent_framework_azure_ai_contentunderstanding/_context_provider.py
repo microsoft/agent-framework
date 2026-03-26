@@ -156,12 +156,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
         # Documents completed in background that still need vector store upload
         self._pending_uploads: list[tuple[str, DocumentEntry]] = []
-        # OpenAI vector store ID for file_search mode (user-provided or auto-created)
-        self._vector_store_id: str | None = None
-        # Whether the provider created the vector store (True) or the user provided it (False).
-        # Only auto-created stores are deleted on close().
-        self._owns_vector_store: bool = False
-        # Uploaded OpenAI file IDs, tracked for cleanup
+        # Uploaded file IDs for file_search mode, tracked for cleanup on close()
         self._uploaded_file_ids: list[str] = []
 
     async def __aenter__(self) -> ContentUnderstandingContextProvider:
@@ -176,9 +171,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if not task.done():
                 task.cancel()
         self._pending_tasks.clear()
-        # Clean up vector store resources
-        if self.file_search and (self._vector_store_id or self._uploaded_file_ids):
-            await self._cleanup_vector_store()
+        # Clean up uploaded files (vector store itself is caller-managed)
+        if self.file_search and self._uploaded_file_ids:
+            await self._cleanup_uploaded_files()
         await self._client.close()
 
     async def before_run(
@@ -244,11 +239,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                         "Use specific field values and cite page numbers when answering.",
                     )
 
-        # 6. Register file_search tool if vector store exists
-        if self.file_search and self._vector_store_id:
+        # 6. Register file_search tool
+        if self.file_search:
             context.extend_tools(
                 self.source_id,
-                [self.file_search.backend.make_tool([self._vector_store_id])],
+                [self.file_search.file_search_tool],
             )
 
     # ------------------------------------------------------------------
@@ -781,7 +776,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # ------------------------------------------------------------------
 
     async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> None:
-        """Upload CU-extracted markdown to a vector store for RAG retrieval."""
+        """Upload CU-extracted markdown to the user's vector store."""
         if not self.file_search:
             return
 
@@ -793,25 +788,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not markdown or not isinstance(markdown, str):
             return
 
-        backend = self.file_search.backend
-
         try:
-            # Resolve vector store on first upload: use user-provided ID or auto-create.
-            if not self._vector_store_id:
-                if self.file_search.vector_store_id:
-                    # User-provided vector store — don't delete on close
-                    self._vector_store_id = self.file_search.vector_store_id
-                    self._owns_vector_store = False
-                    logger.info("Using user-provided vector store (%s).", self._vector_store_id)
-                else:
-                    # Auto-create an ephemeral vector store.
-                    self._vector_store_id = await backend.create_vector_store()
-                    self._owns_vector_store = True
-                    logger.info("Created vector store (%s).", self._vector_store_id)
-
-            # Upload markdown as a .md file
-            file_id = await backend.upload_file(
-                self._vector_store_id, f"{doc_key}.md", markdown.encode("utf-8")
+            file_id = await self.file_search.backend.upload_file(
+                self.file_search.vector_store_id, f"{doc_key}.md", markdown.encode("utf-8")
             )
             self._uploaded_file_ids.append(file_id)
             logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(markdown))
@@ -819,29 +798,17 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         except Exception as e:
             logger.warning("Failed to upload '%s' to vector store: %s", doc_key, e)
 
-    async def _cleanup_vector_store(self) -> None:
-        """Clean up vector store resources.
-
-        Only deletes the vector store itself if it was auto-created by the provider
-        (``_owns_vector_store is True``). Uploaded files are always deleted regardless
-        of ownership, since the provider created them.
-        """
+    async def _cleanup_uploaded_files(self) -> None:
+        """Delete files uploaded by this provider. The vector store is caller-managed."""
         if not self.file_search:
             return
 
         backend = self.file_search.backend
 
         try:
-            # Only delete the vector store if we created it
-            if self._vector_store_id and self._owns_vector_store:
-                await backend.delete_vector_store(self._vector_store_id)
-                logger.info("Deleted vector store %s.", self._vector_store_id)
-            self._vector_store_id = None
-            self._owns_vector_store = False
-
             for file_id in self._uploaded_file_ids:
                 await backend.delete_file(file_id)
             self._uploaded_file_ids.clear()
 
         except Exception as e:
-            logger.warning("Failed to clean up vector store resources: %s", e)
+            logger.warning("Failed to clean up uploaded files: %s", e)

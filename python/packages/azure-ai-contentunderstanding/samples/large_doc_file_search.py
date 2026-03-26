@@ -76,9 +76,27 @@ async def main() -> None:
         openai_kwargs["azure_ad_token"] = token
     openai_client = AsyncAzureOpenAI(**openai_kwargs)
 
+    # Create LLM client first (needed for get_file_search_tool)
+    client_kwargs: dict[str, Any] = {
+        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+    }
+    if api_key:
+        client_kwargs["api_key"] = api_key
+    else:
+        client_kwargs["credential"] = credential
+    client = AzureOpenAIResponsesClient(**client_kwargs)
+
+    # Create vector store and file_search tool
+    vector_store = await openai_client.vector_stores.create(
+        name="cu_large_doc_demo",
+        expires_after={"anchor": "last_active_at", "days": 1},
+    )
+    file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
+
     # Configure CU provider with file_search integration
     # When file_search is set, CU-extracted markdown is automatically uploaded
-    # to a vector store and a file_search tool is registered on the context.
+    # to the vector store and the file_search tool is registered on the context.
     cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
     cu_credential: AzureKeyCredential | AzureCliCredential = (
         AzureKeyCredential(cu_key) if cu_key else credential  # type: ignore[arg-type]
@@ -89,18 +107,12 @@ async def main() -> None:
         credential=cu_credential,
         analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,
-        file_search=FileSearchConfig.from_openai(openai_client),
+        file_search=FileSearchConfig.from_openai(
+            openai_client,
+            vector_store_id=vector_store.id,
+            file_search_tool=file_search_tool,
+        ),
     )
-
-    client_kwargs: dict[str, Any] = {
-        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-    }
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = credential
-    client = AzureOpenAIResponsesClient(**client_kwargs)
 
     if SAMPLE_PDF_PATH.exists():
         pdf_bytes = SAMPLE_PDF_PATH.read_bytes()

@@ -1000,32 +1000,36 @@ class TestAnalyzerAutoDetection:
 
 
 class TestFileSearchIntegration:
+    _MOCK_TOOL = {"type": "file_search", "vector_store_ids": ["vs_test123"]}
+
     def _make_mock_backend(self) -> AsyncMock:
-        """Create a mock FileSearchBackend for vector store operations."""
+        """Create a mock FileSearchBackend for file upload operations."""
         backend = AsyncMock()
-        backend.create_vector_store = AsyncMock(return_value="vs_test123")
-        backend.delete_vector_store = AsyncMock()
         backend.upload_file = AsyncMock(return_value="file_test456")
         backend.delete_file = AsyncMock()
-        backend.make_tool = MagicMock(
-            return_value={"type": "file_search", "vector_store_ids": ["vs_test123"]}
-        )
         return backend
+
+    def _make_file_search_config(self, backend: AsyncMock | None = None) -> Any:
+        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
+
+        return FileSearchConfig(
+            backend=backend or self._make_mock_backend(),
+            vector_store_id="vs_test123",
+            file_search_tool=self._MOCK_TOOL,
+        )
 
     async def test_file_search_uploads_to_vector_store(
         self,
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         msg = Message(
@@ -1046,12 +1050,9 @@ class TestFileSearchIntegration:
             state=state,
         )
 
-        # Vector store should be created
-        mock_backend.create_vector_store.assert_called_once()
         # File should be uploaded
         mock_backend.upload_file.assert_called_once()
         # file_search tool should be registered on context
-        mock_backend.make_tool.assert_called_with(["vs_test123"])
         file_search_tools = [t for t in context.tools if isinstance(t, dict) and t.get("type") == "file_search"]
         assert len(file_search_tools) == 1
         assert file_search_tools[0]["vector_store_ids"] == ["vs_test123"]
@@ -1062,15 +1063,13 @@ class TestFileSearchIntegration:
         pdf_analysis_result: AnalysisResult,
     ) -> None:
         """When file_search is enabled, full content should NOT be injected into context."""
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         msg = Message(
@@ -1102,15 +1101,13 @@ class TestFileSearchIntegration:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
         mock_cu_client.begin_analyze_binary = AsyncMock(
             return_value=_make_mock_poller(pdf_analysis_result),
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         msg = Message(
@@ -1131,9 +1128,8 @@ class TestFileSearchIntegration:
             state=state,
         )
 
-        # Close should clean up
+        # Close should clean up uploaded files (not the vector store)
         await provider.close()
-        mock_backend.delete_vector_store.assert_called_once_with("vs_test123")
         mock_backend.delete_file.assert_called_once_with("file_test456")
 
     async def test_no_file_search_injects_content(
@@ -1180,8 +1176,6 @@ class TestFileSearchIntegration:
         audio_analysis_result: AnalysisResult,
     ) -> None:
         """Multiple files should each be uploaded to the vector store."""
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
         mock_cu_client.begin_analyze_binary = AsyncMock(
             side_effect=[
@@ -1191,7 +1185,7 @@ class TestFileSearchIntegration:
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         msg = Message(
@@ -1208,8 +1202,8 @@ class TestFileSearchIntegration:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        # Vector store created once, but two files uploaded
-        mock_backend.create_vector_store.assert_called_once()
+        # Two files uploaded
+        mock_backend.create_vector_store.assert_not_called()
         assert mock_backend.upload_file.call_count == 2
 
     async def test_file_search_skips_empty_markdown(
@@ -1217,8 +1211,6 @@ class TestFileSearchIntegration:
         mock_cu_client: AsyncMock,
     ) -> None:
         """Upload should be skipped when CU returns no markdown content."""
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
 
         # Create a result with empty markdown
@@ -1228,7 +1220,7 @@ class TestFileSearchIntegration:
         )
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         msg = Message(
@@ -1254,12 +1246,10 @@ class TestFileSearchIntegration:
     ) -> None:
         """When a background task completes in file_search mode, content should be
         uploaded to the vector store — NOT injected into context messages."""
-        from agent_framework_azure_ai_contentunderstanding import FileSearchConfig
-
         mock_backend = self._make_mock_backend()
         provider = _make_provider(
             mock_client=mock_cu_client,
-            file_search=FileSearchConfig(backend=mock_backend),
+            file_search=self._make_file_search_config(mock_backend),
         )
 
         # Simulate a completed background task

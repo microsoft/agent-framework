@@ -59,7 +59,8 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 | Sample | Description |
 |--------|-------------|
 | `devui_multimodal_agent/` | DevUI web UI for CU-powered chat with auto-detect analyzer |
-| `devui_file_search_agent/` | DevUI web UI combining CU + file_search RAG |
+| `devui_azure_openai_file_search_agent/` | DevUI web UI combining CU + Azure OpenAI file_search RAG |
+| `devui_foundry_file_search_agent/` | DevUI web UI combining CU + Foundry file_search RAG |
 | `document_qa.py` | Upload a PDF, ask questions, follow-up with cached results |
 | `multimodal_chat.py` | Multi-file session with background processing |
 | `large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |

@@ -1,18 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
-"""DevUI Multi-Modal Agent — CU extraction + file_search RAG.
+"""DevUI Multi-Modal Agent — CU extraction + file_search RAG via Azure AI Foundry.
 
-This agent combines Azure Content Understanding with OpenAI file_search
+This agent combines Azure Content Understanding with Foundry's file_search
 for token-efficient RAG over large or multi-modal documents.
 
 Upload flow:
   1. CU extracts high-quality markdown (handles scanned PDFs, audio, video)
-  2. Extracted markdown is auto-uploaded to an OpenAI vector store
+  2. Extracted markdown is uploaded to a Foundry vector store
   3. file_search tool is registered so the LLM retrieves top-k chunks
-  4. Vector store is cleaned up on server shutdown
+  4. Uploaded files are cleaned up on server shutdown
 
-This is ideal for large documents (100+ pages), long audio recordings,
-or multiple files in the same conversation where full-context injection
-would exceed the LLM's context window.
+This sample uses ``FoundryChatClient`` and ``FoundryFileSearchBackend``.
+For the OpenAI Responses API variant, see ``devui_azure_openai_file_search_agent``.
 
 Analyzer auto-detection:
   When no analyzer_id is specified, the provider auto-selects the
@@ -22,22 +21,22 @@ Analyzer auto-detection:
     - Video            → prebuilt-videoSearch
 
 Required environment variables:
-  AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
+  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
 Run with DevUI:
-  devui packages/azure-ai-contentunderstanding/samples/devui_file_search_agent
+  devui packages/azure-ai-contentunderstanding/samples/devui_foundry_file_search_agent
 """
 
 import os
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
+from openai import AzureOpenAI
 
 from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
@@ -47,24 +46,33 @@ from agent_framework_azure_ai_contentunderstanding import (
 load_dotenv()
 
 # --- Auth ---
-_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-_credential = AzureCliCredential() if not _api_key else None
+_credential = AzureCliCredential()
 _cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
 _cu_credential: AzureKeyCredential | AzureCliCredential = (
-    AzureKeyCredential(_cu_key) if _cu_key else _credential  # type: ignore[assignment]
+    AzureKeyCredential(_cu_key) if _cu_key else _credential
 )
 
-# --- Async OpenAI client for vector store operations ---
-_openai_kwargs: dict[str, Any] = {
-    "azure_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    "api_version": "2025-03-01-preview",
-}
-if _api_key:
-    _openai_kwargs["api_key"] = _api_key
-else:
-    _token = _credential.get_token("https://cognitiveservices.azure.com/.default").token  # type: ignore[union-attr]
-    _openai_kwargs["azure_ad_token"] = _token
-_openai_client = AsyncAzureOpenAI(**_openai_kwargs)
+# --- Foundry LLM client ---
+client = FoundryChatClient(
+    project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT", ""),
+    model=os.environ.get("FOUNDRY_MODEL", ""),
+    credential=_credential,
+)
+
+# --- Create vector store (sync client to avoid event loop conflicts in DevUI) ---
+_token = _credential.get_token("https://ai.azure.com/.default").token
+_sync_openai = AzureOpenAI(
+    azure_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT", ""),
+    azure_ad_token=_token,
+    api_version="2025-04-01-preview",
+)
+_vector_store = _sync_openai.vector_stores.create(
+    name="devui_cu_foundry_file_search",
+    expires_after={"anchor": "last_active_at", "days": 1},
+)
+_sync_openai.close()
+
+_file_search_tool = client.get_file_search_tool(vector_store_ids=[_vector_store.id])
 
 # --- CU context provider with file_search ---
 # No analyzer_id → auto-selects per media type (documents, audio, video)
@@ -72,22 +80,15 @@ cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
     max_wait=10.0,
-    file_search=FileSearchConfig.from_openai(_openai_client),
+    file_search=FileSearchConfig.from_foundry(
+        client.client,
+        vector_store_id=_vector_store.id,
+        file_search_tool=_file_search_tool,
+    ),
 )
 
-# --- LLM client ---
-_client_kwargs: dict[str, Any] = {
-    "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-}
-if _api_key:
-    _client_kwargs["api_key"] = _api_key
-else:
-    _client_kwargs["credential"] = _credential
-client = AzureOpenAIResponsesClient(**_client_kwargs)
-
 agent = client.as_agent(
-    name="FileSearchDocAgent",
+    name="FoundryFileSearchDocAgent",
     instructions=(
         "You are a helpful document analysis assistant with RAG capabilities. "
         "When a user uploads files, they are automatically analyzed using Azure Content Understanding "

@@ -46,51 +46,67 @@ class DocumentEntry(TypedDict):
 
 @dataclass
 class FileSearchConfig:
-    """Configuration for uploading CU-extracted content to a vector store.
+    """Configuration for uploading CU-extracted content to an existing vector store.
 
     When provided to ``ContentUnderstandingContextProvider``, analyzed document
-    markdown is automatically uploaded to a vector store and a ``file_search``
-    tool is registered on the context. This enables token-efficient RAG retrieval
-    on follow-up turns for large documents.
+    markdown is automatically uploaded to the specified vector store and the
+    given ``file_search`` tool is registered on the context. This enables
+    token-efficient RAG retrieval on follow-up turns for large documents.
 
-    Use the factory methods ``from_openai`` or ``from_foundry`` for convenience,
-    or pass a ``FileSearchBackend`` instance directly.
+    The caller is responsible for creating and managing the vector store and
+    the ``file_search`` tool. Use :meth:`from_openai` or :meth:`from_foundry`
+    factory methods for convenience.
 
     Args:
-        backend: A ``FileSearchBackend`` that handles vector store operations
-            and produces the correct ``file_search`` tool format for the LLM client.
-        vector_store_id: An existing vector store ID to use instead of
-            auto-creating one. When provided, the provider uploads files to this
-            store but does **not** delete it on close (the caller owns its lifecycle).
-            When ``None`` (default), a new ephemeral vector store is created
-            automatically and cleaned up on close.
+        backend: A ``FileSearchBackend`` that handles file upload/delete
+            operations for the target vector store.
+        vector_store_id: The ID of a pre-existing vector store to upload to.
+        file_search_tool: A ``file_search`` tool object created via the LLM
+            client's ``get_file_search_tool()`` factory method. This is
+            registered on the context via ``extend_tools`` so the LLM can
+            retrieve uploaded content.
     """
 
     backend: FileSearchBackend
-    vector_store_id: str | None = None
+    vector_store_id: str
+    file_search_tool: Any
 
     @staticmethod
-    def from_openai(client: Any, *, vector_store_id: str | None = None) -> FileSearchConfig:
+    def from_openai(
+        client: Any,
+        *,
+        vector_store_id: str,
+        file_search_tool: Any,
+    ) -> FileSearchConfig:
         """Create a config for OpenAI Responses API (``OpenAIChatClient``).
 
         Args:
             client: An ``AsyncOpenAI`` or ``AsyncAzureOpenAI`` client.
-            vector_store_id: Optional existing vector store ID.
+            vector_store_id: The ID of the vector store to upload to.
+            file_search_tool: Tool from ``OpenAIChatClient.get_file_search_tool()``.
         """
         return FileSearchConfig(
             backend=OpenAIFileSearchBackend(client),
             vector_store_id=vector_store_id,
+            file_search_tool=file_search_tool,
         )
 
     @staticmethod
-    def from_foundry(client: Any, *, vector_store_id: str | None = None) -> FileSearchConfig:
+    def from_foundry(
+        client: Any,
+        *,
+        vector_store_id: str,
+        file_search_tool: Any,
+    ) -> FileSearchConfig:
         """Create a config for Azure AI Foundry (``FoundryChatClient``).
 
         Args:
             client: The OpenAI-compatible client from ``FoundryChatClient.client``.
-            vector_store_id: Optional existing vector store ID.
+            vector_store_id: The ID of the vector store to upload to.
+            file_search_tool: Tool from ``FoundryChatClient.get_file_search_tool()``.
         """
         return FileSearchConfig(
             backend=FoundryFileSearchBackend(client),
             vector_store_id=vector_store_id,
+            file_search_tool=file_search_tool,
         )
