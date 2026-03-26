@@ -16,6 +16,7 @@ from azure.ai.contentunderstanding.models import AnalysisResult
 from agent_framework_azure_ai_contentunderstanding import (
     AnalysisSection,
     ContentUnderstandingContextProvider,
+    DocumentStatus,
 )
 from agent_framework_azure_ai_contentunderstanding._context_provider import SUPPORTED_MEDIA_TYPES
 
@@ -171,7 +172,7 @@ class TestBeforeRunNewFile:
         # Document should be in state
         assert "documents" in state
         assert "invoice.pdf" in state["documents"]
-        assert state["documents"]["invoice.pdf"]["status"] == "ready"
+        assert state["documents"]["invoice.pdf"]["status"] == DocumentStatus.READY
 
         # Binary should be stripped from input
         for m in context.input_messages:
@@ -205,7 +206,7 @@ class TestBeforeRunNewFile:
         # URL input should use begin_analyze
         mock_cu_client.begin_analyze.assert_called_once()
         assert "report.pdf" in state["documents"]
-        assert state["documents"]["report.pdf"]["status"] == "ready"
+        assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
 
     async def test_text_only_skipped(self, mock_cu_client: AsyncMock) -> None:
         provider = _make_provider(mock_client=mock_cu_client)
@@ -254,8 +255,8 @@ class TestBeforeRunMultiFile:
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
         assert len(state["documents"]) == 2
-        assert state["documents"]["doc1.pdf"]["status"] == "ready"
-        assert state["documents"]["chart.png"]["status"] == "ready"
+        assert state["documents"]["doc1.pdf"]["status"] == DocumentStatus.READY
+        assert state["documents"]["chart.png"]["status"] == DocumentStatus.READY
 
 
 class TestBeforeRunTimeout:
@@ -280,7 +281,7 @@ class TestBeforeRunTimeout:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        assert state["documents"]["big_doc.pdf"]["status"] == "pending"
+        assert state["documents"]["big_doc.pdf"]["status"] == DocumentStatus.ANALYZING
         assert "big_doc.pdf" in provider._pending_tasks
 
         # Instructions should mention analyzing
@@ -311,11 +312,13 @@ class TestBeforeRunPendingResolution:
         state: dict[str, Any] = {
             "documents": {
                 "report.pdf": {
-                    "status": "pending",
+                    "status": DocumentStatus.ANALYZING,
                     "filename": "report.pdf",
                     "media_type": "application/pdf",
                     "analyzer_id": "prebuilt-documentSearch",
                     "analyzed_at": None,
+                    "analysis_duration_s": None,
+                    "upload_duration_s": None,
                     "result": None,
                     "error": None,
                 },
@@ -328,7 +331,7 @@ class TestBeforeRunPendingResolution:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        assert state["documents"]["report.pdf"]["status"] == "ready"
+        assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
         assert state["documents"]["report.pdf"]["result"] is not None
         assert "report.pdf" not in provider._pending_tasks
 
@@ -350,11 +353,13 @@ class TestBeforeRunPendingFailure:
         state: dict[str, Any] = {
             "documents": {
                 "bad_doc.pdf": {
-                    "status": "pending",
+                    "status": DocumentStatus.ANALYZING,
                     "filename": "bad_doc.pdf",
                     "media_type": "application/pdf",
                     "analyzer_id": "prebuilt-documentSearch",
                     "analyzed_at": None,
+                    "analysis_duration_s": None,
+                    "upload_duration_s": None,
                     "result": None,
                     "error": None,
                 },
@@ -367,7 +372,7 @@ class TestBeforeRunPendingFailure:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        assert state["documents"]["bad_doc.pdf"]["status"] == "failed"
+        assert state["documents"]["bad_doc.pdf"]["status"] == DocumentStatus.FAILED
         assert "CU service unavailable" in (state["documents"]["bad_doc.pdf"]["error"] or "")
 
 
@@ -421,7 +426,7 @@ class TestSessionState:
 
         # Document should still be there
         assert "doc.pdf" in state["documents"]
-        assert state["documents"]["doc.pdf"]["status"] == "ready"
+        assert state["documents"]["doc.pdf"]["status"] == DocumentStatus.READY
 
 
 class TestListDocumentsTool:
@@ -458,7 +463,7 @@ class TestListDocumentsTool:
         parsed = json.loads(result)
         assert len(parsed) == 1
         assert parsed[0]["name"] == "test.pdf"
-        assert parsed[0]["status"] == "ready"
+        assert parsed[0]["status"] == DocumentStatus.READY
 
 
 class TestGetDocumentTool:
@@ -864,7 +869,7 @@ class TestErrorHandling:
 
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
-        assert state["documents"]["error.pdf"]["status"] == "failed"
+        assert state["documents"]["error.pdf"]["status"] == DocumentStatus.FAILED
         assert "Service unavailable" in (state["documents"]["error.pdf"]["error"] or "")
 
     async def test_lazy_initialization_on_before_run(self) -> None:
@@ -1291,11 +1296,13 @@ class TestFileSearchIntegration:
         state: dict[str, Any] = {
             "documents": {
                 "report.pdf": {
-                    "status": "pending",
+                    "status": DocumentStatus.ANALYZING,
                     "filename": "report.pdf",
                     "media_type": "application/pdf",
                     "analyzer_id": "prebuilt-documentSearch",
                     "analyzed_at": None,
+                    "analysis_duration_s": None,
+                    "upload_duration_s": None,
                     "result": None,
                     "error": None,
                 },
@@ -1309,7 +1316,7 @@ class TestFileSearchIntegration:
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
         # Document should be ready
-        assert state["documents"]["report.pdf"]["status"] == "ready"
+        assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
 
         # Content should NOT be injected into context messages
         for msgs in context.context_messages.values():

@@ -17,6 +17,7 @@ import json
 import logging
 import mimetypes
 import sys
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -32,7 +33,7 @@ from agent_framework import (
 from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisResult
-from azure.core.credentials import AzureKeyCredential, TokenCredential
+from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
 if sys.version_info >= (3, 11):
@@ -43,11 +44,11 @@ else:
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
-from ._models import AnalysisSection, DocumentEntry, FileSearchConfig
+from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
 
 logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
-AzureCredentialTypes = AzureKeyCredential | TokenCredential | AsyncTokenCredential
+AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
 
 # MIME types used to match against Content.media_type for routing files to CU analysis.
 # Only files whose media_type is set by the client and matches this set will be processed;
@@ -239,9 +240,13 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # 2. Detect and strip supported file attachments from input
         new_files = self._detect_and_strip_files(context)
 
-        # 3. Analyze new files using CU
+        # 3. Analyze new files using CU (track elapsed time for combined timeout)
+        file_start_times: dict[str, float] = {}
         for doc_key, content_item, binary_data in new_files:
-            await self._analyze_file(doc_key, content_item, binary_data, documents, context)
+            file_start_times[doc_key] = time.monotonic()
+            doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context)
+            if doc_entry:
+                documents[doc_key] = doc_entry
 
         # 4. Inject content for ready documents and register tools
         if documents:
@@ -250,21 +255,34 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # 5. On upload turns, inject content for all ready docs from this turn
         for doc_key, _, _ in new_files:
             entry = documents.get(doc_key)
-            if entry and entry["status"] == "ready" and entry["result"]:
+            if entry and entry["status"] == DocumentStatus.READY and entry["result"]:
                 # Upload to vector store if file_search is configured
                 if self.file_search:
-                    uploaded = await self._upload_to_vector_store(doc_key, entry)
+                    # Combined timeout: subtract CU analysis time from max_wait
+                    remaining: float | None = None
+                    if self.max_wait is not None:
+                        elapsed = time.monotonic() - file_start_times.get(doc_key, time.monotonic())
+                        remaining = max(0.0, self.max_wait - elapsed)
+                    uploaded = await self._upload_to_vector_store(doc_key, entry, timeout=remaining)
                     if uploaded:
                         context.extend_instructions(
                             self.source_id,
                             "A document has been analyzed using Azure Content Understanding "
                             "and indexed in a vector store. Use file_search to retrieve relevant sections.",
                         )
-                    else:
+                    elif entry.get("error"):
+                        # Upload failed (not timeout — actual error)
                         context.extend_instructions(
                             self.source_id,
                             f"Document '{entry['filename']}' was analyzed but failed to upload "
                             "to the vector store. The document content is not available for search.",
+                        )
+                    else:
+                        # Upload deferred to background (timeout)
+                        context.extend_instructions(
+                            self.source_id,
+                            f"Document '{entry['filename']}' has been analyzed and is being indexed. "
+                            "Ask about it again in a moment.",
                         )
                 else:
                     # Without file_search, inject full content into context
@@ -440,13 +458,18 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         doc_key: str,
         content: Content,
         binary_data: bytes | None,
-        documents: dict[str, DocumentEntry],
         context: SessionContext,
-    ) -> None:
-        """Analyze a single file via CU with timeout handling."""
+    ) -> DocumentEntry | None:
+        """Analyze a single file via CU with timeout handling.
+
+        Returns:
+            A ``DocumentEntry`` (ready, analyzing, or failed), or ``None`` if
+            file data could not be extracted.
+        """
         media_type = content.media_type or "application/octet-stream"
         filename = doc_key
         resolved_analyzer = self._resolve_analyzer_id(media_type)
+        t0 = time.monotonic()
 
         try:
             # Start CU analysis
@@ -466,7 +489,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     self.source_id,
                     f"Could not extract file data from '{filename}'.",
                 )
-                return
+                return None
 
             # Wait with timeout; defer to background polling on timeout.
             try:
@@ -474,50 +497,56 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             except asyncio.TimeoutError:
                 task = asyncio.create_task(self._background_poll(poller))
                 self._pending_tasks[doc_key] = task
-                documents[doc_key] = DocumentEntry(
-                    status="pending",
-                    filename=filename,
-                    media_type=media_type,
-                    analyzer_id=resolved_analyzer,
-                    analyzed_at=None,
-                    result=None,
-                    error=None,
-                )
                 context.extend_instructions(
                     self.source_id,
                     f"Document '{filename}' is being analyzed. Ask about it again in a moment.",
                 )
-                return
+                return DocumentEntry(
+                    status=DocumentStatus.ANALYZING,
+                    filename=filename,
+                    media_type=media_type,
+                    analyzer_id=resolved_analyzer,
+                    analyzed_at=None,
+                    analysis_duration_s=None,
+                    upload_duration_s=None,
+                    result=None,
+                    error=None,
+                )
 
-            # Store successful result
+            # Analysis completed within timeout
+            analysis_duration = round(time.monotonic() - t0, 2)
             extracted = self._extract_sections(result)
-            documents[doc_key] = DocumentEntry(
-                status="ready",
+            logger.info("Analyzed '%s' with analyzer '%s' in %.1fs.", filename, resolved_analyzer, analysis_duration)
+            return DocumentEntry(
+                status=DocumentStatus.READY,
                 filename=filename,
                 media_type=media_type,
                 analyzer_id=resolved_analyzer,
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
+                analysis_duration_s=analysis_duration,
+                upload_duration_s=None,
                 result=extracted,
                 error=None,
             )
-            logger.info("Analyzed '%s' with analyzer '%s' successfully.", filename, resolved_analyzer)
 
         except asyncio.TimeoutError:
             raise
         except Exception as e:
             logger.warning("CU analysis error for '%s': %s", filename, e)
-            documents[doc_key] = DocumentEntry(
-                status="failed",
+            context.extend_instructions(
+                self.source_id,
+                f"Could not analyze '{filename}': {e}",
+            )
+            return DocumentEntry(
+                status=DocumentStatus.FAILED,
                 filename=filename,
                 media_type=media_type,
                 analyzer_id=resolved_analyzer,
                 analyzed_at=datetime.now(tz=timezone.utc).isoformat(),
+                analysis_duration_s=round(time.monotonic() - t0, 2),
+                upload_duration_s=None,
                 result=None,
                 error=str(e),
-            )
-            context.extend_instructions(
-                self.source_id,
-                f"Could not analyze '{filename}': {e}",
             )
 
     async def _background_poll(self, poller: Any) -> AnalysisResult:
@@ -548,10 +577,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             try:
                 result = task.result()
                 extracted = self._extract_sections(result)
-                entry["status"] = "ready"
+                entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
                 entry["result"] = extracted
                 entry["error"] = None
+                # analysis_duration_s stays None for background tasks (indeterminate)
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
                 # Inject newly ready content
@@ -578,7 +608,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
             except Exception as e:
                 logger.warning("Background analysis of '%s' failed: %s", entry.get("filename", doc_key), e)
-                entry["status"] = "failed"
+                entry["status"] = DocumentStatus.FAILED
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
                 entry["error"] = str(e)
                 context.extend_instructions(
@@ -758,6 +788,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     "status": entry["status"],
                     "media_type": entry["media_type"],
                     "analyzed_at": entry["analyzed_at"],
+                    "analysis_duration_s": entry["analysis_duration_s"],
+                    "upload_duration_s": entry["upload_duration_s"],
                 })
             return json.dumps(entries, indent=2, default=str)
 
@@ -765,7 +797,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             name="list_documents",
             description=(
                 "List all documents that have been uploaded in this session "
-                "with their analysis status (pending, ready, or failed)."
+                "with their analysis status (analyzing, uploading, ready, or failed)."
             ),
             func=list_documents,
         )
@@ -787,9 +819,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 return (
                     f"No document found with name '{document_name}'. Use list_documents() to see available documents."
                 )
-            if entry["status"] == "pending":
+            if entry["status"] == DocumentStatus.ANALYZING:
                 return f"Document '{document_name}' is still being analyzed. Please try again in a moment."
-            if entry["status"] == "failed":
+            if entry["status"] == DocumentStatus.UPLOADING:
+                return f"Document '{document_name}' is being indexed for search. Please try again in a moment."
+            if entry["status"] == DocumentStatus.FAILED:
                 return f"Document '{document_name}' analysis failed: {entry.get('error', 'unknown error')}"
             if not entry["result"]:
                 return f"No analysis result available for '{document_name}'."
@@ -817,11 +851,22 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # file_search Vector Store Integration
     # ------------------------------------------------------------------
 
-    async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> bool:
+    async def _upload_to_vector_store(
+        self, doc_key: str, entry: DocumentEntry, *, timeout: float | None = None
+    ) -> bool:
         """Upload CU-extracted markdown to the caller's vector store.
 
         Delegates to the configured ``FileSearchBackend`` (OpenAI, Foundry,
-        or a custom implementation).
+        or a custom implementation). The upload includes file upload **and**
+        vector store indexing (embedding + ingestion) — ``create_and_poll``
+        waits for the index to be fully ready before returning.
+
+        Args:
+            doc_key: Document identifier.
+            entry: The document entry with extracted results.
+            timeout: Max seconds to wait for upload + indexing. ``None`` waits
+                indefinitely. On timeout the upload is deferred to the
+                ``_pending_uploads`` queue for the next ``before_run()`` call.
 
         Returns:
             True if the upload succeeded, False otherwise.
@@ -837,17 +882,31 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not markdown or not isinstance(markdown, str):
             return False
 
+        entry["status"] = DocumentStatus.UPLOADING
+        t0 = time.monotonic()
+
         try:
-            file_id = await self.file_search.backend.upload_file(
+            upload_coro = self.file_search.backend.upload_file(
                 self.file_search.vector_store_id, f"{doc_key}.md", markdown.encode("utf-8")
             )
+            file_id = await asyncio.wait_for(upload_coro, timeout=timeout)
+            upload_duration = round(time.monotonic() - t0, 2)
             self._uploaded_file_ids.append(file_id)
-            logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(markdown))
+            entry["status"] = DocumentStatus.READY
+            entry["upload_duration_s"] = upload_duration
+            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(markdown))
             return True
+
+        except asyncio.TimeoutError:
+            logger.info("Vector store upload for '%s' timed out; deferring to background.", doc_key)
+            entry["status"] = DocumentStatus.UPLOADING
+            self._pending_uploads.append((doc_key, entry))
+            return False
 
         except Exception as e:
             logger.warning("Failed to upload '%s' to vector store: %s", doc_key, e)
-            entry["status"] = "failed"
+            entry["status"] = DocumentStatus.FAILED
+            entry["upload_duration_s"] = round(time.monotonic() - t0, 2)
             entry["error"] = f"Vector store upload failed: {e}"
             return False
 

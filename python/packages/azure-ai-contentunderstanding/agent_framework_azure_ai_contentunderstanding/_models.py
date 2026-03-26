@@ -4,9 +4,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, TypedDict
+from typing import Any, TypedDict
 
 from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
+
+
+class DocumentStatus(str, Enum):
+    """Analysis lifecycle state of a tracked document."""
+
+    ANALYZING = "analyzing"
+    """CU analysis is in progress (deferred to background)."""
+
+    UPLOADING = "uploading"
+    """Analysis complete; vector store upload + indexing is in progress."""
+
+    READY = "ready"
+    """Analysis (and upload, if applicable) completed successfully."""
+
+    FAILED = "failed"
+    """Analysis or upload failed."""
 
 
 class AnalysisSection(str, Enum):
@@ -34,11 +50,13 @@ class AnalysisSection(str, Enum):
 class DocumentEntry(TypedDict):
     """Tracks the analysis state of a single document in session state."""
 
-    status: Literal["pending", "ready", "failed"]
+    status: DocumentStatus
     filename: str
     media_type: str
     analyzer_id: str
     analyzed_at: str | None
+    analysis_duration_s: float | None
+    upload_duration_s: float | None
     result: dict[str, object] | None
     error: str | None
 

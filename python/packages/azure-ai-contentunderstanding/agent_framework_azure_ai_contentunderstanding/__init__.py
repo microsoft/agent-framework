@@ -10,8 +10,8 @@ into the LLM context.
 import importlib.metadata
 
 from ._context_provider import ContentUnderstandingContextProvider
-from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
-from ._models import AnalysisSection, FileSearchConfig
+from ._file_search import FileSearchBackend
+from ._models import AnalysisSection, DocumentStatus, FileSearchConfig
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -21,9 +21,8 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "AnalysisSection",
     "ContentUnderstandingContextProvider",
+    "DocumentStatus",
     "FileSearchBackend",
     "FileSearchConfig",
-    "FoundryFileSearchBackend",
-    "OpenAIFileSearchBackend",
     "__version__",
 ]
