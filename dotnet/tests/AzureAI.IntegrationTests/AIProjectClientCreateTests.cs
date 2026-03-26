@@ -188,6 +188,123 @@ public class AIProjectClientCreateTests
         }
     }
 
+    /// <summary>
+    /// Validates that an agent version created with an OpenAPI tool definition via the native
+    /// Azure.AI.Projects SDK and then wrapped with <c>AsAIAgent(agentVersion)</c> correctly
+    /// invokes the server-side OpenAPI function through <c>RunAsync</c>.
+    /// Regression test for https://github.com/microsoft/agent-framework/issues/4883.
+    /// </summary>
+    [Fact]
+    public async Task AsAIAgent_WithOpenAPITool_NativeSDKCreation_InvokesServerSideToolAsync()
+    {
+        // Arrange — create agent version with OpenAPI tool using native Azure.AI.Projects SDK types.
+        string agentName = AIProjectClientFixture.GenerateUniqueAgentName("OpenAPITestAgent");
+        const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
+
+        const string CountriesOpenApiSpec = """
+        {
+          "openapi": "3.1.0",
+          "info": {
+            "title": "REST Countries API",
+            "description": "Retrieve information about countries by currency code",
+            "version": "v3.1"
+          },
+          "servers": [
+            {
+              "url": "https://restcountries.com/v3.1"
+            }
+          ],
+          "paths": {
+            "/currency/{currency}": {
+              "get": {
+                "description": "Get countries that use a specific currency code (e.g., USD, EUR, GBP)",
+                "operationId": "GetCountriesByCurrency",
+                "parameters": [
+                  {
+                    "name": "currency",
+                    "in": "path",
+                    "description": "Currency code (e.g., USD, EUR, GBP)",
+                    "required": true,
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Successful response with list of countries",
+                    "content": {
+                      "application/json": {
+                        "schema": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "404": {
+                    "description": "No countries found for the currency"
+                  }
+                }
+              }
+            }
+          }
+        }
+        """;
+
+        // Step 1: Create the OpenAPI function definition and agent version using native SDK types.
+        var openApiFunction = new OpenApiFunctionDefinition(
+            "get_countries",
+            BinaryData.FromString(CountriesOpenApiSpec),
+            new OpenAPIAnonymousAuthenticationDetails())
+        {
+            Description = "Retrieve information about countries by currency code"
+        };
+
+        var definition = new PromptAgentDefinition(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        {
+            Instructions = AgentInstructions,
+            Tools = { (ResponseTool)AgentTool.CreateOpenApiTool(openApiFunction) }
+        };
+
+        AgentVersionCreationOptions creationOptions = new(definition);
+        AgentVersion agentVersion = await this._client.Agents.CreateAgentVersionAsync(agentName, creationOptions);
+
+        try
+        {
+            // Step 2: Wrap the agent version using AsAIAgent extension.
+            ChatClientAgent agent = this._client.AsAIAgent(agentVersion);
+
+            // Assert the agent was created correctly and retains version metadata.
+            Assert.NotNull(agent);
+            Assert.Equal(agentName, agent.Name);
+            var retrievedVersion = agent.GetService<AgentVersion>();
+            Assert.NotNull(retrievedVersion);
+
+            // Step 3: Call RunAsync to trigger the server-side OpenAPI function.
+            var result = await agent.RunAsync("What countries use the Euro (EUR) as their currency? Please list them.");
+
+            // Step 4: Validate the response contains expected data from the REST Countries API.
+            var text = result.ToString();
+            Assert.NotEmpty(text);
+
+            // The response should mention at least some well-known Eurozone countries.
+            Assert.True(
+                text.Contains("Germany", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("France", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("Italy", StringComparison.OrdinalIgnoreCase) ||
+                text.Contains("Spain", StringComparison.OrdinalIgnoreCase),
+                $"Expected response to contain European country names from the OpenAPI tool, but got: {text}");
+        }
+        finally
+        {
+            // Cleanup.
+            await this._client.Agents.DeleteAgentAsync(agentName);
+        }
+    }
+
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
     public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
