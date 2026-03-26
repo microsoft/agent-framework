@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from copy import copy
@@ -15,7 +14,6 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
 from agent_framework._tools import FunctionTool
 from agent_framework.exceptions import SettingNotFoundError
-from dotenv import get_key
 from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, _legacy_response  # type: ignore
 from openai.types import Completion
 from openai.types.audio import Transcription
@@ -99,6 +97,10 @@ class OpenAISettings(TypedDict, total=False):
             Can be set via environment variable OPENAI_MODEL.
         embedding_model: The OpenAI embedding model to use, for example, text-embedding-3-small.
             Can be set via environment variable OPENAI_EMBEDDING_MODEL.
+        chat_model: The OpenAI chat-completions model to prefer before OPENAI_MODEL.
+            Can be set via environment variable OPENAI_CHAT_MODEL.
+        responses_model: The OpenAI responses model to prefer before OPENAI_MODEL.
+            Can be set via environment variable OPENAI_RESPONSES_MODEL.
 
     Examples:
         .. code-block:: python
@@ -122,6 +124,8 @@ class OpenAISettings(TypedDict, total=False):
     org_id: str | None
     model: str | None
     embedding_model: str | None
+    chat_model: str | None
+    responses_model: str | None
 
 
 class AzureOpenAISettings(TypedDict, total=False):
@@ -131,24 +135,47 @@ class AzureOpenAISettings(TypedDict, total=False):
     base_url: str | None
     api_key: SecretString | None
     deployment_name: str | None
+    embedding_deployment_name: str | None
+    chat_deployment_name: str | None
+    responses_deployment_name: str | None
     api_version: str | None
 
 
-OpenAIModelSettingName = Literal["model", "embedding_model"]
+OpenAIModelSettingName = Literal["model", "embedding_model", "chat_model", "responses_model"]
+AzureDeploymentSettingName = Literal[
+    "deployment_name", "embedding_deployment_name", "chat_deployment_name", "responses_deployment_name"
+]
+
+OPENAI_MODEL_ENV_VARS: dict[OpenAIModelSettingName, str] = {
+    "model": "OPENAI_MODEL",
+    "embedding_model": "OPENAI_EMBEDDING_MODEL",
+    "chat_model": "OPENAI_CHAT_MODEL",
+    "responses_model": "OPENAI_RESPONSES_MODEL",
+}
+
+AZURE_DEPLOYMENT_ENV_VARS: dict[AzureDeploymentSettingName, str] = {
+    "deployment_name": "AZURE_OPENAI_DEPLOYMENT_NAME",
+    "embedding_deployment_name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
+    "chat_deployment_name": "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
+    "responses_deployment_name": "AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME",
+}
 
 
-def _get_env_setting(
-    env_var_name: str,
-    *,
-    env_file_path: str | None,
-    env_file_encoding: str | None,
+def _resolve_named_setting(
+    settings: Mapping[str, Any],
+    fields: Sequence[OpenAIModelSettingName | AzureDeploymentSettingName],
 ) -> str | None:
-    """Read a setting from an optional ``.env`` file first, then the process environment."""
-    if env_file_path:
-        dotenv_value = get_key(env_file_path, env_var_name, encoding=env_file_encoding)  # type: ignore[reportArgumentType, arg-type]
-        if dotenv_value:
-            return dotenv_value
-    return os.getenv(env_var_name)
+    """Return the first populated value from ``fields``."""
+    for field in fields:
+        value = settings.get(field)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _join_env_names(env_names: Sequence[str]) -> str:
+    """Format env var names for user-facing error messages."""
+    return ", ".join(f"'{env_name}'" for env_name in env_names)
 
 
 def load_openai_service_settings(
@@ -165,9 +192,8 @@ def load_openai_service_settings(
     client: AsyncOpenAI | None = None,
     env_file_path: str | None,
     env_file_encoding: str | None,
-    openai_model_field: OpenAIModelSettingName = "model",
-    openai_model_env_var: str = "OPENAI_MODEL",
-    azure_deployment_env_vars: Sequence[str] = ("AZURE_OPENAI_DEPLOYMENT_NAME",),
+    openai_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
+    azure_deployment_fields: Sequence[AzureDeploymentSettingName] = ("deployment_name",),
 ) -> tuple[dict[str, Any], AsyncOpenAI, bool]:
     """Load OpenAI settings, including Azure OpenAI aliases.
 
@@ -184,32 +210,36 @@ def load_openai_service_settings(
 
     api_key_callable = api_key if callable(api_key) else None
     api_key_str = api_key if not callable(api_key) else None
-
     azure_client = isinstance(client, AsyncAzureOpenAI)
     use_azure = azure_client or endpoint is not None or credential is not None
     checked_openai = False
+    openai_settings_kwargs: dict[str, Any] = {
+        "api_key": api_key_str,
+        "org_id": org_id,
+        "base_url": base_url,
+        "env_file_path": env_file_path,
+        "env_file_encoding": env_file_encoding,
+    }
+    if model is not None:
+        openai_settings_kwargs[openai_model_fields[0]] = model
+    openai_settings: OpenAISettings | None = None
     if not use_azure:
-        openai_settings_kwargs: dict[str, Any] = {
-            "api_key": api_key_str,
-            "org_id": org_id,
-            "base_url": base_url,
-            "env_file_path": env_file_path,
-            "env_file_encoding": env_file_encoding,
-        }
-        openai_settings_kwargs[openai_model_field] = model
         openai_settings = load_settings(
             OpenAISettings,
             env_prefix="OPENAI_",
             **openai_settings_kwargs,
         )
+        if resolved_model := _resolve_named_setting(openai_settings, openai_model_fields):
+            openai_settings["model"] = resolved_model
         if client:
             return openai_settings, client, False  # type: ignore[return-value]
         if openai_settings.get("api_key") is not None or api_key_callable is not None:
-            resolved_model = openai_settings.get(openai_model_field)
+            resolved_model = _resolve_named_setting(openai_settings, openai_model_fields)
             if not resolved_model:
                 raise SettingNotFoundError(
                     "Model must be specified via the 'model' parameter or the "
-                    f"'{openai_model_env_var}' environment variable."
+                    f"{_join_env_names([OPENAI_MODEL_ENV_VARS[field] for field in openai_model_fields])} "
+                    "environment variable."
                 )
 
             client_args: dict[str, Any] = {
@@ -223,7 +253,6 @@ def load_openai_service_settings(
                 client_args["base_url"] = base_url
             return openai_settings, AsyncOpenAI(**client_args), False  # type: ignore[return-value]
         checked_openai = True
-
     azure_settings = load_settings(
         AzureOpenAISettings,
         env_prefix="AZURE_OPENAI_",
@@ -231,34 +260,34 @@ def load_openai_service_settings(
         api_key=api_key_str,
         endpoint=endpoint,
         base_url=base_url,
-        deployment_name=model,
         api_version=api_version or default_azure_api_version,
         env_file_path=env_file_path,
         env_file_encoding=env_file_encoding,
     )
+    if model is not None:
+        azure_settings[azure_deployment_fields[0]] = model
     client_args = {}
-    if model is None:
-        for azure_deployment_env_var in azure_deployment_env_vars:
-            if deployment_name := _get_env_setting(
-                azure_deployment_env_var,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-            ):
-                azure_settings["deployment_name"] = deployment_name
-                break
-    if ("deployment_name" not in azure_settings or not azure_settings["deployment_name"]) and (
-        openai_model := _get_env_setting(
-            openai_model_env_var,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
-    ):
-        # load the OpenAI model env var as a fallback for Azure routing
-        azure_settings["deployment_name"] = openai_model
-    if model := azure_settings.get("deployment_name"):
-        client_args["azure_deployment"] = model
+    resolved_azure_deployment = _resolve_named_setting(azure_settings, azure_deployment_fields)
+    if resolved_azure_deployment is None and client:
+        azure_deployment = getattr(client, "_azure_deployment", None)
+        if isinstance(azure_deployment, str) and azure_deployment:
+            resolved_azure_deployment = azure_deployment
+    if resolved_azure_deployment is None:
+        if openai_settings is None:
+            openai_settings = load_settings(
+                OpenAISettings,
+                env_prefix="OPENAI_",
+                **openai_settings_kwargs,
+            )
+        resolved_azure_deployment = _resolve_named_setting(openai_settings, openai_model_fields)
+    if resolved_azure_deployment:
+        azure_settings["deployment_name"] = resolved_azure_deployment
+        client_args["azure_deployment"] = resolved_azure_deployment
     else:
-        deployment_env_guidance = ", ".join(f"'{env_var}'" for env_var in azure_deployment_env_vars)
+        deployment_env_guidance = _join_env_names([
+            AZURE_DEPLOYMENT_ENV_VARS[field] for field in azure_deployment_fields
+        ])
+        openai_model_guidance = _join_env_names([OPENAI_MODEL_ENV_VARS[field] for field in openai_model_fields])
         if checked_openai:
             raise SettingNotFoundError(
                 "OpenAI credentials are required. Provide the 'api_key' parameter or set 'OPENAI_API_KEY'. "
@@ -267,7 +296,7 @@ def load_openai_service_settings(
             )
         raise SettingNotFoundError(
             "Azure OpenAI client requires a deployment name, which can be provided via the 'model' parameter, "
-            f"the {deployment_env_guidance} environment variable, or the '{openai_model_env_var}' "
+            f"the {deployment_env_guidance} environment variable, or the {openai_model_guidance} "
             "environment variable."
         )
     if client:
@@ -286,7 +315,7 @@ def load_openai_service_settings(
     if credential:
         client_args["azure_ad_token_provider"] = _resolve_azure_credential_to_token_provider(credential)
     if "api_key" not in client_args and "azure_ad_token_provider" not in client_args:
-        raise ValueError(
+        raise SettingNotFoundError(
             "Azure OpenAI client requires either an API key or an Azure AD token provider."
             " This can be provided either as a callable api_key or via the credential parameter."
         )

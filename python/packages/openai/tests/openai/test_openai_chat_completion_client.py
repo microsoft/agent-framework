@@ -37,6 +37,14 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
 
+def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model_id")
+
+    open_ai_chat_completion = OpenAIChatCompletionClient()
+
+    assert open_ai_chat_completion.model == "test_chat_model_id"
+
+
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ValueError):

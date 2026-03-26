@@ -110,6 +110,14 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
+def test_init_prefers_openai_responses_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model_id")
+
+    openai_responses_client = OpenAIChatClient()
+
+    assert openai_responses_client.model == "test_responses_model_id"
+
+
 def test_init_validation_fail() -> None:
     # Test successful initialization
     with pytest.raises(ValueError):

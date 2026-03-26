@@ -86,7 +86,7 @@ class RawOpenAIEmbeddingClient(
 
         Use this overload when you want the generic OpenAI embeddings endpoint. The
         constructor reads ``model`` from the explicit argument first and then from
-        ``OPENAI_EMBEDDING_MODEL``. Authentication and endpoint settings come from
+        ``OPENAI_EMBEDDING_MODEL``, falling back to ``OPENAI_MODEL``. Authentication and endpoint settings come from
         the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
         then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
         ``env_file_path`` or the process environment.
@@ -120,7 +120,8 @@ class RawOpenAIEmbeddingClient(
         select Azure on its own.
         The constructor reads the deployment name from the explicit ``model``
         argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
+        and then ``OPENAI_MODEL``.
 
         Authentication and endpoint settings come from the explicit Azure arguments
         first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
@@ -152,9 +153,11 @@ class RawOpenAIEmbeddingClient(
 
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` for OpenAI routing. For Azure
-                routing it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                falls back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing. For Azure routing it first checks
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``, then ``OPENAI_EMBEDDING_MODEL``, and
+                finally ``OPENAI_MODEL``.
             model_id: Deprecated alias for ``model``.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
@@ -190,10 +193,11 @@ class RawOpenAIEmbeddingClient(
             3. Azure environment fallback
 
             OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing reads
-            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``, ``AZURE_OPENAI_API_KEY``,
-            ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, ``AZURE_OPENAI_DEPLOYMENT_NAME``,
-            and ``AZURE_OPENAI_API_VERSION``.
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
         """
         if model_id is not None and model is None:
             import warnings
@@ -214,16 +218,12 @@ class RawOpenAIEmbeddingClient(
             client=async_client,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            openai_model_field="embedding_model",
-            openai_model_env_var="OPENAI_EMBEDDING_MODEL",
-            azure_deployment_env_vars=(
-                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME",
-                "AZURE_OPENAI_DEPLOYMENT_NAME",
-            ),
+            openai_model_fields=("embedding_model", "model"),
+            azure_deployment_fields=("embedding_deployment_name", "deployment_name"),
         )
 
         self.client = client
-        resolved_model = settings.get("embedding_model") or settings.get("deployment_name")
+        resolved_model = settings.get("model") or settings.get("deployment_name")
         self.model: str | None = resolved_model.strip() if isinstance(resolved_model, str) and resolved_model else None
 
         # Store configuration for serialization
@@ -338,7 +338,7 @@ class OpenAIEmbeddingClient(
 
         Use this overload when you want the generic OpenAI embeddings endpoint. The
         constructor reads ``model`` from the explicit argument first and then from
-        ``OPENAI_EMBEDDING_MODEL``. Authentication and endpoint settings come from
+        ``OPENAI_EMBEDDING_MODEL``, falling back to ``OPENAI_MODEL``. Authentication and endpoint settings come from
         the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
         then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
         ``env_file_path`` or the process environment.
@@ -373,7 +373,8 @@ class OpenAIEmbeddingClient(
         select Azure on its own.
         The constructor reads the deployment name from the explicit ``model``
         argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
+        and then ``OPENAI_MODEL``.
 
         Authentication and endpoint settings come from the explicit Azure arguments
         first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
@@ -404,9 +405,11 @@ class OpenAIEmbeddingClient(
 
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
-                constructor reads ``OPENAI_EMBEDDING_MODEL`` for OpenAI routing. For Azure
-                routing it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                falls back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing. For Azure routing it first checks
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``, then ``OPENAI_EMBEDDING_MODEL``, and
+                finally ``OPENAI_MODEL``.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -441,10 +444,11 @@ class OpenAIEmbeddingClient(
             3. Azure environment fallback
 
             OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing reads
-            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``, ``AZURE_OPENAI_API_KEY``,
-            ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, ``AZURE_OPENAI_DEPLOYMENT_NAME``,
-            and ``AZURE_OPENAI_API_VERSION``.
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
             .. code-block:: python

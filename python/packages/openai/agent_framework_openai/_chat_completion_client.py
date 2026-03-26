@@ -249,8 +249,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_MODEL`` for OpenAI routing or ``AZURE_OPENAI_DEPLOYMENT_NAME``
-                for Azure routing.
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
+                or ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
             model_id: Deprecated alias for ``model``.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
@@ -286,9 +287,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and
-            ``OPENAI_BASE_URL``. Azure routing reads ``AZURE_OPENAI_ENDPOINT``,
-            ``AZURE_OPENAI_BASE_URL``, ``AZURE_OPENAI_API_KEY``,
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME``,
             ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
         """
         if model_id is not None and model is None:
@@ -310,6 +312,8 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             client=async_client,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            openai_model_fields=("chat_model", "model"),
+            azure_deployment_fields=("chat_deployment_name", "deployment_name"),
         )
 
         self.client = client
@@ -1024,8 +1028,9 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_MODEL`` for OpenAI routing or ``AZURE_OPENAI_DEPLOYMENT_NAME``
-                for Azure routing.
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
+                or ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -1061,9 +1066,10 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and
-            ``OPENAI_BASE_URL``. Azure routing reads ``AZURE_OPENAI_ENDPOINT``,
-            ``AZURE_OPENAI_BASE_URL``, ``AZURE_OPENAI_API_KEY``,
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME``,
             ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
