@@ -181,7 +181,7 @@ async def test_save_upserts_document(mock_container: MagicMock) -> None:
     assert result == checkpoint.checkpoint_id
     mock_container.upsert_item.assert_awaited_once()
     document = mock_container.upsert_item.await_args.kwargs["body"]
-    assert document["id"] == checkpoint.checkpoint_id
+    assert document["id"] == f"test-workflow_{checkpoint.checkpoint_id}"
     assert document["workflow_name"] == "test-workflow"
     assert document["graph_signature_hash"] == "abc123"
     assert document["state"]["counter"] == 42
@@ -233,6 +233,20 @@ async def test_load_queries_without_partition_key(mock_container: MagicMock) -> 
     assert "partition_key" not in kwargs
 
 
+async def test_load_multiple_workflows_same_checkpoint_id_raises(mock_container: MagicMock) -> None:
+    cp1 = _make_checkpoint(checkpoint_id="shared-id", workflow_name="workflow-a")
+    cp2 = _make_checkpoint(checkpoint_id="shared-id", workflow_name="workflow-b")
+    mock_container.query_items.return_value = _to_async_iter([
+        _checkpoint_to_cosmos_document(cp1),
+        _checkpoint_to_cosmos_document(cp2),
+    ])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="Multiple checkpoints found"):
+        await storage.load("shared-id")
+
+
 # --- Tests for list_checkpoints ---
 
 
@@ -276,7 +290,7 @@ async def test_list_checkpoints_empty_returns_empty(mock_container: MagicMock) -
 
 async def test_delete_existing_returns_true(mock_container: MagicMock) -> None:
     mock_container.query_items.return_value = _to_async_iter([
-        {"id": "cp-del", "workflow_name": "test-workflow"},
+        {"id": "test-workflow_cp-del", "workflow_name": "test-workflow"},
     ])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
@@ -284,7 +298,7 @@ async def test_delete_existing_returns_true(mock_container: MagicMock) -> None:
 
     assert result is True
     mock_container.delete_item.assert_awaited_once_with(
-        item="cp-del",
+        item="test-workflow_cp-del",
         partition_key="test-workflow",
     )
 
@@ -301,7 +315,7 @@ async def test_delete_nonexistent_returns_false(mock_container: MagicMock) -> No
 
 async def test_delete_cosmos_not_found_returns_false(mock_container: MagicMock) -> None:
     mock_container.query_items.return_value = _to_async_iter([
-        {"id": "cp-del", "workflow_name": "test-workflow"},
+        {"id": "test-workflow_cp-del", "workflow_name": "test-workflow"},
     ])
     mock_container.delete_item = AsyncMock(side_effect=CosmosResourceNotFoundError)
 

@@ -165,6 +165,9 @@ class CosmosCheckpointStorage:
         non-JSON-native values) and stored as a Cosmos DB document with the
         ``workflow_name`` as the partition key.
 
+        The document ``id`` is a composite of ``workflow_name`` and
+        ``checkpoint_id`` to ensure global uniqueness across partitions.
+
         Args:
             checkpoint: The WorkflowCheckpoint object to save.
 
@@ -177,7 +180,7 @@ class CosmosCheckpointStorage:
         encoded = encode_checkpoint_value(checkpoint_dict)
 
         document: dict[str, Any] = {
-            "id": checkpoint.checkpoint_id,
+            "id": self._make_document_id(checkpoint.workflow_name, checkpoint.checkpoint_id),
             "workflow_name": checkpoint.workflow_name,
             **encoded,
         }
@@ -196,11 +199,12 @@ class CosmosCheckpointStorage:
             The WorkflowCheckpoint object corresponding to the given ID.
 
         Raises:
-            WorkflowCheckpointException: If no checkpoint with the given ID exists.
+            WorkflowCheckpointException: If no checkpoint with the given ID exists,
+                or if multiple checkpoints share the same ID across workflows.
         """
         await self._ensure_container_proxy()
 
-        query = "SELECT * FROM c WHERE c.id = @checkpoint_id"
+        query = "SELECT * FROM c WHERE c.checkpoint_id = @checkpoint_id"
         parameters: list[dict[str, object]] = [
             {"name": "@checkpoint_id", "value": checkpoint_id},
         ]
@@ -210,10 +214,22 @@ class CosmosCheckpointStorage:
             parameters=parameters,
         )
 
+        results: list[dict[str, Any]] = []
         async for item in items:
-            return self._document_to_checkpoint(item)
+            results.append(item)
 
-        raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
+        if not results:
+            raise WorkflowCheckpointException(f"No checkpoint found with ID {checkpoint_id}")
+
+        if len(results) > 1:
+            workflow_names = [r.get("workflow_name", "unknown") for r in results]
+            raise WorkflowCheckpointException(
+                f"Multiple checkpoints found with ID {checkpoint_id} across workflows: "
+                f"{workflow_names}. Use list_checkpoints(workflow_name=...) to query "
+                f"by workflow instead."
+            )
+
+        return self._document_to_checkpoint(results[0])
 
     async def list_checkpoints(self, *, workflow_name: str) -> list[WorkflowCheckpoint]:
         """List checkpoint objects for a given workflow name.
@@ -256,8 +272,7 @@ class CosmosCheckpointStorage:
         """
         await self._ensure_container_proxy()
 
-        # We need to find the document first to get its partition key
-        query = "SELECT c.id, c.workflow_name FROM c WHERE c.id = @checkpoint_id"
+        query = "SELECT c.id, c.workflow_name FROM c WHERE c.checkpoint_id = @checkpoint_id"
         parameters: list[dict[str, object]] = [
             {"name": "@checkpoint_id", "value": checkpoint_id},
         ]
@@ -270,7 +285,7 @@ class CosmosCheckpointStorage:
         async for item in items:
             try:
                 await self._container_proxy.delete_item(  # type: ignore[union-attr]
-                    item=checkpoint_id,
+                    item=item["id"],
                     partition_key=item["workflow_name"],
                 )
                 logger.info("Deleted checkpoint %s from Cosmos DB", checkpoint_id)
@@ -390,10 +405,19 @@ class CosmosCheckpointStorage:
         Strips Cosmos DB system properties (``_rid``, ``_self``, ``_etag``,
         ``_attachments``, ``_ts``) before decoding.
         """
-        # Remove Cosmos DB system properties and the 'id' field
+        # Remove Cosmos DB system properties and the composite 'id' field
         # (checkpoints use 'checkpoint_id', not 'id')
         cosmos_keys = {"id", "_rid", "_self", "_etag", "_attachments", "_ts"}
         cleaned = {k: v for k, v in document.items() if k not in cosmos_keys}
 
         decoded = decode_checkpoint_value(cleaned)
         return WorkflowCheckpoint.from_dict(decoded)
+
+    @staticmethod
+    def _make_document_id(workflow_name: str, checkpoint_id: str) -> str:
+        """Create a composite Cosmos DB document ID.
+
+        Combines ``workflow_name`` and ``checkpoint_id`` to ensure global
+        uniqueness across partitions.
+        """
+        return f"{workflow_name}_{checkpoint_id}"

@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 # ruff: noqa: T201
 
-"""
-Sample: Workflow Checkpointing with Cosmos DB and Azure AI Foundry
+"""Sample: Workflow Checkpointing with Cosmos DB and Azure AI Foundry.
 
 Purpose:
 This sample demonstrates how to use CosmosCheckpointStorage with agents built
@@ -64,35 +63,33 @@ async def main() -> None:
         )
         return
 
-    # Authentication: use key if available, otherwise fall back to Azure credential (RBAC)
-    credential: Any
-    if cosmos_key:
-        credential = cosmos_key
-    else:
-        credential = AzureCliCredential()
+    # Use a single AzureCliCredential for both Cosmos and Foundry,
+    # properly closed via async context manager.
+    async with AzureCliCredential() as azure_credential:
+        cosmos_credential: Any = cosmos_key if cosmos_key else azure_credential
 
-    async with CosmosCheckpointStorage(
-        endpoint=cosmos_endpoint,
-        credential=credential,
-        database_name=cosmos_database_name,
-        container_name=cosmos_container_name,
-    ) as checkpoint_storage:
-        # Create Azure AI Foundry agents
-        client = AzureOpenAIResponsesClient(
-            project_endpoint=project_endpoint,
-            deployment_name=deployment_name,
-            credential=AzureCliCredential(),
-        )
+        async with CosmosCheckpointStorage(
+            endpoint=cosmos_endpoint,
+            credential=cosmos_credential,
+            database_name=cosmos_database_name,
+            container_name=cosmos_container_name,
+        ) as checkpoint_storage:
+            # Create Azure AI Foundry agents
+            client = AzureOpenAIResponsesClient(
+                project_endpoint=project_endpoint,
+                deployment_name=deployment_name,
+                credential=azure_credential,
+            )
 
-        assistant = client.as_agent(
-            name="assistant",
-            instructions="You are a helpful assistant. Keep responses brief.",
-        )
+            assistant = client.as_agent(
+                name="assistant",
+                instructions="You are a helpful assistant. Keep responses brief.",
+            )
 
-        reviewer = client.as_agent(
-            name="reviewer",
-            instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
-        )
+            reviewer = client.as_agent(
+                name="reviewer",
+                instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
+            )
 
         # Build a sequential workflow and wrap it as an agent
         workflow = SequentialBuilder(participants=[assistant, reviewer]).build()

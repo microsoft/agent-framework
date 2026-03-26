@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 # ruff: noqa: T201
 
-"""
-Sample: Workflow Checkpointing with Cosmos DB NoSQL
+"""Sample: Workflow Checkpointing with Cosmos DB NoSQL.
 
 Purpose:
 This sample shows how to use Azure Cosmos DB NoSQL as a persistent checkpoint
@@ -61,6 +60,7 @@ class StartExecutor(Executor):
 
     @handler
     async def start(self, upper_limit: int, ctx: WorkflowContext[ComputeTask]) -> None:
+        """Start the workflow with numbers up to the given limit."""
         print(f"StartExecutor: Starting computation up to {upper_limit}")
         await ctx.send_message(ComputeTask(remaining_numbers=list(range(1, upper_limit + 1))))
 
@@ -69,6 +69,7 @@ class WorkerExecutor(Executor):
     """Processes numbers and manages executor state for checkpointing."""
 
     def __init__(self, id: str) -> None:
+        """Initialize the worker executor."""
         super().__init__(id=id)
         self._results: dict[int, list[tuple[int, int]]] = {}
 
@@ -78,6 +79,7 @@ class WorkerExecutor(Executor):
         task: ComputeTask,
         ctx: WorkflowContext[ComputeTask, dict[int, list[tuple[int, int]]]],
     ) -> None:
+        """Process the next number, computing its factor pairs."""
         next_number = task.remaining_numbers.pop(0)
         print(f"WorkerExecutor: Processing {next_number}")
 
@@ -116,84 +118,83 @@ async def main() -> None:
         return
 
     # Authentication: supports both managed identity/RBAC and key-based auth.
-    #
-    # Option 1 — Managed identity / RBAC (recommended for production):
-    #   from azure.identity.aio import DefaultAzureCredential
-    #   credential = DefaultAzureCredential()
-    #
-    # Option 2 — Account key:
-    #   credential = cosmos_key   (or set AZURE_COSMOS_KEY env var)
-    #
-    # This sample uses key-based auth when AZURE_COSMOS_KEY is set,
-    # otherwise falls back to DefaultAzureCredential.
-    credential: Any
+    # When AZURE_COSMOS_KEY is set, key-based auth is used.
+    # Otherwise, falls back to DefaultAzureCredential (properly closed via async with).
     if cosmos_key:
-        credential = cosmos_key
+        async with CosmosCheckpointStorage(
+            endpoint=cosmos_endpoint,
+            credential=cosmos_key,
+            database_name=cosmos_database_name,
+            container_name=cosmos_container_name,
+        ) as checkpoint_storage:
+            await _run_workflow(checkpoint_storage)
     else:
         from azure.identity.aio import DefaultAzureCredential
 
-        credential = DefaultAzureCredential()
+        async with DefaultAzureCredential() as credential, CosmosCheckpointStorage(
+            endpoint=cosmos_endpoint,
+            credential=credential,
+            database_name=cosmos_database_name,
+            container_name=cosmos_container_name,
+        ) as checkpoint_storage:
+            await _run_workflow(checkpoint_storage)
 
-    async with CosmosCheckpointStorage(
-        endpoint=cosmos_endpoint,
-        credential=credential,
-        database_name=cosmos_database_name,
-        container_name=cosmos_container_name,
-    ) as checkpoint_storage:
-        # Build workflow with Cosmos DB checkpointing
-        start = StartExecutor(id="start")
-        worker = WorkerExecutor(id="worker")
-        workflow_builder = (
-            WorkflowBuilder(start_executor=start, checkpoint_storage=checkpoint_storage)
-            .add_edge(start, worker)
-            .add_edge(worker, worker)
-        )
 
-        # --- First run: execute the workflow ---
-        print("\n=== First Run ===\n")
-        workflow = workflow_builder.build()
+async def _run_workflow(checkpoint_storage: CosmosCheckpointStorage) -> None:
+    """Build and run the workflow with Cosmos DB checkpointing."""
+    start = StartExecutor(id="start")
+    worker = WorkerExecutor(id="worker")
+    workflow_builder = (
+        WorkflowBuilder(start_executor=start, checkpoint_storage=checkpoint_storage)
+        .add_edge(start, worker)
+        .add_edge(worker, worker)
+    )
 
-        output = None
-        async for event in workflow.run(message=8, stream=True):
-            if event.type == "output":
-                output = event.data
+    # --- First run: execute the workflow ---
+    print("\n=== First Run ===\n")
+    workflow = workflow_builder.build()
 
-        print(f"Factor pairs computed: {output}")
+    output = None
+    async for event in workflow.run(message=8, stream=True):
+        if event.type == "output":
+            output = event.data
 
-        # List checkpoints saved in Cosmos DB
-        checkpoint_ids = await checkpoint_storage.list_checkpoint_ids(
-            workflow_name=workflow.name,
-        )
-        print(f"\nCheckpoints in Cosmos DB: {len(checkpoint_ids)}")
-        for cid in checkpoint_ids:
-            print(f"  - {cid}")
+    print(f"Factor pairs computed: {output}")
 
-        # Get the latest checkpoint
-        latest: WorkflowCheckpoint | None = await checkpoint_storage.get_latest(
-            workflow_name=workflow.name,
-        )
+    # List checkpoints saved in Cosmos DB
+    checkpoint_ids = await checkpoint_storage.list_checkpoint_ids(
+        workflow_name=workflow.name,
+    )
+    print(f"\nCheckpoints in Cosmos DB: {len(checkpoint_ids)}")
+    for cid in checkpoint_ids:
+        print(f"  - {cid}")
 
-        if latest is None:
-            print("No checkpoint found to resume from.")
-            return
+    # Get the latest checkpoint
+    latest: WorkflowCheckpoint | None = await checkpoint_storage.get_latest(
+        workflow_name=workflow.name,
+    )
 
-        print(f"\nLatest checkpoint: {latest.checkpoint_id}")
-        print(f"  iteration_count: {latest.iteration_count}")
-        print(f"  timestamp: {latest.timestamp}")
+    if latest is None:
+        print("No checkpoint found to resume from.")
+        return
 
-        # --- Second run: resume from the latest checkpoint ---
-        print("\n=== Resuming from Checkpoint ===\n")
-        workflow2 = workflow_builder.build()
+    print(f"\nLatest checkpoint: {latest.checkpoint_id}")
+    print(f"  iteration_count: {latest.iteration_count}")
+    print(f"  timestamp: {latest.timestamp}")
 
-        output2 = None
-        async for event in workflow2.run(checkpoint_id=latest.checkpoint_id, stream=True):
-            if event.type == "output":
-                output2 = event.data
+    # --- Second run: resume from the latest checkpoint ---
+    print("\n=== Resuming from Checkpoint ===\n")
+    workflow2 = workflow_builder.build()
 
-        if output2:
-            print(f"Resumed workflow produced: {output2}")
-        else:
-            print("Resumed workflow completed (no remaining work — already finished).")
+    output2 = None
+    async for event in workflow2.run(checkpoint_id=latest.checkpoint_id, stream=True):
+        if event.type == "output":
+            output2 = event.data
+
+    if output2:
+        print(f"Resumed workflow produced: {output2}")
+    else:
+        print("Resumed workflow completed (no remaining work — already finished).")
 
 
 if __name__ == "__main__":
