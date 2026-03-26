@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from copy import copy
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, cast
 from urllib.parse import urljoin, urlparse
@@ -107,6 +109,39 @@ def _apply_azure_defaults(
         settings["api_version"] = default_api_version
     if not settings.get("token_endpoint"):
         settings["token_endpoint"] = default_token_endpoint
+
+
+@contextmanager
+def _prefer_single_azure_endpoint_env(*, endpoint: str | None, base_url: str | None) -> Any:
+    """Temporarily expose only the Azure endpoint setting that raw OpenAI clients accept.
+
+    The deprecated Azure wrappers have historically tolerated both
+    ``AZURE_OPENAI_BASE_URL`` and ``AZURE_OPENAI_ENDPOINT`` being present and prefer
+    ``base_url`` when both are available. The raw OpenAI constructors now validate
+    that exactly one is set, so we temporarily hide the unused env var while
+    delegating to those constructors.
+    """
+    original_base_url = os.environ.get("AZURE_OPENAI_BASE_URL")
+    original_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+
+    try:
+        if base_url:
+            os.environ["AZURE_OPENAI_BASE_URL"] = str(base_url)
+            os.environ.pop("AZURE_OPENAI_ENDPOINT", None)
+        elif endpoint:
+            os.environ["AZURE_OPENAI_ENDPOINT"] = str(endpoint)
+            os.environ.pop("AZURE_OPENAI_BASE_URL", None)
+        yield
+    finally:
+        if original_base_url is None:
+            os.environ.pop("AZURE_OPENAI_BASE_URL", None)
+        else:
+            os.environ["AZURE_OPENAI_BASE_URL"] = original_base_url
+
+        if original_endpoint is None:
+            os.environ.pop("AZURE_OPENAI_ENDPOINT", None)
+        else:
+            os.environ["AZURE_OPENAI_ENDPOINT"] = original_endpoint
 
 
 # endregion
@@ -315,6 +350,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
                 "or 'AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME' environment variable."
             )
 
+        endpoint_value = azure_openai_settings.get("endpoint")
+        client_base_url = azure_openai_settings.get("base_url")
         if not async_client:
             # Create the Azure OpenAI client directly
             merged_headers = dict(copy(default_headers)) if default_headers else {}
@@ -332,9 +369,7 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             if not api_key_secret and not ad_token_provider:
                 raise ValueError("Please provide either api_key, credential, or a client.")
 
-            client_endpoint = azure_openai_settings.get("endpoint")
-            client_base_url = azure_openai_settings.get("base_url")
-            if not client_endpoint and not client_base_url:
+            if not endpoint_value and not client_base_url:
                 raise ValueError("Please provide an endpoint or a base_url")
 
             client_args: dict[str, Any] = {"default_headers": merged_headers}
@@ -346,8 +381,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
                 client_args["api_key"] = api_key_secret.get_secret_value()
             if client_base_url:
                 client_args["base_url"] = str(client_base_url)
-            if client_endpoint and not client_base_url:
-                client_args["azure_endpoint"] = str(client_endpoint)
+            if endpoint_value and not client_base_url:
+                client_args["azure_endpoint"] = str(endpoint_value)
             if responses_deployment_name:
                 client_args["azure_deployment"] = responses_deployment_name
             if "websocket_base_url" in kwargs:
@@ -360,16 +395,17 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
         self.api_version = azure_openai_settings.get("api_version") or ""
         self.deployment_name = responses_deployment_name
 
-        super().__init__(
-            async_client=async_client,
-            model=responses_deployment_name,
-            api_version=azure_openai_settings.get("api_version"),
-            instruction_role=instruction_role,
-            default_headers=default_headers,
-            middleware=middleware,  # type: ignore[arg-type]
-            function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
-        )
+        with _prefer_single_azure_endpoint_env(endpoint=endpoint_value, base_url=client_base_url):
+            super().__init__(
+                async_client=async_client,
+                model=responses_deployment_name,
+                api_version=azure_openai_settings.get("api_version"),
+                instruction_role=instruction_role,
+                default_headers=default_headers,
+                middleware=middleware,  # type: ignore[arg-type]
+                function_invocation_configuration=function_invocation_configuration,
+                **kwargs,
+            )
 
     @staticmethod
     def _create_client_from_project(
@@ -530,6 +566,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
                 "or 'AZURE_OPENAI_CHAT_DEPLOYMENT_NAME' environment variable."
             )
 
+        endpoint_value = azure_openai_settings.get("endpoint")
+        base_url_value = azure_openai_settings.get("base_url")
         if not async_client:
             # Create the Azure OpenAI client directly
             merged_headers = dict(copy(default_headers)) if default_headers else {}
@@ -547,8 +585,6 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             if not api_key_secret and not ad_token_provider:
                 raise ValueError("Please provide either api_key, credential, or a client.")
 
-            endpoint_value = azure_openai_settings.get("endpoint")
-            base_url_value = azure_openai_settings.get("base_url")
             if not endpoint_value and not base_url_value:
                 raise ValueError("Please provide an endpoint or a base_url")
 
@@ -573,16 +609,17 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
         self.api_version = azure_openai_settings.get("api_version") or ""
         self.deployment_name = chat_deployment_name
 
-        super().__init__(
-            async_client=async_client,
-            model=chat_deployment_name,
-            api_version=azure_openai_settings.get("api_version"),
-            instruction_role=instruction_role,
-            default_headers=default_headers,
-            additional_properties=additional_properties,
-            middleware=middleware,  # type: ignore[arg-type]
-            function_invocation_configuration=function_invocation_configuration,
-        )
+        with _prefer_single_azure_endpoint_env(endpoint=endpoint_value, base_url=base_url_value):
+            super().__init__(
+                async_client=async_client,
+                model=chat_deployment_name,
+                api_version=azure_openai_settings.get("api_version"),
+                instruction_role=instruction_role,
+                default_headers=default_headers,
+                additional_properties=additional_properties,
+                middleware=middleware,  # type: ignore[arg-type]
+                function_invocation_configuration=function_invocation_configuration,
+            )
 
     @override
     def _parse_text_from_openai(self, choice: Choice | ChunkChoice) -> Content | None:

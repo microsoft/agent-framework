@@ -6,10 +6,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, AgentResponse, ChatResponse, Content, Message, SupportsChatGetResponse, tool
-from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
+from azure.core.credentials_async import AsyncTokenCredential
+from azure.identity.aio import AzureCliCredential
 from openai import AsyncAzureOpenAI
 from pydantic import BaseModel
 from pytest import param
@@ -20,9 +22,16 @@ pytestmark = pytest.mark.azure
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.openai.azure.com")
-    or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "") == "",
+    or (
+        os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "") == ""
+        and os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "") == ""
+    ),
     reason="No real Azure OpenAI endpoint or responses deployment provided; skipping integration tests.",
 )
+
+
+def _get_azure_responses_deployment_name() -> str:
+    return os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME") or os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
 
 class OutputStruct(BaseModel):
@@ -35,12 +44,17 @@ class OutputStruct(BaseModel):
 def _create_azure_openai_chat_client(
     *,
     api_key: Any = None,
+    credential: AsyncTokenCredential | None = None,
 ) -> OpenAIChatClient:
+    resolved_api_key = (
+        api_key if api_key is not None else None if credential is not None else os.environ["AZURE_OPENAI_API_KEY"]
+    )
     return OpenAIChatClient(
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-        api_key=api_key or os.environ["AZURE_OPENAI_API_KEY"],
+        model=_get_azure_responses_deployment_name(),
+        api_key=resolved_api_key,
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        credential=credential,
     )
 
 
@@ -81,7 +95,7 @@ async def get_weather(location: str) -> str:
 def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = _create_azure_openai_chat_client()
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert isinstance(client, SupportsChatGetResponse)
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
@@ -97,11 +111,48 @@ def test_init_auto_detects_azure_env(azure_openai_unit_test_env: dict[str, str])
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
 
 
+def test_openai_api_key_wins_over_azure_env(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
+
+    client = OpenAIChatClient()
+
+    assert client.model == "gpt-5"
+    assert not isinstance(client.client, AsyncAzureOpenAI)
+    assert client.azure_endpoint is None
+
+
+def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
+
+    client = OpenAIChatClient(credential=lambda: "token")
+
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    assert isinstance(client.client, AsyncAzureOpenAI)
+    assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
+
+
+def test_init_with_credential_wraps_async_token_credential(
+    monkeypatch, azure_openai_unit_test_env: dict[str, str]
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
+    credential = AsyncMock(spec=AsyncTokenCredential)
+    token_provider = MagicMock()
+
+    with patch("azure.identity.aio.get_bearer_token_provider", return_value=token_provider) as mock_provider:
+        client = OpenAIChatClient(credential=credential)
+
+    assert isinstance(client.client, AsyncAzureOpenAI)
+    mock_provider.assert_called_once_with(credential, "https://cognitiveservices.azure.com/.default")
+
+
 @pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_VERSION"]], indirect=True)
 def test_init_uses_default_azure_api_version(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = _create_azure_openai_chat_client()
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"]
     assert client.api_version == "preview"
 
 
@@ -180,9 +231,7 @@ async def test_integration_options(
     needs_validation: bool,
 ) -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
         client.function_invocation_configuration["max_iterations"] = 2
 
         for streaming in [False, True]:
@@ -235,9 +284,7 @@ async def test_integration_options(
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_web_search() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
 
         for streaming in [False, True]:
             content = {
@@ -288,9 +335,7 @@ async def test_integration_web_search() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_client_file_search() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
         file_id, vector_store = await create_vector_store(client)
         try:
             response = await client.get_response(
@@ -312,9 +357,7 @@ async def test_integration_client_file_search() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_client_file_search_streaming() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
         file_id, vector_store = await create_vector_store(client)
         try:
             response_stream = client.get_response(
@@ -338,9 +381,7 @@ async def test_integration_client_file_search_streaming() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
         response = await client.get_response(
             messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
             options={
@@ -363,9 +404,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_client_agent_hosted_code_interpreter_tool() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
 
         response = await client.get_response(
             messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
@@ -386,9 +425,7 @@ async def test_integration_client_agent_existing_session() -> None:
         preserved_session = None
 
         async with Agent(
-            client=_create_azure_openai_chat_client(
-                api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-            ),
+            client=_create_azure_openai_chat_client(credential=credential),
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent:
             session = first_agent.create_session()
@@ -403,9 +440,7 @@ async def test_integration_client_agent_existing_session() -> None:
 
         if preserved_session:
             async with Agent(
-                client=_create_azure_openai_chat_client(
-                    api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-                ),
+                client=_create_azure_openai_chat_client(credential=credential),
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent:
                 second_response = await second_agent.run("What is my hobby?", session=preserved_session)
@@ -428,9 +463,7 @@ async def test_azure_openai_chat_client_tool_rich_content_image() -> None:
         return Content.from_data(data=image_bytes, media_type="image/jpeg")
 
     async with AzureCliCredential() as credential:
-        client = _create_azure_openai_chat_client(
-            api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default")
-        )
+        client = _create_azure_openai_chat_client(credential=credential)
         client.function_invocation_configuration["max_iterations"] = 2
 
         for streaming in [False, True]:

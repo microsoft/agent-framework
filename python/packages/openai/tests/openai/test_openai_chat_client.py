@@ -28,6 +28,7 @@ from agent_framework._sessions import (
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
+    SettingNotFoundError,
 )
 from openai import BadRequestError
 from openai.types.responses.response_reasoning_item import Summary
@@ -143,7 +144,7 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError):
         OpenAIChatClient()
 
 
@@ -151,7 +152,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError):
         OpenAIChatClient(
             model=model_id,
         )
