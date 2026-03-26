@@ -86,13 +86,11 @@ from azure.identity.aio import AzureCliCredential
 
 from agent_framework.openai import OpenAIChatClient
 
-
-async with AzureCliCredential() as credential:
-    client = OpenAIChatClient(
-        model="my-responses-deployment",
-        azure_endpoint="https://my-resource.openai.azure.com",
-        credential=credential,
-    )
+client = OpenAIChatClient(
+    model="my-responses-deployment",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    credential=AzureCliCredential(),
+)
 ```
 
 ## ChatClient vs ChatCompletionClient
