@@ -71,7 +71,10 @@ _vector_store = _sync_openai.vector_stores.create(
 )
 _sync_openai.close()
 
-_file_search_tool = client.get_file_search_tool(vector_store_ids=[_vector_store.id])
+_file_search_tool = client.get_file_search_tool(
+    vector_store_ids=[_vector_store.id],
+    max_num_results=10,  # limit chunks to reduce input token usage (default: 50)
+)
 
 # --- CU context provider with file_search ---
 # No analyzer_id → auto-selects per media type (documents, audio, video)

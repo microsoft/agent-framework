@@ -27,16 +27,18 @@ Required environment variables:
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
 Run with DevUI:
-  devui packages/azure-ai-contentunderstanding/samples/devui_azure_openai_file_search_agent
+  devui packages/azure-ai-contentunderstanding/samples/devui_file_search_agent
 """
 
+import asyncio
 import os
+from typing import Any
 
 from agent_framework.azure import AzureOpenAIResponsesClient
-from azure.ai.projects import AIProjectClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
+from openai import AsyncAzureOpenAI
 
 from agent_framework_azure_ai_contentunderstanding import (
     ContentUnderstandingContextProvider,
@@ -46,53 +48,53 @@ from agent_framework_azure_ai_contentunderstanding import (
 load_dotenv()
 
 # --- Auth ---
-# AzureCliCredential works for both Azure OpenAI and CU.
-# API keys can be set separately if the services are on different resources.
-_credential = AzureCliCredential()
-_openai_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-_cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-_cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
+_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+_credential = AzureCliCredential() if not _api_key else None
+_cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+_cu_credential: AzureKeyCredential | AzureCliCredential = (
+    AzureKeyCredential(_cu_key) if _cu_key else _credential  # type: ignore[assignment]
+)
 
-_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-
-# --- LLM client + sync vector store setup ---
-# DevUI loads agent modules synchronously at startup while an event loop is already
-# running, so we cannot use async APIs here. A sync AIProjectClient is used for
-# one-time vector store creation; runtime file uploads use client.client (async).
-if _openai_api_key:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=_endpoint,
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        api_key=_openai_api_key,
-    )
+# --- Async OpenAI client for vector store operations ---
+_openai_kwargs: dict[str, Any] = {
+    "azure_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    "api_version": "2025-03-01-preview",
+}
+if _api_key:
+    _openai_kwargs["api_key"] = _api_key
 else:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=_endpoint,
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=_credential,
+    _token = _credential.get_token("https://cognitiveservices.azure.com/.default").token  # type: ignore[union-attr]
+    _openai_kwargs["azure_ad_token"] = _token
+_openai_client = AsyncAzureOpenAI(**_openai_kwargs)
+
+# --- LLM client (needed for get_file_search_tool) ---
+_client_kwargs: dict[str, Any] = {
+    "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+    "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+}
+if _api_key:
+    _client_kwargs["api_key"] = _api_key
+else:
+    _client_kwargs["credential"] = _credential
+client = AzureOpenAIResponsesClient(**_client_kwargs)
+
+# --- Create vector store and file_search tool ---
+_vector_store = asyncio.get_event_loop().run_until_complete(
+    _openai_client.vector_stores.create(
+        name="devui_cu_file_search",
+        expires_after={"anchor": "last_active_at", "days": 1},
     )
-
-_sync_project = AIProjectClient(endpoint=_endpoint, credential=_credential)  # type: ignore[arg-type]
-_sync_openai = _sync_project.get_openai_client()
-_vector_store = _sync_openai.vector_stores.create(
-    name="devui_cu_file_search",
-    expires_after={"anchor": "last_active_at", "days": 1},
 )
-_sync_openai.close()
-
-_file_search_tool = client.get_file_search_tool(
-    vector_store_ids=[_vector_store.id],
-    max_num_results=10,  # limit chunks to reduce input token usage (default: 50)
-)
+_file_search_tool = client.get_file_search_tool(vector_store_ids=[_vector_store.id])
 
 # --- CU context provider with file_search ---
-# client.client is the async OpenAI client used for runtime file uploads.
 # No analyzer_id → auto-selects per media type (documents, audio, video)
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
-    file_search=FileSearchConfig.from_foundry(
-        client.client,  # reuse the LLM client's internal AsyncAzureOpenAI for file uploads
+    max_wait=10.0,
+    file_search=FileSearchConfig.from_openai(
+        _openai_client,
         vector_store_id=_vector_store.id,
         file_search_tool=_file_search_tool,
     ),
@@ -104,8 +106,6 @@ agent = client.as_agent(
         "You are a helpful document analysis assistant with RAG capabilities. "
         "When a user uploads files, they are automatically analyzed using Azure Content Understanding "
         "and indexed in a vector store for efficient retrieval. "
-        "Analysis takes time (seconds for documents, longer for audio/video) — if a document "
-        "is still pending, let the user know and suggest they ask again shortly. "
         "Use file_search to find relevant sections from uploaded documents. "
         "Use list_documents() to check which documents are ready, pending, or failed. "
         "Use get_analyzed_document() to retrieve the full content of a specific document. "
