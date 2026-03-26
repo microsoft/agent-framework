@@ -27,9 +27,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedD
 
 from dotenv import load_dotenv
 from opentelemetry import metrics, trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.semconv.attributes import service_attributes
-from opentelemetry.semconv_ai import Meters
 
 from . import __version__ as version_info
 from ._settings import load_settings
@@ -43,6 +40,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk._logs.export import LogRecordExporter
     from opentelemetry.sdk.metrics.export import MetricExporter
     from opentelemetry.sdk.metrics.view import View
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace.export import SpanExporter
     from opentelemetry.trace import Tracer
     from opentelemetry.util._decorator import _AgnosticContextManager  # type: ignore[reportPrivateUsage]
@@ -206,6 +204,8 @@ class OtelAttr(str, Enum):
     TOOL_RESULT = "gen_ai.tool.call.result"
     # Agent attributes
     AGENT_ID = "gen_ai.agent.id"
+    SERVICE_NAME = "service.name"
+    SERVICE_VERSION = "service.version"
     # Client attributes
     # replaced TOKEN with T, because both ruff and bandit,
     # complain about TOKEN being a potential secret
@@ -214,6 +214,8 @@ class OtelAttr(str, Enum):
     T_TYPE_INPUT = "input"
     T_TYPE_OUTPUT = "output"
     DURATION_UNIT = "s"
+    LLM_OPERATION_DURATION = "gen_ai.client.operation.duration"
+    LLM_TOKEN_USAGE = "gen_ai.client.token.usage"  # nosec B105 # noqa: S105 - OpenTelemetry metric name, not a secret.
 
     # Agent attributes
     AGENT_NAME = "gen_ai.agent.name"
@@ -224,8 +226,6 @@ class OtelAttr(str, Enum):
     INPUT_MESSAGES = "gen_ai.input.messages"
     OUTPUT_MESSAGES = "gen_ai.output.messages"
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
-    # Attributes previously from opentelemetry-semantic-conventions-ai SpanAttributes,
-    # removed in v0.4.14. Defined here for forward compatibility.
     SYSTEM = "gen_ai.system"
     REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
     REQUEST_TEMPERATURE = "gen_ai.request.temperature"
@@ -282,7 +282,7 @@ class OtelAttr(str, Enum):
     CHAT_COMPLETION_OPERATION = "chat"
     EMBEDDING_OPERATION = "embeddings"
     TOOL_EXECUTION_OPERATION = "execute_tool"
-    #    Describes GenAI agent creation and is usually applicable when working with remote agent services.
+    # Describes GenAI agent creation and is usually applicable when working with remote agent services.
     AGENT_CREATE_OPERATION = "create_agent"
     AGENT_INVOKE_OPERATION = "invoke_agent"
 
@@ -576,25 +576,27 @@ def create_resource(
             # Load from custom .env file
             resource = create_resource(env_file_path="config/.env")
     """
-    # Load environment variables from a .env file only when explicitly provided
+    try:
+        from opentelemetry.sdk.resources import Resource
+    except ModuleNotFoundError as ex:
+        raise ModuleNotFoundError(
+            "`opentelemetry-sdk` is required to use `create_resource()`. "
+            "Please install `opentelemetry-sdk` and update your dependencies."
+        ) from ex
+
     if env_file_path is not None:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
-    # Start with provided attributes
     resource_attributes: dict[str, Any] = dict(attributes)
 
-    # Set service name
     if service_name is None:
         service_name = os.getenv("OTEL_SERVICE_NAME", "agent_framework")
-    resource_attributes[service_attributes.SERVICE_NAME] = service_name
+    resource_attributes[OtelAttr.SERVICE_NAME] = service_name
 
-    # Set service version
     if service_version is None:
         service_version = os.getenv("OTEL_SERVICE_VERSION", version_info)
-    resource_attributes[service_attributes.SERVICE_VERSION] = service_version
+    resource_attributes[OtelAttr.SERVICE_VERSION] = service_version
 
-    # Parse OTEL_RESOURCE_ATTRIBUTES environment variable
-    # Format: key1=value1,key2=value2
     if resource_attrs_env := os.getenv("OTEL_RESOURCE_ATTRIBUTES"):
         resource_attributes.update(_parse_headers(resource_attrs_env))
     return Resource.create(resource_attributes)
@@ -602,10 +604,15 @@ def create_resource(
 
 def create_metric_views() -> list[View]:
     """Create the default OpenTelemetry metric views for Agent Framework."""
-    from opentelemetry.sdk.metrics.view import DropAggregation, View
+    try:
+        from opentelemetry.sdk.metrics.view import DropAggregation, View
+    except ModuleNotFoundError as ex:
+        raise ModuleNotFoundError(
+            "`opentelemetry-sdk` is required to use `create_metric_views()`. "
+            "Please install `opentelemetry-sdk` and update your dependencies."
+        ) from ex
 
     return [
-        # Dropping all enable_instrumentation names except for those starting with "agent_framework"
         View(instrument_name="agent_framework*"),
         View(instrument_name="gen_ai*"),
         View(instrument_name="*", aggregation=DropAggregation()),
@@ -659,7 +666,7 @@ class ObservabilitySettings:
     """
 
     def __init__(self, **kwargs: Any) -> None:
-        """Initialize the settings and create the resource."""
+        """Initialize the settings."""
         env_file_path = kwargs.pop("env_file_path", None)
         env_file_encoding = kwargs.pop("env_file_encoding", None)
         data = load_settings(
@@ -674,10 +681,6 @@ class ObservabilitySettings:
         self.vs_code_extension_port: int | None = data.get("vs_code_extension_port")
         self.env_file_path = env_file_path
         self.env_file_encoding = env_file_encoding
-        self._resource = create_resource(
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
         self._executed_setup = False
 
     @property
@@ -762,17 +765,27 @@ class ObservabilitySettings:
             exporters: A list of exporters for logs, metrics and/or spans.
             views: Optional list of OpenTelemetry views for metrics. Default is empty list.
         """
-        from opentelemetry._logs import set_logger_provider
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+        try:
+            from opentelemetry._logs import set_logger_provider
+            from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+            from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, LogRecordExporter
+            from opentelemetry.sdk.metrics import MeterProvider
+            from opentelemetry.sdk.metrics.export import MetricExporter, PeriodicExportingMetricReader
+            from opentelemetry.sdk.trace import TracerProvider
+            from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter
+        except ModuleNotFoundError as ex:
+            raise ModuleNotFoundError(
+                "`opentelemetry-sdk` is required to use `configure_otel_providers()`. "
+                "Please install `opentelemetry-sdk` and update your dependencies."
+            ) from ex
 
         span_exporters: list[SpanExporter] = []
         log_exporters: list[LogRecordExporter] = []
         metric_exporters: list[MetricExporter] = []
+        resource = create_resource(
+            env_file_path=self.env_file_path,
+            env_file_encoding=self.env_file_encoding,
+        )
         for exp in exporters:
             if isinstance(exp, SpanExporter):
                 span_exporters.append(exp)
@@ -783,14 +796,14 @@ class ObservabilitySettings:
 
         # Tracing
         if span_exporters:
-            tracer_provider = TracerProvider(resource=self._resource)
+            tracer_provider = TracerProvider(resource=resource)
             trace.set_tracer_provider(tracer_provider)
             for exporter in span_exporters:
                 tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 
         # Logging
         if log_exporters:
-            logger_provider = LoggerProvider(resource=self._resource)
+            logger_provider = LoggerProvider(resource=resource)
             for log_exporter in log_exporters:
                 logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
             # Attach a handler with the provider to the root logger
@@ -805,7 +818,7 @@ class ObservabilitySettings:
                     PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
                     for exporter in metric_exporters
                 ],
-                resource=self._resource,
+                resource=resource,
                 views=views or [],
             )
             metrics.set_meter_provider(meter_provider)
@@ -1106,7 +1119,6 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = updated_settings.vs_code_extension_port
         OBSERVABILITY_SETTINGS.env_file_path = updated_settings.env_file_path
         OBSERVABILITY_SETTINGS.env_file_encoding = updated_settings.env_file_encoding
-        OBSERVABILITY_SETTINGS._resource = updated_settings._resource  # type: ignore[reportPrivateUsage]
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
     else:
         # Re-read settings from current environment in case env vars were set
@@ -1123,7 +1135,6 @@ def configure_otel_providers(
         OBSERVABILITY_SETTINGS.vs_code_extension_port = (
             vs_code_extension_port if vs_code_extension_port is not None else _read_int_env("VS_CODE_EXTENSION_PORT")
         )
-        OBSERVABILITY_SETTINGS._resource = create_resource()  # type: ignore[reportPrivateUsage]
         OBSERVABILITY_SETTINGS._executed_setup = False  # type: ignore[reportPrivateUsage]
 
     OBSERVABILITY_SETTINGS._configure(  # type: ignore[reportPrivateUsage]
@@ -1137,7 +1148,7 @@ def configure_otel_providers(
 
 def _get_duration_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
-        name=Meters.LLM_OPERATION_DURATION,
+        name=OtelAttr.LLM_OPERATION_DURATION,
         unit=OtelAttr.DURATION_UNIT,
         description="Captures the duration of operations of function-invoking chat clients",
         explicit_bucket_boundaries_advisory=OPERATION_DURATION_BUCKET_BOUNDARIES,
@@ -1146,7 +1157,7 @@ def _get_duration_histogram() -> metrics.Histogram:
 
 def _get_token_usage_histogram() -> metrics.Histogram:
     return get_meter().create_histogram(
-        name=Meters.LLM_TOKEN_USAGE,
+        name=OtelAttr.LLM_TOKEN_USAGE,
         unit=OtelAttr.T_UNIT,
         description="Captures the token usage of chat clients",
         explicit_bucket_boundaries_advisory=TOKEN_USAGE_BUCKET_BOUNDARIES,

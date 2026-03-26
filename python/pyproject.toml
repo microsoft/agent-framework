@@ -39,6 +39,8 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.19.1",
     "pyright==1.1.408",
+    "mcp[ws]>=1.24.0,<2",
+    "opentelemetry-sdk>=1.39.0,<2",
     #tasks
     "poethepoet==0.42.1",
     "rich==13.7.1",
@@ -49,6 +51,8 @@ dev = [
 [tool.uv]
 package = false
 prerelease = "if-necessary-or-explicit"
+# Keep transitive litellm below the compromised 1.82.7/1.82.8 releases.
+constraint-dependencies = ["litellm<1.82.7"]
 environments = [
     "sys_platform == 'darwin'",
     "sys_platform == 'linux'",
@@ -74,15 +78,18 @@ agent-framework-copilotstudio = { workspace = true }
 agent-framework-declarative = { workspace = true }
 agent-framework-devui = { workspace = true }
 agent-framework-durabletask = { workspace = true }
+agent-framework-foundry = { workspace = true }
 agent-framework-foundry-local = { workspace = true }
 agent-framework-lab = { workspace = true }
 agent-framework-mem0 = { workspace = true }
 agent-framework-ollama = { workspace = true }
+agent-framework-openai = { workspace = true }
 agent-framework-purview = { workspace = true }
 agent-framework-redis = { workspace = true }
 agent-framework-github-copilot = { workspace = true }
 agent-framework-claude = { workspace = true }
 agent-framework-orchestrations = { workspace = true }
+litellm = { url = "https://files.pythonhosted.org/packages/57/77/0c6eca2cb049793ddf8ce9cdcd5123a35666c4962514788c4fc90edf1d3b/litellm-1.82.1-py3-none-any.whl" }
 
 [tool.ruff]
 line-length = 120
@@ -191,6 +198,7 @@ executionEnvironments = [
     { root = "packages/declarative/tests", reportPrivateUsage = "none" },
     { root = "packages/devui/tests", reportPrivateUsage = "none" },
     { root = "packages/durabletask/tests", reportPrivateUsage = "none" },
+    { root = "packages/foundry/tests", reportPrivateUsage = "none" },
     { root = "packages/foundry_local/tests", reportPrivateUsage = "none" },
     { root = "packages/github_copilot/tests", reportPrivateUsage = "none" },
     { root = "packages/lab/gaia/tests", reportPrivateUsage = "none" },

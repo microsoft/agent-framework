@@ -6,12 +6,13 @@ from collections.abc import AsyncIterable
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     Content,
     Message,
     WorkflowEvent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -44,7 +45,7 @@ Demonstrate:
 - Understanding that approval pauses only the agent that triggered it, not all agents.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - OpenAI or Azure OpenAI configured with the required environment variables.
 - Basic familiarity with ConcurrentBuilder and streaming workflow events.
 """
@@ -133,13 +134,14 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     # 3. Create two agents focused on different stocks but with the same tool sets
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    microsoft_agent = client.as_agent(
+    microsoft_agent = Agent(
+        client=client,
         name="MicrosoftAgent",
         instructions=(
             "You are a personal trading assistant focused on Microsoft (MSFT). "
@@ -148,7 +150,8 @@ async def main() -> None:
         tools=[get_stock_price, get_market_sentiment, get_portfolio_balance, execute_trade],
     )
 
-    google_agent = client.as_agent(
+    google_agent = Agent(
+        client=client,
         name="GoogleAgent",
         instructions=(
             "You are a personal trading assistant focused on Google (GOOGL). "

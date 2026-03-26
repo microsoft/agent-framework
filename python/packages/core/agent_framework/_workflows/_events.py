@@ -121,7 +121,7 @@ WorkflowEventType = Literal[
     "executor_completed",  # Executor handler completed (use .executor_id, .data)
     "executor_failed",  # Executor handler raised error (use .executor_id, .details)
     # Orchestration event types (use .data for typed payload)
-    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent)  # noqa: E501
+    "group_chat",  # Group chat orchestrator events (use .data as GroupChatRequestSentEvent | GroupChatResponseReceivedEvent) # noqa: E501
     "handoff_sent",  # Handoff routing events (use .data as HandoffSentEvent)
     "magentic_orchestrator",  # Magentic orchestrator events (use .data as MagenticOrchestratorEvent)
 ]

@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from agent_framework import FunctionInvocationContext
+from agent_framework import Agent, FunctionInvocationContext
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -40,7 +40,8 @@ async def main() -> None:
     client = OpenAIResponsesClient()
 
     # Create a specialized writer agent
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="WriterAgent",
         instructions="You are a creative writer. Write short, engaging content.",
     )
@@ -54,7 +55,8 @@ async def main() -> None:
     )
 
     # Create coordinator agent with writer as a tool
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         name="CoordinatorAgent",
         instructions="You coordinate with specialized agents. Delegate writing tasks to the creative_writer tool.",
         tools=[writer_tool],

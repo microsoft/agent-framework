@@ -13,10 +13,18 @@ namespace Microsoft.Agents.AI.Workflows;
 /// </summary>
 public sealed class HandoffsWorkflowBuilder
 {
-    internal const string FunctionPrefix = "handoff_to_";
+    /// <summary>
+    /// The prefix for function calls that trigger handoffs to other agents; the full name is then `{FunctionPrefix}&lt;agent_id&gt;`,
+    /// where `&lt;agent_id&gt;` is the ID of the target agent to hand off to.
+    /// </summary>
+    public const string FunctionPrefix = "handoff_to_";
+
     private readonly AIAgent _initialAgent;
     private readonly Dictionary<AIAgent, HashSet<HandoffTarget>> _targets = [];
     private readonly HashSet<AIAgent> _allAgents = new(AIAgentIDEqualityComparer.Instance);
+
+    private bool _emitAgentResponseEvents;
+    private bool _emitAgentResponseUpdateEvents;
     private HandoffToolCallFilteringBehavior _toolCallFilteringBehavior = HandoffToolCallFilteringBehavior.HandoffOnly;
 
     /// <summary>
@@ -47,13 +55,40 @@ public sealed class HandoffsWorkflowBuilder
               """;
 
     /// <summary>
-    /// Sets additional instructions to provide to an agent that has handoffs about how and when to
-    /// perform them.
+    /// Sets instructions to provide to each agent that has handoffs about how and when to perform them.
     /// </summary>
+    /// <remarks>
+    /// In the vast majority of cases, the <see cref="DefaultHandoffInstructions"/> will be sufficient, and there will be no need to customize.
+    /// If you do provide alternate instructions, remember to explain the mechanics of the handoff function tool call, using see
+    /// <see cref="FunctionPrefix"/> constant.
+    /// </remarks>
     /// <param name="instructions">The instructions to provide, or <see langword="null"/> to restore the default instructions.</param>
     public HandoffsWorkflowBuilder WithHandoffInstructions(string? instructions)
     {
         this.HandoffInstructions = instructions ?? DefaultHandoffInstructions;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets a value indicating whether agent streaming update events should be emitted during execution.
+    /// If <see langword="null"/>, the value will be taken from the <see cref="TurnToken"/>
+    /// </summary>
+    /// <param name="emitAgentResponseUpdateEvents"></param>
+    /// <returns></returns>
+    public HandoffsWorkflowBuilder EmitAgentResponseUpdateEvents(bool emitAgentResponseUpdateEvents = true)
+    {
+        this._emitAgentResponseUpdateEvents = emitAgentResponseUpdateEvents;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets a value indicating whether aggregated agent response events should be emitted during execution.
+    /// </summary>
+    /// <param name="emitAgentResponseEvents"></param>
+    /// <returns></returns>
+    public HandoffsWorkflowBuilder EmitAgentResponseEvents(bool emitAgentResponseEvents = true)
+    {
+        this._emitAgentResponseEvents = emitAgentResponseEvents;
         return this;
     }
 
@@ -175,7 +210,10 @@ public sealed class HandoffsWorkflowBuilder
         HandoffsEndExecutor end = new();
         WorkflowBuilder builder = new(start);
 
-        HandoffAgentExecutorOptions options = new(this.HandoffInstructions, this._toolCallFilteringBehavior);
+        HandoffAgentExecutorOptions options = new(this.HandoffInstructions,
+                                                  this._emitAgentResponseEvents,
+                                                  this._emitAgentResponseUpdateEvents,
+                                                  this._toolCallFilteringBehavior);
 
         // Create an AgentExecutor for each again.
         Dictionary<string, HandoffAgentExecutor> executors = this._allAgents.ToDictionary(a => a.Id, a => new HandoffAgentExecutor(a, options));

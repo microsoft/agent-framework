@@ -29,6 +29,7 @@ internal static class BuiltInFunctions
     internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
     internal static readonly string GetWorkflowStatusHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(GetWorkflowStatusAsync)}";
     internal static readonly string RespondToWorkflowHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RespondToWorkflowAsync)}";
+    internal static readonly string RunWorkflowMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowMcpToolAsync)}";
 
 #pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
     internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
@@ -376,6 +377,55 @@ internal static class BuiltInFunctions
             options: null);
 
         return agentResponse.Text;
+    }
+
+    /// <summary>
+    /// Runs a workflow via MCP tool trigger.
+    /// Extracts the <c>input</c> argument, schedules a new orchestration, waits for completion, and returns the output.
+    /// </summary>
+    public static async Task<string?> RunWorkflowMcpToolAsync(
+        [McpToolTrigger("BuiltInWorkflowMcpTool")] ToolInvocationContext context,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext functionContext)
+    {
+        if (context.Arguments is null)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required arguments.");
+        }
+
+        if (!context.Arguments.TryGetValue("input", out object? inputObj) || inputObj is not string input)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required 'input' argument of type string.");
+        }
+
+        string workflowName = context.Name;
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+
+        DurableWorkflowInput<string> orchestrationInput = new() { Input = input };
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput);
+
+        OrchestrationMetadata? metadata = await client.WaitForInstanceCompletionAsync(
+            instanceId,
+            getInputsAndOutputs: true,
+            cancellation: functionContext.CancellationToken);
+
+        if (metadata is null)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' returned no metadata.");
+        }
+
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Failed)
+        {
+            string errorMessage = metadata.FailureDetails?.ErrorMessage ?? "Unknown error";
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' failed: {errorMessage}");
+        }
+
+        if (metadata.RuntimeStatus is not OrchestrationRuntimeStatus.Completed)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' ended with unexpected status '{metadata.RuntimeStatus}'.");
+        }
+
+        return metadata.ReadOutputAs<DurableWorkflowResult>()?.Result;
     }
 
     /// <summary>

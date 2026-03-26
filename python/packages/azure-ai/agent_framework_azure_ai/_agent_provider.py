@@ -18,19 +18,23 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from pydantic import BaseModel
 
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
@@ -47,6 +51,11 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated(
+    "AzureAIAgentClient and the AzureAIAgentsProvider are deprecated. "
+    "They target the V1 Agents Service API and have no direct replacement; "
+    "for new Foundry projects, use FoundryAgent."
+)
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
 
@@ -426,7 +435,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
-        client = AzureAIAgentClient(
+        client = AzureAIAgentClient(  # pyright: ignore[reportDeprecated]
             agents_client=self._agents_client,
             agent_id=agent.id,
             agent_name=agent.name,

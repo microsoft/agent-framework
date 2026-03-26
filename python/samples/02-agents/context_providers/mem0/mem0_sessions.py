@@ -3,8 +3,8 @@
 import asyncio
 import uuid
 
-from agent_framework import tool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -37,7 +37,8 @@ async def example_global_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="GlobalMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
@@ -78,7 +79,8 @@ async def example_per_operation_thread_scope() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="ScopedMemoryAssistant",
             instructions="You are an assistant with thread-scoped memory.",
             tools=get_user_preferences,
@@ -129,7 +131,8 @@ async def example_multiple_agents() -> None:
 
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="PersonalAssistant",
             instructions="You are a personal assistant that helps with personal tasks.",
             context_providers=[
@@ -139,7 +142,8 @@ async def example_multiple_agents() -> None:
                 )
             ],
         ) as personal_agent,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="WorkAssistant",
             instructions="You are a work assistant that helps with professional tasks.",
             context_providers=[

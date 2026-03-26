@@ -18,7 +18,7 @@ Key architectural points:
 - Durable Functions provides durability while waiting for human input
 
 Prerequisites:
-- Azure OpenAI configured with required environment variables
+- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`
 - Durable Task Scheduler connection string
 - Authentication via Azure CLI (az login)
 """
@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     Executor,
@@ -40,18 +41,17 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
 
 # Environment variable names
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 
 # Agent names
 CONTENT_ANALYZER_AGENT_NAME = "ContentAnalyzerAgent"
@@ -307,27 +307,20 @@ class PublishExecutor(Executor):
 
 
 def _build_client_kwargs() -> dict[str, Any]:
-    """Build Azure OpenAI client configuration from environment variables."""
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
+    """Build Foundry chat client configuration from environment variables."""
+    project_endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
+    if not project_endpoint:
+        raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
 
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
+    model = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
+    if not model:
         raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
+    return {
+        "project_endpoint": project_endpoint,
+        "model": model,
+        "credential": AzureCliCredential(),
     }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
 
 
 class InputRouterExecutor(Executor):
@@ -379,10 +372,11 @@ class InputRouterExecutor(Executor):
 def _create_workflow() -> Workflow:
     """Create the content moderation workflow with HITL."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
     # Create the content analysis agent
-    content_analyzer_agent = chat_client.as_agent(
+    content_analyzer_agent = Agent(
+        client=chat_client,
         name=CONTENT_ANALYZER_AGENT_NAME,
         instructions=CONTENT_ANALYZER_INSTRUCTIONS,
         default_options={"response_format": ContentAnalysisResult},

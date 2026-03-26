@@ -6,8 +6,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
-from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
@@ -115,7 +115,7 @@ async def run_chat_client() -> None:
         2 spans with gen_ai.operation.name=execute_tool
 
     """
-    client = OpenAIChatClient()
+    client = FoundryChatClient()
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")
