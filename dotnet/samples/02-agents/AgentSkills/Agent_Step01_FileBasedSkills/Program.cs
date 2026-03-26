@@ -23,7 +23,7 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 // The script runner runs file-based scripts (e.g. Python) as local subprocesses.
 var skillsProvider = new AgentSkillsProvider(
     Path.Combine(AppContext.BaseDirectory, "skills"),
-    SubprocessScriptExecutor.ExecuteAsync);
+    SubprocessScriptRunner.ExecuteAsync);
 // --- Agent Setup ---
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
     .GetResponsesClient()

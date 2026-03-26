@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// Sample subprocess-based skill script executor.
+// Sample subprocess-based skill script runner.
 // Executes file-based skill scripts as local subprocesses.
 // This is provided for demonstration purposes only.
 
@@ -12,11 +12,11 @@ using Microsoft.Extensions.AI;
 /// Executes file-based skill scripts as local subprocesses.
 /// </summary>
 /// <remarks>
-/// This executor uses the script's absolute path, converts the arguments
+/// This runner uses the script's absolute path, converts the arguments
 /// to CLI flags, and returns captured output. It is intended for
 /// demonstration purposes only.
 /// </remarks>
-internal static class SubprocessScriptExecutor
+internal static class SubprocessScriptRunner
 {
     /// <summary>
     /// Runs a skill script as a local subprocess.

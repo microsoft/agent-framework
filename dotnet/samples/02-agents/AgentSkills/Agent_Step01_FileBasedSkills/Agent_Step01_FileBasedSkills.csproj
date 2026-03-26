@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\SubprocessScriptExecutor.cs" Link="SubprocessScriptExecutor.cs" />
+    <Compile Include="..\SubprocessScriptRunner.cs" Link="SubprocessScriptRunner.cs" />
   </ItemGroup>
 
   <ItemGroup>
