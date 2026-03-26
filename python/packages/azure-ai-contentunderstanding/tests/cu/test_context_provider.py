@@ -1095,7 +1095,7 @@ class TestFormatResult:
         expected = (
             'Video analysis of "demo.mp4":\n'
             "Duration: 0:41 | Resolution: 640x480\n"
-            "\n### Segment 1 (0:01 \u2013 0:14)\n"
+            "\n### Segment 1 (0:01 - 0:14)\n"
             "\n```markdown\nWelcome to the Contoso demo.\n```\n"
             "\n**Fields:**\n```json\n"
             "{\n"
@@ -1113,7 +1113,7 @@ class TestFormatResult:
             "    }\n"
             "  }\n"
             "}\n```\n"
-            "\n### Segment 2 (0:15 \u2013 0:31)\n"
+            "\n### Segment 2 (0:15 - 0:31)\n"
             "\n```markdown\nHere we show real-time monitoring.\n```\n"
             "\n**Fields:**\n```json\n"
             "{\n"
@@ -1144,7 +1144,8 @@ class TestFormatResult:
         walkthrough_pos = formatted.index("Feature walkthrough")
         host_only_pos = formatted.index('"count": 1')
         host_engineer_pos = formatted.index('"count": 2')
-        assert seg1_pos < contoso_pos < intro_pos < host_only_pos < seg2_pos < monitoring_pos < walkthrough_pos < host_engineer_pos
+        assert (seg1_pos < contoso_pos < intro_pos < host_only_pos
+                < seg2_pos < monitoring_pos < walkthrough_pos < host_engineer_pos)
 
     def test_format_single_segment_no_segments_key(self) -> None:
         """Single-segment results should NOT have segments key — flat format."""
@@ -1196,7 +1197,8 @@ class TestFormatResult:
         vendor_pos = formatted.index("Contoso")
         address_pos = formatted.index("ShippingAddress")
         street_pos = formatted.index("123 Main St")
-        assert header_pos < content_header_pos < markdown_pos < fields_header_pos < vendor_pos < address_pos < street_pos
+        assert (header_pos < content_header_pos < markdown_pos
+                < fields_header_pos < vendor_pos < address_pos < street_pos)
 
 
 class TestSupportedMediaTypes:

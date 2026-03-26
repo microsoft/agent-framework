@@ -337,12 +337,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self,
         context: SessionContext,
     ) -> list[tuple[str, Content, bytes | None]]:
-        """Scan input messages for file content (type ``data`` or ``uri``) supported by
-        Azure Content Understanding, strip them from messages to prevent raw binary
-        being sent to the LLM, and return metadata for CU analysis.
+        """Scan input messages for supported file content and prepare for CU analysis.
 
-        Detected files are tracked via ``doc_key`` (derived from filename, URL, or UUID)
-        and their analysis status is managed in session state.
+        Scans for type ``data`` or ``uri`` content supported by Azure Content
+        Understanding, strips them from messages to prevent raw binary being sent
+        to the LLM, and returns metadata for CU analysis.
+
+        Detected files are tracked via ``doc_key`` (derived from filename, URL,
+        or UUID) and their analysis status is managed in session state.
 
         When the upstream MIME type is unreliable (``application/octet-stream``
         or missing), binary content sniffing via ``filetype`` is used to
@@ -823,7 +825,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 if start is not None and end is not None:
                     s_min, s_sec = divmod(int(start), 60)  # type: ignore[call-overload]
                     e_min, e_sec = divmod(int(end), 60)  # type: ignore[call-overload]
-                    parts.append(f"\n### Segment {i + 1} ({s_min}:{s_sec:02d} – {e_min}:{e_sec:02d})")
+                    parts.append(f"\n### Segment {i + 1} ({s_min}:{s_sec:02d} - {e_min}:{e_sec:02d})")
                 else:
                     parts.append(f"\n### Segment {i + 1}")
 
