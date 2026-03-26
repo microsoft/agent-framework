@@ -18,7 +18,7 @@ using OpenTelemetry.Trace;
 
 #region Setup Telemetry
 
-// The source name under which all activities, metrics, and logs will be emitted.
+// Source name for this sample's custom ActivitySource and Meter; other instrumentation uses their own sources/categories.
 const string SourceName = "OpenTelemetryAspire.ConsoleApp";
 const string ServiceName = "AgentOpenTelemetry";
 
