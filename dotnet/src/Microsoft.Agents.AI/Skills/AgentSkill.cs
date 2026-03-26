@@ -41,10 +41,18 @@ public abstract class AgentSkill
     /// <summary>
     /// Gets the resources associated with this skill, or <see langword="null"/> if none.
     /// </summary>
-    public abstract IReadOnlyList<AgentSkillResource>? Resources { get; }
+    /// <remarks>
+    /// The default implementation returns <see langword="null"/>.
+    /// Override this property in derived classes to provide skill-specific resources.
+    /// </remarks>
+    public virtual IReadOnlyList<AgentSkillResource>? Resources => null;
 
     /// <summary>
     /// Gets the scripts associated with this skill, or <see langword="null"/> if none.
     /// </summary>
-    public abstract IReadOnlyList<AgentSkillScript>? Scripts { get; }
+    /// <remarks>
+    /// The default implementation returns <see langword="null"/>.
+    /// Override this property in derived classes to provide skill-specific scripts.
+    /// </remarks>
+    public virtual IReadOnlyList<AgentSkillScript>? Scripts => null;
 }
