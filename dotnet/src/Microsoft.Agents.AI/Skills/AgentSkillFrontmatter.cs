@@ -41,8 +41,8 @@ public sealed class AgentSkillFrontmatter
     /// </summary>
     internal const int MaxCompatibilityLength = 500;
 
-    // Validates skill names: lowercase letters, numbers, and hyphens only;
-    // must not start or end with a hyphen; must not contain consecutive hyphens.
+    // Validates skill names per the Agent Skills specification (https://agentskills.io/specification#frontmatter):
+    // lowercase letters, numbers, and hyphens only; must not start or end with a hyphen; must not contain consecutive hyphens.
     private static readonly Regex s_validNameRegex = new("^[a-z0-9]([a-z0-9]*-[a-z0-9])*[a-z0-9]*$", RegexOptions.Compiled);
 
     private string? _compatibility;
