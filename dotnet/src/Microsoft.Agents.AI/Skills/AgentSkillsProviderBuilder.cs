@@ -86,7 +86,7 @@ public sealed class AgentSkillsProviderBuilder
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UsePromptTemplate(string promptTemplate)
     {
-        this.EnsureOptions().SkillsInstructionPrompt = promptTemplate;
+        this.GetOrCreateOptions().SkillsInstructionPrompt = promptTemplate;
         return this;
     }
 
@@ -97,7 +97,7 @@ public sealed class AgentSkillsProviderBuilder
     /// <returns>This builder instance for chaining.</returns>
     public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
     {
-        this.EnsureOptions().ScriptApproval = enabled;
+        this.GetOrCreateOptions().ScriptApproval = enabled;
         return this;
     }
 
@@ -148,7 +148,7 @@ public sealed class AgentSkillsProviderBuilder
     public AgentSkillsProviderBuilder UseOptions(Action<AgentSkillsProviderOptions> configure)
     {
         _ = Throw.IfNull(configure);
-        configure(this.EnsureOptions());
+        configure(this.GetOrCreateOptions());
         return this;
     }
 
@@ -185,13 +185,8 @@ public sealed class AgentSkillsProviderBuilder
         return new AgentSkillsProvider(source, this._options, this._loggerFactory);
     }
 
-    private AgentSkillsProviderOptions EnsureOptions()
+    private AgentSkillsProviderOptions GetOrCreateOptions()
     {
-        if (this._options == null)
-        {
-            this._options = new AgentSkillsProviderOptions();
-        }
-
-        return this._options;
+        return this._options ??= new AgentSkillsProviderOptions();
     }
 }

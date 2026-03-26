@@ -27,8 +27,7 @@ internal sealed class AggregatingAgentSkillsSource : AgentSkillsSource
     /// <param name="sources">The child sources to aggregate.</param>
     public AggregatingAgentSkillsSource(IEnumerable<AgentSkillsSource> sources)
     {
-        _ = Throw.IfNull(sources);
-        this._sources = sources;
+        this._sources = Throw.IfNull(sources);
     }
 
     /// <inheritdoc/>
