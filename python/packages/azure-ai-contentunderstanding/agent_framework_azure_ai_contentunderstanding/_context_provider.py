@@ -238,7 +238,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 await self._upload_to_vector_store(upload_key, upload_entry)
             self._pending_uploads.clear()
 
-        # 2. Detect and strip supported file attachments from input
+        # 2. Detect CU-supported file attachments, strip them from input, and return for analysis
         new_files = self._detect_and_strip_files(context)
 
         # 3. Analyze new files using CU (track elapsed time for combined timeout)
@@ -249,8 +249,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 logger.warning("Duplicate document key '%s' — skipping (already exists in session).", doc_key)
                 context.extend_instructions(
                     self.source_id,
-                    f"File '{doc_key}' was already uploaded in this session. "
-                    "Rename the file or use a different filename to upload it again.",
+                    f"IMPORTANT: The user tried to upload '{doc_key}', but a file with that name "
+                    "was already uploaded earlier in this session. The new upload was REJECTED — "
+                    "it was NOT analyzed. Tell the user explicitly that a file with the same name "
+                    "already exists and they need to rename the file before uploading again.",
                 )
                 continue
             file_start_times[doc_key] = time.monotonic()
@@ -335,7 +337,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self,
         context: SessionContext,
     ) -> list[tuple[str, Content, bytes | None]]:
-        """Detect files supported by Azure Content Understanding in input, strip them, and return metadata.
+        """Scan input messages for file content (type ``data`` or ``uri``) supported by
+        Azure Content Understanding, strip them from messages to prevent raw binary
+        being sent to the LLM, and return metadata for CU analysis.
+
+        Detected files are tracked via ``doc_key`` (derived from filename, URL, or UUID)
+        and their analysis status is managed in session state.
 
         When the upstream MIME type is unreliable (``application/octet-stream``
         or missing), binary content sniffing via ``filetype`` is used to
@@ -343,7 +350,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         filename-based fallback.
 
         Returns:
-            List of (doc_key, content_item, binary_data) tuples.
+            List of (doc_key, content_item, binary_data) tuples for files to analyze.
         """
         results: list[tuple[str, Content, bytes | None]] = []
         strip_ids: set[int] = set()
@@ -362,10 +369,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     continue
 
                 # Slow path: unreliable MIME — sniff binary content
-                if not media_type or media_type == "application/octet-stream":
+                if (not media_type) or (media_type == "application/octet-stream"):
                     binary_data = self._extract_binary(c)
                     resolved = self._sniff_media_type(binary_data, c)
-                    if resolved and resolved in SUPPORTED_MEDIA_TYPES:
+                    if resolved and (resolved in SUPPORTED_MEDIA_TYPES):
                         c.media_type = resolved
                         results.append((self._derive_doc_key(c), c, binary_data))
                         strip_ids.add(id(c))
@@ -390,14 +397,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 mime: str = kind.mime  # type: ignore[reportUnknownMemberType]
                 return _MIME_ALIASES.get(mime, mime)
 
-        # 2. Filename extension fallback
+        # 2. Filename extension fallback — try additional_properties first,
+        # then extract basename from external URL path
         filename: str | None = None
         if content.additional_properties:
             filename = content.additional_properties.get("filename")
         if not filename and content.uri and not content.uri.startswith("data:"):
+            # Extract basename from URL path (e.g. "https://example.com/report.pdf?v=1" → "report.pdf")
             filename = content.uri.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
         if filename:
-            guessed, _ = mimetypes.guess_type(filename)
+            guessed, _ = mimetypes.guess_type(filename)  # uses file extension to guess MIME type
             if guessed:
                 return _MIME_ALIASES.get(guessed, guessed)
 
@@ -588,7 +597,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         documents: dict[str, DocumentEntry],
         context: SessionContext,
     ) -> None:
-        """Check for completed background tasks and update document state."""
+        """Check for completed background CU analysis tasks and update document state.
+
+        When a file's CU analysis exceeds ``max_wait``, it is deferred to a background
+        ``asyncio.Task``. This method checks all pending tasks on the next ``before_run()``
+        call: completed tasks have their results extracted and status set to ``READY``;
+        failed tasks are marked ``FAILED`` with an error message.
+
+        In file_search mode, completed documents are queued in ``_pending_uploads``
+        for vector store upload (handled in step 1b of ``before_run``).
+        """
         completed_keys: list[str] = []
 
         for doc_key, task in self._pending_tasks.items():
@@ -652,12 +670,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
         """Extract configured sections from a CU analysis result.
 
-        For multi-segment results (e.g. video split into scenes), this method
-        iterates **all** ``contents`` entries and merges them:
-        - ``duration_seconds``: computed from the global min(startTimeMs) to max(endTimeMs)
-        - ``markdown``: concatenated across segments with separator
-        - ``fields``: merged; when the same field name appears in multiple segments,
-          values are collected into a per-segment list
+        For single-segment results (documents, images, short audio), returns a flat
+        dict with ``markdown`` and ``fields`` at the top level.
+
+        For multi-segment results (e.g. video split into scenes), fields are kept
+        with their respective segments in a ``segments`` list so the LLM can see
+        which fields belong to which part of the content:
+        - ``segments``: list of per-segment dicts with ``markdown``, ``fields``,
+          ``start_time_s``, and ``end_time_s``
+        - ``markdown``: still concatenated at top level for file_search uploads
+        - ``duration_seconds``: computed from the global time span
         - ``kind`` / ``resolution``: taken from the first segment
         """
         extracted: dict[str, object] = {}
@@ -665,7 +687,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not contents:
             return extracted
 
-        # --- Media metadata (merged across all segments) ---
+        # --- Media metadata (from first segment) ---
         first = contents[0]
         kind = getattr(first, "kind", None)
         if kind:
@@ -688,46 +710,83 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if global_start is not None and global_end is not None:
             extracted["duration_seconds"] = round((global_end - global_start) / 1000, 1)
 
-        # --- Markdown (concatenated) ---
-        if AnalysisSection.MARKDOWN in self.output_sections:
-            md_parts: list[str] = []
-            for content in contents:
-                if content.markdown:
-                    md_parts.append(content.markdown)
-            if md_parts:
-                extracted["markdown"] = "\n\n---\n\n".join(md_parts)
+        is_multi_segment = len(contents) > 1
 
-        # --- Fields (merged across segments) ---
-        if AnalysisSection.FIELDS in self.output_sections:
-            merged_fields: dict[str, list[dict[str, object]]] = {}
-            for seg_idx, content in enumerate(contents):
-                if not content.fields:
-                    continue
-                for name, field in content.fields.items():
-                    value: object = None
-                    for attr in ("value_string", "value_number", "value_date", "value"):
-                        value = getattr(field, attr, None)
-                        if value is not None:
-                            break
+        # --- Single-segment: flat output (documents, images, short audio) ---
+        if not is_multi_segment:
+            if AnalysisSection.MARKDOWN in self.output_sections and contents[0].markdown:
+                extracted["markdown"] = contents[0].markdown
+            if AnalysisSection.FIELDS in self.output_sections and contents[0].fields:
+                fields: dict[str, object] = {}
+                for name, field in contents[0].fields.items():
+                    value = self._extract_field_value(field)
                     confidence = getattr(field, "confidence", None)
                     field_type = getattr(field, "type", None)
-                    entry = {"type": field_type, "value": value, "confidence": confidence}
-                    if len(contents) > 1:
-                        entry["segment"] = seg_idx
-                    merged_fields.setdefault(name, []).append(entry)
+                    fields[name] = {"type": field_type, "value": value, "confidence": confidence}
+                if fields:
+                    extracted["fields"] = fields
+            return extracted
 
-            # Flatten single-occurrence fields for backward compat
-            fields: dict[str, dict[str, object] | list[dict[str, object]]] = {}
-            for name, entries in merged_fields.items():
-                fields[name] = entries[0] if len(entries) == 1 else entries
-            if fields:
-                extracted["fields"] = fields
+        # --- Multi-segment: per-segment output (video scenes, long audio) ---
+        # Each segment keeps its own markdown + fields together so the LLM can
+        # see which fields (e.g. Summary) belong to which part of the content.
+        segments_out: list[dict[str, object]] = []
+        md_parts: list[str] = []  # also collect for top-level concatenated markdown
+
+        for content in contents:
+            seg: dict[str, object] = {}
+
+            # Time range for this segment
+            s = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
+            e = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
+            if s is not None:
+                seg["start_time_s"] = round(s / 1000, 1)
+            if e is not None:
+                seg["end_time_s"] = round(e / 1000, 1)
+
+            # Per-segment markdown
+            if AnalysisSection.MARKDOWN in self.output_sections and content.markdown:
+                seg["markdown"] = content.markdown
+                md_parts.append(content.markdown)
+
+            # Per-segment fields
+            if AnalysisSection.FIELDS in self.output_sections and content.fields:
+                seg_fields: dict[str, object] = {}
+                for name, field in content.fields.items():
+                    value = self._extract_field_value(field)
+                    confidence = getattr(field, "confidence", None)
+                    field_type = getattr(field, "type", None)
+                    seg_fields[name] = {"type": field_type, "value": value, "confidence": confidence}
+                if seg_fields:
+                    seg["fields"] = seg_fields
+
+            segments_out.append(seg)
+
+        extracted["segments"] = segments_out
+
+        # Top-level concatenated markdown (used by file_search for vector store upload)
+        if md_parts:
+            extracted["markdown"] = "\n\n---\n\n".join(md_parts)
 
         return extracted
 
     @staticmethod
+    def _extract_field_value(field: Any) -> object:
+        """Extract the value from a CU field, trying multiple attribute names."""
+        for attr in ("value_string", "value_number", "value_date", "value"):
+            value = getattr(field, attr, None)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
     def _format_result(filename: str, result: dict[str, object]) -> str:
-        """Format extracted CU result for LLM consumption."""
+        """Format extracted CU result for LLM consumption.
+
+        For multi-segment results (video/audio with ``segments``), each segment's
+        markdown and fields are grouped together so the LLM can see which fields
+        belong to which part of the content.
+        """
         kind = result.get("kind")
         is_video = kind == "audioVisual"
         is_audio = kind == "audio"
@@ -753,9 +812,39 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if meta_items:
             parts.append(" | ".join(meta_items))
 
-        # For audio: promote Summary field as prose before markdown
+        # --- Multi-segment: format each segment with its own content + fields ---
+        segments = result.get("segments")
+        if isinstance(segments, list) and len(segments) > 0:
+            for i, seg in enumerate(segments):
+                seg = cast(dict[str, object], seg)
+                # Segment header with time range
+                start = seg.get("start_time_s")
+                end = seg.get("end_time_s")
+                if start is not None and end is not None:
+                    s_min, s_sec = divmod(int(start), 60)  # type: ignore[call-overload]
+                    e_min, e_sec = divmod(int(end), 60)  # type: ignore[call-overload]
+                    parts.append(f"\n### Segment {i + 1} ({s_min}:{s_sec:02d} – {e_min}:{e_sec:02d})")
+                else:
+                    parts.append(f"\n### Segment {i + 1}")
+
+                # Segment markdown
+                seg_md = seg.get("markdown")
+                if seg_md:
+                    parts.append(f"\n```markdown\n{seg_md}\n```")
+
+                # Segment fields
+                seg_fields = seg.get("fields")
+                if isinstance(seg_fields, dict) and seg_fields:
+                    fields_json = json.dumps(seg_fields, indent=2, default=str)
+                    parts.append(f"\n**Fields:**\n```json\n{fields_json}\n```")
+
+            return "\n".join(parts)
+
+        # --- Single-segment: flat format ---
         fields_raw = result.get("fields")
         fields: dict[str, object] = cast(dict[str, object], fields_raw) if isinstance(fields_raw, dict) else {}
+
+        # For audio: promote Summary field as prose before markdown
         if is_audio and fields:
             summary_field = fields.get("Summary")
             if isinstance(summary_field, dict):
@@ -771,7 +860,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # Fields section
         if fields:
             remaining = dict(fields)
-            # For audio, Summary was already shown as prose above
             if is_audio:
                 remaining = {k: v for k, v in remaining.items() if k != "Summary"}
             if remaining:
@@ -904,8 +992,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not result:
             return False
 
-        markdown = result.get("markdown")
-        if not markdown or not isinstance(markdown, str):
+        # Upload the full formatted content (markdown + fields + segments),
+        # not just raw markdown — consistent with what non-file_search mode injects.
+        formatted = self._format_result(entry["filename"], result)
+        if not formatted:
             return False
 
         entry["status"] = DocumentStatus.UPLOADING
@@ -913,14 +1003,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         try:
             upload_coro = self.file_search.backend.upload_file(
-                self.file_search.vector_store_id, f"{doc_key}.md", markdown.encode("utf-8")
+                self.file_search.vector_store_id, f"{doc_key}.md", formatted.encode("utf-8")
             )
             file_id = await asyncio.wait_for(upload_coro, timeout=timeout)
             upload_duration = round(time.monotonic() - t0, 2)
             self._uploaded_file_ids.append(file_id)
             entry["status"] = DocumentStatus.READY
             entry["upload_duration_s"] = upload_duration
-            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(markdown))
+            logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(formatted))
             return True
 
         except asyncio.TimeoutError:

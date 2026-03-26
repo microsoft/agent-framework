@@ -991,7 +991,7 @@ class TestMultiModalFixtures:
         provider = _make_provider()
         result = provider._extract_sections(video_analysis_result)
         assert "markdown" in result
-        # All 3 segments should be concatenated
+        # All 3 segments should be concatenated at top level (for file_search)
         md = str(result["markdown"])
         assert "Contoso Product Demo" in md
         assert "real-time monitoring" in md
@@ -1002,16 +1002,22 @@ class TestMultiModalFixtures:
         assert result.get("kind") == "audioVisual"
         # resolution from first segment
         assert result.get("resolution") == "640x480"
-        # Fields merged across 3 segments: Summary appears 3 times
-        fields = result.get("fields")
-        assert isinstance(fields, dict)
-        assert "Summary" in fields
-        # Multi-segment field should be a list of per-segment entries
-        summary = fields["Summary"]
-        assert isinstance(summary, list)
-        assert len(summary) == 3
-        assert summary[0]["segment"] == 0
-        assert summary[2]["segment"] == 2
+        # Multi-segment: fields should be in per-segment list, not merged at top level
+        assert "fields" not in result  # no top-level fields for multi-segment
+        segments = result.get("segments")
+        assert isinstance(segments, list)
+        assert len(segments) == 3
+        # Each segment should have its own fields and time range
+        seg0 = segments[0]
+        assert "fields" in seg0
+        assert "Summary" in seg0["fields"]
+        assert seg0.get("start_time_s") == 1.0
+        assert seg0.get("end_time_s") == 14.0
+        seg2 = segments[2]
+        assert "fields" in seg2
+        assert "Summary" in seg2["fields"]
+        assert seg2.get("start_time_s") == 36.0
+        assert seg2.get("end_time_s") == 42.0
 
     def test_image_fixture_loads(self, image_analysis_result: AnalysisResult) -> None:
         provider = _make_provider()
@@ -1026,6 +1032,8 @@ class TestMultiModalFixtures:
         fields = result["fields"]
         assert isinstance(fields, dict)
         assert "VendorName" in fields
+        # Single-segment: should NOT have segments key
+        assert "segments" not in result
 
 
 class TestFormatResult:
@@ -1047,6 +1055,148 @@ class TestFormatResult:
 
         assert "# Just Text" in formatted
         assert "Extracted Fields" not in formatted
+
+    def test_format_multi_segment_video(self) -> None:
+        """Multi-segment results should format each segment with its own content + fields."""
+        result: dict[str, object] = {
+            "kind": "audioVisual",
+            "duration_seconds": 41.0,
+            "resolution": "640x480",
+            "markdown": "scene1\n\n---\n\nscene2",  # concatenated for file_search
+            "segments": [
+                {
+                    "start_time_s": 1.0,
+                    "end_time_s": 14.0,
+                    "markdown": "Welcome to the Contoso demo.",
+                    "fields": {
+                        "Summary": {"type": "string", "value": "Product intro"},
+                        "Speakers": {
+                            "type": "object",
+                            "value": {"count": 1, "names": ["Host"]},
+                        },
+                    },
+                },
+                {
+                    "start_time_s": 15.0,
+                    "end_time_s": 31.0,
+                    "markdown": "Here we show real-time monitoring.",
+                    "fields": {
+                        "Summary": {"type": "string", "value": "Feature walkthrough"},
+                        "Speakers": {
+                            "type": "object",
+                            "value": {"count": 2, "names": ["Host", "Engineer"]},
+                        },
+                    },
+                },
+            ],
+        }
+        formatted = ContentUnderstandingContextProvider._format_result("demo.mp4", result)
+
+        expected = (
+            'Video analysis of "demo.mp4":\n'
+            "Duration: 0:41 | Resolution: 640x480\n"
+            "\n### Segment 1 (0:01 \u2013 0:14)\n"
+            "\n```markdown\nWelcome to the Contoso demo.\n```\n"
+            "\n**Fields:**\n```json\n"
+            "{\n"
+            '  "Summary": {\n'
+            '    "type": "string",\n'
+            '    "value": "Product intro"\n'
+            "  },\n"
+            '  "Speakers": {\n'
+            '    "type": "object",\n'
+            '    "value": {\n'
+            '      "count": 1,\n'
+            '      "names": [\n'
+            '        "Host"\n'
+            "      ]\n"
+            "    }\n"
+            "  }\n"
+            "}\n```\n"
+            "\n### Segment 2 (0:15 \u2013 0:31)\n"
+            "\n```markdown\nHere we show real-time monitoring.\n```\n"
+            "\n**Fields:**\n```json\n"
+            "{\n"
+            '  "Summary": {\n'
+            '    "type": "string",\n'
+            '    "value": "Feature walkthrough"\n'
+            "  },\n"
+            '  "Speakers": {\n'
+            '    "type": "object",\n'
+            '    "value": {\n'
+            '      "count": 2,\n'
+            '      "names": [\n'
+            '        "Host",\n'
+            '        "Engineer"\n'
+            "      ]\n"
+            "    }\n"
+            "  }\n"
+            "}\n```"
+        )
+        assert formatted == expected
+
+        # Verify ordering: segment 1 markdown+fields appear before segment 2
+        seg1_pos = formatted.index("Segment 1")
+        seg2_pos = formatted.index("Segment 2")
+        contoso_pos = formatted.index("Welcome to the Contoso demo.")
+        monitoring_pos = formatted.index("Here we show real-time monitoring.")
+        intro_pos = formatted.index("Product intro")
+        walkthrough_pos = formatted.index("Feature walkthrough")
+        host_only_pos = formatted.index('"count": 1')
+        host_engineer_pos = formatted.index('"count": 2')
+        assert seg1_pos < contoso_pos < intro_pos < host_only_pos < seg2_pos < monitoring_pos < walkthrough_pos < host_engineer_pos
+
+    def test_format_single_segment_no_segments_key(self) -> None:
+        """Single-segment results should NOT have segments key — flat format."""
+        result: dict[str, object] = {
+            "kind": "document",
+            "markdown": "# Invoice content",
+            "fields": {
+                "VendorName": {"type": "string", "value": "Contoso", "confidence": 0.95},
+                "ShippingAddress": {
+                    "type": "object",
+                    "value": {"street": "123 Main St", "city": "Redmond", "state": "WA"},
+                    "confidence": 0.88,
+                },
+            },
+        }
+        formatted = ContentUnderstandingContextProvider._format_result("invoice.pdf", result)
+
+        expected = (
+            'Document analysis of "invoice.pdf":\n'
+            "\n## Content\n\n"
+            "```markdown\n# Invoice content\n```\n"
+            "\n## Extracted Fields\n\n"
+            "```json\n"
+            "{\n"
+            '  "VendorName": {\n'
+            '    "type": "string",\n'
+            '    "value": "Contoso",\n'
+            '    "confidence": 0.95\n'
+            "  },\n"
+            '  "ShippingAddress": {\n'
+            '    "type": "object",\n'
+            '    "value": {\n'
+            '      "street": "123 Main St",\n'
+            '      "city": "Redmond",\n'
+            '      "state": "WA"\n'
+            "    },\n"
+            '    "confidence": 0.88\n'
+            "  }\n"
+            "}\n"
+            "```"
+        )
+        assert formatted == expected
+
+        # Verify ordering: header → markdown content → fields
+        header_pos = formatted.index('Document analysis of "invoice.pdf"')
+        content_header_pos = formatted.index("## Content")
+        markdown_pos = formatted.index("# Invoice content")
+        fields_header_pos = formatted.index("## Extracted Fields")
+        vendor_pos = formatted.index("Contoso")
+        address_pos = formatted.index("ShippingAddress")
+        street_pos = formatted.index("123 Main St")
+        assert header_pos < content_header_pos < markdown_pos < fields_header_pos < vendor_pos < address_pos < street_pos
 
 
 class TestSupportedMediaTypes:
