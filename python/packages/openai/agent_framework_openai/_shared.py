@@ -199,7 +199,7 @@ def load_openai_service_settings(
 
     The generic OpenAI clients primarily read from ``OPENAI_*`` variables. Azure-specific
     environment variables are used only when an explicit Azure signal is present
-    (``azure_endpoint`` or ``credential``) or when no explicit
+    (``endpoint`` or ``credential``) or when no explicit
     OpenAI API key is available.
     """
     # Merge APP_INFO into the headers
