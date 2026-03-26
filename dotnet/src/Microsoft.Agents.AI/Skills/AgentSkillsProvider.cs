@@ -77,13 +77,13 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// Duplicate skill names are automatically deduplicated (first occurrence wins).
     /// </summary>
     /// <param name="skillPath">Path to search for skills.</param>
-    /// <param name="scriptRunner">The delegate that runs file-based scripts.</param>
+    /// <param name="scriptRunner">Optional delegate that runs file-based scripts. Required only when skills contain scripts.</param>
     /// <param name="fileOptions">Optional options that control skill discovery behavior.</param>
     /// <param name="options">Optional provider configuration.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentSkillsProvider(
         string skillPath,
-        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillScriptRunner? scriptRunner = null,
         AgentFileSkillsSourceOptions? fileOptions = null,
         AgentSkillsProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
@@ -97,19 +97,19 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     /// Duplicate skill names are automatically deduplicated (first occurrence wins).
     /// </summary>
     /// <param name="skillPaths">Paths to search for skills.</param>
-    /// <param name="scriptRunner">The delegate that runs file-based scripts.</param>
+    /// <param name="scriptRunner">Optional delegate that runs file-based scripts. Required only when skills contain scripts.</param>
     /// <param name="fileOptions">Optional options that control skill discovery behavior.</param>
     /// <param name="options">Optional provider configuration.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentSkillsProvider(
         IEnumerable<string> skillPaths,
-        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillScriptRunner? scriptRunner = null,
         AgentFileSkillsSourceOptions? fileOptions = null,
         AgentSkillsProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
         : this(
             new DeduplicatingAgentSkillsSource(
-                new AgentFileSkillsSource(skillPaths, Throw.IfNull(scriptRunner), fileOptions, loggerFactory),
+                new AgentFileSkillsSource(skillPaths, scriptRunner, fileOptions, loggerFactory),
                 loggerFactory),
             options,
             loggerFactory)

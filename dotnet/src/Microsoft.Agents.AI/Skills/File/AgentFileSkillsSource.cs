@@ -55,19 +55,19 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     private readonly IEnumerable<string> _skillPaths;
     private readonly HashSet<string> _allowedResourceExtensions;
     private readonly HashSet<string> _allowedScriptExtensions;
-    private readonly AgentFileSkillScriptRunner _scriptRunner;
+    private readonly AgentFileSkillScriptRunner? _scriptRunner;
     private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkillsSource"/> class.
     /// </summary>
     /// <param name="skillPath">Path to search for skills.</param>
-    /// <param name="scriptRunner">Runner for file-based scripts.</param>
+    /// <param name="scriptRunner">Optional runner for file-based scripts. Required only when skills contain scripts.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentFileSkillsSource(
         string skillPath,
-        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillScriptRunner? scriptRunner = null,
         AgentFileSkillsSourceOptions? options = null,
         ILoggerFactory? loggerFactory = null)
         : this([skillPath], scriptRunner, options, loggerFactory)
@@ -78,12 +78,12 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
     /// Initializes a new instance of the <see cref="AgentFileSkillsSource"/> class.
     /// </summary>
     /// <param name="skillPaths">Paths to search for skills.</param>
-    /// <param name="scriptRunner">Runner for file-based scripts.</param>
+    /// <param name="scriptRunner">Optional runner for file-based scripts. Required only when skills contain scripts.</param>
     /// <param name="options">Optional options that control skill discovery behavior.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentFileSkillsSource(
         IEnumerable<string> skillPaths,
-        AgentFileSkillScriptRunner scriptRunner,
+        AgentFileSkillScriptRunner? scriptRunner = null,
         AgentFileSkillsSourceOptions? options = null,
         ILoggerFactory? loggerFactory = null)
     {
@@ -102,7 +102,7 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
             resolvedOptions.AllowedScriptExtensions ?? s_defaultScriptExtensions,
             StringComparer.OrdinalIgnoreCase);
 
-        this._scriptRunner = Throw.IfNull(scriptRunner);
+        this._scriptRunner = scriptRunner;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentFileSkillsSource>();
     }
 

@@ -16,19 +16,19 @@ namespace Microsoft.Agents.AI;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentFileSkillScript : AgentSkillScript
 {
-    private readonly AgentFileSkillScriptRunner _runner;
+    private readonly AgentFileSkillScriptRunner? _runner;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AgentFileSkillScript"/> class.
     /// </summary>
     /// <param name="name">The script name.</param>
     /// <param name="fullPath">The absolute file path to the script.</param>
-    /// <param name="runner">External runner for running the script.</param>
-    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillScriptRunner runner)
+    /// <param name="runner">Optional external runner for running the script. An <see cref="InvalidOperationException"/> is thrown from <see cref="RunAsync"/> if no runner is provided.</param>
+    internal AgentFileSkillScript(string name, string fullPath, AgentFileSkillScriptRunner? runner = null)
         : base(name)
     {
         this.FullPath = Throw.IfNullOrWhitespace(fullPath);
-        this._runner = Throw.IfNull(runner);
+        this._runner = runner;
     }
 
     /// <summary>
@@ -42,6 +42,13 @@ public sealed class AgentFileSkillScript : AgentSkillScript
         if (skill is not AgentFileSkill fileSkill)
         {
             throw new InvalidOperationException($"File-based script '{this.Name}' requires an {nameof(AgentFileSkill)} but received '{skill.GetType().Name}'.");
+        }
+
+        if (this._runner is null)
+        {
+            throw new InvalidOperationException(
+                $"Script '{this.Name}' cannot be executed because no {nameof(AgentFileSkillScriptRunner)} was provided. " +
+                $"Supply a script runner when constructing {nameof(AgentFileSkillsSource)} to enable script execution.");
         }
 
         return await this._runner(fileSkill, this, arguments, cancellationToken).ConfigureAwait(false);

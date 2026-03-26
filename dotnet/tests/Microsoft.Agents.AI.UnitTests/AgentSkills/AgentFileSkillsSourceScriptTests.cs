@@ -160,9 +160,27 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_NullExecutor_ThrowsArgumentNullException()
+    public void Constructor_NullExecutor_DoesNotThrow()
     {
-        Assert.Throws<ArgumentNullException>(() => new AgentFileSkillsSource(this._testRoot, null!));
+        // Arrange & Act & Assert — null runner is allowed when skills have no scripts
+        var source = new AgentFileSkillsSource(this._testRoot, null);
+        Assert.NotNull(source);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ScriptsWithNoRunner_ThrowsOnRunAsync()
+    {
+        // Arrange
+        string skillDir = CreateSkillDir(this._testRoot, "no-runner-skill", "No runner", "Body.");
+        CreateFile(skillDir, "scripts/run.sh", "echo 'hello'");
+        var source = new AgentFileSkillsSource(this._testRoot, scriptRunner: null);
+
+        // Act — discovery succeeds even without a runner
+        var skills = await source.GetSkillsAsync(CancellationToken.None);
+        var script = skills[0].Scripts![0];
+
+        // Assert — running the script throws because no runner was provided
+        await Assert.ThrowsAsync<InvalidOperationException>(() => script.RunAsync(skills[0], new AIFunctionArguments(), CancellationToken.None));
     }
 
     [Fact]
