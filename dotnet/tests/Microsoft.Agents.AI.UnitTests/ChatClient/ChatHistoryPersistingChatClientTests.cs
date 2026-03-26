@@ -763,4 +763,171 @@ public class ChatHistoryPersistingChatClientTests
 
         await Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Verifies that when per-service-call persistence is active and no real conversation ID exists,
+    /// <see cref="ChatClientAgent"/> sets the <see cref="ChatHistoryPersistingChatClient.LocalHistoryConversationId"/>
+    /// sentinel on the chat options and <see cref="ChatHistoryPersistingChatClient"/> strips it before
+    /// forwarding to the inner client.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SetsAndStripsSentinelConversationId_WhenPerServiceCallPersistenceActiveAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test" },
+            PersistChatHistoryAtEndOfRun = false,
+        });
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert — the inner client should NOT see the sentinel conversation ID
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that the sentinel is NOT set when end-of-run persistence is enabled
+    /// (mark-only mode), since the issue only applies to per-service-call persistence.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotSetSentinel_WhenEndOfRunPersistenceEnabledAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test" },
+            PersistChatHistoryAtEndOfRun = true,
+        });
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")]);
+
+        // Assert — the inner client should see options but NOT the sentinel conversation ID
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that the sentinel is NOT set when a real conversation ID is already present
+    /// on the session (indicating server-side history management).
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_DoesNotSetSentinel_WhenRealConversationIdExistsAsync()
+    {
+        // Arrange
+        const string RealConversationId = "real-conv-123";
+        ChatOptions? capturedOptions = null;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")])
+            {
+                ConversationId = RealConversationId,
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            PersistChatHistoryAtEndOfRun = false,
+        });
+
+        // Create a session with a real conversation ID.
+        var session = await agent.CreateSessionAsync(RealConversationId);
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert — the inner client should see the real conversation ID, not the sentinel
+        Assert.NotNull(capturedOptions);
+        Assert.Equal(RealConversationId, capturedOptions!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that the sentinel is set and stripped correctly in the streaming path.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_SetsAndStripsSentinelConversationId_WhenPerServiceCallPersistenceActiveAsync()
+    {
+        // Arrange
+        ChatOptions? capturedOptions = null;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((_, opts, _) => capturedOptions = opts)
+            .Returns(CreateAsyncEnumerableAsync(new ChatResponseUpdate(role: ChatRole.Assistant, content: "response")));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatOptions = new() { Instructions = "test" },
+            PersistChatHistoryAtEndOfRun = false,
+        });
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "test")]))
+        {
+            // Consume the stream.
+        }
+
+        // Assert — the inner client should NOT see the sentinel conversation ID
+        Assert.NotNull(capturedOptions);
+        Assert.Null(capturedOptions!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that the session's conversation ID is NOT set to the sentinel after the run.
+    /// The sentinel should only exist transiently on the ChatOptions for the pipeline.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SentinelDoesNotLeakToSession_WhenPerServiceCallPersistenceActiveAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            PersistChatHistoryAtEndOfRun = false,
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert — session should NOT have the sentinel conversation ID
+        Assert.Null(session!.ConversationId);
+    }
 }

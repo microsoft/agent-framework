@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 from opentelemetry import propagate
 
 from ._tools import FunctionTool
-from ._types import Content, Message
+from ._types import (
+    ChatOptions,
+    Content,
+    Message,
+)
 from .exceptions import ToolException, ToolExecutionException
 
 if sys.version_info >= (3, 11):
@@ -641,6 +645,7 @@ class MCPTool:
                 raise ToolException(error_msg, inner_exception=ex) from ex
             try:
                 try:
+                    from mcp import types
                     from mcp.client.session import ClientSession as runtime_client_session
                 except ModuleNotFoundError as ex:
                     await self._safe_close_exit_stack()
@@ -648,6 +653,12 @@ class MCPTool:
                         "MCP support requires `mcp`. Please install `mcp`.",
                         inner_exception=ex,
                     ) from ex
+
+                sampling_capabilities = None
+                if self.client is not None:
+                    sampling_capabilities = types.SamplingCapability(
+                        tools=types.SamplingToolsCapability(),
+                    )
                 session = await self._exit_stack.enter_async_context(
                     runtime_client_session(
                         read_stream=transport[0],
@@ -658,6 +669,7 @@ class MCPTool:
                         message_handler=self.message_handler,
                         logging_callback=self.logging_callback,
                         sampling_callback=self.sampling_callback,
+                        sampling_capabilities=sampling_capabilities,
                     )
                 )
             except Exception as ex:
@@ -734,14 +746,35 @@ class MCPTool:
         messages: list[Message] = []
         for msg in params.messages:
             messages.append(self._parse_message_from_mcp(msg))
+
+        options: ChatOptions[None] = {}
+        if params.systemPrompt is not None:
+            options["instructions"] = params.systemPrompt
+        if params.tools is not None:
+            options["tools"] = [
+                FunctionTool(
+                    name=tool.name,
+                    description=tool.description or "",
+                    input_model=tool.inputSchema,
+                )
+                for tool in params.tools
+            ]
+        if params.toolChoice is not None and params.toolChoice.mode is not None:
+            options["tool_choice"] = params.toolChoice.mode
+
+        if params.temperature is not None:
+            options["temperature"] = params.temperature
+        options["max_tokens"] = params.maxTokens
+        if params.stopSequences is not None:
+            options["stop"] = params.stopSequences
+
         try:
             response = await self.client.get_response(
                 messages,
-                temperature=params.temperature,
-                max_tokens=params.maxTokens,
-                stop=params.stopSequences,
+                options=options or None,
             )
         except Exception as ex:
+            logger.debug("Sampling callback error: %s", ex, exc_info=True)
             return types.ErrorData(
                 code=types.INTERNAL_ERROR,
                 message=f"Failed to get chat message content: {ex}",

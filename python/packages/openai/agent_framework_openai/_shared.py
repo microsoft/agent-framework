@@ -216,7 +216,9 @@ def load_openai_service_settings(
                     openai_settings["model"] = resolved_model
                     break
 
-        if not openai_settings.get("api_version"):
+        if api_version is not None:
+            openai_settings["api_version"] = api_version
+        else:
             resolved_api_version = _get_setting_from_alias(
                 "AZURE_OPENAI_API_VERSION",
                 dotenv_values_by_name=dotenv_values_by_name,

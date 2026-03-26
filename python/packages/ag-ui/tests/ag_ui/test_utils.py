@@ -450,6 +450,7 @@ def test_normalize_agui_role_valid():
     assert normalize_agui_role("assistant") == "assistant"
     assert normalize_agui_role("system") == "system"
     assert normalize_agui_role("tool") == "tool"
+    assert normalize_agui_role("reasoning") == "reasoning"
 
 
 def test_normalize_agui_role_invalid():

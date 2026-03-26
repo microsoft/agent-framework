@@ -1184,11 +1184,13 @@ def test_parse_response_from_openai_with_mcp_server_tool_result() -> None:
     assert result_content.output is not None
 
 
-def test_parse_chunk_from_openai_with_mcp_call_result() -> None:
-    """Test _parse_chunk_from_openai with MCP call output."""
+def test_parse_chunk_from_openai_with_mcp_call_added_defers_result() -> None:
+    """Test that response.output_item.added for mcp_call emits only the call, not the result.
+
+    The result is deferred to response.output_item.done.
+    """
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
-    # Mock event with MCP call that has output
     mock_event = MagicMock()
     mock_event.type = "response.output_item.added"
 
@@ -1199,8 +1201,9 @@ def test_parse_chunk_from_openai_with_mcp_call_result() -> None:
     mock_item.name = "fetch_resource"
     mock_item.server_label = "ResourceServer"
     mock_item.arguments = {"resource_id": "123"}
-    # Use proper content structure that _parse_content can handle
-    mock_item.result = [{"type": "text", "text": "test result"}]
+    mock_item.result = None
+    mock_item.output = None
+    mock_item.outputs = None
 
     mock_event.item = mock_item
     mock_event.output_index = 0
@@ -1209,18 +1212,124 @@ def test_parse_chunk_from_openai_with_mcp_call_result() -> None:
 
     update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
 
-    # Should have both call and result in contents
-    assert len(update.contents) == 2
-    call_content, result_content = update.contents
+    # Should have only the call content — result is deferred
+    assert len(update.contents) == 1
+    call_content = update.contents[0]
 
     assert call_content.type == "mcp_server_tool_call"
     assert call_content.call_id in ["mcp_call_456", "call_456"]
     assert call_content.tool_name == "fetch_resource"
 
+    # No result should be emitted at this point
+    result_contents = [c for c in update.contents if c.type == "mcp_server_tool_result"]
+    assert len(result_contents) == 0
+
+
+def test_parse_chunk_from_openai_with_mcp_output_item_done() -> None:
+    """Test that response.output_item.done for mcp_call emits mcp_server_tool_result with output."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "mcp_call"
+    mock_item.id = "mcp_call_456"
+    mock_item.output = "The weather in Seattle is 72F and sunny."
+    mock_event.item = mock_item
+
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+
     assert result_content.type == "mcp_server_tool_result"
-    assert result_content.call_id in ["mcp_call_456", "call_456"]
-    # Verify the output was parsed
+    assert result_content.call_id == "mcp_call_456"
     assert result_content.output is not None
+    assert len(result_content.output) == 1
+    assert result_content.output[0].text == "The weather in Seattle is 72F and sunny."
+    assert result_content.raw_representation is mock_item
+
+
+def test_parse_chunk_from_openai_with_mcp_output_item_done_no_output() -> None:
+    """Test that response.output_item.done for mcp_call with no output emits result with None output."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock()
+    mock_item.type = "mcp_call"
+    mock_item.id = "mcp_call_789"
+    mock_item.output = None
+    mock_event.item = mock_item
+
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+
+    assert result_content.type == "mcp_server_tool_result"
+    assert result_content.call_id == "mcp_call_789"
+    assert result_content.output is None
+    assert result_content.raw_representation is mock_item
+
+
+def test_parse_chunk_from_openai_with_mcp_output_item_done_call_id_fallback() -> None:
+    """Test that response.output_item.done for mcp_call falls back to call_id when id is missing."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock(spec=[])
+    mock_item.type = "mcp_call"
+    mock_item.call_id = "mcp_fallback_123"
+    mock_item.output = "fallback result"
+    mock_event.item = mock_item
+
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+
+    assert result_content.type == "mcp_server_tool_result"
+    assert result_content.call_id == "mcp_fallback_123"
+    assert result_content.output is not None
+    assert result_content.output[0].text == "fallback result"
+    assert result_content.raw_representation is mock_item
+
+
+def test_parse_chunk_from_openai_with_mcp_output_item_done_no_id_fallback() -> None:
+    """Test that response.output_item.done for mcp_call falls back to empty string when neither id nor call_id exist."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.done"
+
+    mock_item = MagicMock(spec=[])
+    mock_item.type = "mcp_call"
+    mock_item.output = "some result"
+    mock_event.item = mock_item
+
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    update = client._parse_chunk_from_openai(mock_event, options={}, function_call_ids=function_call_ids)
+
+    assert len(update.contents) == 1
+    result_content = update.contents[0]
+
+    assert result_content.type == "mcp_server_tool_result"
+    assert result_content.call_id == ""
+    assert result_content.output is not None
+    assert result_content.output[0].text == "some result"
+    assert result_content.raw_representation is mock_item
 
 
 def test_prepare_message_for_openai_with_function_approval_response() -> None:

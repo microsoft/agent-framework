@@ -604,6 +604,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
         # This path maps AG‑UI tool messages to function_result content with the correct tool_call_id
         role_str = normalize_agui_role(msg.get("role", "user"))
+        if role_str == "reasoning":
+            # Reasoning messages are UI-only state carried in MESSAGES_SNAPSHOT.
+            # They should not be forwarded to the LLM provider.
+            continue
         if role_str == "tool":
             # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
             tool_call_id = msg.get("tool_call_id") or msg.get("toolCallId")
@@ -1019,6 +1023,11 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
                 del normalized_msg["tool_call_id"]
             elif "toolCallId" not in normalized_msg:
                 normalized_msg["toolCallId"] = ""
+
+        # Normalize encrypted_value to encryptedValue for reasoning messages
+        if normalized_msg.get("role") == "reasoning" and "encrypted_value" in normalized_msg:
+            normalized_msg["encryptedValue"] = normalized_msg["encrypted_value"]
+            del normalized_msg["encrypted_value"]
 
         result.append(normalized_msg)
 

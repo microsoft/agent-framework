@@ -119,13 +119,17 @@ internal sealed class WorkflowHostAgent : AIAgent
         MessageMerger merger = new();
 
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
-                                                                      .ConfigureAwait(false)
-                                                                      .WithCancellation(cancellationToken))
+                                                                     .ConfigureAwait(false)
+                                                                     .WithCancellation(cancellationToken))
         {
             merger.AddUpdate(update);
         }
 
-        return merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
+        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
+
+        return response;
     }
 
     protected override async
@@ -138,11 +142,18 @@ internal sealed class WorkflowHostAgent : AIAgent
         await this.ValidateWorkflowAsync().ConfigureAwait(false);
 
         WorkflowSession workflowSession = await this.UpdateSessionAsync(messages, session, cancellationToken).ConfigureAwait(false);
+        MessageMerger merger = new();
+
         await foreach (AgentResponseUpdate update in workflowSession.InvokeStageAsync(cancellationToken)
                                                                       .ConfigureAwait(false)
                                                                       .WithCancellation(cancellationToken))
         {
+            merger.AddUpdate(update);
             yield return update;
         }
+
+        AgentResponse response = merger.ComputeMerged(workflowSession.LastResponseId!, this.Id, this.Name);
+        workflowSession.ChatHistoryProvider.AddMessages(workflowSession, response.Messages);
+        workflowSession.ChatHistoryProvider.UpdateBookmark(workflowSession);
     }
 }
