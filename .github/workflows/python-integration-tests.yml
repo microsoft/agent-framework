@@ -126,6 +126,7 @@ jobs:
           uv run pytest --import-mode=importlib
           packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
           packages/openai/tests/openai/test_openai_chat_client_azure.py
+          packages/openai/tests/openai/test_openai_embedding_client_azure.py
           packages/azure-ai/tests/azure_openai
           -m integration
           -n logical --dist worksteal
