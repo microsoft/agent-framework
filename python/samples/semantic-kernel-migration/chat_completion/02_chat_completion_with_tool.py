@@ -48,7 +48,7 @@ async def run_semantic_kernel() -> None:
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import tool
+    from agent_framework import Agent, tool
     from agent_framework.openai import OpenAIChatClient
 
     @tool(name="specials", description="List daily specials")
@@ -56,7 +56,8 @@ async def run_agent_framework() -> None:
         return "Clam chowder, Cobb salad, Chai tea"
 
     # AF tools are provided as callables on each agent instance.
-    chat_agent = OpenAIChatClient().as_agent(
+    chat_agent = Agent(
+        client=OpenAIChatClient(),
         name="Host",
         instructions="Answer menu questions accurately.",
         tools=[specials],

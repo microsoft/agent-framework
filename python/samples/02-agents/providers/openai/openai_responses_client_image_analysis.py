@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import Content
+from agent_framework import Agent, Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -21,7 +21,8 @@ async def main():
     print("=== OpenAI Responses Agent with Image Analysis ===")
 
     # 1. Create an OpenAI Responses agent with vision capabilities
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="VisionAgent",
         instructions="You are a image analysist, you get a image and need to respond with what you see in the picture.",
     )

@@ -6,7 +6,7 @@ import struct
 from pathlib import Path
 
 from agent_framework import Content, Message
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -46,7 +46,7 @@ def create_sample_audio() -> str:
 
 async def test_image() -> None:
     """Test image analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    client = FoundryChatClient(model="gpt-4o")
 
     image_uri = create_sample_image()
     message = Message(
@@ -63,7 +63,7 @@ async def test_image() -> None:
 
 async def test_audio() -> None:
     """Test audio analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o-audio-preview")
+    client = FoundryChatClient(model="gpt-4o-audio-preview")
 
     audio_uri = create_sample_audio()
     message = Message(
@@ -80,7 +80,7 @@ async def test_audio() -> None:
 
 async def test_pdf() -> None:
     """Test PDF document analysis with OpenAI."""
-    client = OpenAIChatClient(model_id="gpt-4o")
+    client = FoundryChatClient(model="gpt-4o")
 
     pdf_bytes = load_sample_pdf()
     message = Message(

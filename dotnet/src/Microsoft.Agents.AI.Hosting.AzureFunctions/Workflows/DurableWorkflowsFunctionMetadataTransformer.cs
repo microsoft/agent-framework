@@ -50,8 +50,11 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
         int initialCount = original.Count;
         this._logger.LogTransformingFunctionMetadata(initialCount);
 
-        // Track registered function names to avoid duplicates when workflows share executors.
-        HashSet<string> registeredFunctions = [];
+        // Seed with existing function names to avoid duplicates across transformers
+        // (e.g., when DurableAgentFunctionMetadataTransformer already registered entity triggers).
+        HashSet<string> registeredFunctions = new(
+            original.Select(f => f.Name!),
+            StringComparer.OrdinalIgnoreCase);
 
         DurableWorkflowOptions workflowOptions = this._options.Workflows;
         foreach (var workflow in workflowOptions.Workflows)
@@ -110,6 +113,17 @@ internal sealed class DurableWorkflowsFunctionMetadataTransformer : IFunctionMet
                         $"{workflow.Key}-respond",
                         $"workflows/{workflow.Key}/respond/{{runId}}",
                         BuiltInFunctions.RespondToWorkflowHttpFunctionEntryPoint));
+                }
+            }
+
+            // Register an MCP tool trigger if opted in via AddWorkflow(exposeMcpToolTrigger: true).
+            if (this._options.IsMcpToolTriggerEnabled(workflow.Key))
+            {
+                string mcpToolFunctionName = $"{BuiltInFunctions.McpToolPrefix}{workflow.Key}";
+                if (registeredFunctions.Add(mcpToolFunctionName))
+                {
+                    this._logger.LogRegisteringWorkflowTrigger(workflow.Key, mcpToolFunctionName, "mcpTool");
+                    original.Add(FunctionMetadataFactory.CreateWorkflowMcpToolTrigger(workflow.Key, workflow.Value.Description));
                 }
             }
 

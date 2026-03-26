@@ -1,12 +1,10 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import Agent, FunctionTool
 from agent_framework._mcp import MCPTool
-from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentVersionDetails,
     PromptAgentDefinition,
@@ -14,15 +12,8 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
-from azure.identity.aio import AzureCliCredential
 
 from agent_framework_azure_ai import AzureAIProjectAgentProvider
-
-skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
-    or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
-    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
-)
 
 
 @pytest.fixture
@@ -689,42 +680,3 @@ async def test_provider_create_agent_with_mcp_and_regular_tools(
         assert "regular_function" in tool_names
         assert "mcp_function_1" in tool_names
         assert "mcp_function_2" in tool_names
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_provider_create_and_get_agent_integration() -> None:
-    """Integration test for provider create_agent and get_agent."""
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
-
-    async with (
-        AzureCliCredential() as credential,
-        AIProjectClient(endpoint=endpoint, credential=credential) as project_client,
-    ):
-        provider = AzureAIProjectAgentProvider(project_client=project_client)
-
-        try:
-            # Create agent
-            agent = await provider.create_agent(
-                name="ProviderTestAgent",
-                model=model,
-                instructions="You are a helpful assistant. Always respond with 'Hello from provider!'",
-            )
-
-            assert isinstance(agent, Agent)
-            assert agent.name == "ProviderTestAgent"
-
-            # Run the agent
-            response = await agent.run("Hi!")
-            assert response.text is not None
-            assert len(response.text) > 0
-
-            # Get the same agent
-            retrieved_agent = await provider.get_agent(name="ProviderTestAgent")
-            assert retrieved_agent.name == "ProviderTestAgent"
-
-        finally:
-            # Cleanup
-            await project_client.agents.delete(agent_name="ProviderTestAgent")

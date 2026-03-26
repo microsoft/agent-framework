@@ -14,6 +14,11 @@ Key architectural points:
 
 This approach allows using the rich structure of `WorkflowBuilder` while leveraging
 the statefulness and durability of `DurableAIAgent`s.
+
+Prerequisites:
+- Configure `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL`
+- Sign in with Azure CLI (`az login`) for `AzureCliCredential`
+- Ensure Azurite and the Durable Task Scheduler emulator are running
 """
 
 import logging
@@ -22,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Case,
     Default,
@@ -31,17 +37,16 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, ValidationError
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
 
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
+FOUNDRY_PROJECT_ENDPOINT_ENV = "FOUNDRY_PROJECT_ENDPOINT"
+AZURE_OPENAI_DEPLOYMENT_ENV = "FOUNDRY_MODEL"
 SPAM_AGENT_NAME = "SpamDetectionAgent"
 EMAIL_AGENT_NAME = "EmailAssistantAgent"
 
@@ -87,26 +92,20 @@ class EmailPayload(BaseModel):
 
 
 def _build_client_kwargs() -> dict[str, Any]:
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
+    """Build Foundry chat client configuration from environment variables."""
+    project_endpoint = os.getenv(FOUNDRY_PROJECT_ENDPOINT_ENV)
+    if not project_endpoint:
+        raise RuntimeError(f"{FOUNDRY_PROJECT_ENDPOINT_ENV} environment variable is required.")
 
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
+    model = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
+    if not model:
         raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
 
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
+    return {
+        "project_endpoint": project_endpoint,
+        "model": model,
+        "credential": AzureCliCredential(),
     }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
 
 
 # Executors for non-AI activities (defined at module level)
@@ -165,15 +164,17 @@ def is_spam_detected(message: Any) -> bool:
 def _create_workflow() -> Workflow:
     """Create the workflow definition."""
     client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    chat_client = FoundryChatClient(**client_kwargs)
 
-    spam_agent = chat_client.as_agent(
+    spam_agent = Agent(
+        client=chat_client,
         name=SPAM_AGENT_NAME,
         instructions=SPAM_DETECTION_INSTRUCTIONS,
         default_options={"response_format": SpamDetectionResult},
     )
 
-    email_agent = chat_client.as_agent(
+    email_agent = Agent(
+        client=chat_client,
         name=EMAIL_AGENT_NAME,
         instructions=EMAIL_ASSISTANT_INSTRUCTIONS,
         default_options={"response_format": EmailResponse},
