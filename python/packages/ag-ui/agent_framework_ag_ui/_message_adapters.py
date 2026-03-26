@@ -194,6 +194,26 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
         pending_tool_call_ids = None
         pending_confirm_changes_id = None
 
+    # If the conversation ends with pending tool calls (e.g. a declaration-only
+    # frontend tool was called with no user message following), inject synthetic
+    # results so the next OpenAI call doesn't get a 400 for unmatched tool_call_ids.
+    if pending_tool_call_ids:
+        logger.info(
+            f"Messages ended with {len(pending_tool_call_ids)} pending tool calls - "
+            "injecting synthetic results"
+        )
+        for pending_call_id in pending_tool_call_ids:
+            logger.info(f"Injecting synthetic tool result for pending call_id={pending_call_id}")
+            sanitized.append(Message(
+                role="tool",
+                contents=[
+                    Content.from_function_result(
+                        call_id=pending_call_id,
+                        result="Tool execution skipped - frontend tool result not yet received",
+                    )
+                ],
+            ))
+
     return sanitized
 
 
