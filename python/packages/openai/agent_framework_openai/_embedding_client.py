@@ -164,26 +164,25 @@ class RawOpenAIEmbeddingClient(
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI routing. For Azure routing it first checks
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``
+                and then ``AZURE_OPENAI_DEPLOYMENT_NAME``.
             model_id: Deprecated alias for ``model``.
-            api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
-                For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
-                auth. A callable token provider is also accepted for backwards compatibility,
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
+                A callable token provider is also accepted for backwards compatibility,
                 but ``credential`` is the preferred Azure auth surface.
             credential: Azure credential or token provider for Azure OpenAI auth. Passing this
                 is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
                 Credential objects require the optional ``azure-identity`` package.
-            org_id: OpenAI organization ID. Used only for OpenAI routing and resolved from
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
                 ``OPENAI_ORG_ID`` when not provided.
-            base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
-                For Azure routing this may be used instead of ``azure_endpoint`` when you want
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
                 to pass the full ``.../openai/v1`` base URL directly.
-            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version to use once Azure routing is selected. When
-                not provided explicitly, Azure routing falls back to
+            api_version: Azure API version to use for Azure requests. When not provided explicitly,
+                Azure falls back to
                 ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
@@ -195,15 +194,15 @@ class RawOpenAIEmbeddingClient(
             kwargs: Additional keyword arguments forwarded to ``BaseEmbeddingClient``.
 
         Notes:
-            Environment resolution and routing precedence are:
+            Environment resolution precedence is:
 
             1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
-            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
+            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
             ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
             ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
         """
@@ -426,28 +425,27 @@ class OpenAIEmbeddingClient(
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI routing. For Azure routing it first checks
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
-            api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
-                For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
-                auth. A callable token provider is also accepted for backwards compatibility,
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``
+                and then ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
+                A callable token provider is also accepted for backwards compatibility,
                 but ``credential`` is the preferred Azure auth surface.
             credential: Azure credential or token provider for Azure OpenAI auth. Passing this
                 is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
                 Credential objects require the optional ``azure-identity`` package.
-            org_id: OpenAI organization ID. Used only for OpenAI routing and resolved from
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
                 ``OPENAI_ORG_ID`` when not provided.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
-            base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
-                For Azure routing this may be used instead of ``azure_endpoint`` when you want
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
                 to pass the full ``.../openai/v1`` base URL directly.
-            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
-            api_version: Azure API version to use once Azure routing is selected. When
-                not provided explicitly, Azure routing falls back to
+            api_version: Azure API version to use for Azure requests. When not provided explicitly,
+                Azure falls back to
                 ``AZURE_OPENAI_API_VERSION`` and then the embedding default.
             otel_provider_name: Override the OpenTelemetry provider name.
             env_file_path: Optional ``.env`` file that is checked before process environment
@@ -456,15 +454,15 @@ class OpenAIEmbeddingClient(
             env_file_encoding: Encoding for the ``.env`` file.
 
         Notes:
-            Environment resolution and routing precedence are:
+            Environment resolution precedence is:
 
             1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
             2. Explicit OpenAI API key or ``OPENAI_API_KEY``
             3. Azure environment fallback
 
-            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
-            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
+            ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
             ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
             ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
 
