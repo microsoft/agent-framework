@@ -7,7 +7,7 @@ import base64
 import contextlib
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from agent_framework import Content, Message, SessionContext
 from agent_framework._sessions import AgentSession

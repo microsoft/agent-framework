@@ -30,7 +30,6 @@ Run with DevUI:
 """
 
 import os
-from typing import Any
 
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import AzureKeyCredential
