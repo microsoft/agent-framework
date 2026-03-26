@@ -22,8 +22,11 @@ param cosmosAccountName string
 @description('Cosmos DB database name')
 param cosmosDatabaseName string
 
-@description('Cosmos DB container name')
+@description('Cosmos DB container name for messages')
 param cosmosContainerName string
+
+@description('Cosmos DB container name for threads')
+param cosmosThreadsContainerName string = 'threads'
 
 @description('Azure OpenAI endpoint URL')
 param azureOpenAiEndpoint string = ''
@@ -133,6 +136,10 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'AZURE_COSMOS_CONTAINER_NAME'
           value: cosmosContainerName
+        }
+        {
+          name: 'AZURE_COSMOS_THREADS_CONTAINER_NAME'
+          value: cosmosThreadsContainerName
         }
       ]
       cors: {

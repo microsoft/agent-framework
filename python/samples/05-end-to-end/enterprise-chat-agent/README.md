@@ -105,6 +105,7 @@ Copy `local.settings.json.example` to `local.settings.json` and update:
     "AZURE_COSMOS_ENDPOINT": "https://your-cosmos-account.documents.azure.com:443/",
     "AZURE_COSMOS_DATABASE_NAME": "chat_db",
     "AZURE_COSMOS_CONTAINER_NAME": "messages",
+    "AZURE_COSMOS_THREADS_CONTAINER_NAME": "threads",
     "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
     "ENABLE_INSTRUMENTATION": "true",
     "ENABLE_SENSITIVE_DATA": "false",

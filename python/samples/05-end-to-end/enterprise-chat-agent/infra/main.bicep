@@ -37,6 +37,9 @@ param cosmosDatabaseName string = 'chat_db'
 @description('Cosmos DB container name for messages')
 param cosmosContainerName string = 'messages'
 
+@description('Cosmos DB container name for threads')
+param cosmosThreadsContainerName string = 'threads'
+
 // ============================================================================
 // Variables
 // ============================================================================
@@ -115,6 +118,7 @@ module functionApp './core/host/function-app.bicep' = {
     cosmosAccountName: cosmos.outputs.accountName
     cosmosDatabaseName: cosmosDatabaseName
     cosmosContainerName: cosmosContainerName
+    cosmosThreadsContainerName: cosmosThreadsContainerName
     azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiModel: azureOpenAiModel
   }
@@ -134,5 +138,6 @@ output AZURE_FUNCTION_APP_URL string = functionApp.outputs.url
 output AZURE_COSMOS_ENDPOINT string = cosmos.outputs.endpoint
 output AZURE_COSMOS_DATABASE_NAME string = cosmosDatabaseName
 output AZURE_COSMOS_CONTAINER_NAME string = cosmosContainerName
+output AZURE_COSMOS_THREADS_CONTAINER_NAME string = cosmosThreadsContainerName
 
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = monitoring.outputs.applicationInsightsConnectionString
