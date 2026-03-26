@@ -6,7 +6,6 @@ Provides safe mathematical expression evaluation with DoS protections.
 
 import ast
 import operator
-from typing import Union
 
 from agent_framework import tool
 
@@ -27,7 +26,7 @@ SAFE_OPERATORS = {
 }
 
 
-def _safe_eval(node: ast.AST) -> Union[int, float]:
+def _safe_eval(node: ast.AST) -> int | float:
     """
     Safely evaluate an AST node containing only numeric operations.
     """

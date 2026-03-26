@@ -6,8 +6,6 @@ In a production scenario, this would integrate with Azure AI Search,
 Cosmos DB, or another search service.
 """
 
-from typing import Optional
-
 from agent_framework import tool
 
 # Simulated knowledge base entries
@@ -63,7 +61,7 @@ KNOWLEDGE_BASE = [
 @tool
 def search_knowledge_base(
     query: str,
-    category: Optional[str] = None,
+    category: str | None = None,
     max_results: int = 3,
 ) -> list[dict]:
     """

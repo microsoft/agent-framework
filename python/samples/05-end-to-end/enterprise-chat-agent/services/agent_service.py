@@ -12,7 +12,6 @@ Microsoft Learn documentation search.
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from agent_framework import Agent, MCPStreamableHTTPTool
 from agent_framework.azure import AzureOpenAIChatClient
@@ -24,9 +23,9 @@ from tools import (
     search_knowledge_base,
 )
 
-_history_provider: Optional[CosmosHistoryProvider] = None
-_agent: Optional[Agent] = None
-_credential: Optional[DefaultAzureCredential] = None
+_history_provider: CosmosHistoryProvider | None = None
+_agent: Agent | None = None
+_credential: DefaultAzureCredential | None = None
 
 # Prompts directory
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"

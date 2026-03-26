@@ -12,8 +12,8 @@ Uses the framework's configure_otel_providers() and get_tracer() APIs.
 """
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional
 
 # Import framework's observability - use framework APIs, don't recreate them
 from agent_framework.observability import configure_otel_providers, get_tracer
@@ -70,8 +70,8 @@ def init_observability() -> None:
 async def http_request_span(
     method: str,
     path: str,
-    thread_id: Optional[str] = None,
-    user_id: Optional[str] = None,
+    thread_id: str | None = None,
+    user_id: str | None = None,
 ) -> AsyncIterator[Span]:
     """Create a top-level HTTP request span.
 
@@ -126,7 +126,7 @@ async def http_request_span(
 async def cosmos_span(
     operation: str,
     container: str,
-    partition_key: Optional[str] = None,
+    partition_key: str | None = None,
 ) -> AsyncIterator[None]:
     """Create a Cosmos DB operation span.
 
