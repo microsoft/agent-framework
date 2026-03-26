@@ -29,11 +29,13 @@ from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingCo
 
 load_dotenv()
 
-# Support both API key and credential-based auth
-_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-_credential = AzureCliCredential() if not _api_key else None
-_cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-_cu_credential = AzureKeyCredential(_cu_key) if _cu_key else _credential
+# --- Auth ---
+# AzureCliCredential works for both Azure OpenAI and CU.
+# API keys can be set separately if the services are on different resources.
+_credential = AzureCliCredential()
+_openai_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+_cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+_cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
 
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
@@ -41,15 +43,18 @@ cu = ContentUnderstandingContextProvider(
     max_wait=5.0,
 )
 
-_client_kwargs: dict = {
-    "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-    "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-}
-if _api_key:
-    _client_kwargs["api_key"] = _api_key
+if _openai_api_key:
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        api_key=_openai_api_key,
+    )
 else:
-    _client_kwargs["credential"] = _credential
-client = AzureOpenAIResponsesClient(**_client_kwargs)
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=_credential,
+    )
 
 agent = client.as_agent(
     name="MultiModalDocAgent",

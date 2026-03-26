@@ -62,7 +62,10 @@ class _OpenAICompatBackend(FileSearchBackend):
             file=(filename, io.BytesIO(content)),
             purpose=self._FILE_PURPOSE,
         )
-        await self._client.vector_stores.files.create(
+        # Use create_and_poll to wait for indexing to complete before returning.
+        # Without this, file_search queries may return no results immediately
+        # after upload because the vector store index isn't ready yet.
+        await self._client.vector_stores.files.create_and_poll(
             vector_store_id=vector_store_id,
             file_id=uploaded.id,
         )

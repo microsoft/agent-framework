@@ -216,7 +216,19 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if entry and entry["status"] == "ready" and entry["result"]:
                 # Upload to vector store if file_search is configured
                 if self.file_search:
-                    await self._upload_to_vector_store(doc_key, entry)
+                    uploaded = await self._upload_to_vector_store(doc_key, entry)
+                    if uploaded:
+                        context.extend_instructions(
+                            self.source_id,
+                            "A document has been analyzed using Azure Content Understanding "
+                            "and indexed in a vector store. Use file_search to retrieve relevant sections.",
+                        )
+                    else:
+                        context.extend_instructions(
+                            self.source_id,
+                            f"Document '{entry['filename']}' was analyzed but failed to upload "
+                            "to the vector store. The document content is not available for search.",
+                        )
                 else:
                     # Without file_search, inject full content into context
                     context.extend_messages(
@@ -225,13 +237,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                             Message(role="user", text=self._format_result(entry["filename"], entry["result"])),
                         ],
                     )
-                if self.file_search:
-                    context.extend_instructions(
-                        self.source_id,
-                        "A document has been analyzed using Azure Content Understanding "
-                        "and indexed in a vector store. Use file_search to retrieve relevant sections.",
-                    )
-                else:
                     context.extend_instructions(
                         self.source_id,
                         "A document has been analyzed using Azure Content Understanding. "
@@ -693,14 +698,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         documents: dict[str, DocumentEntry],
         context: SessionContext,
     ) -> None:
-        """Register list_documents and get_analyzed_document tools."""
-        context.extend_tools(
-            self.source_id,
-            [
-                self._make_list_documents_tool(documents),
-                self._make_get_document_tool(documents),
-            ],
-        )
+        """Register document tools on the context.
+
+        In file_search mode, only ``list_documents`` is registered (for status
+        checking) — the LLM uses ``file_search`` for content retrieval instead
+        of ``get_analyzed_document``.
+        """
+        tools: list[FunctionTool] = [self._make_list_documents_tool(documents)]
+        if not self.file_search:
+            tools.append(self._make_get_document_tool(documents))
+        context.extend_tools(self.source_id, tools)
 
     @staticmethod
     def _make_list_documents_tool(documents: dict[str, DocumentEntry]) -> FunctionTool:
@@ -775,18 +782,22 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # file_search Vector Store Integration
     # ------------------------------------------------------------------
 
-    async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> None:
-        """Upload CU-extracted markdown to the user's vector store."""
+    async def _upload_to_vector_store(self, doc_key: str, entry: DocumentEntry) -> bool:
+        """Upload CU-extracted markdown to the user's vector store.
+
+        Returns:
+            True if the upload succeeded, False otherwise.
+        """
         if not self.file_search:
-            return
+            return False
 
         result = entry.get("result")
         if not result:
-            return
+            return False
 
         markdown = result.get("markdown")
         if not markdown or not isinstance(markdown, str):
-            return
+            return False
 
         try:
             file_id = await self.file_search.backend.upload_file(
@@ -794,9 +805,13 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             )
             self._uploaded_file_ids.append(file_id)
             logger.info("Uploaded '%s' to vector store (%s bytes).", doc_key, len(markdown))
+            return True
 
         except Exception as e:
             logger.warning("Failed to upload '%s' to vector store: %s", doc_key, e)
+            entry["status"] = "failed"
+            entry["error"] = f"Vector store upload failed: {e}"
+            return False
 
     async def _cleanup_uploaded_files(self) -> None:
         """Delete files uploaded by this provider. The vector store is caller-managed."""

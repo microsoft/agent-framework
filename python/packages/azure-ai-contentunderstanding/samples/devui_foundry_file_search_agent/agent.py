@@ -46,11 +46,10 @@ from agent_framework_azure_ai_contentunderstanding import (
 load_dotenv()
 
 # --- Auth ---
+# AzureCliCredential for Foundry. CU API key optional if on a different resource.
 _credential = AzureCliCredential()
-_cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-_cu_credential: AzureKeyCredential | AzureCliCredential = (
-    AzureKeyCredential(_cu_key) if _cu_key else _credential
-)
+_cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
+_cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
 
 # --- Foundry LLM client ---
 client = FoundryChatClient(
