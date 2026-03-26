@@ -155,10 +155,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             ``FileSearchConfig.from_openai()`` or ``FileSearchConfig.from_foundry()``
             for supported providers, or supply a custom ``FileSearchBackend``
             implementation for other vector store services.
-        source_id: Unique identifier for message attribution.
+        source_id: Unique identifier for this provider instance, used for message
+            attribution and tool registration. Defaults to ``"azure_ai_contentunderstanding"``.
     """
 
-    DEFAULT_SOURCE_ID: ClassVar[str] = "content_understanding"
+    DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_contentunderstanding"
     DEFAULT_MAX_WAIT_SECONDS: ClassVar[float] = 5.0
 
     def __init__(
@@ -325,7 +326,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self,
         context: SessionContext,
     ) -> list[tuple[str, Content, bytes | None]]:
-        """Detect supported files in input, strip them, and return metadata.
+        """Detect files supported by Azure Content Understanding in input, strip them, and return metadata.
 
         When the upstream MIME type is unreliable (``application/octet-stream``
         or missing), binary content sniffing via ``filetype`` is used to

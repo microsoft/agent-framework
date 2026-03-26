@@ -101,7 +101,7 @@ class TestInit:
         assert provider.analyzer_id is None
         assert provider.max_wait == 5.0
         assert provider.output_sections == [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
-        assert provider.source_id == "content_understanding"
+        assert provider.source_id == "azure_ai_contentunderstanding"
 
     def test_custom_values(self) -> None:
         provider = ContentUnderstandingContextProvider(
