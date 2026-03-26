@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -2315,10 +2316,11 @@ class TestExtractPerEvaluator:
     def test_with_per_testing_criteria_results(self):
         """Parses per_testing_criteria_results into per-evaluator breakdown."""
 
+        @dataclass
         class CriteriaItem:
-            def __init__(self, name: str, passed: int, failed: int):
-                self.name = name
-                self.result_counts = {"passed": passed, "failed": failed}
+            testing_criteria: str
+            passed: int
+            failed: int
 
         run = MagicMock()
         run.per_testing_criteria_results = [
@@ -2332,13 +2334,13 @@ class TestExtractPerEvaluator:
         assert result["coherence"] == {"passed": 5, "failed": 0}
 
     def test_with_testing_criteria_attr(self):
-        """Falls back to 'testing_criteria' attr when 'name' is absent."""
+        """Uses testing_criteria field (the real SDK field name)."""
 
+        @dataclass
         class CriteriaItem:
-            def __init__(self, criteria: str, passed: int, failed: int):
-                self.testing_criteria = criteria
-                self.name = None
-                self.result_counts = {"passed": passed, "failed": failed}
+            testing_criteria: str
+            passed: int
+            failed: int
 
         run = MagicMock()
         run.per_testing_criteria_results = [CriteriaItem("fluency", 3, 2)]

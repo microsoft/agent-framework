@@ -43,6 +43,7 @@ from openai import AsyncOpenAI
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
+    from openai.types.evals import RunRetrieveResponse
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +126,9 @@ def _resolve_evaluator(name: str) -> str:
         ValueError: If the name is not recognized.
     """
     if name.startswith("builtin."):
+        # Already fully-qualified — pass through as-is.
+        # We don't validate the specific name because Foundry may add
+        # new evaluators that aren't in our local mapping.
         return name
     resolved = _BUILTIN_EVALUATORS.get(name)
     if resolved is None:
@@ -156,6 +160,8 @@ def _build_testing_criteria(
         qualified = _resolve_evaluator(name)
         short = name if not name.startswith("builtin.") else name.split(".")[-1]
 
+        # Structure dictated by the OpenAI evals API — see
+        # https://platform.openai.com/docs/api-reference/evals/create
         entry: dict[str, Any] = {
             "type": "azure_ai_evaluator",
             "name": short,
@@ -165,7 +171,9 @@ def _build_testing_criteria(
 
         if include_data_mapping:
             if qualified in _AGENT_EVALUATORS:
-                # Agent evaluators: query/response as conversation arrays
+                # Agent evaluators: query/response as conversation arrays.
+                # {{item.*}} are Mustache-style placeholders resolved by the
+                # evals API against fields in the JSONL data items.
                 mapping: dict[str, str] = {
                     "query": "{{item.query_messages}}",
                     "response": "{{item.response_messages}}",
@@ -264,13 +272,10 @@ async def _poll_eval_run(
         if run.status in ("completed", "failed", "canceled"):
             error_msg = None
             if run.status == "failed":
-                error_msg = (
-                    getattr(run, "error", None)
-                    or getattr(run, "error_message", None)
-                    or getattr(run, "failure_reason", None)
-                )
-                if error_msg and not isinstance(error_msg, str):
-                    error_msg = str(error_msg)
+                # run.error is an EvalAPIError object (code + message)
+                err = run.error
+                if err is not None:
+                    error_msg = getattr(err, "message", None) or str(err)
 
             items: list[EvalItemResult] = []
             if fetch_output_items and run.status == "completed":
@@ -282,7 +287,7 @@ async def _poll_eval_run(
                 run_id=run_id,
                 status=run.status,
                 result_counts=_extract_result_counts(run),
-                report_url=getattr(run, "report_url", None),
+                report_url=run.report_url,
                 error=error_msg,
                 per_evaluator=_extract_per_evaluator(run),
                 items=items,
@@ -291,38 +296,41 @@ async def _poll_eval_run(
         if remaining <= 0:
             return EvalResults(provider=provider, eval_id=eval_id, run_id=run_id, status="timeout")
         logger.debug("Eval run %s status: %s (%.0fs remaining)", run_id, run.status, remaining)
+        # Clamp sleep: at least 1s (rate-limit protection), at most 60s
+        # (prevents a single long sleep from consuming the whole timeout),
+        # and never longer than the remaining time.
         await asyncio.sleep(min(max(poll_interval, 1.0), remaining, 60.0))
 
 
-def _extract_result_counts(run: Any) -> dict[str, int] | None:
-    """Safely extract result_counts from an eval run object."""
+def _extract_result_counts(run: RunRetrieveResponse | Any) -> dict[str, int] | None:
+    """Extract result_counts from an eval run as a plain dict."""
     counts = getattr(run, "result_counts", None)
     if counts is None:
         return None
     if isinstance(counts, dict):
         return cast(dict[str, int], counts)
-    try:
-        attrs = cast(dict[str, Any], vars(counts))
-        return {str(k): v for k, v in attrs.items() if isinstance(v, int)}
-    except TypeError:
-        return None
+    # ResultCounts is a Pydantic model with errored/failed/passed/total fields
+    result: dict[str, int] = {}
+    for attr in ("errored", "failed", "passed", "total"):
+        val = getattr(counts, attr, None)
+        if isinstance(val, int):
+            result[attr] = val
+    return result or None
 
 
-def _extract_per_evaluator(run: Any) -> dict[str, dict[str, int]]:
-    """Safely extract per-evaluator result breakdowns from an eval run."""
+def _extract_per_evaluator(run: RunRetrieveResponse | Any) -> dict[str, dict[str, int]]:
+    """Extract per-evaluator result breakdowns from an eval run."""
     per_eval: dict[str, dict[str, int]] = {}
     per_testing_criteria = getattr(run, "per_testing_criteria_results", None)
     if per_testing_criteria is None:
         return per_eval
-    try:
-        items = cast(list[Any], per_testing_criteria) if isinstance(per_testing_criteria, list) else []  # type: ignore[redundant-cast]
-        for item in items:
-            name: str = str(getattr(item, "name", None) or getattr(item, "testing_criteria", "unknown"))
-            counts = _extract_result_counts(item)
-            if name and counts:
-                per_eval[name] = counts
-    except (TypeError, AttributeError):
-        pass
+    # PerTestingCriteriaResult has testing_criteria (str), passed (int), failed (int)
+    for item in per_testing_criteria:
+        name = str(getattr(item, "testing_criteria", None) or getattr(item, "name", "unknown"))
+        passed = getattr(item, "passed", None)
+        failed = getattr(item, "failed", None)
+        if name and isinstance(passed, int) and isinstance(failed, int):
+            per_eval[name] = {"passed": passed, "failed": failed}
     return per_eval
 
 
@@ -536,7 +544,9 @@ class FoundryEvals:
     Args:
         project_client: An ``AIProjectClient`` instance (sync or async).
             Provide this or *openai_client*.
-        openai_client: An ``AsyncOpenAI`` client with evals API.
+        openai_client: An ``AsyncOpenAI`` client configured for an Azure AI
+            Foundry endpoint.  The ``builtin.*`` evaluators are a Foundry
+            feature and are not available on ``api.openai.com``.
         model_deployment: Model deployment name for the evaluator LLM judge.
         evaluators: Evaluator names (e.g. ``["relevance", "tool_call_accuracy"]``).
             When ``None`` (default), uses smart defaults based on item data.

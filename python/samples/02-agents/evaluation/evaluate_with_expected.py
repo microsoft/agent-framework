@@ -60,10 +60,6 @@ async def main() -> None:
         agent=agent,
         queries=["What is 2 + 2?", "What is the square root of 144?"],
         expected_output=["4", "12"],
-        expected_tool_calls=[
-            [],  # no tools expected for simple math
-            [],
-        ],
         evaluators=local,
     )
 
