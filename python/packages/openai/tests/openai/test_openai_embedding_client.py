@@ -62,8 +62,10 @@ def test_with_callable_api_key() -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
-def test_openai_construction_missing_api_key_raises(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(SettingNotFoundError, match="Exactly one of 'base_url', 'endpoint'"):
+def test_openai_construction_without_openai_or_azure_config_raises_clear_error(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    with pytest.raises(SettingNotFoundError, match="OPENAI_API_KEY"):
         OpenAIEmbeddingClient(model="text-embedding-3-small")
 
 

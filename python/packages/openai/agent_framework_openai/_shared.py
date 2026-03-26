@@ -221,6 +221,27 @@ def load_openai_service_settings(
             if base_url := openai_settings.get("base_url"):
                 client_args["base_url"] = base_url
             return openai_settings, AsyncOpenAI(**client_args), False  # type: ignore[return-value]
+        if (
+            endpoint is None
+            and credential is None
+            and _get_env_setting(
+                "AZURE_OPENAI_ENDPOINT",
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            is None
+            and _get_env_setting(
+                "AZURE_OPENAI_BASE_URL",
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
+            is None
+        ):
+            raise SettingNotFoundError(
+                "OpenAI credentials are required. Provide the 'api_key' parameter or set 'OPENAI_API_KEY'. "
+                "To use Azure OpenAI instead, pass 'azure_endpoint' or set 'AZURE_OPENAI_ENDPOINT' or "
+                "'AZURE_OPENAI_BASE_URL'."
+            )
 
     azure_settings = load_settings(
         AzureOpenAISettings,

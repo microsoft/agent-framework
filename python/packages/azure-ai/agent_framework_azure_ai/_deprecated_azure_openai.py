@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
@@ -113,35 +112,8 @@ def _apply_azure_defaults(
 
 @contextmanager
 def _prefer_single_azure_endpoint_env(*, endpoint: str | None, base_url: str | None) -> Any:
-    """Temporarily expose only the Azure endpoint setting that raw OpenAI clients accept.
-
-    The deprecated Azure wrappers have historically tolerated both
-    ``AZURE_OPENAI_BASE_URL`` and ``AZURE_OPENAI_ENDPOINT`` being present and prefer
-    ``base_url`` when both are available. The raw OpenAI constructors now validate
-    that exactly one is set, so we temporarily hide the unused env var while
-    delegating to those constructors.
-    """
-    original_base_url = os.environ.get("AZURE_OPENAI_BASE_URL")
-    original_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-
-    try:
-        if base_url:
-            os.environ["AZURE_OPENAI_BASE_URL"] = str(base_url)
-            os.environ.pop("AZURE_OPENAI_ENDPOINT", None)
-        elif endpoint:
-            os.environ["AZURE_OPENAI_ENDPOINT"] = str(endpoint)
-            os.environ.pop("AZURE_OPENAI_BASE_URL", None)
-        yield
-    finally:
-        if original_base_url is None:
-            os.environ.pop("AZURE_OPENAI_BASE_URL", None)
-        else:
-            os.environ["AZURE_OPENAI_BASE_URL"] = original_base_url
-
-        if original_endpoint is None:
-            os.environ.pop("AZURE_OPENAI_ENDPOINT", None)
-        else:
-            os.environ["AZURE_OPENAI_ENDPOINT"] = original_endpoint
+    """Preserve the legacy call shape without mutating process-wide environment state."""
+    yield
 
 
 # endregion
@@ -399,6 +371,8 @@ class AzureOpenAIResponsesClient(  # type: ignore[misc]
             super().__init__(
                 async_client=async_client,
                 model=responses_deployment_name,
+                azure_endpoint=str(endpoint_value) if endpoint_value else None,
+                base_url=str(client_base_url) if client_base_url else None,
                 api_version=azure_openai_settings.get("api_version"),
                 instruction_role=instruction_role,
                 default_headers=default_headers,
@@ -613,6 +587,8 @@ class AzureOpenAIChatClient(  # type: ignore[misc]
             super().__init__(
                 async_client=async_client,
                 model=chat_deployment_name,
+                azure_endpoint=str(endpoint_value) if endpoint_value else None,
+                base_url=str(base_url_value) if base_url_value else None,
                 api_version=azure_openai_settings.get("api_version"),
                 instruction_role=instruction_role,
                 default_headers=default_headers,
@@ -926,6 +902,8 @@ class AzureOpenAIEmbeddingClient(
             super().__init__(
                 async_client=async_client,
                 model=embedding_deployment_name,
+                azure_endpoint=str(endpoint_value) if endpoint_value else None,
+                base_url=str(base_url_value) if base_url_value else None,
                 api_version=azure_openai_settings.get("api_version"),
                 default_headers=default_headers,
             )
