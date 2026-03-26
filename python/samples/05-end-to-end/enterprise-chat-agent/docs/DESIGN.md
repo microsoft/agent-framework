@@ -21,10 +21,8 @@ This document describes the architecture and design decisions for a **production
 ### References
 
 - **GitHub Issue**: [#2436 - Production Chat API with Azure Functions, Cosmos DB & Agent Framework](https://github.com/microsoft/agent-framework/issues/2436)
-- [Create and run a durable agent (Python)](https://learn.microsoft.com/en-us/agent-framework/tutorials/agents/create-and-run-durable-agent)
-- [Agent Framework Tools](https://learn.microsoft.com/en-us/agent-framework/concepts/tools)
-- [Multi-agent Reference Architecture](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/architecture/build-multi-agent-framework-solution)
-- [Well-Architected AI Agents](https://learn.microsoft.com/en-us/azure/well-architected/service-guides/ai-agent-architecture)
+- [Agent Framework Tools (Python)](https://learn.microsoft.com/agent-framework/agents/tools/function-tools)
+- [Azure Functions Python Developer Guide](https://learn.microsoft.com/azure/azure-functions/functions-reference-python)
 
 ---
 
