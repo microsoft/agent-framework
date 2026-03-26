@@ -1,14 +1,13 @@
-﻿# Multi-turn Conversation with the Responses API
+﻿# Multi-turn Conversation with Server-Side Conversations
 
-This sample demonstrates how to implement multi-turn conversations using the `ChatClientAgent`, where context is preserved across multiple agent runs using sessions.
+This sample demonstrates how to use server-side conversations with a `FoundryAgent`. Server-side conversations persist on the Foundry service and are visible in the Foundry Project UI, making them ideal when you need conversation history to be stored and accessible server-side.
 
 ## What this sample demonstrates
 
-- Creating a `ChatClientAgent` with instructions
-- Using sessions to maintain conversation context across multiple runs
-- Running multi-turn conversations with text output
-- Running multi-turn conversations with streaming output
-- No server-side agent creation or cleanup required
+- Creating a `FoundryAgent` with instructions
+- Using `CreateConversationSessionAsync` to create a server-side `ProjectConversation`
+- Multi-turn conversations with both text and streaming output
+- Server-side conversation persistence visible in the Foundry Project UI
 
 ## Prerequisites
 
@@ -33,5 +32,5 @@ Navigate to the ChatClientAgents sample directory and run:
 
 ```powershell
 cd dotnet/samples/02-agents/AgentsWithFoundry
-dotnet run --project .\Agent_Step02_MultiturnConversation
+dotnet run --project .\Agent_Step02.2_MultiturnWithServerConversations
 ```

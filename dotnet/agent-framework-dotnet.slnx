@@ -125,7 +125,8 @@
     <File Path="samples/02-agents/AgentsWithFoundry/README.md" />
     <Project Path="samples/02-agents/AgentsWithFoundry/FoundryAgent_Step01/FoundryAgent_Step01.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step01_Basics/Agent_Step01_Basics.csproj" />
-    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step02_MultiturnConversation/Agent_Step02_MultiturnConversation.csproj" />
+    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step02.1_MultiturnConversation/Agent_Step02.1_MultiturnConversation.csproj" />
+    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step02.2_MultiturnWithServerConversations/Agent_Step02.2_MultiturnWithServerConversations.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step03_UsingFunctionTools/Agent_Step03_UsingFunctionTools.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step04_UsingFunctionToolsWithApprovals/Agent_Step04_UsingFunctionToolsWithApprovals.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step05_StructuredOutput/Agent_Step05_StructuredOutput.csproj" />

@@ -8,7 +8,6 @@ using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
-using Microsoft.Extensions.AI;
 using OpenAI;
 using OpenAI.Files;
 using OpenAI.Responses;
@@ -40,7 +39,10 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
     FileIds = { uploadResult.Value.Id }
 });
 
-var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreCreate.Value.Id)] };
+// Use the native OpenAI SDK FileSearchTool directly with the vector store ID.
+#pragma warning disable OPENAI001
+FileSearchTool fileSearchTool = new([vectorStoreCreate.Value.Id]);
+#pragma warning restore OPENAI001
 
 AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
     "AskContoso",
@@ -48,7 +50,7 @@ AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync
         new PromptAgentDefinition(model: deploymentName)
         {
             Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
-            Tools = { fileSearchTool.GetService<ResponseTool>() ?? fileSearchTool.AsOpenAIResponseTool() ?? throw new InvalidOperationException("Unable to convert hosted file search tool to a ResponseTool.") }
+            Tools = { fileSearchTool }
         }));
 FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
