@@ -279,7 +279,7 @@ public class AIProjectClientCreateTests
         try
         {
             // Step 2: Wrap the agent version using AsAIAgent extension.
-            ChatClientAgent agent = this._client.AsAIAgent(agentVersion);
+            FoundryAgent agent = this._client.AsAIAgent(agentVersion);
 
             // Assert the agent was created correctly and retains version metadata.
             Assert.NotNull(agent);
