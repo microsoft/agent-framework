@@ -11,11 +11,14 @@ from agent_framework import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._workflows._checkpoint import CheckpointID, WorkflowCheckpoint
 from agent_framework._workflows._checkpoint_encoding import decode_checkpoint_value, encode_checkpoint_value
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import WorkflowCheckpointException
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
 
