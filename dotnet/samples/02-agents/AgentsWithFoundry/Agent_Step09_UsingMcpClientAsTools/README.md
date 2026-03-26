@@ -4,7 +4,7 @@ This sample shows how to use MCP (Model Context Protocol) client tools with a `C
 
 ## What this sample demonstrates
 
-- Connecting to an MCP server (GitHub) via stdio transport
+- Connecting to an MCP server via HTTP client transport
 - Retrieving MCP tools and passing them to a `ChatClientAgent`
 - Using MCP tools for agent interactions without server-side agent creation
 

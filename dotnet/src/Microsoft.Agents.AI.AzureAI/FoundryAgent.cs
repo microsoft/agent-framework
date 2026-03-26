@@ -16,9 +16,15 @@ namespace Microsoft.Agents.AI.AzureAI;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class wraps a <see cref="ChatClientAgent"/> and provides convenient access to
-/// Foundry-specific features such as server-side conversation management via
-/// <see cref="CreateConversationSessionAsync(CancellationToken)"/>.
+/// <see cref="FoundryAgent"/> connects to a pre-configured server-side agent in Microsoft Foundry,
+/// wrapping it as an <see cref="AIAgent"/> for use with Agent Framework. Unlike the direct
+/// <c>AIProjectClient.AsAIAgent(model, instructions)</c> approach (which creates a local agent
+/// backed by the Responses API without any server-side agent definition), <see cref="FoundryAgent"/>
+/// works with agents that are managed and versioned in the Foundry service.
+/// </para>
+/// <para>
+/// This class provides convenient access to Foundry-specific features such as server-side
+/// conversation management via <see cref="CreateConversationSessionAsync(CancellationToken)"/>.
 /// </para>
 /// <para>
 /// Instances can be created directly via public constructors or through

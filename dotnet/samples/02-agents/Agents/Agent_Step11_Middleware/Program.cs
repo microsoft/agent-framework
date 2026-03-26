@@ -190,8 +190,8 @@ async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Agent
         Regex[] piiPatterns =
         [
             MyRegex(), // Phone number (e.g., 123-456-7890)
-            new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
-            new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
+            EmailRegex(), // Email address
+            FullNameRegex() // Full name (e.g., John Doe)
         ];
 
         foreach (var pattern in piiPatterns)
@@ -314,4 +314,10 @@ internal partial class Program
 {
     [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
     private static partial Regex MyRegex();
+
+    [GeneratedRegex(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled)]
+    private static partial Regex EmailRegex();
+
+    [GeneratedRegex(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled)]
+    private static partial Regex FullNameRegex();
 }

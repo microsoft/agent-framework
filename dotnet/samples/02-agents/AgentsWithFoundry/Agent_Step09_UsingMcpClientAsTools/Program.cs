@@ -27,6 +27,9 @@ Console.WriteLine($"MCP tools available: {string.Join(", ", mcpTools.Select(t =>
 
 List<AITool> agentTools = [.. mcpTools.Cast<AITool>()];
 
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 AIAgent agent = aiProjectClient.AsAIAgent(deploymentName,

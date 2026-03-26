@@ -15,6 +15,9 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 const string AgentInstructions = "You are a helpful assistant that can search through uploaded files to answer questions.";
 
 // We need the AIProjectClient to upload files and create vector stores.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 var projectOpenAIClient = aiProjectClient.GetProjectOpenAIClient();
 var filesClient = projectOpenAIClient.GetProjectFilesClient();
