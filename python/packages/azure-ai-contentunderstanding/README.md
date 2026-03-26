@@ -57,6 +57,27 @@ async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
 | Audio | WAV, MP3, M4A, FLAC, OGG |
 | Video | MP4, MOV, AVI, WebM |
 
+## File Naming
+
+Always provide a `filename` via `additional_properties` when uploading files. The filename serves as the **unique document key** for the session — it determines how documents are tracked, retrieved, and referenced by the LLM.
+
+```python
+# Recommended: always provide a filename
+Content.from_data(pdf_bytes, "application/pdf",
+                  additional_properties={"filename": "invoice.pdf"})
+
+# For URLs: filename from additional_properties takes priority over the URL path
+Content.from_uri("https://example.com/files/12345",
+                 media_type="application/pdf",
+                 additional_properties={"filename": "quarterly_report.pdf"})
+```
+
+**Why this matters:**
+
+- Without a filename, binary uploads get a hash-based key (e.g. `doc_a59574c3`) that is hard for users and the LLM to reference.
+- For URLs without a file extension (e.g. `https://api.example.com/files/12345`), the provider cannot detect the media type automatically — the file may be silently skipped.
+- **Duplicate filenames are rejected** within a session to prevent data integrity issues with vector store entries. Use unique filenames for each document.
+
 ## Configuration
 
 ```python

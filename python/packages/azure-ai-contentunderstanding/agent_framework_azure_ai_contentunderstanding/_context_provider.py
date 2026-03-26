@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import json
 import logging
 import mimetypes
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -429,24 +429,25 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if filename and isinstance(filename, str):
                 return str(filename)
 
-        # 2. URL path basename for external URIs
+        # 2. URL path basename for external URIs (e.g. "https://example.com/report.pdf" → "report.pdf")
         if content.type == "uri" and content.uri and not content.uri.startswith("data:"):
-            path = content.uri.split("?")[0].split("#")[0]
+            path = content.uri.split("?")[0].split("#")[0]  # strip query params and fragments
+            # rstrip("/") handles trailing slashes (e.g. ".../files/" → ".../files")
+            # rsplit("/", 1)[-1] splits from the right once to get the last path segment
             basename = path.rstrip("/").rsplit("/", 1)[-1]
             if basename:
                 return basename
 
-        # 3. Content hash for anonymous binary uploads
-        if content.uri and content.uri.startswith("data:"):
-            _, data_part = content.uri.split(",", 1)
-            raw = base64.b64decode(data_part)
-            return f"doc_{hashlib.sha256(raw).hexdigest()[:8]}"
-
-        return f"doc_{id(content)}"
+        # 3. Fallback: generate a unique ID for anonymous uploads (no filename, no URL)
+        return f"doc_{uuid.uuid4().hex[:8]}"
 
     @staticmethod
     def _extract_binary(content: Content) -> bytes | None:
-        """Extract binary data from a content item."""
+        """Extract binary data from a data URI content item.
+
+        Only handles ``data:`` URIs (base64-encoded). Returns ``None`` for
+        external URLs — those are passed directly to CU via ``begin_analyze``.
+        """
         if content.uri and content.uri.startswith("data:"):
             try:
                 _, data_part = content.uri.split(",", 1)
