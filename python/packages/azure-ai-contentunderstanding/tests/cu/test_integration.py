@@ -26,7 +26,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Shared sample asset — same PDF used by samples and integration tests
 INVOICE_PDF_PATH = (
-    Path(__file__).resolve().parents[4] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
+    Path(__file__).resolve().parents[2] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
 )
 
 

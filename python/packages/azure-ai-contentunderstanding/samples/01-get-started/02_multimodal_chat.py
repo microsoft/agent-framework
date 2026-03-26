@@ -6,7 +6,7 @@
 #     "azure-identity",
 # ]
 # ///
-# Run with: uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
+# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/02_multimodal_chat.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -40,31 +40,25 @@ Environment variables:
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
-SAMPLE_DIR = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets"
+SAMPLE_DIR = Path(__file__).resolve().parents[1] / "shared" / "sample_assets"
 
 
 async def main() -> None:
-    # Support both API key and credential-based auth
+    # Auth: use API key if set, otherwise fall back to Azure CLI credential
     api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    credential = AzureCliCredential() if not api_key else None
-    cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-    cu_credential = AzureKeyCredential(cu_key) if cu_key else credential
+    credential = AzureKeyCredential(api_key) if api_key else AzureCliCredential()
 
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-        credential=cu_credential,
+        credential=credential,
         max_wait=5.0,  # 5 seconds — audio/video will defer to background
     )
 
-    client_kwargs = {
-        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-    }
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = credential
-    client = AzureOpenAIResponsesClient(**client_kwargs)
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
 
     async with cu:
         agent = client.as_agent(

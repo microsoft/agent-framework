@@ -6,7 +6,7 @@
 #     "azure-identity",
 # ]
 # ///
-# Run with: uv run packages/azure-ai-contentunderstanding/samples/invoice_processing.py
+# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/03_invoice_processing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -41,20 +41,18 @@ Environment variables:
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
-SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
+SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_assets" / "invoice.pdf"
 
 
 async def main() -> None:
-    # Support both API key and credential-based auth
+    # Auth: use API key if set, otherwise fall back to Azure CLI credential
     api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    credential = AzureCliCredential() if not api_key else None
-    cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-    cu_credential = AzureKeyCredential(cu_key) if cu_key else credential
+    credential = AzureKeyCredential(api_key) if api_key else AzureCliCredential()
 
     # Use prebuilt-invoice analyzer for structured field extraction
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-        credential=cu_credential,
+        credential=credential,
         analyzer_id="prebuilt-invoice",
         output_sections=[
             AnalysisSection.MARKDOWN,
@@ -62,15 +60,11 @@ async def main() -> None:
         ],
     )
 
-    client_kwargs = {
-        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-    }
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = credential
-    client = AzureOpenAIResponsesClient(**client_kwargs)
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
 
     async with cu:
         agent = client.as_agent(

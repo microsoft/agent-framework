@@ -7,14 +7,13 @@
 #     "openai",
 # ]
 # ///
-# Run with: uv run packages/azure-ai-contentunderstanding/samples/large_doc_file_search.py
+# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/04_large_doc_file_search.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 import os
 from pathlib import Path
-from typing import Any
 
 from agent_framework import Content, Message
 from agent_framework.azure import AzureOpenAIResponsesClient
@@ -56,36 +55,35 @@ Environment variables:
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
-SAMPLE_PDF_PATH = Path(__file__).resolve().parents[3] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
+SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_assets" / "invoice.pdf"
 
 
 async def main() -> None:
-    # Support both API key and credential-based auth
+    # Auth: use API key if set, otherwise fall back to Azure CLI credential
     api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    credential = AzureCliCredential() if not api_key else None
+    credential = AzureKeyCredential(api_key) if api_key else AzureCliCredential()
 
     # Create async OpenAI client for vector store operations
-    openai_kwargs: dict[str, Any] = {
-        "azure_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        "api_version": "2025-03-01-preview",
-    }
     if api_key:
-        openai_kwargs["api_key"] = api_key
+        openai_client = AsyncAzureOpenAI(
+            azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            api_version="2025-03-01-preview",
+            api_key=api_key,
+        )
     else:
-        token = credential.get_token("https://cognitiveservices.azure.com/.default").token  # type: ignore[union-attr]
-        openai_kwargs["azure_ad_token"] = token
-    openai_client = AsyncAzureOpenAI(**openai_kwargs)
+        token = credential.get_token("https://cognitiveservices.azure.com/.default").token
+        openai_client = AsyncAzureOpenAI(
+            azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+            api_version="2025-03-01-preview",
+            azure_ad_token=token,
+        )
 
-    # Create LLM client first (needed for get_file_search_tool)
-    client_kwargs: dict[str, Any] = {
-        "project_endpoint": os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        "deployment_name": os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-    }
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = credential
-    client = AzureOpenAIResponsesClient(**client_kwargs)
+    # Create LLM client (needed for get_file_search_tool)
+    client = AzureOpenAIResponsesClient(
+        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        credential=credential,
+    )
 
     # Create vector store and file_search tool
     vector_store = await openai_client.vector_stores.create(
@@ -97,14 +95,9 @@ async def main() -> None:
     # Configure CU provider with file_search integration
     # When file_search is set, CU-extracted markdown is automatically uploaded
     # to the vector store and the file_search tool is registered on the context.
-    cu_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
-    cu_credential: AzureKeyCredential | AzureCliCredential = (
-        AzureKeyCredential(cu_key) if cu_key else credential  # type: ignore[arg-type]
-    )
-
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
-        credential=cu_credential,
+        credential=credential,
         analyzer_id="prebuilt-documentSearch",
         max_wait=60.0,
         file_search=FileSearchConfig.from_openai(
