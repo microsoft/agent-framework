@@ -21,7 +21,7 @@ internal static class SubprocessScriptRunner
     /// <summary>
     /// Runs a skill script as a local subprocess.
     /// </summary>
-    public static async Task<object?> ExecuteAsync(
+    public static async Task<object?> RunAsync(
         AgentFileSkill skill,
         AgentFileSkillScript script,
         AIFunctionArguments arguments,
