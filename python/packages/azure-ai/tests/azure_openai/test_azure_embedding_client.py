@@ -108,10 +108,7 @@ def test_azure_otel_provider_name(azure_embedding_unit_test_env: None) -> None:
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com")
-    or (
-        os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "") == ""
-        and os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "") == ""
-    ),
+    or os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "") == "",
     reason="No Azure OpenAI endpoint or embedding deployment provided; skipping integration tests.",
 )
 
