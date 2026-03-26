@@ -194,6 +194,7 @@ def load_openai_service_settings(
     env_file_encoding: str | None,
     openai_model_fields: Sequence[OpenAIModelSettingName] = ("model",),
     azure_deployment_fields: Sequence[AzureDeploymentSettingName] = ("deployment_name",),
+    responses_mode: bool = False,
 ) -> tuple[dict[str, Any], AsyncOpenAI, bool]:
     """Load OpenAI settings, including Azure OpenAI aliases.
 
@@ -298,7 +299,10 @@ def load_openai_service_settings(
         return azure_settings, client, True  # type: ignore[return-value]
     client_args["default_headers"] = merged_headers
     if endpoint := azure_settings.get("endpoint"):
-        client_args["azure_endpoint"] = endpoint
+        if responses_mode:
+            client_args["base_url"] = f"{endpoint.rstrip('/')}/openai/v1/"
+        else:
+            client_args["azure_endpoint"] = endpoint
     if base_url := azure_settings.get("base_url"):
         client_args["base_url"] = base_url
     if api_key := azure_settings.get("api_key"):

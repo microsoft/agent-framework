@@ -99,7 +99,7 @@ jobs:
       AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_API_VERSION: ${{ vars.AZUREOPENAI__APIVERSION || '2024-12-01-preview' }}
     defaults:
@@ -251,8 +251,8 @@ jobs:
           --retries 2 --retry-delay 5
 
   # Azure AI integration tests
-  python-tests-azure-ai:
-    name: Python Integration Tests - Azure AI
+  python-tests-foundry:
+    name: Python Integration Tests - Foundry
     runs-on: ubuntu-latest
     environment: integration
     timeout-minutes: 60

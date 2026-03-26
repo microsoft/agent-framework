@@ -431,6 +431,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
             openai_model_fields=("responses_model", "model"),
             azure_deployment_fields=("responses_deployment_name", "deployment_name"),
+            responses_mode=True,
         )
 
         self.client = client

@@ -31,10 +31,6 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-def _get_azure_responses_deployment_name() -> str:
-    return os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME") or os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
-
-
 class OutputStruct(BaseModel):
     """A structured output for testing purposes."""
 
@@ -51,10 +47,7 @@ def _create_azure_openai_chat_client(
         api_key if api_key is not None else None if credential is not None else os.environ["AZURE_OPENAI_API_KEY"]
     )
     return OpenAIChatClient(
-        model=_get_azure_responses_deployment_name(),
         api_key=resolved_api_key,
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
         credential=credential,
     )
 

@@ -84,7 +84,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_framework.openai")
 
-DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-10-21"
+DEFAULT_AZURE_OPENAI_CHAT_COMPLETION_API_VERSION = "2024-12-01-preview"
 
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
