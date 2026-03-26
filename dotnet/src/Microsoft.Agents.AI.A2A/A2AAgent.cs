@@ -321,17 +321,17 @@ public sealed class A2AAgent : AIAgent
         };
     }
 
-    private AgentResponse ConvertToAgentResponse(AgentTask agentTask)
+    private AgentResponse ConvertToAgentResponse(AgentTask task)
     {
         return new AgentResponse
         {
             AgentId = this.Id,
-            ResponseId = agentTask.Id,
-            FinishReason = MapTaskStateToFinishReason(agentTask.Status.State),
-            RawRepresentation = agentTask,
-            Messages = agentTask.ToChatMessages() ?? [],
-            ContinuationToken = CreateContinuationToken(agentTask.Id, agentTask.Status.State),
-            AdditionalProperties = agentTask.Metadata?.ToAdditionalProperties(),
+            ResponseId = task.Id,
+            FinishReason = MapTaskStateToFinishReason(task.Status.State),
+            RawRepresentation = task,
+            Messages = task.ToChatMessages() ?? [],
+            ContinuationToken = CreateContinuationToken(task.Id, task.Status.State),
+            AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
         };
     }
 
@@ -360,6 +360,7 @@ public sealed class A2AAgent : AIAgent
             RawRepresentation = task,
             Role = ChatRole.Assistant,
             Contents = task.ToAIContents(),
+            ContinuationToken = CreateContinuationToken(task.Id, task.Status.State),
             AdditionalProperties = task.Metadata?.ToAdditionalProperties(),
         };
     }
