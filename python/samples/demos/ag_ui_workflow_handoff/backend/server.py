@@ -80,12 +80,12 @@ def lookup_order_details(order_id: str) -> dict[str, str]:
 def create_agents() -> tuple[Agent, Agent, Agent]:
     """Create triage, refund, and order agents for the handoff workflow."""
 
-    from agent_framework.azure import AzureOpenAIResponsesClient
+    from agent_framework.foundry import FoundryChatClient
     from azure.identity import AzureCliCredential
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 

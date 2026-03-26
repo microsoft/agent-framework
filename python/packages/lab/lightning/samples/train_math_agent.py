@@ -140,8 +140,9 @@ def evaluate(result: AgentResponse, ground_truth: str) -> float:
 AGENT_INSTRUCTION = """
 Solve the following math problem. Use the calculator tool to help you calculate math expressions.
 
-Output the answer when you are ready. The answer should be after three sharps (`###`), with no extra punctuations or texts. For example: ### 123
-""".strip()  # noqa: E501
+Output the answer when you are ready. The answer should be after three sharps (`###`),
+with no extra punctuations or texts. For example: ### 123
+""".strip()
 
 
 # The @rollout decorator is the key integration point with agent-lightning.

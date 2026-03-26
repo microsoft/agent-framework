@@ -113,7 +113,7 @@ public static class ExecutorBindingExtensions
     /// <param name="id">An id for the executor to be instantiated.</param>
     /// <param name="options">An optional parameter specifying the options.</param>
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
-    public static ExecutorBinding BindExecutor<TExecutor, TOptions>(this Func<Config<TOptions>, string, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
+    public static ExecutorBinding BindExecutor<TExecutor, TOptions>(this Func<ExecutorConfig<TOptions>, string, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
         where TExecutor : Executor
         where TOptions : ExecutorOptions
     {
@@ -139,7 +139,7 @@ public static class ExecutorBindingExtensions
     /// <returns>An <see cref="ExecutorBinding"/> instance that resolves to the result of the factory call when messages get sent to it.</returns>
     [Obsolete("Use BindExecutor() instead")]
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public static ExecutorBinding ConfigureFactory<TExecutor, TOptions>(this Func<Config<TOptions>, string, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
+    public static ExecutorBinding ConfigureFactory<TExecutor, TOptions>(this Func<ExecutorConfig<TOptions>, string, ValueTask<TExecutor>> factoryAsync, string id, TOptions? options = null)
         where TExecutor : Executor
         where TOptions : ExecutorOptions
         => factoryAsync.BindExecutor(id, options);

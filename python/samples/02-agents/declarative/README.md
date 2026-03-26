@@ -43,7 +43,7 @@ Shows how to create an agent that can search and retrieve information from Micro
 - Uses Azure CLI credentials for authentication
 - Leverages MCP to access Microsoft documentation tools
 
-**Requirements**: `pip install agent-framework-azure-ai --pre`
+**Requirements**: `pip install agent-framework-foundry --pre`
 
 **Key concepts**: Azure AI Foundry integration, MCP server usage, async patterns, resource management
 
@@ -53,7 +53,7 @@ Shows how to create an agent using an inline YAML string rather than a file.
 
 - Uses Azure AI Foundry v2 Client with instructions.
 
-**Requirements**: `pip install agent-framework-azure-ai --pre`
+**Requirements**: `pip install agent-framework-foundry --pre`
 
 **Key concepts**: Inline YAML definition.
 

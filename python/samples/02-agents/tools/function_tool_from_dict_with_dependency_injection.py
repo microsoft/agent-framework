@@ -21,7 +21,7 @@ Usage:
 
 import asyncio
 
-from agent_framework import FunctionTool
+from agent_framework import Agent, FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -61,8 +61,11 @@ async def main() -> None:
     # - "func": the parameter name that will receive the injected function
     tool = FunctionTool.from_dict(definition, dependencies={"function_tool": {"name:add_numbers": {"func": func}}})
 
-    agent = OpenAIResponsesClient().as_agent(
-        name="FunctionToolAgent", instructions="You are a helpful assistant.", tools=tool
+    agent = Agent(
+        client=OpenAIResponsesClient(),
+        name="FunctionToolAgent",
+        instructions="You are a helpful assistant.",
+        tools=tool,
     )
     response = await agent.run("What is 5 + 3?")
     print(f"Response: {response.text}")

@@ -32,7 +32,7 @@ async def run_semantic_kernel() -> None:
     client = OpenAIResponsesAgent.create_client()
     # response_format requests schema-constrained output from the model.
     agent = OpenAIResponsesAgent(
-        ai_model_id=OpenAISettings().responses_model_id,
+        ai_model=OpenAISettings().responses_model_id,
         client=client,
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",

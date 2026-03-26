@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import FunctionTool
+from agent_framework import Agent, FunctionTool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -25,7 +25,8 @@ async def main():
         description="Get the current time in ISO 8601 format.",
     )
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="DeclarationOnlyToolAgent",
         instructions="You are a helpful agent that uses tools.",
         tools=function_declaration,
