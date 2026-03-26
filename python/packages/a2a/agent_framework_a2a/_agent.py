@@ -378,9 +378,10 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 all_updates.append(update)
                 yield update
             elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
-                task, _update_event = item
+                task, update_event = item
                 for update in self._updates_from_task(
                     task,
+                    update_event=update_event,
                     background=background,
                     emit_intermediate=emit_intermediate,
                 ):
@@ -403,6 +404,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         self,
         task: Task,
         *,
+        update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None = None,
         background: bool = False,
         emit_intermediate: bool = False,
     ) -> list[AgentResponseUpdate]:
@@ -417,6 +419,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         completion.
         """
         status = task.status
+
+        if emit_intermediate and update_event is not None:
+            if event_updates := self._updates_from_task_update_event(update_event):
+                return event_updates
+            if status.state in TERMINAL_TASK_STATES:
+                return []
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
@@ -466,6 +474,41 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 ]
 
         return []
+
+    def _updates_from_task_update_event(
+        self, update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent
+    ) -> list[AgentResponseUpdate]:
+        """Convert A2A task update events into streaming AgentResponseUpdates."""
+        if isinstance(update_event, TaskArtifactUpdateEvent):
+            contents = self._parse_contents_from_a2a(update_event.artifact.parts)
+            if not contents:
+                return []
+            return [
+                AgentResponseUpdate(
+                    contents=contents,
+                    role="assistant",
+                    response_id=update_event.task_id,
+                    message_id=update_event.artifact.artifact_id,
+                    raw_representation=update_event,
+                )
+            ]
+
+        message = update_event.status.message
+        if message is None or not message.parts:
+            return []
+
+        contents = self._parse_contents_from_a2a(message.parts)
+        if not contents:
+            return []
+
+        return [
+            AgentResponseUpdate(
+                contents=contents,
+                role="assistant" if message.role == A2ARole.agent else "user",
+                response_id=update_event.task_id,
+                raw_representation=update_event,
+            )
+        ]
 
     @staticmethod
     def _build_continuation_token(task: Task) -> A2AContinuationToken | None:

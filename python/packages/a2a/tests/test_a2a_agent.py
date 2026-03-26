@@ -14,8 +14,10 @@ from a2a.types import (
     FileWithUri,
     Part,
     Task,
+    TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
+    TaskStatusUpdateEvent,
     TextPart,
 )
 from a2a.types import Message as A2AMessage
@@ -1187,6 +1189,88 @@ async def test_streaming_working_update_with_empty_parts_is_skipped(
 
     assert len(updates) == 1
     assert updates[0].contents[0].text == "Result"
+
+
+async def test_streaming_artifact_update_event_yields_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that streaming artifact update events yield incremental content."""
+    task = Task(id="task-art", context_id="ctx-art", status=TaskStatus(state=TaskState.working, message=None))
+    artifact = Artifact(
+        artifact_id="artifact-1",
+        parts=[Part(root=TextPart(text="Hello"))],
+    )
+    update_event = TaskArtifactUpdateEvent(task_id="task-art", context_id="ctx-art", artifact=artifact, append=False)
+    mock_a2a_client.responses.append((task, update_event))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].text == "Hello"
+    assert updates[0].message_id == "artifact-1"
+    assert updates[0].raw_representation == update_event
+
+
+async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_artifacts(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that streamed artifact chunks are not re-emitted from the final terminal task."""
+    working_task = Task(id="task-art-dup", context_id="ctx-art-dup", status=TaskStatus(state=TaskState.working))
+    first_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-dup",
+        context_id="ctx-art-dup",
+        artifact=Artifact(
+            artifact_id="artifact-dup",
+            parts=[Part(root=TextPart(text="Hello "))],
+        ),
+        append=False,
+    )
+    second_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-dup",
+        context_id="ctx-art-dup",
+        artifact=Artifact(
+            artifact_id="artifact-dup",
+            parts=[Part(root=TextPart(text="world"))],
+        ),
+        append=True,
+    )
+    terminal_task = Task(
+        id="task-art-dup",
+        context_id="ctx-art-dup",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        artifacts=[
+            Artifact(
+                artifact_id="artifact-dup",
+                parts=[Part(root=TextPart(text="Hello world"))],
+            )
+        ],
+    )
+    terminal_event = TaskStatusUpdateEvent(
+        task_id="task-art-dup",
+        context_id="ctx-art-dup",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        final=True,
+    )
+
+    mock_a2a_client.responses.extend(
+        [
+            (working_task, first_chunk),
+            (working_task, second_chunk),
+            (terminal_task, terminal_event),
+        ]
+    )
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates: list[AgentResponseUpdate] = []
+    async for update in stream:
+        updates.append(update)
+    response = await stream.get_final_response()
+
+    assert [update.text for update in updates] == ["Hello ", "world"]
+    assert response.text == "Hello world"
+    assert len(response.messages) == 1
 
 
 # endregion
