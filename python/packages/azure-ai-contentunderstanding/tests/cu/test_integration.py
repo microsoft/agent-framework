@@ -174,3 +174,137 @@ async def test_before_run_uri_content() -> None:
             assert doc_entry["result"].get("markdown")
             assert len(doc_entry["result"]["markdown"]) > 10
             assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_cu_integration_tests_disabled
+async def test_before_run_data_uri_content() -> None:
+    """End-to-end test: Content.from_uri with a base64 data URI → before_run → state populated.
+
+    Verifies that CU can analyze a file embedded as a data URI (data:application/pdf;base64,...).
+    This tests the data URI path: from_uri with "data:" prefix → type="data" → begin_analyze_binary.
+    """
+    import base64
+
+    from agent_framework import Content, Message, SessionContext
+    from agent_framework._sessions import AgentSession
+    from azure.identity.aio import DefaultAzureCredential
+
+    from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
+
+    endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
+
+    pdf_path = Path(__file__).parent / "test_data" / "invoice.pdf"
+    assert pdf_path.exists(), f"Test fixture not found: {pdf_path}"
+    pdf_bytes = pdf_path.read_bytes()
+    b64 = base64.b64encode(pdf_bytes).decode("ascii")
+    data_uri = f"data:application/pdf;base64,{b64}"
+
+    async with DefaultAzureCredential() as credential:
+        cu = ContentUnderstandingContextProvider(
+            endpoint=endpoint,
+            credential=credential,
+            max_wait=None,  # wait until analysis completes
+        )
+        async with cu:
+            msg = Message(
+                role="user",
+                contents=[
+                    Content.from_text("What's on this invoice?"),
+                    Content.from_uri(
+                        uri=data_uri,
+                        media_type="application/pdf",
+                        additional_properties={"filename": "invoice_b64.pdf"},
+                    ),
+                ],
+            )
+            context = SessionContext(input_messages=[msg])
+            state: dict[str, object] = {}
+            session = AgentSession()
+
+            from unittest.mock import MagicMock
+
+            await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
+
+            docs = state.get("documents", {})
+            assert isinstance(docs, dict)
+            assert "invoice_b64.pdf" in docs
+
+            doc_entry = docs["invoice_b64.pdf"]
+            assert doc_entry["status"] == "ready"
+            assert doc_entry["result"] is not None
+            assert doc_entry["result"].get("markdown")
+            assert len(doc_entry["result"]["markdown"]) > 10
+            assert "CONTOSO LTD." in doc_entry["result"]["markdown"]
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_cu_integration_tests_disabled
+async def test_before_run_background_analysis() -> None:
+    """End-to-end test: max_wait timeout → background analysis → resolved on next turn.
+
+    Uses a short max_wait (0.5s) so CU analysis is deferred to background.
+    Then waits for analysis to complete and calls before_run again to verify
+    the background task resolves and the document becomes ready.
+    """
+    import asyncio
+
+    from agent_framework import Content, Message, SessionContext
+    from agent_framework._sessions import AgentSession
+    from azure.identity.aio import DefaultAzureCredential
+
+    from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
+
+    endpoint = os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"]
+
+    async with DefaultAzureCredential() as credential:
+        cu = ContentUnderstandingContextProvider(
+            endpoint=endpoint,
+            credential=credential,
+            max_wait=0.5,  # short timeout to force background deferral
+        )
+        async with cu:
+            # Turn 1: upload file — should time out and defer to background
+            msg = Message(
+                role="user",
+                contents=[
+                    Content.from_text("What's on this invoice?"),
+                    Content.from_uri(
+                        uri=_INVOICE_PDF_URL,
+                        media_type="application/pdf",
+                        additional_properties={"filename": "invoice.pdf"},
+                    ),
+                ],
+            )
+            context = SessionContext(input_messages=[msg])
+            state: dict[str, object] = {}
+            session = AgentSession()
+
+            from unittest.mock import MagicMock
+
+            await cu.before_run(agent=MagicMock(), session=session, context=context, state=state)
+
+            docs = state.get("documents", {})
+            assert isinstance(docs, dict)
+            assert "invoice.pdf" in docs
+            assert docs["invoice.pdf"]["status"] == "analyzing", (
+                f"Expected 'analyzing' but got '{docs['invoice.pdf']['status']}' — "
+                "CU responded too fast for the 0.5s timeout"
+            )
+            assert docs["invoice.pdf"]["result"] is None
+
+            # Wait for background analysis to complete
+            await asyncio.sleep(30)
+
+            # Turn 2: no new files — should resolve the background task
+            msg2 = Message(role="user", contents=[Content.from_text("Is it ready?")])
+            context2 = SessionContext(input_messages=[msg2])
+
+            await cu.before_run(agent=MagicMock(), session=session, context=context2, state=state)
+
+            assert docs["invoice.pdf"]["status"] == "ready"
+            assert docs["invoice.pdf"]["result"] is not None
+            assert docs["invoice.pdf"]["result"].get("markdown")
+            assert "CONTOSO LTD." in docs["invoice.pdf"]["result"]["markdown"]

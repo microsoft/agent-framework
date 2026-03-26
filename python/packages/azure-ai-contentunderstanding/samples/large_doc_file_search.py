@@ -144,6 +144,8 @@ async def main() -> None:
                     Content.from_data(
                         pdf_bytes,
                         "application/pdf",
+                        # Always provide filename — used as the document key in list_documents()
+                        # and get_analyzed_document(). Without it, a hash-based key is generated.
                         additional_properties={"filename": filename},
                     ),
                 ],

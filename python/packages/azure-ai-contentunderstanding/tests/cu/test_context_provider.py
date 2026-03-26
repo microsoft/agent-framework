@@ -568,6 +568,78 @@ class TestOutputFiltering:
         assert fields["VendorName"]["confidence"] is not None
 
 
+class TestDuplicateDocumentKey:
+    async def test_duplicate_filename_rejected(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Uploading the same filename twice in the same session should reject the second."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        # Turn 1: upload invoice.pdf
+        msg1 = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "invoice.pdf"),
+            ],
+        )
+        context1 = _make_context([msg1])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context1, state=state)
+        assert "invoice.pdf" in state["documents"]
+        assert state["documents"]["invoice.pdf"]["status"] == DocumentStatus.READY
+
+        # Turn 2: upload invoice.pdf again (different content but same filename)
+        msg2 = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this too"),
+                _make_content_from_data(b"different-content", "application/pdf", "invoice.pdf"),
+            ],
+        )
+        context2 = _make_context([msg2])
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context2, state=state)
+
+        # Should still have only one document, not re-analyzed
+        assert mock_cu_client.begin_analyze_binary.call_count == 1
+        # Instructions should mention duplicate
+        assert any("already uploaded" in instr for instr in context2.instructions)
+
+    async def test_duplicate_in_same_turn_rejected(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Two files with the same filename in the same turn: first wins, second rejected."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze both"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "report.pdf"),
+                _make_content_from_data(b"other-content", "application/pdf", "report.pdf"),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Only analyzed once (first one wins)
+        assert mock_cu_client.begin_analyze_binary.call_count == 1
+        assert "report.pdf" in state["documents"]
+        assert any("already uploaded" in instr for instr in context.instructions)
+
+
 class TestBinaryStripping:
     async def test_supported_files_stripped(
         self,

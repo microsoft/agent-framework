@@ -244,6 +244,15 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # 3. Analyze new files using CU (track elapsed time for combined timeout)
         file_start_times: dict[str, float] = {}
         for doc_key, content_item, binary_data in new_files:
+            # Reject duplicate filenames — re-analyzing would orphan vector store entries
+            if doc_key in documents:
+                logger.warning("Duplicate document key '%s' — skipping (already exists in session).", doc_key)
+                context.extend_instructions(
+                    self.source_id,
+                    f"File '{doc_key}' was already uploaded in this session. "
+                    "Rename the file or use a different filename to upload it again.",
+                )
+                continue
             file_start_times[doc_key] = time.monotonic()
             doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context)
             if doc_entry:
@@ -406,7 +415,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     @staticmethod
     def _derive_doc_key(content: Content) -> str:
-        """Derive a document key from content metadata.
+        """Derive a unique document key from content metadata.
+
+        The key is used to track documents in session state. Duplicate keys
+        within a session are rejected (not re-analyzed) to prevent orphaned
+        vector store entries.
 
         Priority: filename > URL basename > content hash.
         """
