@@ -6,7 +6,7 @@ import tempfile
 import urllib.request as urllib_request
 from pathlib import Path
 
-from agent_framework import Content
+from agent_framework import Agent, Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -61,7 +61,8 @@ async def main() -> None:
 
     # Create an agent with customized image generation options
     client = OpenAIResponsesClient()
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         instructions="You are a helpful AI that can generate images.",
         tools=[
             client.get_image_generation_tool(

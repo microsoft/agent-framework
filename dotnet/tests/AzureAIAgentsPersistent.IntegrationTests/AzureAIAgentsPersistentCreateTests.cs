@@ -1,21 +1,25 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - testing deprecated PersistentAgentsClientExtensions
+
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Agents.Persistent;
-using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class AzureAIAgentsPersistentCreateTests
 {
-    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), new AzureCliCredential());
+    private const string SkipCodeInterpreterReason = "Azure AI Code Interpreter intermittently fails to execute uploaded files in CI";
+
+    private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
     [InlineData("CreateWithChatClientAgentOptionsAsync")]
@@ -132,10 +136,15 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
+    [Fact(Skip = SkipCodeInterpreterReason)]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_ChatClientAgentOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithChatClientAgentOptionsAsync");
+
+    [Fact(Skip = SkipCodeInterpreterReason)]
+    public Task CreateAgent_CreatesAgentWithCodeInterpreter_FoundryOptionsAsync()
+        => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithFoundryOptionsAsync");
+
+    private async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
     {
         // Arrange.
         const string AgentInstructions = """

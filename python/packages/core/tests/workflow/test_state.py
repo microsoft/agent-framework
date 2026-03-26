@@ -61,9 +61,9 @@ class TestSuperstepCaching:
         state.set("key", "value")
 
         # Value is in pending
-        assert "key" in state._pending
+        assert "key" in state._pending  # pyright: ignore[reportPrivateUsage]
         # Value is NOT in committed
-        assert "key" not in state._committed
+        assert "key" not in state._committed  # pyright: ignore[reportPrivateUsage]
         # But get() still returns it
         assert state.get("key") == "value"
 
@@ -72,14 +72,14 @@ class TestSuperstepCaching:
         state.set("key", "value")
 
         # Before commit: in pending, not committed
-        assert "key" in state._pending
-        assert "key" not in state._committed
+        assert "key" in state._pending  # pyright: ignore[reportPrivateUsage]
+        assert "key" not in state._committed  # pyright: ignore[reportPrivateUsage]
 
         state.commit()
 
         # After commit: in committed, pending cleared
-        assert "key" not in state._pending
-        assert "key" in state._committed
+        assert "key" not in state._pending  # pyright: ignore[reportPrivateUsage]
+        assert "key" in state._committed  # pyright: ignore[reportPrivateUsage]
         assert state.get("key") == "value"
 
     def test_discard_clears_pending_without_committing(self) -> None:
@@ -108,7 +108,7 @@ class TestSuperstepCaching:
         # get() returns pending value, not committed
         assert state.get("key") == "pending_value"
         # But committed still has old value
-        assert state._committed["key"] == "committed_value"
+        assert state._committed["key"] == "committed_value"  # pyright: ignore[reportPrivateUsage]
 
     def test_multiple_sets_before_commit(self) -> None:
         state = State()
@@ -130,13 +130,13 @@ class TestDeleteWithSuperstepCaching:
         state = State()
         state.set("key", "value")
         # Key only in pending, not committed
-        assert "key" in state._pending
-        assert "key" not in state._committed
+        assert "key" in state._pending  # pyright: ignore[reportPrivateUsage]
+        assert "key" not in state._committed  # pyright: ignore[reportPrivateUsage]
 
         state.delete("key")
 
         # Should be removed from pending
-        assert "key" not in state._pending
+        assert "key" not in state._pending  # pyright: ignore[reportPrivateUsage]
         assert state.get("key") is None
         assert state.has("key") is False
 
@@ -148,14 +148,14 @@ class TestDeleteWithSuperstepCaching:
         state.delete("key")
 
         # Key should be marked for deletion in pending (sentinel)
-        assert "key" in state._pending
+        assert "key" in state._pending  # pyright: ignore[reportPrivateUsage]
         # get() should return default (not the sentinel!)
         assert state.get("key") is None
         assert state.get("key", "default") == "default"
         # has() should return False
         assert state.has("key") is False
         # But committed still has it until commit()
-        assert "key" in state._committed
+        assert "key" in state._committed  # pyright: ignore[reportPrivateUsage]
 
     def test_delete_committed_key_removed_on_commit(self) -> None:
         state = State()
@@ -166,8 +166,8 @@ class TestDeleteWithSuperstepCaching:
         state.commit()
 
         # Now it should be gone from committed too
-        assert "key" not in state._committed
-        assert "key" not in state._pending
+        assert "key" not in state._committed  # pyright: ignore[reportPrivateUsage]
+        assert "key" not in state._pending  # pyright: ignore[reportPrivateUsage]
 
     def test_delete_key_in_both_pending_and_committed(self) -> None:
         """Test delete when key exists in both pending (modified) and committed."""
@@ -177,8 +177,8 @@ class TestDeleteWithSuperstepCaching:
 
         # Modify the key (now in both pending and committed)
         state.set("key", "modified")
-        assert state._pending["key"] == "modified"
-        assert state._committed["key"] == "original"
+        assert state._pending["key"] == "modified"  # pyright: ignore[reportPrivateUsage]
+        assert state._committed["key"] == "original"  # pyright: ignore[reportPrivateUsage]
 
         # Delete should mark for deletion from committed
         state.delete("key")
@@ -189,8 +189,8 @@ class TestDeleteWithSuperstepCaching:
 
         # After commit, key should be fully removed
         state.commit()
-        assert "key" not in state._committed
-        assert "key" not in state._pending
+        assert "key" not in state._committed  # pyright: ignore[reportPrivateUsage]
+        assert "key" not in state._pending  # pyright: ignore[reportPrivateUsage]
 
     def test_discard_after_delete_restores_committed_value(self) -> None:
         state = State()
@@ -238,12 +238,12 @@ class TestFailureScenarios:
         state.set("key3", "value3")
 
         # Before commit - nothing in committed
-        assert len(state._committed) == 0
+        assert len(state._committed) == 0  # pyright: ignore[reportPrivateUsage]
 
         state.commit()
 
         # After commit - all three values committed together
-        assert state._committed == {"key1": "value1", "key2": "value2", "key3": "value3"}
+        assert state._committed == {"key1": "value1", "key2": "value2", "key3": "value3"}  # pyright: ignore[reportPrivateUsage]
 
     def test_repeated_supersteps_are_isolated(self) -> None:
         """Test that each superstep's changes are isolated until committed."""
@@ -300,4 +300,4 @@ class TestExportImport:
 
         # Pending is still there
         assert state.get("pending_key") == "pending_value"
-        assert "pending_key" in state._pending
+        assert "pending_key" in state._pending  # pyright: ignore[reportPrivateUsage]

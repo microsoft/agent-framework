@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIAssistantProvider
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -46,7 +46,7 @@ async def create_agent_example() -> None:
     ):
         agent = await provider.create_agent(
             name="WeatherAssistant",
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             instructions="You are a helpful weather assistant.",
             tools=[get_weather],
         )
@@ -69,7 +69,7 @@ async def get_agent_example() -> None:
     ):
         # Create an assistant directly with SDK (simulating pre-existing assistant)
         sdk_assistant = await client.beta.assistants.create(
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             name="ExistingAssistant",
             instructions="You always respond with 'Hello!'",
         )
@@ -86,7 +86,7 @@ async def get_agent_example() -> None:
 
 
 async def as_agent_example() -> None:
-    """Wrap an SDK Assistant object using provider.as_agent()."""
+    """Wrap an SDK Assistant object using Agent(client=provider, ...)."""
     print("\n--- as_agent() ---")
 
     async with (
@@ -95,14 +95,14 @@ async def as_agent_example() -> None:
     ):
         # Create assistant using SDK
         sdk_assistant = await client.beta.assistants.create(
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             name="WrappedAssistant",
             instructions="You respond with poetry.",
         )
 
         try:
             # Wrap synchronously (no HTTP call)
-            agent = provider.as_agent(sdk_assistant)
+            agent = Agent(client=provider, agent=sdk_assistant)
             print(f"Wrapped: {agent.name} (ID: {agent.id})")
 
             result = await agent.run("Tell me about the sunset.")
@@ -121,14 +121,14 @@ async def multiple_agents_example() -> None:
     ):
         weather_agent = await provider.create_agent(
             name="WeatherSpecialist",
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             instructions="You are a weather specialist.",
             tools=[get_weather],
         )
 
         greeter_agent = await provider.create_agent(
             name="GreeterAgent",
-            model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
             instructions="You are a friendly greeter.",
         )
 

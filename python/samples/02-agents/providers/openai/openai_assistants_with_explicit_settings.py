@@ -43,7 +43,7 @@ async def main() -> None:
 
     agent = await provider.create_agent(
         name="WeatherAssistant",
-        model=os.environ["OPENAI_CHAT_MODEL_ID"],
+        model=os.environ["OPENAI_MODEL"],
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
     )

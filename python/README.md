@@ -24,14 +24,14 @@ If you only need specific integrations, you can install at a more granular level
 # also includes workflows and orchestrations
 pip install agent-framework-core --pre
 
-# Core + Azure AI integration
-pip install agent-framework-azure-ai --pre
+# Core + Azure AI Foundry integration
+pip install agent-framework-foundry --pre
 
 # Core + Microsoft Copilot Studio integration
 pip install agent-framework-copilotstudio --pre
 
-# Core + both Microsoft Copilot Studio and Azure AI integration
-pip install agent-framework-microsoft agent-framework-azure-ai --pre
+# Core + both Microsoft Copilot Studio and Azure AI Foundry integration
+pip install agent-framework-microsoft agent-framework-foundry --pre
 ```
 
 This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments.
@@ -53,8 +53,8 @@ AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
 ...
-AZURE_AI_PROJECT_ENDPOINT=...
-AZURE_AI_MODEL_DEPLOYMENT_NAME=...
+FOUNDRY_PROJECT_ENDPOINT=...
+FOUNDRY_MODEL=...
 ```
 
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:

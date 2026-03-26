@@ -188,9 +188,9 @@ def _validate_conversation_history(messages: list[Message], agent_name: str) -> 
     tool_result_ids: set[str] = set()
 
     for i, msg in enumerate(messages):
-        if not hasattr(msg, "contents") or msg.contents is None:
+        if not (contents := getattr(msg, "contents", None)):
             continue
-        for content in msg.contents:
+        for content in contents:
             if content.type == "function_call" and content.call_id:
                 tool_call_ids.add(content.call_id)
                 logger.debug(

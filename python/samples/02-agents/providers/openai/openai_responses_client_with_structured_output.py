@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent_framework import AgentResponse
+from agent_framework import Agent, AgentResponse
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -29,7 +29,8 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )
@@ -54,7 +55,8 @@ async def streaming_example() -> None:
     print("=== Streaming example ===")
 
     # Create an OpenAI Responses agent
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="CityAgent",
         instructions="You are a helpful agent that describes cities in a structured format.",
     )

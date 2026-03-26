@@ -22,11 +22,8 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYM
 var skillsProvider = new FileAgentSkillsProvider(skillPath: Path.Combine(AppContext.BaseDirectory, "skills"));
 
 // --- Agent Setup ---
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetResponsesClient(deploymentName)
+    .GetResponsesClient()
     .AsAIAgent(new ChatClientAgentOptions
     {
         Name = "SkillsAgent",
@@ -35,7 +32,8 @@ AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredent
             Instructions = "You are a helpful assistant.",
         },
         AIContextProviders = [skillsProvider],
-    });
+    },
+    model: deploymentName);
 
 // --- Example 1: Expense policy question (loads FAQ resource) ---
 Console.WriteLine("Example 1: Checking expense policy FAQ");

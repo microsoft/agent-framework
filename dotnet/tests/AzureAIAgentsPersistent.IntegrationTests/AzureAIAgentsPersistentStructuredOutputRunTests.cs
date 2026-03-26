@@ -5,19 +5,26 @@ using AgentConformance.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class AzureAIAgentsPersistentStructuredOutputRunTests() : StructuredOutputRunTests<AzureAIAgentsPersistentFixture>(() => new())
 {
     private const string SkipReason = "Fails intermittently on the build agent/CI";
 
-    [Fact(Skip = SkipReason)]
-    public override Task RunWithResponseFormatReturnsExpectedResultAsync() =>
-        base.RunWithResponseFormatReturnsExpectedResultAsync();
+    public override Task RunWithResponseFormatReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithResponseFormatReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = SkipReason)]
-    public override Task RunWithGenericTypeReturnsExpectedResultAsync() =>
-        base.RunWithGenericTypeReturnsExpectedResultAsync();
+    public override Task RunWithGenericTypeReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithGenericTypeReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = SkipReason)]
-    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync() =>
-        base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync()
+    {
+        Assert.SkipWhen(SkipReason is not null, SkipReason ?? string.Empty);
+        return base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    }
 }

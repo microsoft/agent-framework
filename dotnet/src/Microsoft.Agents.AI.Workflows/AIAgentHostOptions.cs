@@ -21,7 +21,7 @@ public sealed class AIAgentHostOptions
     public bool EmitAgentResponseEvents { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether <see cref="UserInputRequestContent"/> should be intercepted and sent
+    /// Gets or sets a value indicating whether <see cref="ToolApprovalRequestContent"/> should be intercepted and sent
     /// as a message to the workflow for handling, instead of being raised as a request.
     /// </summary>
     public bool InterceptUserInputRequests { get; set; }

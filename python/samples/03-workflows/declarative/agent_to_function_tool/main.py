@@ -22,10 +22,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from pydantic import BaseModel, Field
+
+# Copyright (c) Microsoft. All rights reserved.
+
 
 # Pricing data for the order calculation
 ITEM_PRICES = {
@@ -198,14 +202,15 @@ def format_order_confirmation(order_data: dict[str, Any], order_calculation: dic
 async def main():
     """Run the agent to function tool workflow."""
     # Create Azure OpenAI Responses client
-    chat_client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
     # Create the order analysis agent with structured output
-    order_analysis_agent = chat_client.as_agent(
+    order_analysis_agent = Agent(
+        client=chat_client,
         name="OrderAnalysisAgent",
         instructions=ORDER_ANALYSIS_INSTRUCTIONS,
         default_options={"response_format": OrderAnalysis},

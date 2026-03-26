@@ -27,7 +27,7 @@ internal sealed class OpenAIResponsesAgentClient(HttpClient httpClient) : AgentC
             Transport = new HttpClientPipelineTransport(httpClient)
         };
 
-        var openAiClient = new ResponsesClient(model: agentName, credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient();
+        var openAiClient = new ResponsesClient(credential: new ApiKeyCredential("dummy-key"), options: options).AsIChatClient(agentName);
         var chatOptions = new ChatOptions()
         {
             ConversationId = sessionId

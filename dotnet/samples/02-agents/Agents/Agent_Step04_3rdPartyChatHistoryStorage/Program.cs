@@ -79,13 +79,13 @@ namespace SampleApp
     internal sealed class VectorChatHistoryProvider : ChatHistoryProvider
     {
         private readonly ProviderSessionState<State> _sessionState;
+        private IReadOnlyList<string>? _stateKeys;
         private readonly VectorStore _vectorStore;
 
         public VectorChatHistoryProvider(
             VectorStore vectorStore,
             Func<AgentSession?, State>? stateInitializer = null,
             string? stateKey = null)
-            : base(provideOutputMessageFilter: null, storeInputMessageFilter: null)
         {
             this._sessionState = new ProviderSessionState<State>(
                 stateInitializer ?? (_ => new State(Guid.NewGuid().ToString("N"))),
@@ -93,7 +93,7 @@ namespace SampleApp
             this._vectorStore = vectorStore ?? throw new ArgumentNullException(nameof(vectorStore));
         }
 
-        public override string StateKey => this._sessionState.StateKey;
+        public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
         public string GetSessionDbKey(AgentSession session)
             => this._sessionState.GetOrInitializeState(session).SessionDbKey;

@@ -7,8 +7,8 @@ that uses conditional logic to either handle spam emails or draft professional r
 
 Prerequisites:
 - The worker must be running with both agents, orchestration, and activities registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 
@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 
 # Configure logging
@@ -43,7 +43,7 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,

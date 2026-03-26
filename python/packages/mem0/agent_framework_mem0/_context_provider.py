@@ -88,7 +88,7 @@ class Mem0ContextProvider(BaseContextProvider):
     async def __aexit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any) -> None:
         """Async context manager exit."""
         if self._should_close_client and self.mem0_client and isinstance(self.mem0_client, AbstractAsyncContextManager):
-            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)
+            await self.mem0_client.__aexit__(exc_type, exc_val, exc_tb)  # pyright: ignore[reportUnknownMemberType]
 
     # -- Hooks pattern ---------------------------------------------------------
 

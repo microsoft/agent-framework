@@ -6,8 +6,8 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
-from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
@@ -96,10 +96,16 @@ async def run_chat_client() -> None:
         stream: Whether to use streaming for the plugin
 
     Remarks:
-        When function calling is outside the open telemetry loop
-        each of the call to the model is handled as a seperate span,
-        while when the open telemetry is put last, a single span
-        is shown, which might include one or more rounds of function calling.
+        By default, the built-in non-`Raw...Client` chat clients already compose
+        the layers in this order:
+        `FunctionInvocationLayer -> ChatMiddlewareLayer -> ChatTelemetryLayer -> Raw/Base client`.
+
+        When `FunctionInvocationLayer` is outside `ChatTelemetryLayer`,
+        each call to the model is handled as a separate span.
+        Keep `ChatMiddlewareLayer` outside telemetry
+        so middleware latency does not skew those timings.
+        By contrast, when telemetry is placed outside the function loop,
+        a single span can cover one or more rounds of function calling.
 
         So for the scenario below, you should see the following:
 
@@ -109,7 +115,7 @@ async def run_chat_client() -> None:
         2 spans with gen_ai.operation.name=execute_tool
 
     """
-    client = OpenAIChatClient()
+    client = FoundryChatClient()
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")

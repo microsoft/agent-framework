@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
@@ -197,6 +198,45 @@ public class EdgeRunnerTests
             mapping = await runner.ChaseEdgeAsync(new("final part", "executor2"), stepTracer: null, CancellationToken.None);
             mapping.Should().NotBeNull();
             mapping.CheckDeliveries(["executor3"], ["part1", "part2", "final part"]);
+        }
+    }
+
+    [Fact]
+    public async Task Test_FanInEdgeRunner_ConcurrentProcessingAsync()
+    {
+        // Arrange
+        const int SourceCount = 4;
+        const int Iterations = 50;
+
+        string[] sourceIds = Enumerable.Range(0, SourceCount).Select(i => $"source{i}").ToArray();
+        const string SinkId = "sink";
+
+        TestRunContext runContext = new();
+        List<Executor> executors = [.. sourceIds.Select(id => (Executor)new ForwardMessageExecutor<string>(id)), new ForwardMessageExecutor<string>(SinkId)];
+        runContext.ConfigureExecutors(executors);
+
+        FanInEdgeData edgeData = new(sourceIds.ToList(), SinkId, new EdgeId(0), null);
+        FanInEdgeRunner runner = new(runContext, edgeData);
+
+        for (int iteration = 0; iteration < Iterations; iteration++)
+        {
+            // Act: send messages from all sources concurrently
+            using Barrier barrier = new(SourceCount);
+            Task<DeliveryMapping?>[] tasks = sourceIds.Select(sourceId => Task.Run(async () =>
+            {
+                barrier.SignalAndWait();
+                return await runner.ChaseEdgeAsync(new($"msg-from-{sourceId}", sourceId), stepTracer: null, CancellationToken.None);
+            })).ToArray();
+
+            DeliveryMapping?[] results = await Task.WhenAll(tasks);
+
+            // Assert: exactly one task should return a non-null mapping with all messages
+            DeliveryMapping?[] nonNullResults = results.Where(r => r is not null).ToArray();
+            nonNullResults.Should().HaveCount(1, $"iteration {iteration}: exactly one thread should release the batch");
+
+            DeliveryMapping mapping = nonNullResults[0]!;
+            HashSet<object> expectedMessages = [.. sourceIds.Select(id => (object)$"msg-from-{id}")];
+            mapping.CheckDeliveries([SinkId], expectedMessages);
         }
     }
 }

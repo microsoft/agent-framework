@@ -3,7 +3,7 @@
 // This sample shows how to use SharePoint Grounding Tool with AI Agents.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;

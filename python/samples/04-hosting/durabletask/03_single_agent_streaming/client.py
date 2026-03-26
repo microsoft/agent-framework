@@ -9,7 +9,7 @@ This client demonstrates:
 
 Prerequisites:
 - The worker must be running with the TravelPlanner agent registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
 - Redis must be running
 - Durable Task Scheduler must be running
 """
@@ -21,7 +21,7 @@ from datetime import timedelta
 
 import redis.asyncio as aioredis
 from agent_framework.azure import DurableAIAgentClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from redis_stream_response_handler import RedisStreamResponseHandler
@@ -76,7 +76,7 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     dts_client = DurableTaskSchedulerClient(
         host_address=endpoint_url,

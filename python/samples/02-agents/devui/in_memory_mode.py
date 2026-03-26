@@ -10,9 +10,16 @@ import logging
 import os
 from typing import Annotated
 
-from agent_framework import Agent, Executor, WorkflowBuilder, WorkflowContext, handler, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import (
+    Agent,
+    Executor,
+    WorkflowBuilder,
+    WorkflowContext,
+    handler,
+    tool,
+)
 from agent_framework.devui import serve
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 from typing_extensions import Never
 
@@ -72,11 +79,11 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    client = AzureOpenAIChatClient(
+    client = FoundryChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+        model=os.environ["FOUNDRY_MODEL"],
+        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
         api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
-        model_id=os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "gpt-4o"),
     )
 
     # Create agents
