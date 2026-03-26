@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import AgentSession, FunctionInvocationContext, tool
+from agent_framework import Agent, AgentSession, FunctionInvocationContext, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from pydantic import Field
@@ -36,7 +36,8 @@ async def get_weather(
 
 
 async def main() -> None:
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant.",
         tools=[get_weather],
@@ -47,12 +48,8 @@ async def main() -> None:
     session = agent.create_session()
 
     # Run the agent with the session; tools receive it via ctx.session.
-    print(
-        f"Agent: {await agent.run('What is the weather in London?', session=session)}"
-    )
-    print(
-        f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}"
-    )
+    print(f"Agent: {await agent.run('What is the weather in London?', session=session)}")
+    print(f"Agent: {await agent.run('What is the weather in Amsterdam?', session=session)}")
     print(f"Agent: {await agent.run('What cities did I ask about?', session=session)}")
 
 

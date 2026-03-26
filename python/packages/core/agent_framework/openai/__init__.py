@@ -1,48 +1,55 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""OpenAI namespace for built-in Agent Framework clients.
+"""OpenAI namespace for Agent Framework clients.
 
-This module re-exports objects from the core OpenAI implementation modules in
-``agent_framework.openai``.
+This module lazily re-exports objects from the ``agent-framework-openai`` package.
+Install it with: ``pip install agent-framework-openai``
 
 Supported classes include:
-- OpenAIChatClient
-- OpenAIResponsesClient
-- OpenAIAssistantsClient
-- OpenAIAssistantProvider
+- OpenAIChatClient (Responses API)
+- OpenAIChatCompletionClient (Chat Completions API)
+- OpenAIEmbeddingClient
+- OpenAIAssistantsClient (deprecated)
 """
 
-from ._assistant_provider import OpenAIAssistantProvider
-from ._assistants_client import (
-    AssistantToolResources,
-    OpenAIAssistantsClient,
-    OpenAIAssistantsOptions,
-)
-from ._chat_client import OpenAIChatClient, OpenAIChatOptions
-from ._embedding_client import OpenAIEmbeddingClient, OpenAIEmbeddingOptions
-from ._exceptions import ContentFilterResultSeverity, OpenAIContentFilterException
-from ._responses_client import (
-    OpenAIContinuationToken,
-    OpenAIResponsesClient,
-    OpenAIResponsesOptions,
-    RawOpenAIResponsesClient,
-)
-from ._shared import OpenAISettings
+import importlib
+from typing import Any
 
-__all__ = [
-    "AssistantToolResources",
-    "ContentFilterResultSeverity",
-    "OpenAIAssistantProvider",
-    "OpenAIAssistantsClient",
-    "OpenAIAssistantsOptions",
-    "OpenAIChatClient",
-    "OpenAIChatOptions",
-    "OpenAIContentFilterException",
-    "OpenAIContinuationToken",
-    "OpenAIEmbeddingClient",
-    "OpenAIEmbeddingOptions",
-    "OpenAIResponsesClient",
-    "OpenAIResponsesOptions",
-    "OpenAISettings",
-    "RawOpenAIResponsesClient",
-]
+_IMPORTS: dict[str, tuple[str, str]] = {
+    "OpenAIChatClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIChatOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIContinuationToken": ("agent_framework_openai", "agent-framework-openai"),
+    "RawOpenAIChatClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIChatCompletionClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIChatCompletionOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "RawOpenAIChatCompletionClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIEmbeddingClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIEmbeddingOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAISettings": ("agent_framework_openai", "agent-framework-openai"),
+    "ContentFilterResultSeverity": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIContentFilterException": ("agent_framework_openai", "agent-framework-openai"),
+    "AssistantToolResources": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIAssistantProvider": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIAssistantsClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIAssistantsOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIResponsesClient": ("agent_framework_openai", "agent-framework-openai"),
+    "OpenAIResponsesOptions": ("agent_framework_openai", "agent-framework-openai"),
+    "RawOpenAIResponsesClient": ("agent_framework_openai", "agent-framework-openai"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _IMPORTS:
+        import_path, package_name = _IMPORTS[name]
+        try:
+            return getattr(importlib.import_module(import_path), name)
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                f"The package {package_name} is required to use `{name}`. "
+                f"Please use `pip install {package_name}`, or update your requirements.txt or pyproject.toml file."
+            ) from exc
+    raise AttributeError(f"Module `openai` has no attribute {name}.")
+
+
+def __dir__() -> list[str]:
+    return list(_IMPORTS.keys())

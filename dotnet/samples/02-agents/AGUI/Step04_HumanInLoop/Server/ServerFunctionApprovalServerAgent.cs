@@ -9,7 +9,7 @@ using ServerFunctionApproval;
 
 /// <summary>
 /// A delegating agent that handles function approval requests on the server side.
-/// Transforms between FunctionApprovalRequestContent/FunctionApprovalResponseContent
+/// Transforms between ToolApprovalRequestContent/ToolApprovalResponseContent
 /// and the request_approval tool call pattern for client communication.
 /// </summary>
 internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
@@ -50,7 +50,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
     }
 
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
-    private static FunctionApprovalRequestContent ConvertToolCallToApprovalRequest(FunctionCallContent toolCall, JsonSerializerOptions jsonSerializerOptions)
+    private static ToolApprovalRequestContent ConvertToolCallToApprovalRequest(FunctionCallContent toolCall, JsonSerializerOptions jsonSerializerOptions)
     {
         if (toolCall.Name != "request_approval" || toolCall.Arguments == null)
         {
@@ -67,15 +67,15 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
             throw new InvalidOperationException("Failed to deserialize approval request from tool call");
         }
 
-        return new FunctionApprovalRequestContent(
-            id: request.ApprovalId,
+        return new ToolApprovalRequestContent(
+            requestId: request.ApprovalId,
             new FunctionCallContent(
                 callId: request.ApprovalId,
                 name: request.FunctionName,
                 arguments: request.FunctionArguments));
     }
 
-    private static FunctionApprovalResponseContent ConvertToolResultToApprovalResponse(FunctionResultContent result, FunctionApprovalRequestContent approval, JsonSerializerOptions jsonSerializerOptions)
+    private static ToolApprovalResponseContent ConvertToolResultToApprovalResponse(FunctionResultContent result, ToolApprovalRequestContent approval, JsonSerializerOptions jsonSerializerOptions)
     {
         var approvalResponse = result.Result is JsonElement je ?
             (ApprovalResponse?)je.Deserialize(jsonSerializerOptions.GetTypeInfo(typeof(ApprovalResponse))) :
@@ -121,7 +121,7 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         // Track approval ID to original call ID mapping
         _ = new Dictionary<string, string>();
 #pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
-        Dictionary<string, FunctionApprovalRequestContent> trackedRequestApprovalToolCalls = new(); // Remote approvals
+        Dictionary<string, ToolApprovalRequestContent> trackedRequestApprovalToolCalls = new(); // Remote approvals
         for (int messageIndex = 0; messageIndex < messages.Count; messageIndex++)
         {
             var message = messages[messageIndex];
@@ -181,11 +181,10 @@ internal sealed class ServerFunctionApprovalAgent : DelegatingAIAgent
         {
             var content = update.Contents[i];
 #pragma warning disable MEAI001 // Type is for evaluation purposes only
-            if (content is FunctionApprovalRequestContent request)
+            if (content is ToolApprovalRequestContent request && request.ToolCall is FunctionCallContent functionCall)
             {
                 updatedContents ??= [.. update.Contents];
-                var functionCall = request.FunctionCall;
-                var approvalId = request.Id;
+                var approvalId = request.RequestId;
 
                 var approvalData = new ApprovalRequest
                 {

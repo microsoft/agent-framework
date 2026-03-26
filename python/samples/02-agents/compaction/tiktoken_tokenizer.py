@@ -33,9 +33,7 @@ Key components:
 class TiktokenTokenizer(TokenizerProtocol):
     """TokenizerProtocol implementation backed by tiktoken's o200k_base (gpt-4.1 and up default) encoding."""
 
-    def __init__(
-        self, *, encoding_name: str = "o200k_base", model_name: str | None = None
-    ) -> None:
+    def __init__(self, *, encoding_name: str = "o200k_base", model_name: str | None = None) -> None:
         if model_name is not None:
             self._encoding = tiktoken.encoding_for_model(model_name)
         else:
@@ -62,10 +60,7 @@ def _build_messages() -> list[Message]:
         ),
         Message(
             role="user",
-            text=(
-                "Now provide a detailed checklist with owners, rollback "
-                "gates, and validation criteria."
-            ),
+            text=("Now provide a detailed checklist with owners, rollback gates, and validation criteria."),
         ),
         Message(
             role="assistant",

@@ -403,7 +403,7 @@ So we use bounded ranges for external package dependencies in `pyproject.toml`:
 - For `<1.0.0` dependencies, use a known-good bounded range with an explicit upper cap. Prefer the broadest validated range the package can actually support: that may be a patch line, a minor line, or multiple minor lines (for example: `a2a-sdk>=0.3.5,<0.4.0`, `fastapi>=0.115.0,<0.136.0`, `uvicorn>=0.30.0,<0.39.0`).
 - For prerelease (`dev`/`a`/`b`/`rc`) dependencies, use a known-good bounded range with a hard upper cap and keep the range only as broad as the package's validation coverage justifies.
 - Prefer keeping support for multiple major versions when practical. This may mean that the upper bound spans multiple major versions when the dependency maintains backward compatibility; if APIs differ between supported majors, version-conditional imports/branches are acceptable to preserve compatibility.
-- When adding or changing an external dependency, first run `uv run poe validate-dependency-bounds-test` to validate workspace-wide lower/upper compatibility, then run `uv run poe validate-dependency-bounds-project --mode both --project <workspace-package-name> --dependency "<dependency-name>"` to expand package-scoped bounds.
+- When adding or changing an external dependency, first run `uv run poe validate-dependency-bounds-test` to validate workspace-wide lower/upper compatibility, then run `uv run poe validate-dependency-bounds-project --mode both --package <workspace-package-name> --dependency "<dependency-name>"` to expand package-scoped bounds.
 
 ### Installation Options
 

@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - sample uses deprecated PersistentAgentsClientExtensions
+
 // This sample shows how to create an Azure AI Foundry Agent with the Deep Research Tool.
 
 using Azure.AI.Agents.Persistent;

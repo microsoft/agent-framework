@@ -35,10 +35,12 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
+    BaseHistoryProvider,
     Content,
     ContinuationToken,
     Message,
     ResponseStream,
+    SessionContext,
     normalize_messages,
     prepend_agent_framework_to_user_agent,
 )
@@ -284,17 +286,37 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         del function_invocation_kwargs, client_kwargs, kwargs
+        normalized_messages = normalize_messages(messages)
+
         if continuation_token is not None:
             a2a_stream: AsyncIterable[A2AStreamItem] = self.client.resubscribe(
                 TaskIdParams(id=continuation_token["task_id"])
             )
         else:
-            normalized_messages = normalize_messages(messages)
+            if not normalized_messages:
+                raise ValueError("At least one message is required when starting a new task (no continuation_token).")
             a2a_message = self._prepare_message_for_a2a(normalized_messages[-1])
             a2a_stream = self.client.send_message(a2a_message)
 
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
+        session_context = SessionContext(
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
+            input_messages=normalized_messages or [],
+            options={},
+        )
+
         response = ResponseStream(
-            self._map_a2a_stream(a2a_stream, background=background),
+            self._map_a2a_stream(
+                a2a_stream,
+                background=background,
+                emit_intermediate=stream,
+                session=provider_session,
+                session_context=session_context,
+            ),
             finalizer=AgentResponse.from_updates,
         )
         if stream:
@@ -306,6 +328,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         a2a_stream: AsyncIterable[A2AStreamItem],
         *,
         background: bool = False,
+        emit_intermediate: bool = False,
+        session: AgentSession | None = None,
+        session_context: SessionContext | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Map raw A2A protocol items to AgentResponseUpdates.
 
@@ -316,37 +341,84 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             background: When False, in-progress task updates are silently
                 consumed (the stream keeps iterating until a terminal state).
                 When True, they are yielded with a continuation token.
+            emit_intermediate: When True, in-progress status updates that
+                carry message content are yielded to the caller.  Typically
+                set for streaming callers so non-streaming consumers only
+                receive terminal task outputs.
+            session: The agent session for context providers.
+            session_context: The session context for context providers.
         """
+        if session_context is None:
+            session_context = SessionContext(input_messages=[], options={})
+
+        # Run before_run providers (forward order)
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            if session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        all_updates: list[AgentResponseUpdate] = []
         async for item in a2a_stream:
             if isinstance(item, A2AMessage):
                 # Process A2A Message
                 contents = self._parse_contents_from_a2a(item.parts)
-                yield AgentResponseUpdate(
+                update = AgentResponseUpdate(
                     contents=contents,
                     role="assistant" if item.role == A2ARole.agent else "user",
                     response_id=str(getattr(item, "message_id", uuid.uuid4())),
                     raw_representation=item,
                 )
+                all_updates.append(update)
+                yield update
             elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, _update_event = item
-                for update in self._updates_from_task(task, background=background):
+                for update in self._updates_from_task(
+                    task,
+                    background=background,
+                    emit_intermediate=emit_intermediate,
+                ):
+                    all_updates.append(update)
                     yield update
             else:
                 raise NotImplementedError("Only Message and Task responses are supported")
+
+        # Set the response on the context for after_run providers
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+
+        await self._run_after_providers(session=session, context=session_context)
 
     # ------------------------------------------------------------------
     # Task helpers
     # ------------------------------------------------------------------
 
-    def _updates_from_task(self, task: Task, *, background: bool = False) -> list[AgentResponseUpdate]:
+    def _updates_from_task(
+        self,
+        task: Task,
+        *,
+        background: bool = False,
+        emit_intermediate: bool = False,
+    ) -> list[AgentResponseUpdate]:
         """Convert an A2A Task into AgentResponseUpdate(s).
 
         Terminal tasks produce updates from their artifacts/history.
-        In-progress tasks produce a continuation token update only when
-        ``background=True``; otherwise they are silently skipped so the
-        caller keeps consuming the stream until completion.
+        In-progress tasks produce a continuation token update when
+        ``background=True``.  When ``emit_intermediate=True`` (typically
+        set for streaming callers), any message content attached to an
+        in-progress status update is surfaced; otherwise the update is
+        silently skipped so the caller keeps consuming the stream until
+        completion.
         """
-        if task.status.state in TERMINAL_TASK_STATES:
+        status = task.status
+
+        if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
             if task_messages:
                 return [
@@ -361,7 +433,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 ]
             return [AgentResponseUpdate(contents=[], role="assistant", response_id=task.id, raw_representation=task)]
 
-        if background and task.status.state in IN_PROGRESS_TASK_STATES:
+        if background and status.state in IN_PROGRESS_TASK_STATES:
             token = self._build_continuation_token(task)
             return [
                 AgentResponseUpdate(
@@ -372,6 +444,26 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raw_representation=task,
                 )
             ]
+
+        # Surface message content from in-progress status updates (e.g. working state)
+        # Only emitted when the caller opts in (streaming), so non-streaming
+        # consumers keep receiving only terminal task outputs.
+        if (
+            emit_intermediate
+            and status.state in IN_PROGRESS_TASK_STATES
+            and status.message is not None
+            and status.message.parts
+        ):
+            contents = self._parse_contents_from_a2a(status.message.parts)
+            if contents:
+                return [
+                    AgentResponseUpdate(
+                        contents=contents,
+                        role="assistant" if status.message.role == A2ARole.agent else "user",
+                        response_id=task.id,
+                        raw_representation=task,
+                    )
+                ]
 
         return []
 
@@ -486,13 +578,14 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     raise ValueError(f"Unknown content type: {content.type}")
 
         # Exclude framework-internal keys (e.g. attribution) from wire metadata
-        internal_keys = {"_attribution"}
+        internal_keys = {"_attribution", "context_id"}
         metadata = {k: v for k, v in message.additional_properties.items() if k not in internal_keys} or None
 
         return A2AMessage(
             role=A2ARole("user"),
             parts=parts,
             message_id=message.message_id or uuid.uuid4().hex,
+            context_id=message.additional_properties.get("context_id"),
             metadata=metadata,
         )
 

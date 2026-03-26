@@ -85,7 +85,7 @@ internal sealed class InvokeMcpToolExecutor(
                 toolCall.AdditionalProperties.Add(headers);
             }
 
-            McpServerToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
+            ToolApprovalRequestContent approvalRequest = new(this.Id, toolCall);
 
             ChatMessage requestMessage = new(ChatRole.Assistant, [approvalRequest]);
             AgentResponse agentResponse = new([requestMessage]);
@@ -127,11 +127,10 @@ internal sealed class InvokeMcpToolExecutor(
         ExternalInputResponse response,
         CancellationToken cancellationToken)
     {
-        // Check for approval response
-        McpServerToolApprovalResponseContent? approvalResponse = response.Messages
+        ToolApprovalResponseContent? approvalResponse = response.Messages
             .SelectMany(m => m.Contents)
-            .OfType<McpServerToolApprovalResponseContent>()
-            .FirstOrDefault(r => r.Id == this.Id);
+            .OfType<ToolApprovalResponseContent>()
+            .FirstOrDefault(r => r.RequestId == this.Id);
 
         if (approvalResponse?.Approved != true)
         {
@@ -174,7 +173,7 @@ internal sealed class InvokeMcpToolExecutor(
         string? conversationId = this.GetConversationId();
 
         await this.AssignResultAsync(context, resultContent).ConfigureAwait(false);
-        ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Output);
+        ChatMessage resultMessage = new(ChatRole.Tool, resultContent.Outputs);
 
         // Store messages if output path is configured
         if (this.Model.Output?.Messages is not null)
@@ -192,20 +191,20 @@ internal sealed class InvokeMcpToolExecutor(
         // Add messages to conversation if conversationId is provided
         if (conversationId is not null)
         {
-            ChatMessage assistantMessage = new(ChatRole.Assistant, resultContent.Output);
+            ChatMessage assistantMessage = new(ChatRole.Assistant, resultContent.Outputs);
             await agentProvider.CreateMessageAsync(conversationId, assistantMessage, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private async ValueTask AssignResultAsync(IWorkflowContext context, McpServerToolResultContent toolResult)
     {
-        if (this.Model.Output?.Result is null || toolResult.Output is null || toolResult.Output.Count == 0)
+        if (this.Model.Output?.Result is null || toolResult.Outputs is null || toolResult.Outputs.Count == 0)
         {
             return;
         }
 
         List<object?> parsedResults = [];
-        foreach (AIContent resultContent in toolResult.Output)
+        foreach (AIContent resultContent in toolResult.Outputs)
         {
             object? resultValue = resultContent switch
             {

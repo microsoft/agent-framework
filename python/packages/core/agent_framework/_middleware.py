@@ -742,11 +742,16 @@ class AgentMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of agent middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[AgentMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[AgentMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[AgentMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: AgentMiddlewareTypes) -> None:
         """Register an agent middleware item.
@@ -824,11 +829,16 @@ class FunctionMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of function middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[FunctionMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[FunctionMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[FunctionMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: FunctionMiddlewareTypes) -> None:
         """Register a function middleware item.
@@ -892,11 +902,16 @@ class ChatMiddlewarePipeline(BaseMiddlewarePipeline):
             middleware: The list of chat middleware to include in the pipeline.
         """
         super().__init__()
+        self._source_middleware: tuple[ChatMiddlewareTypes, ...] = tuple(middleware)
         self._middleware: list[ChatMiddleware] = []
 
         if middleware:
             for mdlware in middleware:
                 self._register_middleware(mdlware)
+
+    def matches(self, middleware: Sequence[ChatMiddlewareTypes]) -> bool:
+        """Return whether this pipeline was built from the provided middleware sequence."""
+        return self._source_middleware == tuple(middleware)
 
     def _register_middleware(self, middleware: ChatMiddlewareTypes) -> None:
         """Register a chat middleware item.
@@ -980,15 +995,25 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
     def __init__(
         self,
         *,
-        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        middleware: Sequence[ChatMiddlewareTypes] | None = None,
         **kwargs: Any,
     ) -> None:
-        middleware_list = categorize_middleware(*(middleware or []))
-        self.chat_middleware = middleware_list["chat"]
-        if "function_middleware" in kwargs and middleware_list["function"]:
-            raise ValueError("Cannot specify 'function_middleware' and 'middleware' at the same time.")
-        kwargs["function_middleware"] = middleware_list["function"]
+        self.chat_middleware = list(middleware) if middleware else []
+        self._cached_chat_middleware_pipeline: ChatMiddlewarePipeline | None = None
         super().__init__(**kwargs)
+
+    def _get_chat_middleware_pipeline(
+        self,
+        middleware: Sequence[ChatMiddlewareTypes],
+    ) -> ChatMiddlewarePipeline:
+        effective_middleware = [*self.chat_middleware, *middleware]
+        if self._cached_chat_middleware_pipeline is not None and self._cached_chat_middleware_pipeline.matches(
+            effective_middleware
+        ):
+            return self._cached_chat_middleware_pipeline
+
+        self._cached_chat_middleware_pipeline = ChatMiddlewarePipeline(*effective_middleware)
+        return self._cached_chat_middleware_pipeline
 
     @overload
     def get_response(
@@ -1052,14 +1077,8 @@ class ChatMiddlewareLayer(Generic[OptionsCoT]):
             kwargs["tokenizer"] = tokenizer
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
-        call_middleware = kwargs.pop("middleware", effective_client_kwargs.pop("middleware", []))
-        middleware = categorize_middleware(call_middleware)
-        effective_client_kwargs["function_middleware"] = middleware["function"]
-
-        pipeline = ChatMiddlewarePipeline(
-            *self.chat_middleware,
-            *middleware["chat"],
-        )
+        call_middleware = effective_client_kwargs.pop("middleware", [])
+        pipeline = self._get_chat_middleware_pipeline(call_middleware)  # type: ignore[reportUnknownArgumentType]
         if not pipeline.has_middlewares:
             return super_get_response(  # type: ignore[no-any-return]
                 messages=messages,
@@ -1134,11 +1153,24 @@ class AgentMiddlewareLayer:
     ) -> None:
         middleware_list = categorize_middleware(middleware)
         self.agent_middleware = middleware_list["agent"]
+        self._cached_agent_middleware_pipeline: AgentMiddlewarePipeline | None = None
         # Pass middleware to super so BaseAgent can store it for dynamic rebuild
         super().__init__(*args, middleware=middleware, **kwargs)  # type: ignore[call-arg]
         # Note: We intentionally don't extend client's middleware lists here.
         # Chat and function middleware is passed to the chat client at runtime via kwargs
         # in AgentMiddlewareLayer.run(), where it's properly combined with run-level middleware.
+
+    def _get_agent_middleware_pipeline(
+        self,
+        middleware: Sequence[AgentMiddlewareTypes],
+    ) -> AgentMiddlewarePipeline:
+        if self._cached_agent_middleware_pipeline is not None and self._cached_agent_middleware_pipeline.matches(
+            middleware
+        ):
+            return self._cached_agent_middleware_pipeline
+
+        self._cached_agent_middleware_pipeline = AgentMiddlewarePipeline(*middleware)
+        return self._cached_agent_middleware_pipeline
 
     @overload
     def run(
@@ -1210,7 +1242,7 @@ class AgentMiddlewareLayer:
         )
         base_middleware_list = categorize_middleware(base_middleware)
         run_middleware_list = categorize_middleware(middleware)
-        pipeline = AgentMiddlewarePipeline(*base_middleware_list["agent"], *run_middleware_list["agent"])
+        pipeline = self._get_agent_middleware_pipeline([*base_middleware_list["agent"], *run_middleware_list["agent"]])
 
         # Combine base and run-level function/chat middleware for forwarding to chat client
         combined_function_chat_middleware = (
@@ -1392,7 +1424,7 @@ def categorize_middleware(
     all_middleware: list[Any] = []
     for source in middleware_sources:
         if source:
-            if isinstance(source, list):
+            if isinstance(source, Sequence) and not isinstance(source, (str, bytes)):
                 all_middleware.extend(source)  # type: ignore
             else:
                 all_middleware.append(source)

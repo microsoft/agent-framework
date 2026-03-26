@@ -128,6 +128,7 @@ public static class Program
 /// <summary>
 /// Splits data into roughly equal chunks based on the number of mapper nodes.
 /// </summary>
+[SendsMessage(typeof(SplitComplete))]
 internal sealed class Split(string[] mapperIds, string id) :
     Executor<string>(id)
 {
@@ -186,6 +187,7 @@ internal sealed class Split(string[] mapperIds, string id) :
 /// <summary>
 /// Maps each token to a count of 1 and writes pairs to a per-mapper file.
 /// </summary>
+[SendsMessage(typeof(MapComplete))]
 internal sealed class Mapper(string id) : Executor<SplitComplete>(id)
 {
     /// <summary>
@@ -212,6 +214,7 @@ internal sealed class Mapper(string id) : Executor<SplitComplete>(id)
 /// <summary>
 /// Groups intermediate pairs by key and partitions them across reducers.
 /// </summary>
+[SendsMessage(typeof(ShuffleComplete))]
 internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string id) :
     Executor<MapComplete>(id)
 {
@@ -311,6 +314,7 @@ internal sealed class Shuffler(string[] reducerIds, string[] mapperIds, string i
 /// <summary>
 /// Sums grouped counts per key for its assigned partition.
 /// </summary>
+[SendsMessage(typeof(ReduceComplete))]
 internal sealed class Reducer(string id) : Executor<ShuffleComplete>(id)
 {
     /// <summary>
@@ -352,6 +356,7 @@ internal sealed class Reducer(string id) : Executor<ShuffleComplete>(id)
 /// <summary>
 /// Joins all reducer outputs and yields the final output.
 /// </summary>
+[YieldsOutput(typeof(List<string>))]
 internal sealed class CompletionExecutor(string id) :
     Executor<List<ReduceComplete>>(id)
 {

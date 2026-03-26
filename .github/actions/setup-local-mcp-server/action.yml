@@ -1,0 +1,166 @@
+name: Setup Local MCP Server
+description: Start and validate a local streamable HTTP MCP server for integration tests
+
+inputs:
+  fallback_url:
+    description: Existing LOCAL_MCP_URL value to keep as a fallback if local startup fails
+    required: false
+    default: ''
+  host:
+    description: Host interface to bind the local MCP server
+    required: false
+    default: '127.0.0.1'
+  port:
+    description: Port to bind the local MCP server
+    required: false
+    default: '8011'
+  mount_path:
+    description: Mount path for the local streamable HTTP MCP endpoint
+    required: false
+    default: '/mcp'
+
+outputs:
+  effective_url:
+    description: Local MCP URL when startup succeeds, otherwise the provided fallback URL
+    value: ${{ steps.start.outputs.effective_url }}
+  local_url:
+    description: URL of the local MCP server
+    value: ${{ steps.start.outputs.local_url }}
+  started:
+    description: Whether the local MCP server started and passed validation
+    value: ${{ steps.start.outputs.started }}
+  pid:
+    description: PID of the local MCP server process when startup succeeded
+    value: ${{ steps.start.outputs.pid }}
+
+runs:
+  using: composite
+  steps:
+    - name: Start and validate local MCP server
+      id: start
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        host="${{ inputs.host }}"
+        port="${{ inputs.port }}"
+        mount_path="${{ inputs.mount_path }}"
+        fallback_url="${{ inputs.fallback_url }}"
+
+        if [[ ! "$mount_path" =~ ^/ ]]; then
+          mount_path="/$mount_path"
+        fi
+
+        local_url="http://${host}:${port}${mount_path}"
+        health_url="http://${host}:${port}/healthz"
+        log_file="$RUNNER_TEMP/local-mcp-server.log"
+        pid_file="$RUNNER_TEMP/local-mcp-server.pid"
+        rm -f "$log_file" "$pid_file"
+
+        server_pid="$(
+          python3 - "$GITHUB_WORKSPACE/python" "$log_file" "$host" "$port" "$mount_path" <<'PY'
+        from __future__ import annotations
+
+        import subprocess
+        import sys
+
+        workspace, log_file, host, port, mount_path = sys.argv[1:]
+
+        with open(log_file, "w", encoding="utf-8") as log:
+            process = subprocess.Popen(
+                [
+                    "uv",
+                    "run",
+                    "python",
+                    "scripts/local_mcp_streamable_http_server.py",
+                    "--host",
+                    host,
+                    "--port",
+                    port,
+                    "--mount-path",
+                    mount_path,
+                ],
+                cwd=workspace,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        print(process.pid)
+        PY
+        )"
+        echo "$server_pid" > "$pid_file"
+
+        started=false
+        for _ in $(seq 1 30); do
+          if curl --silent --fail "$health_url" >/dev/null; then
+            started=true
+            break
+          fi
+          if ! kill -0 "$server_pid" 2>/dev/null; then
+            break
+          fi
+          sleep 1
+        done
+
+        if [[ "$started" == "true" ]]; then
+          if ! (
+            cd "$GITHUB_WORKSPACE/python"
+            LOCAL_MCP_URL="$local_url" uv run python - <<'PY'
+        from __future__ import annotations
+
+        import asyncio
+        import os
+
+        from agent_framework import Content, MCPStreamableHTTPTool
+
+
+        def result_to_text(result: str | list[Content]) -> str:
+            if isinstance(result, str):
+                return result
+            return "\n".join(content.text for content in result if content.type == "text" and content.text)
+
+
+        async def main() -> None:
+            tool = MCPStreamableHTTPTool(
+                name="local_ci_mcp",
+                url=os.environ["LOCAL_MCP_URL"],
+                approval_mode="never_require",
+            )
+
+            async with tool:
+                assert tool.functions, "Local MCP server did not expose any tools."
+                result = result_to_text(await tool.functions[0].invoke(query="What is Agent Framework?"))
+                assert result, "Local MCP server returned an empty response."
+
+
+        asyncio.run(main())
+        PY
+          ); then
+            started=false
+          fi
+        fi
+
+        effective_url="$local_url"
+        pid="$server_pid"
+
+        if [[ "$started" != "true" ]]; then
+          effective_url="$fallback_url"
+          pid=""
+          if kill -0 "$server_pid" 2>/dev/null; then
+            kill -TERM -- "-$server_pid" 2>/dev/null || kill -TERM "$server_pid" || true
+            sleep 1
+            kill -KILL -- "-$server_pid" 2>/dev/null || kill -KILL "$server_pid" || true
+          fi
+          echo "Local MCP server was unavailable; continuing with fallback LOCAL_MCP_URL."
+          if [[ -f "$log_file" ]]; then
+            tail -n 100 "$log_file" || true
+          fi
+        else
+          echo "Using local MCP server at $local_url"
+        fi
+
+        echo "started=$started" >> "$GITHUB_OUTPUT"
+        echo "local_url=$local_url" >> "$GITHUB_OUTPUT"
+        echo "effective_url=$effective_url" >> "$GITHUB_OUTPUT"
+        echo "pid=$pid" >> "$GITHUB_OUTPUT"

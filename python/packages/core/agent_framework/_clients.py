@@ -966,16 +966,7 @@ def _apply_get_response_docstrings() -> None:
     from .observability import ChatTelemetryLayer
 
     apply_layered_docstring(ChatTelemetryLayer.get_response, BaseChatClient.get_response)
-    apply_layered_docstring(
-        FunctionInvocationLayer.get_response,
-        ChatTelemetryLayer.get_response,
-        extra_keyword_args={
-            "function_middleware": """
-                Optional per-call function middleware.
-                When omitted, middleware configured on the client or forwarded from higher layers is used.
-            """,
-        },
-    )
+    apply_layered_docstring(FunctionInvocationLayer.get_response, ChatTelemetryLayer.get_response)
     apply_layered_docstring(
         ChatMiddlewareLayer.get_response,
         FunctionInvocationLayer.get_response,

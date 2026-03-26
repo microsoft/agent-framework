@@ -5,6 +5,7 @@ from typing import Literal
 
 from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
 
@@ -39,7 +40,7 @@ async def demo_anthropic_chat_client() -> None:
     print("\n=== Anthropic ChatClient with TypedDict Options ===\n")
 
     # Create Anthropic client
-    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
     # Standard options work great:
     response = await client.get_response(
@@ -61,7 +62,7 @@ async def demo_anthropic_agent() -> None:
     """Demonstrate Agent with Anthropic client and typed options."""
     print("\n=== Agent with Anthropic and Typed Options ===\n")
 
-    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
     agent = Agent(
@@ -148,7 +149,7 @@ async def demo_openai_agent() -> None:
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
     agent = Agent[OpenAIReasoningChatOptions](
-        client=OpenAIChatClient(model_id="o3"),
+        client=FoundryChatClient(model="o3"),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time

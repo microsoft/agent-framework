@@ -55,7 +55,7 @@ async def main() -> None:
 
     agent = await provider.create_agent(
         name="CodeHelper",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful assistant that can write and execute Python code to solve problems.",
         tools=[chat_client.get_code_interpreter_tool()],
     )

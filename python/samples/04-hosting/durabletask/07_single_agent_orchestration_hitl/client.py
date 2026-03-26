@@ -7,8 +7,8 @@ by starting an orchestration, sending approval/rejection events, and monitoring 
 
 Prerequisites:
 - The worker must be running with the agent, orchestration, and activities registered
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """
 
@@ -18,7 +18,7 @@ import logging
 import os
 import time
 
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from durabletask.azuremanaged.client import DurableTaskSchedulerClient
 from durabletask.client import OrchestrationState
 
@@ -49,7 +49,7 @@ def get_client(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerClient(
         host_address=endpoint_url,

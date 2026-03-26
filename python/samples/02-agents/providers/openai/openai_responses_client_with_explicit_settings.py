@@ -5,7 +5,7 @@ import os
 from random import randint
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from pydantic import Field
@@ -36,10 +36,13 @@ def get_weather(
 async def main() -> None:
     print("=== OpenAI Responses Client with Explicit Settings ===")
 
-    agent = OpenAIResponsesClient(
-        model_id=os.environ["OPENAI_RESPONSES_MODEL_ID"],
+    _client = OpenAIResponsesClient(
+        model=os.environ["OPENAI_MODEL"],
         api_key=os.environ["OPENAI_API_KEY"],
-    ).as_agent(
+    )
+
+    agent = Agent(
+        client=_client,
         instructions="You are a helpful weather agent.",
         tools=get_weather,
     )

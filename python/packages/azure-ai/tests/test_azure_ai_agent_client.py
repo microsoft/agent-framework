@@ -1,17 +1,11 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-import os
-from pathlib import Path
 from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import (
-    Agent,
-    AgentResponse,
-    AgentResponseUpdate,
-    AgentSession,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -28,7 +22,6 @@ from azure.ai.agents.models import (
     AgentsNamedToolChoiceType,
     AgentsToolChoiceOptionMode,
     CodeInterpreterToolDefinition,
-    FileInfo,
     MessageDeltaChunk,
     MessageDeltaTextContent,
     MessageDeltaTextFileCitationAnnotation,
@@ -41,18 +34,11 @@ from azure.ai.agents.models import (
     SubmitToolApprovalAction,
     SubmitToolOutputsAction,
     ThreadRun,
-    VectorStore,
 )
 from azure.core.credentials_async import AsyncTokenCredential
-from azure.identity.aio import AzureCliCredential
 from pydantic import BaseModel, Field
 
 from agent_framework_azure_ai import AzureAIAgentClient, AzureAISettings
-
-skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/"),
-    reason="No real AZURE_AI_PROJECT_ENDPOINT provided; skipping integration tests.",
-)
 
 
 def create_test_azure_ai_chat_client(
@@ -87,6 +73,8 @@ def create_test_azure_ai_chat_client(
     client.middleware = None
     client.chat_middleware = []
     client.function_middleware = []
+    client._cached_chat_middleware_pipeline = None
+    client._cached_function_middleware_pipeline = None
     client.otel_provider_name = "azure.ai"
     client.function_invocation_configuration = {
         "enabled": True,
@@ -98,6 +86,15 @@ def create_test_azure_ai_chat_client(
     }
 
     return client
+
+
+def test_init_emits_updated_deprecation_warning(mock_agents_client: MagicMock) -> None:
+    """Test that construction emits the updated class deprecation warning."""
+    with pytest.deprecated_call(match="V1 Agents Service API and has no direct replacement"):
+        AzureAIAgentClient(
+            agents_client=mock_agents_client,
+            agent_id="test-agent",
+        )
 
 
 def test_azure_ai_settings_init(azure_ai_unit_test_env: dict[str, str]) -> None:
@@ -151,6 +148,10 @@ def test_azure_ai_chat_client_init_auto_create_client(
     chat_client.agent_name = None
     chat_client.additional_properties = {}
     chat_client.middleware = None
+    chat_client.chat_middleware = []
+    chat_client.function_middleware = []
+    chat_client._cached_chat_middleware_pipeline = None
+    chat_client._cached_function_middleware_pipeline = None
 
     assert chat_client.agents_client is mock_agents_client
     assert chat_client.agent_id is None
@@ -1519,401 +1520,6 @@ def get_weather(
 ) -> str:
     """Get the weather for a given location."""
     return f"The weather in {location} is sunny with a high of 25°C."
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_get_response() -> None:
-    """Test Azure AI Chat Client response."""
-    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
-
-        messages: list[Message] = []
-        messages.append(
-            Message(
-                role="user",
-                text="The weather in Seattle is currently sunny with a high of 25°C. "
-                "It's a beautiful day for outdoor activities.",
-            )
-        )
-        messages.append(Message(role="user", text="What's the weather like today?"))
-
-        # Test that the agents_client can be used to get a response
-        response = await azure_ai_chat_client.get_response(messages=messages)
-
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert any(word in response.text.lower() for word in ["sunny", "25"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_get_response_tools() -> None:
-    """Test Azure AI Chat Client response with tools."""
-    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
-
-        messages: list[Message] = []
-        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
-
-        # Test that the agents_client can be used to get a response
-        response = await azure_ai_chat_client.get_response(
-            messages=messages,
-            options={"tools": [get_weather], "tool_choice": "auto"},
-        )
-
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert any(word in response.text.lower() for word in ["sunny", "25"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_streaming() -> None:
-    """Test Azure AI Chat Client streaming response."""
-    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
-
-        messages: list[Message] = []
-        messages.append(
-            Message(
-                role="user",
-                text="The weather in Seattle is currently sunny with a high of 25°C. "
-                "It's a beautiful day for outdoor activities.",
-            )
-        )
-        messages.append(Message(role="user", text="What's the weather like today?"))
-
-        # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_response(messages=messages, stream=True)
-
-        full_message: str = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if content.type == "text" and content.text:
-                    full_message += content.text
-
-        assert any(word in full_message.lower() for word in ["sunny", "25"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_streaming_tools() -> None:
-    """Test Azure AI Chat Client streaming response with tools."""
-    async with AzureAIAgentClient(credential=AzureCliCredential()) as azure_ai_chat_client:
-        assert isinstance(azure_ai_chat_client, SupportsChatGetResponse)
-
-        messages: list[Message] = []
-        messages.append(Message(role="user", text="What's the weather like in Seattle?"))
-
-        # Test that the agents_client can be used to get a response
-        response = azure_ai_chat_client.get_response(
-            messages=messages,
-            stream=True,
-            options={"tools": [get_weather], "tool_choice": "auto"},
-        )
-        full_message: str = ""
-        async for chunk in response:
-            assert chunk is not None
-            assert isinstance(chunk, ChatResponseUpdate)
-            for content in chunk.contents:
-                if content.type == "text" and content.text:
-                    full_message += content.text
-
-        assert any(word in full_message.lower() for word in ["sunny", "25"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_basic_run() -> None:
-    """Test Agent basic run functionality with AzureAIAgentClient."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-    ) as agent:
-        # Run a simple query
-        response = await agent.run("Hello! Please respond with 'Hello World' exactly.")
-
-        # Validate response
-        assert isinstance(response, AgentResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        assert "Hello World" in response.text
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_basic_run_streaming() -> None:
-    """Test Agent basic streaming functionality with AzureAIAgentClient."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-    ) as agent:
-        # Run streaming query
-        full_message: str = ""
-        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
-            assert chunk is not None
-            assert isinstance(chunk, AgentResponseUpdate)
-            if chunk.text:
-                full_message += chunk.text
-
-        # Validate streaming response
-        assert len(full_message) > 0
-        assert "streaming response test" in full_message.lower()
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_thread_persistence() -> None:
-    """Test Agent session persistence across runs with AzureAIAgentClient."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant with good memory.",
-    ) as agent:
-        # Create a new session that will be reused
-        session = agent.create_session()
-
-        # First message - establish context
-        first_response = await agent.run(
-            "Remember this number: 42. What number did I just tell you to remember?", session=session
-        )
-        assert isinstance(first_response, AgentResponse)
-        assert "42" in first_response.text
-
-        # Second message - test conversation memory
-        second_response = await agent.run(
-            "What number did I tell you to remember in my previous message?", session=session
-        )
-        assert isinstance(second_response, AgentResponse)
-        assert "42" in second_response.text
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_existing_thread_id() -> None:
-    """Test Agent existing thread ID functionality with AzureAIAgentClient."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant with good memory.",
-    ) as first_agent:
-        # Start a conversation and get the session ID
-        session = first_agent.create_session()
-        first_response = await first_agent.run("My name is Alice. Remember this.", session=session)
-
-        # Validate first response
-        assert isinstance(first_response, AgentResponse)
-        assert first_response.text is not None
-
-        # The thread ID is set after the first response
-        existing_thread_id = session.service_session_id
-        assert existing_thread_id is not None
-
-    # Now continue with the same thread ID in a new agent instance
-    async with Agent(
-        client=AzureAIAgentClient(thread_id=existing_thread_id, credential=AzureCliCredential()),
-        instructions="You are a helpful assistant with good memory.",
-    ) as second_agent:
-        # Create a session with the existing ID
-        session = AgentSession(service_session_id=existing_thread_id)
-
-        # Ask about the previous conversation
-        response2 = await second_agent.run("What is my name?", session=session)
-
-        # Validate that the agent remembers the previous conversation
-        assert isinstance(response2, AgentResponse)
-        assert response2.text is not None
-        # Should reference Alice from the previous conversation
-        assert "alice" in response2.text.lower()
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_code_interpreter():
-    """Test Agent with code interpreter through AzureAIAgentClient."""
-
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant that can write and execute Python code.",
-        tools=[AzureAIAgentClient.get_code_interpreter_tool()],
-    ) as agent:
-        # Request code execution
-        response = await agent.run("Write Python code to calculate the factorial of 5 and show the result.")
-
-        # Validate response
-        assert isinstance(response, AgentResponse)
-        assert response.text is not None
-        # Factorial of 5 is 120
-        assert "120" in response.text or "factorial" in response.text.lower()
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_file_search():
-    """Test Agent with file search through AzureAIAgentClient."""
-
-    client = AzureAIAgentClient(credential=AzureCliCredential())
-    file: FileInfo | None = None
-    vector_store: VectorStore | None = None
-
-    try:
-        # 1. Read and upload the test file to the Azure AI agent service
-        test_file_path = Path(__file__).parent / "resources" / "employees.pdf"
-        file = await client.agents_client.files.upload_and_poll(file_path=str(test_file_path), purpose="assistants")
-        vector_store = await client.agents_client.vector_stores.create_and_poll(
-            file_ids=[file.id], name="test_employees_vectorstore"
-        )
-
-        # 2. Create file search tool with uploaded resources
-        file_search_tool = AzureAIAgentClient.get_file_search_tool(vector_store_ids=[vector_store.id])
-
-        async with Agent(
-            client=client,
-            instructions="You are a helpful assistant that can search through uploaded employee files.",
-            tools=[file_search_tool],
-        ) as agent:
-            # 3. Test file search functionality
-            response = await agent.run("Who is the youngest employee in the files?")
-
-            # Validate response
-            assert isinstance(response, AgentResponse)
-            assert response.text is not None
-            # Should find information about Alice Johnson (age 24) being the youngest
-            assert any(term in response.text.lower() for term in ["alice", "johnson", "24"])
-
-    finally:
-        # 4. Cleanup: Delete the vector store and file
-        try:
-            if vector_store:
-                await client.agents_client.vector_stores.delete(vector_store.id)
-            if file:
-                await client.agents_client.files.delete(file.id)
-        except Exception:
-            # Ignore cleanup errors to avoid masking the actual test failure
-            pass
-        finally:
-            await client.close()
-
-
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_hosted_mcp_tool() -> None:
-    """Integration test for MCP tool with Azure AI Agent using Microsoft Learn MCP."""
-
-    mcp_tool = AzureAIAgentClient.get_mcp_tool(
-        name="Microsoft Learn MCP",
-        url="https://learn.microsoft.com/api/mcp",
-        description="A Microsoft Learn MCP server for documentation questions",
-        approval_mode="never_require",
-    )
-
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant that can help with microsoft documentation questions.",
-        tools=[mcp_tool],
-    ) as agent:
-        response = await agent.run(
-            "How to create an Azure storage account using az cli?",
-            options={"max_tokens": 200},
-        )
-
-        assert isinstance(response, AgentResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-        # With never_require approval mode, there should be no approval requests
-        assert len(response.user_input_requests) == 0, (
-            f"Expected no approval requests with never_require mode, but got {len(response.user_input_requests)}"
-        )
-
-        # Should contain Azure-related content since it's asking about Azure CLI
-        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_level_tool_persistence():
-    """Test that agent-level tools persist across multiple runs with AzureAIAgentClient."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant that uses available tools.",
-        tools=[get_weather],
-    ) as agent:
-        # First run - agent-level tool should be available
-        first_response = await agent.run("What's the weather like in Chicago?")
-
-        assert isinstance(first_response, AgentResponse)
-        assert first_response.text is not None
-        # Should use the agent-level weather tool
-        assert any(term in first_response.text.lower() for term in ["chicago", "sunny", "25"])
-
-        # Second run - agent-level tool should still be available (persistence test)
-        second_response = await agent.run("What's the weather in Miami?")
-
-        assert isinstance(second_response, AgentResponse)
-        assert second_response.text is not None
-        # Should use the agent-level weather tool again
-        assert any(term in second_response.text.lower() for term in ["miami", "sunny", "25"])
-
-
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_chat_options_run_level() -> None:
-    """Test ChatOptions parameter coverage at run level."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant.",
-    ) as agent:
-        response = await agent.run(
-            "Provide a brief, helpful response.",
-            tools=[get_weather],
-            options={
-                "max_tokens": 100,
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "tool_choice": "auto",
-                "metadata": {"test": "value"},
-            },
-        )
-
-        assert isinstance(response, AgentResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_azure_ai_chat_client_agent_chat_options_agent_level() -> None:
-    """Test ChatOptions parameter coverage agent level."""
-    async with Agent(
-        client=AzureAIAgentClient(credential=AzureCliCredential()),
-        instructions="You are a helpful assistant.",
-        tools=[get_weather],
-        default_options={
-            "max_tokens": 100,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "tool_choice": "auto",
-            "metadata": {"test": "value"},
-        },
-    ) as agent:
-        response = await agent.run(
-            "Provide a brief, helpful response.",
-        )
-
-        assert isinstance(response, AgentResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
 
 
 async def test_azure_ai_chat_client_cleanup_agent_when_enabled_and_created(
