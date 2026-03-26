@@ -4,6 +4,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 import azure.functions as func
@@ -17,6 +18,9 @@ from services import (
 )
 
 from routes.threads import get_store
+
+# Only log message content when explicitly enabled (PII protection)
+ENABLE_SENSITIVE_DATA = os.environ.get("ENABLE_SENSITIVE_DATA", "").lower() == "true"
 
 bp = func.Blueprint()
 
@@ -188,13 +192,15 @@ async def get_messages(req: func.HttpRequest) -> func.HttpResponse:
         # Convert Message objects to serializable dicts
         # Message has .role (str) and .text (property that concatenates all TextContent)
         message_list = []
-        for msg in messages:
+        for idx, msg in enumerate(messages):
             role = msg.role.value if hasattr(msg.role, "value") else str(msg.role)
             # Use the .text property which concatenates all text contents
             content = msg.text if hasattr(msg, "text") else ""
-            logging.info(
-                f"Message: role={role}, content={content[:100] if content else 'empty'}..."
-            )
+            if ENABLE_SENSITIVE_DATA:
+                logging.info(
+                    f"Message {idx}: role={role}, "
+                    f"content={content[:100] if content else 'empty'}..."
+                )
             message_list.append(
                 {
                     "role": role,

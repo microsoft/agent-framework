@@ -2,17 +2,18 @@
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_MODEL": "gpt-4o",
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-4o",
     "AZURE_OPENAI_API_VERSION": "2024-10-21",
     "AZURE_COSMOS_ENDPOINT": "https://your-cosmos-account.documents.azure.com:443/",
     "AZURE_COSMOS_DATABASE_NAME": "chat_db",
     "AZURE_COSMOS_CONTAINER_NAME": "messages",
-    "ENABLE_OTEL": "true",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+    "ENABLE_INSTRUMENTATION": "true",
     "ENABLE_SENSITIVE_DATA": "false",
-    "OTLP_ENDPOINT": "http://localhost:4317",
-    "OTEL_SERVICE_NAME": "enterprise-chat-agent"
+    "ENABLE_DEBUG_ENDPOINTS": "false"
   },
   "Host": {
     "CORS": "*",

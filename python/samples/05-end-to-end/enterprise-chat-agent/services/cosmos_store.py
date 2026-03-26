@@ -3,7 +3,7 @@
 Cosmos DB Storage for Thread Metadata
 
 This module provides persistent storage for conversation thread metadata
-using Azure Cosmos DB. Message storage is handled separately by the
+using Azure Cosmos DB (async SDK). Message storage is handled separately by the
 CosmosHistoryProvider from agent-framework-azure-cosmos package.
 
 Document Types:
@@ -18,14 +18,15 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from azure.cosmos import CosmosClient
+from azure.cosmos import PartitionKey
+from azure.cosmos.aio import CosmosClient
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from azure.identity import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential
 
 
 class CosmosConversationStore:
     """
-    Manages conversation thread metadata in Azure Cosmos DB.
+    Manages conversation thread metadata in Azure Cosmos DB (async).
 
     Thread metadata includes: user_id, title, status, created_at, updated_at.
     Message persistence is handled by CosmosHistoryProvider (context provider).
@@ -61,26 +62,36 @@ class CosmosConversationStore:
                 "Set AZURE_COSMOS_ENDPOINT environment variable."
             )
 
-        self.credential = credential or DefaultAzureCredential()
+        self._credential = credential
         self._client: CosmosClient | None = None
         self._container = None
+        self._initialized = False
 
-    @property
-    def container(self):
-        """Lazy initialization of Cosmos DB container client with auto-create."""
-        if self._container is None:
-            self._client = CosmosClient(self.endpoint, credential=self.credential)
-            # Create database if it doesn't exist
-            database = self._client.create_database_if_not_exists(id=self.database_name)
-            # Create container with thread_id as partition key
-            self._container = database.create_container_if_not_exists(
-                id=self.container_name,
-                partition_key={"paths": ["/thread_id"], "kind": "Hash"},
-            )
-            logging.info(
-                f"Initialized Cosmos container: {self.database_name}/{self.container_name}"
-            )
-        return self._container
+    async def _ensure_initialized(self):
+        """Lazy async initialization of Cosmos DB container client with auto-create."""
+        if self._initialized:
+            return
+
+        if self._credential is None:
+            self._credential = DefaultAzureCredential()
+
+        self._client = CosmosClient(self.endpoint, credential=self._credential)
+
+        # Create database if it doesn't exist
+        database = await self._client.create_database_if_not_exists(
+            id=self.database_name
+        )
+
+        # Create container with thread_id as partition key
+        self._container = await database.create_container_if_not_exists(
+            id=self.container_name,
+            partition_key=PartitionKey(path="/thread_id"),
+        )
+
+        self._initialized = True
+        logging.info(
+            f"Initialized async Cosmos container: {self.database_name}/{self.container_name}"
+        )
 
     # -------------------------------------------------------------------------
     # Thread Operations
@@ -105,6 +116,8 @@ class CosmosConversationStore:
         Returns:
             The created thread document.
         """
+        await self._ensure_initialized()
+
         now = datetime.now(timezone.utc).isoformat()
         thread = {
             "id": thread_id,
@@ -120,7 +133,7 @@ class CosmosConversationStore:
             "metadata": metadata or {},
         }
 
-        self.container.create_item(body=thread)
+        await self._container.create_item(body=thread)
         logging.info(f"Created thread {thread_id} for user {user_id} in Cosmos DB")
         return thread
 
@@ -134,8 +147,10 @@ class CosmosConversationStore:
         Returns:
             Thread document or None if not found.
         """
+        await self._ensure_initialized()
+
         try:
-            return self.container.read_item(
+            return await self._container.read_item(
                 item=thread_id,
                 partition_key=thread_id,
             )
@@ -155,8 +170,10 @@ class CosmosConversationStore:
         Returns:
             True if deleted, False if not found.
         """
+        await self._ensure_initialized()
+
         try:
-            self.container.delete_item(item=thread_id, partition_key=thread_id)
+            await self._container.delete_item(item=thread_id, partition_key=thread_id)
             logging.info(f"Deleted thread {thread_id} from Cosmos DB")
             return True
         except CosmosResourceNotFoundError:
@@ -199,7 +216,7 @@ class CosmosConversationStore:
 
         thread["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        updated = self.container.replace_item(item=thread_id, body=thread)
+        updated = await self._container.replace_item(item=thread_id, body=thread)
         logging.info(f"Updated thread {thread_id}")
         return updated
 
@@ -235,6 +252,8 @@ class CosmosConversationStore:
         Returns:
             List of thread documents sorted by updated_at descending.
         """
+        await self._ensure_initialized()
+
         # Build query with optional filters
         conditions = ["c.type = 'thread'"]
         parameters = []
@@ -260,15 +279,23 @@ class CosmosConversationStore:
             ]
         )
 
-        items = list(
-            self.container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=True,
-            )
-        )
+        items = []
+        async for item in self._container.query_items(
+            query=query,
+            parameters=parameters,
+        ):
+            items.append(item)
 
         logging.info(
             f"Listed {len(items)} threads (user_id={user_id}, status={status})"
         )
         return items
+
+    async def close(self) -> None:
+        """Close the Cosmos DB client and release resources."""
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+            self._container = None
+            self._initialized = False
+            logging.info("Closed async Cosmos DB client")

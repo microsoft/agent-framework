@@ -119,19 +119,19 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           value: azureOpenAiEndpoint
         }
         {
-          name: 'AZURE_OPENAI_MODEL'
+          name: 'AZURE_OPENAI_DEPLOYMENT_NAME'
           value: azureOpenAiModel
         }
         {
-          name: 'COSMOS_ENDPOINT'
+          name: 'AZURE_COSMOS_ENDPOINT'
           value: cosmosAccount.properties.documentEndpoint
         }
         {
-          name: 'COSMOS_DATABASE_NAME'
+          name: 'AZURE_COSMOS_DATABASE_NAME'
           value: cosmosDatabaseName
         }
         {
-          name: 'COSMOS_CONTAINER_NAME'
+          name: 'AZURE_COSMOS_CONTAINER_NAME'
           value: cosmosContainerName
         }
       ]

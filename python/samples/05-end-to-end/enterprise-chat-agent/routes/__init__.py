@@ -12,5 +12,6 @@ This package contains Azure Functions blueprints organized by resource:
 from routes.health import bp as health_bp
 from routes.messages import bp as messages_bp
 from routes.threads import bp as threads_bp
+from routes.threads import close_store
 
-__all__ = ["threads_bp", "messages_bp", "health_bp"]
+__all__ = ["threads_bp", "messages_bp", "health_bp", "close_store"]

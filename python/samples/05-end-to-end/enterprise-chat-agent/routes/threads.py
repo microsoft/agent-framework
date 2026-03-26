@@ -4,6 +4,7 @@
 
 import json
 import logging
+import os
 import uuid
 
 import azure.functions as func
@@ -13,6 +14,9 @@ from services import (
     get_history_provider,
     http_request_span,
 )
+
+# Debug endpoints are disabled by default for security
+DEBUG_ENDPOINTS_ENABLED = os.environ.get("ENABLE_DEBUG_ENDPOINTS", "").lower() == "true"
 
 bp = func.Blueprint()
 
@@ -27,6 +31,15 @@ def get_store() -> CosmosConversationStore:
         _store = CosmosConversationStore()
         logging.info("Initialized Cosmos DB conversation store")
     return _store
+
+
+async def close_store() -> None:
+    """Close the Cosmos DB conversation store and release resources."""
+    global _store
+    if _store is not None:
+        await _store.close()
+        _store = None
+        logging.info("Closed Cosmos DB conversation store")
 
 
 @bp.route(route="threads", methods=["POST"])
@@ -219,8 +232,17 @@ async def debug_list_sessions(req: func.HttpRequest) -> func.HttpResponse:
     Debug endpoint to list all session_ids that have messages in CosmosHistoryProvider.
     This helps diagnose mismatches between thread_ids and session_ids.
 
+    SECURITY: Disabled by default. Set ENABLE_DEBUG_ENDPOINTS=true to enable.
+
     GET /api/debug/sessions
     """
+    if not DEBUG_ENDPOINTS_ENABLED:
+        return func.HttpResponse(
+            body=json.dumps({"error": "Debug endpoints are disabled"}),
+            status_code=404,
+            mimetype="application/json",
+        )
+
     history_provider = get_history_provider()
 
     try:

@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft. All rights reserved.
-// Azure Cosmos DB NoSQL account, database, and container
+// Azure Cosmos DB NoSQL account and database
+// Note: Containers are auto-created by CosmosHistoryProvider and CosmosConversationStore
 
 @description('Name of the Cosmos DB account')
 param accountName string
@@ -12,12 +13,6 @@ param tags object = {}
 
 @description('Name of the database')
 param databaseName string
-
-@description('Name of the container')
-param containerName string
-
-@description('Partition key path for the container')
-param partitionKeyPath string = '/thread_id'
 
 @description('Enable free tier (only one per subscription)')
 param enableFreeTier bool = false
@@ -74,40 +69,6 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2023-11-15
 }
 
 // ============================================================================
-// Container
-// ============================================================================
-
-resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
-  parent: database
-  name: containerName
-  properties: {
-    resource: {
-      id: containerName
-      partitionKey: {
-        paths: [partitionKeyPath]
-        kind: 'Hash'
-      }
-      indexingPolicy: {
-        automatic: true
-        indexingMode: 'consistent'
-        includedPaths: [
-          {
-            path: '/*'
-          }
-        ]
-        excludedPaths: [
-          {
-            path: '/"_etag"/?'
-          }
-        ]
-      }
-      // Default TTL: -1 means items don't expire unless specified
-      defaultTtl: -1
-    }
-  }
-}
-
-// ============================================================================
 // Outputs
 // ============================================================================
 
@@ -115,4 +76,3 @@ output accountId string = cosmosAccount.id
 output accountName string = cosmosAccount.name
 output endpoint string = cosmosAccount.properties.documentEndpoint
 output databaseName string = database.name
-output containerName string = container.name

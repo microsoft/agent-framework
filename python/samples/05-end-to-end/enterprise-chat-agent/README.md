@@ -8,7 +8,7 @@ This sample showcases:
 
 - **Azure Functions HTTP Triggers** - Serverless REST API endpoints
 - **Runtime Tool Selection** - Agent autonomously decides which tools to invoke based on user intent
-- **Cosmos DB Persistence** - Durable thread and message storage with thread_id partition key
+- **Cosmos DB Persistence** - Two containers: `threads` (partition key `/thread_id`) and `messages` (`/session_id`)
 - **Production Patterns** - Error handling, observability, and security best practices
 - **One-command deployment** - `azd up` deploys all infrastructure
 
@@ -41,7 +41,7 @@ Client → Azure Functions (HTTP Triggers) → ChatAgent → Azure OpenAI
 Deploy the complete infrastructure with a single command:
 
 ```bash
-cd python/samples/demos/enterprise-chat-agent
+cd python/samples/05-end-to-end/enterprise-chat-agent
 
 # Login to Azure
 azd auth login
@@ -86,7 +86,7 @@ azd down
 ### Option 2: Run Locally
 
 ```bash
-cd python/samples/demos/enterprise-chat-agent
+cd python/samples/05-end-to-end/enterprise-chat-agent
 pip install -r requirements.txt
 ```
 
@@ -97,13 +97,18 @@ Copy `local.settings.json.example` to `local.settings.json` and update:
   "IsEncrypted": false,
   "Values": {
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_MODEL": "gpt-4o",
+    "AZURE_OPENAI_DEPLOYMENT_NAME": "gpt-4o",
     "AZURE_OPENAI_API_VERSION": "2024-10-21",
     "AZURE_COSMOS_ENDPOINT": "https://your-cosmos-account.documents.azure.com:443/",
     "AZURE_COSMOS_DATABASE_NAME": "chat_db",
-    "AZURE_COSMOS_CONTAINER_NAME": "messages"
+    "AZURE_COSMOS_CONTAINER_NAME": "messages",
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+    "ENABLE_INSTRUMENTATION": "true",
+    "ENABLE_SENSITIVE_DATA": "false",
+    "ENABLE_DEBUG_ENDPOINTS": "false"
   }
 }
 ```
@@ -116,7 +121,11 @@ func start
 
 ### Test the API
 
-Use the included `demo.http` file or:
+After running `func start`, you can test the API in two ways:
+
+#### Option A: API-Only Testing (demo.http)
+
+Use the included `demo.http` file with VS Code's REST Client extension or any HTTP client:
 
 ```bash
 # Create a thread
@@ -127,6 +136,12 @@ curl -X POST http://localhost:7071/api/threads/{thread_id}/messages \
   -H "Content-Type: application/json" \
   -d '{"content": "What is the weather in Seattle and what is 15% tip on $85?"}'
 ```
+
+#### Option B: Interactive UI Testing (demo-ui.html)
+
+For a quick visual way to interact with the API, open `demo-ui.html` in your browser. This provides a simple chat interface to test thread creation, messaging, and agent responses.
+
+> ⚠️ **Development Only**: The `demo-ui.html` file is intended for local development and testing purposes only. It is not designed for production use.
 
 ## API Endpoints
 
@@ -172,11 +187,11 @@ User: "What's the weather in Paris and what's 18% tip on €75?"
 → Agent calls: get_weather("Paris") AND calculate("75 * 0.18")
 
 User: "How do I configure partition keys in Azure Cosmos DB?"
-→ Agent calls: search_microsoft_docs("Cosmos DB partition keys")
+→ Agent calls: microsoft_docs_search("Cosmos DB partition keys") via MCP
 → Returns: Official Microsoft documentation with best practices
 
 User: "Show me Python code for Azure OpenAI chat completion"
-→ Agent calls: search_microsoft_code_samples("Azure OpenAI chat", language="python")
+→ Agent calls: microsoft_code_sample_search("Azure OpenAI chat") via MCP
 → Returns: Official code examples from Microsoft Learn
 
 User: "What's your return policy?"
@@ -188,13 +203,17 @@ User: "Tell me a joke"
 
 ### Available Tools
 
-| Tool | Description | Example Use |
-|------|-------------|-------------|
-| `search_microsoft_docs` | Search official Microsoft/Azure docs | Azure services, cloud architecture |
-| `search_microsoft_code_samples` | Find code examples from Microsoft Learn | SDK usage, implementation samples |
-| `search_knowledge_base` | Internal company knowledge | Policies, FAQs, procedures |
-| `get_weather` | Current weather data | Weather queries |
-| `calculate` | Safe math evaluation | Calculations, tips, conversions |
+| Tool | Description | Source |
+|------|-------------|--------|
+| `microsoft_docs_search` | Search official Microsoft/Azure docs | MCP (remote) |
+| `microsoft_code_sample_search` | Find code examples from Microsoft Learn | MCP (remote) |
+| `search_knowledge_base` | Internal company knowledge | Local |
+| `get_weather` | Current weather data | Local |
+| `calculate` | Safe math evaluation (exponent ≤ 100) | Local |
+
+> **Note:** MCP tools (`microsoft_docs_search`, `microsoft_code_sample_search`) are provided by the
+> Microsoft Learn MCP server at `https://learn.microsoft.com/api/mcp` and discovered at runtime
+> via `MCPStreamableHTTPTool`. No local tool file is needed.
 
 ## Streaming Responses
 
@@ -288,10 +307,9 @@ enterprise-chat-agent/
 │   ├── messages.py           # Message endpoint
 │   └── health.py             # Health check
 ├── tools/
-│   ├── weather.py            # Weather tool
-│   ├── calculator.py         # Calculator tool
-│   ├── knowledge_base.py     # Knowledge base search tool
-│   └── microsoft_docs.py     # Microsoft Docs MCP integration
+│   ├── weather.py            # Weather tool (local)
+│   ├── calculator.py         # Calculator tool (local)
+│   └── knowledge_base.py     # Knowledge base search tool (local)
 └── infra/                    # Infrastructure as Code (Bicep)
     ├── main.bicep            # Main deployment template
     └── core/                 # Modular Bicep components
@@ -299,7 +317,7 @@ enterprise-chat-agent/
 
 ## Design Documentation
 
-See [DESIGN.md](./DESIGN.md) for:
+See [DESIGN.md](./docs/DESIGN.md) for:
 
 - Architecture diagrams and message processing flow
 - Cosmos DB data model and partition strategy
@@ -313,16 +331,3 @@ See [DESIGN.md](./DESIGN.md) for:
 - [Microsoft Agent Framework Documentation](https://learn.microsoft.com/agent-framework/)
 - [Azure Functions Python Developer Guide](https://learn.microsoft.com/azure/azure-functions/functions-reference-python)
 
-## Implementation Status
-
-### ✅ Completed
-- ✅ Create tools (weather, calculator, knowledge_base)
-- ✅ Create an agent (ChatAgent with Azure OpenAI)
-- ✅ Use tools with agents (@ai_function decorators + agent configuration)
-- ✅ Cosmos DB persistence
-- ✅ OpenTelemetry observability
-
-### 🔄 Pending
-- ⏳ Test agent locally with `func start`
-- ⏳ Check the logs in Application Insights
-- ⏳ Deploy to Azure with `azd up`

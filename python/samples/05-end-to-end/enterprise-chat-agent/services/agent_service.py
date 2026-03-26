@@ -172,13 +172,16 @@ def get_mcp_tool() -> MCPStreamableHTTPTool:
         approval_mode="never_require",  # Auto-approve tool calls for docs search
     )
 
-    return _agent
-
 
 async def close_providers() -> None:
-    """Close the history provider and release resources."""
+    """Close the history provider and conversation store, and release resources."""
     global _history_provider
     if _history_provider is not None:
         await _history_provider.close()
         _history_provider = None
         logging.info("Closed CosmosHistoryProvider")
+
+    # Close the conversation store (imported here to avoid circular imports)
+    from routes.threads import close_store
+
+    await close_store()

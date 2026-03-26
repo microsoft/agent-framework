@@ -50,8 +50,8 @@ flowchart TB
             Weather["get_weather"]
             Calc["calculate"]
             KB["search_knowledge_base"]
-            Docs["search_microsoft_docs<br/>(MCP)"]
-            Code["search_microsoft_code_samples<br/>(MCP)"]
+            Docs["microsoft_docs_search<br/>(MCP)"]
+            Code["microsoft_code_sample_search<br/>(MCP)"]
         end
 
         Endpoints --> Agent
@@ -111,7 +111,7 @@ POST /api/threads/{thread_id}/messages
 4. Agent automatically calls tools as needed:
    • get_weather("Seattle")
    • calculate("85 * 0.15")
-   • search_microsoft_docs("Azure Functions")
+   • microsoft_docs_search("Azure Functions") via MCP
     ↓
    ┌─────────────────────────────────────────┐
    │  CosmosHistoryProvider (automatic):     │
@@ -144,7 +144,7 @@ The agent is configured with multiple tools but **decides at runtime** which too
 |------------|----------------|
 | "What's the weather in Tokyo?" | `get_weather("Tokyo")` |
 | "What's the weather in Paris and what's 18% tip on €75?" | `get_weather("Paris")` AND `calculate("75 * 0.18")` |
-| "How do I configure partition keys in Azure Cosmos DB?" | `search_microsoft_docs("Cosmos DB partition keys")` |
+| "How do I configure partition keys in Azure Cosmos DB?" | `microsoft_docs_search("Cosmos DB partition keys")` via MCP |
 | "Tell me a joke" | (No tools — direct response) |
 
 ### 2. Cosmos DB Persistence Strategy
@@ -153,8 +153,11 @@ The agent is configured with multiple tools but **decides at runtime** which too
 
 | Container | Purpose | Managed By | Partition Key |
 |-----------|---------|------------|---------------|
-| `threads` | Thread metadata (user_id, title, timestamps) | `CosmosConversationStore` (custom) | `/id` |
+| `threads` | Thread metadata (user_id, title, timestamps) | `CosmosConversationStore` (custom) | `/thread_id` |
 | `messages` | Conversation messages | `CosmosHistoryProvider` (framework) | `/session_id` |
+
+> **Note:** Both containers are auto-created by the Python code at runtime with the correct partition keys.
+> The Bicep infrastructure only provisions the Cosmos DB account and database — not the containers.
 
 **CosmosHistoryProvider** from `agent-framework-azure-cosmos` automatically:
 - Loads conversation history before each agent run
@@ -182,6 +185,27 @@ Using **HTTP Triggers** for a familiar REST API pattern:
 - API references
 
 The integration uses `MCPStreamableHTTPTool` with per-request connections (serverless-friendly pattern).
+
+**Implementation** (in `services/agent_service.py`):
+```python
+MICROSOFT_LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp"
+
+def get_mcp_tool() -> MCPStreamableHTTPTool:
+    return MCPStreamableHTTPTool(
+        name="Microsoft Learn",
+        url=MICROSOFT_LEARN_MCP_URL,
+        approval_mode="never_require",
+    )
+
+# Usage in messages.py:
+async with get_mcp_tool() as mcp:
+    response = await agent.run(content, session=session, tools=mcp)
+```
+
+**Key Points:**
+- No local tool file needed — tools are discovered from the remote MCP server
+- Tools (`microsoft_docs_search`, `microsoft_code_sample_search`) are injected at runtime
+- Async context manager ensures proper connection lifecycle
 
 **Benefits:**
 - ✅ Authoritative information from official sources
@@ -319,78 +343,11 @@ enterprise-chat-agent/
 │   ├── messages.py         # Message endpoint
 │   └── health.py           # Health check
 ├── tools/
-│   ├── weather.py          # Weather tool
-│   ├── calculator.py       # Calculator tool
-│   ├── knowledge_base.py   # KB search tool
-│   └── microsoft_docs.py   # Microsoft Docs MCP integration
+│   ├── weather.py          # Weather tool (local)
+│   ├── calculator.py       # Calculator tool (local)
+│   └── knowledge_base.py   # KB search tool (local)
 ├── docs/                   # Additional documentation
 └── infra/
     └── main.bicep          # Azure infrastructure (Bicep)
 ```
 
----
-
-## Implementation Status
-
-### ✅ Phase 1: Core Chat API
-
-- Azure Functions HTTP triggers
-- ChatAgent with Azure OpenAI
-- Local tools (weather, calculator, knowledge base)
-- `CosmosHistoryProvider` for automatic message persistence
-- `CosmosConversationStore` for thread metadata
-- README with setup instructions
-- Infrastructure as Code (Bicep + azd)
-
-### ✅ Phase 2: Observability
-
-- OpenTelemetry integration via Agent Framework
-- Custom spans for HTTP requests and Cosmos operations
-- Structured logging
-- Health check endpoint
-
-### ✅ Phase 3: MCP Integration
-
-- `MCPStreamableHTTPTool` for Microsoft Learn MCP server
-- `microsoft_docs_search` tool via MCP
-- `microsoft_code_sample_search` tool via MCP
-- Per-request MCP connection (serverless-friendly)
-
-### 🔄 Phase 4: Production Hardening (Future)
-
-- Managed Identity authentication
-- Retry policies and circuit breakers
-- Rate limiting
-- Input sanitization
-
-### 🔄 Phase 5: Caching (Future)
-
-- Redis session cache for high-frequency access
-- Recent messages caching
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint URL |
-| `AZURE_OPENAI_MODEL` | Model deployment name (e.g., `gpt-4o`) |
-| `AZURE_OPENAI_API_VERSION` | API version (e.g., `2024-10-21`) |
-| `AZURE_COSMOS_ENDPOINT` | Cosmos DB endpoint |
-| `AZURE_COSMOS_DATABASE_NAME` | Database name (e.g., `chat_db`) |
-| `AZURE_COSMOS_CONTAINER_NAME` | Messages container name |
-| `AZURE_COSMOS_THREADS_CONTAINER_NAME` | Threads container name |
-| `ENABLE_OTEL` | Enable OpenTelemetry (`true`/`false`) |
-| `OTLP_ENDPOINT` | OTLP collector endpoint |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Azure Monitor connection |
-| `OTEL_SERVICE_NAME` | Service name for traces |
-
----
-
-## Open Questions
-
-1. **Multi-tenant**: Should thread isolation support user-level partitioning?
-2. **Caching Strategy**: What's the optimal TTL for conversation context caching?

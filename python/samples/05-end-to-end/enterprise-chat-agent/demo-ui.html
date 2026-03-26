@@ -279,8 +279,8 @@
             }
             list.innerHTML = threads.map(t => `
                 <div class="thread-item ${t.id === currentThreadId ? 'active' : ''}" onclick="selectThread('${t.id}')">
-                    <div class="title">${t.title || 'New Chat'}</div>
-                    <div class="preview">${t.last_message_preview || 'No messages'}</div>
+                    <div class="title">${escapeHtml(t.title || 'New Chat')}</div>
+                    <div class="preview">${escapeHtml(t.last_message_preview || 'No messages')}</div>
                     <div class="time">${new Date(t.created_at).toLocaleDateString()}</div>
                 </div>
             `).join('');

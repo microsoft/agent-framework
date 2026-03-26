@@ -96,8 +96,6 @@ module cosmos './core/database/cosmos-nosql.bicep' = {
     location: location
     tags: tags
     databaseName: cosmosDatabaseName
-    containerName: cosmosContainerName
-    partitionKeyPath: '/thread_id'
   }
 }
 
