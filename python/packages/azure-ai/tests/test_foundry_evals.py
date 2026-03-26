@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,6 +21,7 @@ from agent_framework._evaluation import (
     evaluate_workflow,
 )
 from agent_framework._workflows._workflow import WorkflowRunResult
+from openai import AsyncOpenAI
 
 from agent_framework_azure_ai._foundry_evals import (
     FoundryEvals,
@@ -32,6 +34,23 @@ from agent_framework_azure_ai._foundry_evals import (
     _resolve_evaluator,
     _resolve_openai_client,
 )
+
+
+class _AsyncPage:
+    """Async-iterable mock for OpenAI SDK pagination pages."""
+
+    def __init__(self, items: list[Any]) -> None:
+        self._items = items
+
+    def __aiter__(self) -> _AsyncPage:
+        self._iter = iter(self._items)
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return next(self._iter)
+        except StopIteration:
+            raise StopAsyncIteration from None
 
 
 def _make_tool(name: str) -> MagicMock:
@@ -711,7 +730,7 @@ class TestFoundryEvals:
         assert fe.name == "Microsoft Foundry"
 
     def test_constructor_with_project_client(self) -> None:
-        mock_oai = MagicMock()
+        mock_oai = MagicMock(spec=AsyncOpenAI)
         mock_project = MagicMock()
         mock_project.get_openai_client.return_value = mock_oai
         fe = FoundryEvals(project_client=mock_project, model_deployment="gpt-4o")
@@ -760,10 +779,7 @@ class TestFoundryEvals:
         mock_result = MagicMock(status="pass", score=5, reason="Relevant response")
         mock_result.name = "relevance"  # MagicMock(name=...) sets display name, not .name attr
         mock_output_item.results = [mock_result]
-        mock_page = MagicMock()
-        mock_page.__iter__ = MagicMock(return_value=iter([mock_output_item]))
-        mock_page.has_more = False
-        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_output_item]))
 
         items = [
             EvalItem(conversation=[Message("user", ["Hello"]), Message("assistant", ["Hi there!"])]),
@@ -907,7 +923,7 @@ class TestFoundryEvals:
         assert "tool_definitions" in ds["source"]["content"][0]["item"]
 
     async def test_evaluate_with_project_client(self) -> None:
-        mock_oai = MagicMock()
+        mock_oai = MagicMock(spec=AsyncOpenAI)
         mock_project = MagicMock()
         mock_project.get_openai_client.return_value = mock_oai
 
@@ -1137,7 +1153,7 @@ class TestResolveOpenAIClient:
         assert _resolve_openai_client(openai_client=mock_client) is mock_client
 
     def test_project_client(self) -> None:
-        mock_oai = MagicMock()
+        mock_oai = MagicMock(spec=AsyncOpenAI)
         mock_project = MagicMock()
         mock_project.get_openai_client.return_value = mock_oai
 
@@ -1980,9 +1996,7 @@ class TestFetchOutputItems:
         mock_oi.datasource_item = {"resp_id": "resp_xyz"}
 
         mock_client = MagicMock()
-        mock_page = MagicMock()
-        mock_page.__iter__ = MagicMock(return_value=iter([mock_oi]))
-        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_oi]))
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
 
@@ -2023,9 +2037,7 @@ class TestFetchOutputItems:
         mock_oi.datasource_item = {}
 
         mock_client = MagicMock()
-        mock_page = MagicMock()
-        mock_page.__iter__ = MagicMock(return_value=iter([mock_oi]))
-        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_oi]))
 
         items = await _fetch_output_items(mock_client, "eval_1", "run_1")
 
@@ -2148,10 +2160,7 @@ class TestEvaluateTraces:
         mock_result = MagicMock(status="pass", score=4)
         mock_result.name = "relevance"
         mock_output_item.results = [mock_result]
-        mock_page = MagicMock()
-        mock_page.__iter__ = MagicMock(return_value=iter([mock_output_item]))
-        mock_page.has_more = False
-        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([mock_output_item]))
 
         results = await evaluate_traces(
             response_ids=["resp_abc", "resp_def"],
@@ -2352,9 +2361,9 @@ class TestResolveOpenaiClientAsyncCheck:
     """Tests for the async client runtime check."""
 
     def test_sync_client_raises(self):
-        """A sync project_client raises TypeError."""
+        """A sync project_client raises TypeError (not an AsyncOpenAI instance)."""
         mock_project = MagicMock()
-        sync_client = MagicMock(spec=[])  # no __aenter__
+        sync_client = MagicMock()  # plain MagicMock, not isinstance(AsyncOpenAI)
         mock_project.get_openai_client.return_value = sync_client
 
         with pytest.raises(TypeError, match="sync client"):
@@ -2409,10 +2418,7 @@ class TestEvaluateTracesAgentId:
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
-        mock_page = MagicMock()
-        mock_page.__iter__ = MagicMock(return_value=iter([]))
-        mock_page.has_more = False
-        mock_client.evals.runs.output_items.list = AsyncMock(return_value=mock_page)
+        mock_client.evals.runs.output_items.list = AsyncMock(return_value=_AsyncPage([]))
 
         results = await evaluate_traces(
             agent_id="my-agent",

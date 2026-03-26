@@ -741,6 +741,7 @@ def _extract_agent_eval_data(
 
             # Skip internal framework executors
             if executor_id.startswith("_") or executor_id.lower() in {"input-conversation", "end-conversation", "end"}:
+                logger.debug("Skipping internal executor %r during eval data extraction", executor_id)
                 continue
 
             completion_data: Any = event.data
@@ -1619,10 +1620,15 @@ async def evaluate_response(
         stacklevel=2,
     )
     # Normalize queries for evaluate_agent (it expects Sequence[str] | None)
-    queries_norm: list[str] | None = None
+    responses_list = [response] if isinstance(response, AgentResponse) else list(response)
     if query is not None:
-        responses_list = [response] if isinstance(response, AgentResponse) else list(response)
-        queries_norm = [str(q) for q in _normalize_queries(query, len(responses_list))]
+        queries_norm: list[str] = [str(q) for q in _normalize_queries(query, len(responses_list))]
+    else:
+        # Extract user messages from responses as queries
+        queries_norm = []
+        for resp in responses_list:
+            user_texts = [m.text for m in resp.messages if m.role == "user" and m.text]
+            queries_norm.append(" ".join(user_texts).strip() or "(no query)")
 
     return await evaluate_agent(
         agent=agent,
