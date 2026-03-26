@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework.azure import AzureOpenAIEmbeddingClient
 from agent_framework_openai import OpenAIEmbeddingOptions
+from azure.identity.aio import AzureCliCredential
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
@@ -106,10 +107,34 @@ def test_azure_otel_provider_name(azure_embedding_unit_test_env: None) -> None:
 
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
-    not os.getenv("AZURE_OPENAI_ENDPOINT")
-    or (not os.getenv("AZURE_OPENAI_API_KEY") and not os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")),
-    reason="No Azure OpenAI credentials provided; skipping integration tests.",
+    os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com")
+    or (
+        os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", "") == ""
+        and os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "") == ""
+    ),
+    reason="No Azure OpenAI endpoint or embedding deployment provided; skipping integration tests.",
 )
+
+
+def _get_azure_embedding_deployment_name() -> str:
+    return os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") or os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
+
+
+def _create_azure_openai_embedding_client(
+    *,
+    api_key: str | None = None,
+    credential: AzureCliCredential | None = None,
+) -> AzureOpenAIEmbeddingClient:
+    resolved_api_key = (
+        api_key if api_key is not None else None if credential is not None else os.getenv("AZURE_OPENAI_API_KEY")
+    )
+    return AzureOpenAIEmbeddingClient(
+        deployment_name=_get_azure_embedding_deployment_name(),
+        api_key=resolved_api_key,
+        endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        credential=credential,
+    )
 
 
 @pytest.mark.flaky
@@ -117,9 +142,10 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings() -> None:
     """End-to-end test of Azure OpenAI embedding generation."""
-    client = AzureOpenAIEmbeddingClient()
+    async with AzureCliCredential() as credential:
+        client = _create_azure_openai_embedding_client(credential=credential)
 
-    result = await client.get_embeddings(["hello world"])
+        result = await client.get_embeddings(["hello world"])
 
     assert len(result) == 1
     assert isinstance(result[0].vector, list)
@@ -135,9 +161,10 @@ async def test_integration_azure_openai_get_embeddings() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings_multiple() -> None:
     """Test Azure OpenAI embedding generation for multiple inputs."""
-    client = AzureOpenAIEmbeddingClient()
+    async with AzureCliCredential() as credential:
+        client = _create_azure_openai_embedding_client(credential=credential)
 
-    result = await client.get_embeddings(["hello", "world", "test"])
+        result = await client.get_embeddings(["hello", "world", "test"])
 
     assert len(result) == 3
     dims = [len(e.vector) for e in result]
@@ -149,10 +176,11 @@ async def test_integration_azure_openai_get_embeddings_multiple() -> None:
 @skip_if_azure_openai_integration_tests_disabled
 async def test_integration_azure_openai_get_embeddings_with_dimensions() -> None:
     """Test Azure OpenAI embedding generation with custom dimensions."""
-    client = AzureOpenAIEmbeddingClient()
+    async with AzureCliCredential() as credential:
+        client = _create_azure_openai_embedding_client(credential=credential)
 
-    options: OpenAIEmbeddingOptions = {"dimensions": 256}
-    result = await client.get_embeddings(["hello world"], options=options)
+        options: OpenAIEmbeddingOptions = {"dimensions": 256}
+        result = await client.get_embeddings(["hello world"], options=options)
 
     assert len(result) == 1
     assert len(result[0].vector) == 256

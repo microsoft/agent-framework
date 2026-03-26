@@ -6,6 +6,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agent_framework.exceptions import SettingNotFoundError
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
@@ -32,13 +33,6 @@ def _make_openai_response(
     )
 
 
-@pytest.fixture
-def openai_unit_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set up environment variables for OpenAI embedding client."""
-    monkeypatch.setenv("OPENAI_API_KEY", "test-api-key")
-    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-
-
 # --- OpenAI unit tests ---
 
 
@@ -50,24 +44,24 @@ def test_openai_construction_with_explicit_params() -> None:
     assert client.model == "text-embedding-3-small"
 
 
-def test_openai_construction_from_env(openai_unit_test_env: None) -> None:
+def test_openai_construction_from_env(openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIEmbeddingClient()
-    assert client.model == "text-embedding-3-small"
+    assert client.model == openai_unit_test_env["OPENAI_EMBEDDING_MODEL"]
 
 
-def test_openai_construction_missing_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="API key is required"):
+@pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
+def test_openai_construction_missing_api_key_raises(openai_unit_test_env: dict[str, str]) -> None:
+    with pytest.raises(SettingNotFoundError, match="Exactly one of 'base_url', 'endpoint'"):
         OpenAIEmbeddingClient(model="text-embedding-3-small")
 
 
-def test_openai_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
-    with pytest.raises(ValueError, match="embedding model is required"):
-        OpenAIEmbeddingClient(api_key="test-key")
+@pytest.mark.parametrize("exclude_list", [["OPENAI_EMBEDDING_MODEL"]], indirect=True)
+def test_openai_construction_missing_model_raises(openai_unit_test_env: dict[str, str]) -> None:
+    with pytest.raises(SettingNotFoundError, match="OPENAI_EMBEDDING_MODEL"):
+        OpenAIEmbeddingClient()
 
 
-async def test_openai_get_embeddings(openai_unit_test_env: None) -> None:
+async def test_openai_get_embeddings(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(
         embeddings=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
     )
@@ -85,7 +79,7 @@ async def test_openai_get_embeddings(openai_unit_test_env: None) -> None:
     assert result[0].dimensions == 3
 
 
-async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
+async def test_openai_get_embeddings_usage(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(
         embeddings=[[0.1]],
         prompt_tokens=10,
@@ -103,7 +97,7 @@ async def test_openai_get_embeddings_usage(openai_unit_test_env: None) -> None:
     assert result.usage["total_token_count"] == 10
 
 
-async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None) -> None:
+async def test_openai_options_passthrough_dimensions(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(embeddings=[[0.1]])
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
@@ -118,7 +112,7 @@ async def test_openai_options_passthrough_dimensions(openai_unit_test_env: None)
     assert result.options is options
 
 
-async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: None) -> None:
+async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: dict[str, str]) -> None:
     mock_response = _make_openai_response(embeddings=[[0.1]])
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
@@ -132,7 +126,7 @@ async def test_openai_options_passthrough_encoding_format(openai_unit_test_env: 
     assert call_kwargs["encoding_format"] == "base64"
 
 
-async def test_openai_base64_decoding(openai_unit_test_env: None) -> None:
+async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> None:
     import base64
     import struct
 
@@ -176,7 +170,7 @@ async def test_openai_error_when_no_model_id() -> None:
         await client.get_embeddings(["test"])
 
 
-async def test_openai_empty_values_returns_empty(openai_unit_test_env: None) -> None:
+async def test_openai_empty_values_returns_empty(openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIEmbeddingClient()
     client.client = MagicMock()
     client.client.embeddings = MagicMock()

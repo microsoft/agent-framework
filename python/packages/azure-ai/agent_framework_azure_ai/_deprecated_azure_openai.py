@@ -879,6 +879,8 @@ class AzureOpenAIEmbeddingClient(
                 "or 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME' environment variable."
             )
 
+        endpoint_value = azure_openai_settings.get("endpoint")
+        base_url_value = azure_openai_settings.get("base_url")
         if not async_client:
             # Create the Azure OpenAI client directly
             merged_headers = dict(copy(default_headers)) if default_headers else {}
@@ -896,8 +898,6 @@ class AzureOpenAIEmbeddingClient(
             if not api_key_secret and not ad_token_provider:
                 raise ValueError("Please provide either api_key, credential, or a client.")
 
-            endpoint_value = azure_openai_settings.get("endpoint")
-            base_url_value = azure_openai_settings.get("base_url")
             if not endpoint_value and not base_url_value:
                 raise ValueError("Please provide an endpoint or a base_url")
 
@@ -922,11 +922,13 @@ class AzureOpenAIEmbeddingClient(
         self.api_version = azure_openai_settings.get("api_version") or ""
         self.deployment_name = embedding_deployment_name
 
-        super().__init__(
-            async_client=async_client,
-            model=embedding_deployment_name,
-            default_headers=default_headers,
-        )
+        with _prefer_single_azure_endpoint_env(endpoint=endpoint_value, base_url=base_url_value):
+            super().__init__(
+                async_client=async_client,
+                model=embedding_deployment_name,
+                api_version=azure_openai_settings.get("api_version"),
+                default_headers=default_headers,
+            )
         if otel_provider_name is not None:
             self.OTEL_PROVIDER_NAME = otel_provider_name  # type: ignore[misc]
 
