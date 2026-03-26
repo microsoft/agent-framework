@@ -55,9 +55,11 @@ async def main() -> None:
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
+    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
+
     # 2. Create an agent with a tool
     agent = Agent(
-        client=FoundryChatClient(project_client=project_client, model=deployment),
+        client=chat_client,
         name="weather-assistant",
         instructions="You are a helpful weather assistant. Use the get_weather tool to answer questions.",
         tools=[get_weather],
@@ -99,7 +101,7 @@ async def main() -> None:
     print("Pattern 2: Foundry evaluation only")
     print("=" * 60)
 
-    foundry = FoundryEvals(project_client=project_client, model_deployment=deployment)
+    foundry = FoundryEvals(client=chat_client, model_deployment=deployment)
 
     results = await evaluate_agent(
         agent=agent,
@@ -131,7 +133,7 @@ async def main() -> None:
     )
 
     # Foundry: deep quality assessment
-    foundry = FoundryEvals(project_client=project_client, model_deployment=deployment)
+    foundry = FoundryEvals(client=chat_client, model_deployment=deployment)
 
     # Pass both as a list — returns one EvalResults per provider
     results = await evaluate_agent(

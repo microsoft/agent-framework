@@ -727,7 +727,7 @@ class TestBuildItemSchema:
 class TestFoundryEvals:
     def test_constructor_with_openai_client(self) -> None:
         mock_client = MagicMock()
-        fe = FoundryEvals(openai_client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
         assert fe.name == "Microsoft Foundry"
 
     def test_constructor_with_project_client(self) -> None:
@@ -743,12 +743,12 @@ class TestFoundryEvals:
             FoundryEvals(model_deployment="gpt-4o")
 
     def test_name_property(self) -> None:
-        fe = FoundryEvals(openai_client=MagicMock(), model_deployment="gpt-4o")
+        fe = FoundryEvals(client=MagicMock(), model_deployment="gpt-4o")
         assert fe.name == "Microsoft Foundry"
 
     def test_evaluators_passed_in_constructor(self) -> None:
         fe = FoundryEvals(
-            openai_client=MagicMock(),
+            client=MagicMock(),
             model_deployment="gpt-4o",
             evaluators=["relevance", "coherence"],
         )
@@ -788,7 +788,7 @@ class TestFoundryEvals:
         ]
 
         fe = FoundryEvals(
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE],
         )
@@ -840,7 +840,7 @@ class TestFoundryEvals:
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
-        fe = FoundryEvals(openai_client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
         await fe.evaluate([EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])])
 
         # Verify default evaluators were used
@@ -876,7 +876,7 @@ class TestFoundryEvals:
             ),
         ]
 
-        fe = FoundryEvals(openai_client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
         await fe.evaluate(items)
 
         run_call = mock_client.evals.runs.create.call_args
@@ -912,7 +912,7 @@ class TestFoundryEvals:
         ]
 
         fe = FoundryEvals(
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
             evaluators=[FoundryEvals.TOOL_CALL_ACCURACY],
         )
@@ -1151,7 +1151,7 @@ class TestEvalResults:
 class TestResolveOpenAIClient:
     def test_explicit_client(self) -> None:
         mock_client = MagicMock()
-        assert _resolve_openai_client(openai_client=mock_client) is mock_client
+        assert _resolve_openai_client(client=mock_client) is mock_client
 
     def test_project_client(self) -> None:
         mock_oai = MagicMock(spec=AsyncOpenAI)
@@ -1166,7 +1166,7 @@ class TestResolveOpenAIClient:
         mock_client = MagicMock()
         mock_project = MagicMock()
 
-        result = _resolve_openai_client(openai_client=mock_client, project_client=mock_project)
+        result = _resolve_openai_client(client=mock_client, project_client=mock_project)
         assert result is mock_client
         mock_project.get_openai_client.assert_not_called()
 
@@ -1188,7 +1188,7 @@ class TestEvaluateAgentWithResponses:
         with pytest.raises(ValueError, match="Provide 'queries' alongside 'responses'"):
             await evaluate_agent(
                 responses=response,
-                evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             )
 
     async def test_fallback_to_dataset_with_query(self) -> None:
@@ -1215,7 +1215,7 @@ class TestEvaluateAgentWithResponses:
         results = await evaluate_agent(
             responses=response,
             queries=["What's the weather?"],
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
         )
 
         assert results[0].status == "completed"
@@ -1260,7 +1260,7 @@ class TestEvaluateAgentWithResponses:
             responses=response,
             queries=["Do the thing"],
             agent=mock_agent,
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
         )
 
         assert results[0].status == "completed"
@@ -1300,7 +1300,7 @@ class TestEvaluateAgentWithResponses:
         results = await evaluate_agent(
             responses=responses,
             queries=["Question 1", "Question 2"],
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
         )
 
         assert results[0].passed == 2
@@ -1323,7 +1323,7 @@ class TestEvaluateAgentWithResponses:
             await evaluate_agent(
                 responses=responses,
                 queries=["Q1", "Q2", "Q3"],
-                evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             )
 
     async def test_tool_evaluators_with_query_and_agent_uses_dataset_path(self) -> None:
@@ -1357,7 +1357,7 @@ class TestEvaluateAgentWithResponses:
         }
 
         fe = FoundryEvals(
-            openai_client=mock_oai,
+            client=mock_oai,
             model_deployment="gpt-4o",
             evaluators=[FoundryEvals.TOOL_CALL_ACCURACY],
         )
@@ -1632,7 +1632,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             include_overall=False,
         )
 
@@ -1662,7 +1662,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             queries=["Test query"],
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             include_overall=False,
         )
 
@@ -1691,7 +1691,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
         )
 
         # Should have per-agent sub_results AND overall
@@ -1707,7 +1707,7 @@ class TestEvaluateWorkflow:
         with pytest.raises(ValueError, match="Provide either"):
             await evaluate_workflow(
                 workflow=mock_workflow,
-                evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             )
 
     async def test_per_agent_only(self) -> None:
@@ -1728,7 +1728,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(openai_client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
             include_overall=False,
         )
 
@@ -1755,7 +1755,7 @@ class TestEvaluateWorkflow:
         mock_workflow.executors = {}
 
         fe = FoundryEvals(
-            openai_client=mock_oai,
+            client=mock_oai,
             model_deployment="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         )
@@ -1817,7 +1817,7 @@ class TestEvaluateWorkflow:
         }
 
         fe = FoundryEvals(
-            openai_client=mock_oai,
+            client=mock_oai,
             model_deployment="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         )
@@ -2129,7 +2129,7 @@ class TestEvaluateTraces:
         mock_client = MagicMock()
         with pytest.raises(ValueError, match="Provide at least one of"):
             await evaluate_traces(
-                openai_client=mock_client,
+                client=mock_client,
                 model_deployment="gpt-4o",
             )
 
@@ -2165,7 +2165,7 @@ class TestEvaluateTraces:
 
         results = await evaluate_traces(
             response_ids=["resp_abc", "resp_def"],
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
         )
         assert results.status == "completed"
@@ -2204,7 +2204,7 @@ class TestEvaluateTraces:
 
         results = await evaluate_traces(
             trace_ids=["trace_1"],
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
         )
         assert results.status == "completed"
@@ -2245,7 +2245,7 @@ class TestEvaluateFoundryTarget:
         results = await evaluate_foundry_target(
             target={"type": "azure_ai_agent", "name": "my-agent"},
             test_queries=["Query 1", "Query 2"],
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
         )
         assert results.status == "completed"
@@ -2424,7 +2424,7 @@ class TestEvaluateTracesAgentId:
 
         results = await evaluate_traces(
             agent_id="my-agent",
-            openai_client=mock_client,
+            client=mock_client,
             model_deployment="gpt-4o",
             lookback_hours=24,
         )
@@ -2466,6 +2466,6 @@ class TestEvaluateFoundryTargetValidation:
             await evaluate_foundry_target(
                 target={"name": "my-agent"},  # missing "type"
                 test_queries=["Hello"],
-                openai_client=mock_client,
+                client=mock_client,
                 model_deployment="gpt-4o",
             )

@@ -18,6 +18,7 @@ import asyncio
 import os
 
 from agent_framework import Content, ConversationSplit, EvalItem, FunctionTool, Message
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -99,6 +100,8 @@ async def main() -> None:
     )
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
+    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
+
     # =========================================================================
     # Strategy 1: LAST_TURN (default)
     # "Given all context, was the last response good?"
@@ -113,7 +116,7 @@ async def main() -> None:
     print_split(item, ConversationSplit.LAST_TURN)
 
     results = await FoundryEvals(
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         # conversation_split defaults to LAST_TURN
@@ -137,7 +140,7 @@ async def main() -> None:
     print_split(item, ConversationSplit.FULL)
 
     results = await FoundryEvals(
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         conversation_split=ConversationSplit.FULL,
@@ -165,7 +168,7 @@ async def main() -> None:
     print()
 
     results = await FoundryEvals(
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
     ).evaluate(items, eval_name="Split Strategy: Per-Turn")

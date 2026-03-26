@@ -250,8 +250,12 @@ async def run_self_reflection_batch(
     )
 
     # Create FoundryEvals for groundedness scoring
-    evals = FoundryEvals(
+    judge_client = FoundryChatClient(
         project_client=project_client,
+        model=judge_model,
+    )
+    evals = FoundryEvals(
+        client=judge_client,
         model_deployment=judge_model,
         evaluators=[FoundryEvals.GROUNDEDNESS],
     )

@@ -39,6 +39,7 @@ from agent_framework._evaluation import (
     EvalResults,
     EvalScoreResult,
 )
+from agent_framework_foundry import FoundryChatClient
 from openai import AsyncOpenAI
 
 if TYPE_CHECKING:
@@ -442,23 +443,25 @@ async def _fetch_output_items(
 
 
 def _resolve_openai_client(
-    openai_client: AsyncOpenAI | None = None,
+    client: FoundryChatClient | AsyncOpenAI | None = None,
     project_client: AIProjectClient | None = None,
 ) -> AsyncOpenAI:
-    """Resolve an OpenAI client from explicit client or project_client."""
-    if openai_client is not None:
-        return openai_client
+    """Resolve an AsyncOpenAI client from a FoundryChatClient, raw client, or project_client."""
+    if client is not None:
+        if isinstance(client, FoundryChatClient):
+            return client.client
+        return client
     if project_client is not None:
-        client = project_client.get_openai_client()
-        if client is None:  # pyright: ignore[reportUnnecessaryComparison]
+        oai = project_client.get_openai_client()
+        if oai is None:  # pyright: ignore[reportUnnecessaryComparison]
             raise ValueError("project_client.get_openai_client() returned None. Check project configuration.")
-        if not isinstance(client, AsyncOpenAI):
+        if not isinstance(oai, AsyncOpenAI):
             raise TypeError(
                 "project_client.get_openai_client() returned a sync client. "
                 "FoundryEvals requires an async AIProjectClient (from azure.ai.projects.aio)."
             )
-        return client
-    raise ValueError("Provide either 'openai_client' or 'project_client'.")
+        return oai
+    raise ValueError("Provide either 'client' or 'project_client'.")
 
 
 async def _evaluate_via_responses_impl(
@@ -531,8 +534,10 @@ class FoundryEvals:
 
             from agent_framework import evaluate_agent
             from agent_framework_azure_ai import FoundryEvals
+            from agent_framework_foundry import FoundryChatClient
 
-            evals = FoundryEvals(project_client=client, model_deployment="gpt-4o")
+            chat_client = FoundryChatClient(model="gpt-4o")
+            evals = FoundryEvals(client=chat_client, model_deployment="gpt-4o")
             results = await evaluate_agent(agent=agent, queries=queries, evaluators=evals)
 
     **Evaluator selection:**
@@ -542,11 +547,11 @@ class FoundryEvals:
     definitions. Override with ``evaluators=``.
 
     Args:
+        client: A ``FoundryChatClient`` instance.  The ``builtin.*``
+            evaluators are a Foundry feature and require a Foundry endpoint.
+            Provide this or *project_client*.
         project_client: An ``AIProjectClient`` instance (sync or async).
-            Provide this or *openai_client*.
-        openai_client: An ``AsyncOpenAI`` client configured for an Azure AI
-            Foundry endpoint.  The ``builtin.*`` evaluators are a Foundry
-            feature and are not available on ``api.openai.com``.
+            Provide this or *client*.
         model_deployment: Model deployment name for the evaluator LLM judge.
         evaluators: Evaluator names (e.g. ``["relevance", "tool_call_accuracy"]``).
             When ``None`` (default), uses smart defaults based on item data.
@@ -592,8 +597,8 @@ class FoundryEvals:
     def __init__(
         self,
         *,
+        client: FoundryChatClient | None = None,
         project_client: AIProjectClient | None = None,
-        openai_client: AsyncOpenAI | None = None,
         model_deployment: str,
         evaluators: Sequence[str] | None = None,
         conversation_split: ConversationSplitter = ConversationSplit.LAST_TURN,
@@ -601,7 +606,7 @@ class FoundryEvals:
         timeout: float = 180.0,
     ):
         self.name = "Microsoft Foundry"
-        self._client = _resolve_openai_client(openai_client, project_client)
+        self._client = _resolve_openai_client(client, project_client)
         self._model_deployment = model_deployment
         self._evaluators = list(evaluators) if evaluators is not None else None
         self._conversation_split = conversation_split
@@ -716,7 +721,7 @@ class FoundryEvals:
 async def evaluate_traces(
     *,
     evaluators: Sequence[str] | None = None,
-    openai_client: AsyncOpenAI | None = None,
+    client: FoundryChatClient | None = None,
     project_client: AIProjectClient | None = None,
     model_deployment: str,
     response_ids: Sequence[str] | None = None,
@@ -737,7 +742,7 @@ async def evaluate_traces(
     Args:
         evaluators: Evaluator names (e.g. ``[FoundryEvals.RELEVANCE]``).
             Defaults to relevance, coherence, and task_adherence.
-        openai_client: ``AsyncOpenAI`` client. Provide this or *project_client*.
+        client: A ``FoundryChatClient`` instance. Provide this or *project_client*.
         project_client: An ``AIProjectClient`` instance.
         model_deployment: Model deployment name for the evaluator LLM judge.
         response_ids: Evaluate specific Responses API responses.
@@ -758,16 +763,16 @@ async def evaluate_traces(
         results = await evaluate_traces(
             response_ids=[response.response_id],
             evaluators=[FoundryEvals.RELEVANCE],
-            project_client=project_client,
+            client=chat_client,
             model_deployment="gpt-4o",
         )
     """
-    client = _resolve_openai_client(openai_client, project_client)
+    oai_client = _resolve_openai_client(client, project_client)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
     if response_ids:
         return await _evaluate_via_responses_impl(
-            client=client,
+            client=oai_client,
             response_ids=response_ids,
             evaluators=resolved_evaluators,
             model_deployment=model_deployment,
@@ -788,19 +793,19 @@ async def evaluate_traces(
     if agent_id:
         trace_source["agent_id"] = agent_id
 
-    eval_obj = await client.evals.create(
+    eval_obj = await oai_client.evals.create(
         name=eval_name,
         data_source_config={"type": "azure_ai_source", "scenario": "traces"},  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
         testing_criteria=_build_testing_criteria(resolved_evaluators, model_deployment),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
-    run = await client.evals.runs.create(
+    run = await oai_client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
         data_source=trace_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
-    return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout)
+    return await _poll_eval_run(oai_client, eval_obj.id, run.id, poll_interval, timeout)
 
 
 async def evaluate_foundry_target(
@@ -808,7 +813,7 @@ async def evaluate_foundry_target(
     target: dict[str, Any],
     test_queries: Sequence[str],
     evaluators: Sequence[str] | None = None,
-    openai_client: AsyncOpenAI | None = None,
+    client: FoundryChatClient | None = None,
     project_client: AIProjectClient | None = None,
     model_deployment: str,
     eval_name: str = "Agent Framework Target Eval",
@@ -824,7 +829,7 @@ async def evaluate_foundry_target(
         target: Target configuration dict.
         test_queries: Queries for Foundry to send to the target.
         evaluators: Evaluator names.
-        openai_client: ``AsyncOpenAI`` client. Provide this or *project_client*.
+        client: A ``FoundryChatClient`` instance. Provide this or *project_client*.
         project_client: An ``AIProjectClient`` instance.
         model_deployment: Model deployment name for the evaluator LLM judge.
         eval_name: Display name for the evaluation.
@@ -841,16 +846,16 @@ async def evaluate_foundry_target(
         results = await evaluate_foundry_target(
             target={"type": "azure_ai_agent", "name": "my-agent"},
             test_queries=["Book a flight to Paris"],
-            project_client=project_client,
+            client=chat_client,
             model_deployment="gpt-4o",
         )
     """
     if "type" not in target:
         raise ValueError("target dict must include a 'type' key (e.g., 'azure_ai_agent').")
-    client = _resolve_openai_client(openai_client, project_client)
+    oai_client = _resolve_openai_client(client, project_client)
     resolved_evaluators = _resolve_default_evaluators(evaluators)
 
-    eval_obj = await client.evals.create(
+    eval_obj = await oai_client.evals.create(
         name=eval_name,
         data_source_config={  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             "type": "azure_ai_source",
@@ -868,10 +873,10 @@ async def evaluate_foundry_target(
         },
     }
 
-    run = await client.evals.runs.create(
+    run = await oai_client.evals.runs.create(
         eval_id=eval_obj.id,
         name=f"{eval_name} Run",
         data_source=data_source,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
     )
 
-    return await _poll_eval_run(client, eval_obj.id, run.id, poll_interval, timeout)
+    return await _poll_eval_run(oai_client, eval_obj.id, run.id, poll_interval, timeout)

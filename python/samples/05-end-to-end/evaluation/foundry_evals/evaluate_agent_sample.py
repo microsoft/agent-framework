@@ -50,9 +50,11 @@ async def main() -> None:
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
 
+    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
+
     # 2. Create an agent with tools
     agent = Agent(
-        client=FoundryChatClient(project_client=project_client, model=deployment),
+        client=chat_client,
         name="travel-assistant",
         instructions=(
             "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."
@@ -61,7 +63,7 @@ async def main() -> None:
     )
 
     # 3. Create the evaluator — provider config goes here, once
-    evals = FoundryEvals(project_client=project_client, model_deployment=deployment)
+    evals = FoundryEvals(client=chat_client, model_deployment=deployment)
 
     # =========================================================================
     # Pattern 1: evaluate_agent(responses=...) — evaluate a response you already have
@@ -80,7 +82,7 @@ async def main() -> None:
         responses=response,
         queries=[query],
         evaluators=FoundryEvals(
-            project_client=project_client,
+            client=chat_client,
             model_deployment=deployment,
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         ),
@@ -180,7 +182,7 @@ async def main() -> None:
 
     # Submit directly to the evaluator
     tool_evals = FoundryEvals(
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
     )

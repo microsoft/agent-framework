@@ -19,6 +19,7 @@ Prerequisites:
 import asyncio
 import os
 
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai import FoundryEvals, evaluate_traces
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
@@ -35,6 +36,8 @@ async def main() -> None:
     )
 
     deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+
+    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # =========================================================================
     # Pattern 1: evaluate_traces(response_ids=...) — By response ID
@@ -55,7 +58,7 @@ async def main() -> None:
     results = await evaluate_traces(
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.GROUNDEDNESS, FoundryEvals.TOOL_CALL_ACCURACY],
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
     )
 
@@ -81,7 +84,7 @@ async def main() -> None:
     results = await evaluate_traces(
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
-        project_client=project_client,
+        client=chat_client,
         model_deployment=deployment,
     )
 
@@ -92,7 +95,7 @@ async def main() -> None:
     # results = await evaluate_traces(
     #     agent_id="travel-bot",
     #     evaluators=[FoundryEvals.INTENT_RESOLUTION, FoundryEvals.TASK_ADHERENCE],
-    #     project_client=project_client,
+    #     client=chat_client,
     #     model_deployment=deployment,
     #     lookback_hours=24,
     # )
