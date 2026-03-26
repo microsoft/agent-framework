@@ -196,10 +196,23 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI Chat Completions client with OpenAI-only routing.
+        """Initialize a raw OpenAI Chat completion client.
 
-        This overload describes the OpenAI shape. Explicit keyword arguments are used first,
-        then ``OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -219,11 +232,30 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI Chat Completions client with Azure routing.
+        """Initialize a raw OpenAI Chat completion client.
 
-        This overload describes the Azure shape. Passing ``azure_endpoint`` or
-        ``credential`` forces Azure routing, and missing Azure values fall back to
-        ``AZURE_OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Chat Completions default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -985,7 +1017,28 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize an OpenAI Chat completion client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
+        """
+        ...
 
     @overload
     def __init__(
@@ -1004,7 +1057,35 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         env_file_encoding: str | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize an OpenAI Chat completion client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Chat Completions default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+            middleware: Optional sequence of ChatAndFunctionMiddlewareTypes to apply to requests.
+            function_invocation_configuration: Optional configuration for function invocation support.
+        """
+        ...
 
     def __init__(
         self,

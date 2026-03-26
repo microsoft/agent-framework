@@ -272,14 +272,6 @@ def load_openai_service_settings(
         azure_deployment = getattr(client, "_azure_deployment", None)
         if isinstance(azure_deployment, str) and azure_deployment:
             resolved_azure_deployment = azure_deployment
-    if resolved_azure_deployment is None:
-        if openai_settings is None:
-            openai_settings = load_settings(
-                OpenAISettings,
-                env_prefix="OPENAI_",
-                **openai_settings_kwargs,
-            )
-        resolved_azure_deployment = _resolve_named_setting(openai_settings, openai_model_fields)
     if resolved_azure_deployment:
         azure_settings["deployment_name"] = resolved_azure_deployment
         client_args["azure_deployment"] = resolved_azure_deployment
@@ -287,8 +279,12 @@ def load_openai_service_settings(
         deployment_env_guidance = _join_env_names([
             AZURE_DEPLOYMENT_ENV_VARS[field] for field in azure_deployment_fields
         ])
-        openai_model_guidance = _join_env_names([OPENAI_MODEL_ENV_VARS[field] for field in openai_model_fields])
-        if checked_openai:
+        has_azure_configuration = (
+            client is not None
+            or azure_settings.get("endpoint") is not None
+            or azure_settings.get("base_url") is not None
+        )
+        if checked_openai and not has_azure_configuration:
             raise SettingNotFoundError(
                 "OpenAI credentials are required. Provide the 'api_key' parameter or set 'OPENAI_API_KEY'. "
                 "To use Azure OpenAI instead, pass 'azure_endpoint' or set 'AZURE_OPENAI_ENDPOINT' or "
@@ -296,8 +292,7 @@ def load_openai_service_settings(
             )
         raise SettingNotFoundError(
             "Azure OpenAI client requires a deployment name, which can be provided via the 'model' parameter, "
-            f"the {deployment_env_guidance} environment variable, or the {openai_model_guidance} "
-            "environment variable."
+            f"or the {deployment_env_guidance} environment variable."
         )
     if client:
         return azure_settings, client, True  # type: ignore[return-value]

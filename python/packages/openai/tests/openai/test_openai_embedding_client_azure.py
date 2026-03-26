@@ -6,6 +6,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from openai import AsyncAzureOpenAI
@@ -74,29 +75,27 @@ def test_init_falls_back_to_generic_azure_deployment_env(
     assert isinstance(client.client, AsyncAzureOpenAI)
 
 
-def test_init_falls_back_to_openai_embedding_model_for_azure_env(
+def test_init_does_not_fall_back_to_openai_embedding_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
     monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
     monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 
-    client = OpenAIEmbeddingClient()
-
-    assert client.model == "text-embedding-3-small"
-    assert isinstance(client.client, AsyncAzureOpenAI)
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+        OpenAIEmbeddingClient()
 
 
-def test_init_falls_back_to_openai_model_for_azure_env(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_does_not_fall_back_to_openai_model_for_azure_env(
+    monkeypatch, azure_openai_unit_test_env: dict[str, str]
+) -> None:
     monkeypatch.delenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("OPENAI_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
 
-    client = OpenAIEmbeddingClient()
-
-    assert client.model == "gpt-5"
-    assert isinstance(client.client, AsyncAzureOpenAI)
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+        OpenAIEmbeddingClient()
 
 
 def test_openai_api_key_wins_over_azure_env(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:

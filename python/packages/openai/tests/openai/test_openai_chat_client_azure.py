@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from agent_framework import Agent, AgentResponse, ChatResponse, Content, Message, SupportsChatGetResponse, tool
+from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.identity.aio import AzureCliCredential
 from openai import AsyncAzureOpenAI
@@ -157,29 +158,27 @@ def test_init_falls_back_to_generic_azure_deployment_env(
     assert isinstance(client.client, AsyncAzureOpenAI)
 
 
-def test_init_falls_back_to_openai_responses_model_for_azure_env(
+def test_init_does_not_fall_back_to_openai_responses_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
     monkeypatch.delenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
     monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model")
 
-    client = OpenAIChatClient()
-
-    assert client.model == "test_responses_model"
-    assert isinstance(client.client, AsyncAzureOpenAI)
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+        OpenAIChatClient()
 
 
-def test_init_falls_back_to_openai_model_for_azure_env(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
+def test_init_does_not_fall_back_to_openai_model_for_azure_env(
+    monkeypatch, azure_openai_unit_test_env: dict[str, str]
+) -> None:
     monkeypatch.delenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
     monkeypatch.delenv("OPENAI_RESPONSES_MODEL", raising=False)
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
 
-    client = OpenAIChatClient()
-
-    assert client.model == "gpt-5"
-    assert isinstance(client.client, AsyncAzureOpenAI)
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+        OpenAIChatClient()
 
 
 def test_init_with_credential_wraps_async_token_credential(

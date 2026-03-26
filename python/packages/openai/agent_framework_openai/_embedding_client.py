@@ -82,17 +82,22 @@ class RawOpenAIEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI embedding client with OpenAI-only routing.
+        """Initialize a raw OpenAI embedding client.
 
-        Use this overload when you want the generic OpenAI embeddings endpoint. The
-        constructor reads ``model`` from the explicit argument first and then from
-        ``OPENAI_EMBEDDING_MODEL``, falling back to ``OPENAI_MODEL``. Authentication and endpoint settings come from
-        the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
-        then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
-        ``env_file_path`` or the process environment.
-
-        Azure-specific environment variables are ignored for this overload unless an
-        explicit Azure signal is provided via the Azure overload shape.
+        Keyword Args:
+            model: Embedding model identifier. When not provided, the constructor reads
+                ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -111,24 +116,29 @@ class RawOpenAIEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI embedding client with Azure routing.
+        """Initialize a raw OpenAI embedding client.
 
-        Use this overload when you want Azure OpenAI embeddings. Passing
-        ``azure_endpoint`` or ``credential`` is an explicit Azure signal and forces
-        Azure routing even when ``OPENAI_API_KEY`` is also present. ``api_version``
-        configures Azure requests after Azure routing is selected, but it does not
-        select Azure on its own.
-        The constructor reads the deployment name from the explicit ``model``
-        argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
-        and then ``OPENAI_MODEL``.
-
-        Authentication and endpoint settings come from the explicit Azure arguments
-        first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-        ``AZURE_OPENAI_API_KEY``, and ``AZURE_OPENAI_API_VERSION`` in
-        ``env_file_path`` or the process environment. ``credential`` is the
-        preferred Azure auth surface; ``api_key`` remains supported for Azure key
-        auth and callable token providers for compatibility.
+        Keyword Args:
+            model: Embedding deployment name. When not provided, the constructor reads
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the embedding default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -155,9 +165,8 @@ class RawOpenAIEmbeddingClient(
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
                 for OpenAI routing. For Azure routing it first checks
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``, then ``OPENAI_EMBEDDING_MODEL``, and
-                finally ``OPENAI_MODEL``.
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
             model_id: Deprecated alias for ``model``.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
@@ -196,8 +205,7 @@ class RawOpenAIEmbeddingClient(
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
             ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
         """
         if model_id is not None and model is None:
             import warnings
@@ -334,17 +342,23 @@ class OpenAIEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize an OpenAI embedding client with OpenAI-only routing.
+        """Initialize an OpenAI embedding client.
 
-        Use this overload when you want the generic OpenAI embeddings endpoint. The
-        constructor reads ``model`` from the explicit argument first and then from
-        ``OPENAI_EMBEDDING_MODEL``, falling back to ``OPENAI_MODEL``. Authentication and endpoint settings come from
-        the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
-        then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
-        ``env_file_path`` or the process environment.
-
-        Azure-specific environment variables are ignored for this overload unless an
-        explicit Azure signal is provided via the Azure overload shape.
+        Keyword Args:
+            model: Embedding model identifier. When not provided, the constructor reads
+                ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            otel_provider_name: Optional telemetry provider name override.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -364,24 +378,30 @@ class OpenAIEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize an OpenAI embedding client with Azure routing.
+        """Initialize an OpenAI embedding client.
 
-        Use this overload when you want Azure OpenAI embeddings. Passing
-        ``azure_endpoint`` or ``credential`` is an explicit Azure signal and forces
-        Azure routing even when ``OPENAI_API_KEY`` is also present. ``api_version``
-        configures Azure requests after Azure routing is selected, but it does not
-        select Azure on its own.
-        The constructor reads the deployment name from the explicit ``model``
-        argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
-        and then ``OPENAI_MODEL``.
-
-        Authentication and endpoint settings come from the explicit Azure arguments
-        first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-        ``AZURE_OPENAI_API_KEY``, and ``AZURE_OPENAI_API_VERSION`` in
-        ``env_file_path`` or the process environment. ``credential`` is the
-        preferred Azure auth surface; ``api_key`` remains supported for Azure key
-        auth and callable token providers for compatibility.
+        Keyword Args:
+            model: Embedding deployment name. When not provided, the constructor reads
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the embedding default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            otel_provider_name: Optional telemetry provider name override.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -407,9 +427,8 @@ class OpenAIEmbeddingClient(
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
                 for OpenAI routing. For Azure routing it first checks
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``, then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``, then ``OPENAI_EMBEDDING_MODEL``, and
-                finally ``OPENAI_MODEL``.
+                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -447,8 +466,7 @@ class OpenAIEmbeddingClient(
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
             ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, ``OPENAI_EMBEDDING_MODEL``,
-            ``OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
             .. code-block:: python

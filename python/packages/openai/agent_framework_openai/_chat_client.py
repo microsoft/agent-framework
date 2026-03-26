@@ -281,10 +281,23 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI Responses client with OpenAI-only routing.
+        """Initialize a raw OpenAI Chat client.
 
-        This overload describes the OpenAI shape. Explicit keyword arguments are used first,
-        then ``OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -304,11 +317,30 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw OpenAI Responses client with Azure routing.
+        """Initialize a raw OpenAI Chat client.
 
-        This overload describes the Azure shape. Passing ``azure_endpoint`` or
-        ``credential`` forces Azure routing, and missing Azure values fall back to
-        ``AZURE_OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Responses default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted,
+                but ``credential`` is the preferred Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
         """
         ...
 
@@ -330,27 +362,27 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         env_file_encoding: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Initialize a raw OpenAI Responses client.
+        """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
+                or ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure.
             model_id: Deprecated alias for ``model``.
-            api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
-                For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
                 but ``credential`` is the preferred Azure auth surface.
             credential: Azure credential or token provider for Azure OpenAI auth. Passing this
                 is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
                 Credential objects require the optional ``azure-identity`` package.
-            org_id: OpenAI organization ID. Used only for OpenAI routing and resolved from
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
                 ``OPENAI_ORG_ID`` when not provided.
-            base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
-                For Azure routing this may be used instead of ``azure_endpoint`` when you want
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
                 to pass the full ``.../openai/v1`` base URL directly.
-            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
                 falls back to ``AZURE_OPENAI_ENDPOINT``.
             api_version: Azure API version to use once Azure routing is selected. When
                 not provided explicitly, Azure routing falls back to
@@ -2441,10 +2473,25 @@ class OpenAIChatClient(  # type: ignore[misc]
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     ) -> None:
-        """Initialize an OpenAI Responses client with OpenAI-only routing.
+        """Initialize an OpenAI Responses client.
 
-        This overload describes the OpenAI shape. Explicit keyword arguments are used first,
-        then ``OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
         """
         ...
 
@@ -2466,11 +2513,32 @@ class OpenAIChatClient(  # type: ignore[misc]
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
     ) -> None:
-        """Initialize an OpenAI Responses client with Azure routing.
+        """Initialize an OpenAI Responses client.
 
-        This overload describes the Azure shape. Passing ``azure_endpoint`` or
-        ``credential`` forces Azure routing, and missing Azure values fall back to
-        ``AZURE_OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Responses default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
         """
         ...
 
