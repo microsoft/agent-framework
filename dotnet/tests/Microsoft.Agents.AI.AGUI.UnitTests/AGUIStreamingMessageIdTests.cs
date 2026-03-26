@@ -150,29 +150,6 @@ public sealed class AGUIStreamingMessageIdTests
     }
 
     /// <summary>
-    /// AsChatResponseUpdate() must sync MessageId from the AgentResponseUpdate wrapper
-    /// back to the underlying RawRepresentation when the raw value is null.
-    /// </summary>
-    [Fact]
-    public void AsChatResponseUpdate_NullRawMessageId_SyncsFromWrapper()
-    {
-        // Arrange - ChatResponseUpdate without MessageId, wrapped in AgentResponseUpdate
-        ChatResponseUpdate originalUpdate = new(ChatRole.Assistant, "test content");
-        AgentResponseUpdate agentUpdate = new(originalUpdate)
-        {
-            AgentId = "test-agent"
-        };
-
-        agentUpdate.MessageId = "fixed-message-id";
-
-        // Act
-        ChatResponseUpdate result = agentUpdate.AsChatResponseUpdate();
-
-        // Assert - wrapper MessageId should be synced to the result
-        Assert.Equal("fixed-message-id", result.MessageId);
-    }
-
-    /// <summary>
     /// When a provider properly sets MessageId (e.g., OpenAI), the AGUI pipeline
     /// produces valid events with correct messageId values.
     /// </summary>

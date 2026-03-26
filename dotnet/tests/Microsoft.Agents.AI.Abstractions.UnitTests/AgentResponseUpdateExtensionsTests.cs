@@ -385,26 +385,22 @@ public class AgentResponseUpdateExtensionsTests
     }
 
     [Fact]
-    public void AsChatResponseUpdate_WithRawRepresentationNullMessageId_SyncsMessageIdFromWrapper()
+    public void AsChatResponseUpdate_WithRawRepresentationNullMessageId_ReturnsRawDirectly()
     {
-        // Arrange - RawRepresentation has null MessageId, wrapper has a value set after construction
+        // Arrange - RawRepresentation has null MessageId
         ChatResponseUpdate originalChatResponseUpdate = new()
         {
             ResponseId = "original-update",
             Contents = [new TextContent("Hello")]
-            // MessageId intentionally NOT set (null)
         };
         AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
-
-        // Simulate a pipeline step setting MessageId on the wrapper
-        agentResponseUpdate.MessageId = "recovered-message-id";
 
         // Act
         ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
 
-        // Assert - MessageId should be recovered from wrapper into RawRepresentation
+        // Assert - Returns the raw representation directly without mutation
         Assert.Same(originalChatResponseUpdate, result);
-        Assert.Equal("recovered-message-id", result.MessageId);
+        Assert.Null(result.MessageId);
     }
 
     [Fact]
@@ -419,37 +415,12 @@ public class AgentResponseUpdateExtensionsTests
         };
         AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
 
-        // Simulate a pipeline step trying to override MessageId on the wrapper
-        agentResponseUpdate.MessageId = "different-message-id";
-
         // Act
         ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
 
         // Assert - Provider's original MessageId should be preserved
         Assert.Same(originalChatResponseUpdate, result);
         Assert.Equal("provider-message-id", result.MessageId);
-    }
-
-    [Fact]
-    public void AsChatResponseUpdate_WithRawRepresentationEmptyMessageId_SyncsMessageIdFromWrapper()
-    {
-        // Arrange - RawRepresentation has empty MessageId, wrapper has a valid value
-        ChatResponseUpdate originalChatResponseUpdate = new()
-        {
-            ResponseId = "original-update",
-            MessageId = "",
-            Contents = [new TextContent("Hello")]
-        };
-        AgentResponseUpdate agentResponseUpdate = new(originalChatResponseUpdate);
-
-        agentResponseUpdate.MessageId = "recovered-message-id";
-
-        // Act
-        ChatResponseUpdate result = agentResponseUpdate.AsChatResponseUpdate();
-
-        // Assert - Empty MessageId should be replaced by wrapper's valid value
-        Assert.Same(originalChatResponseUpdate, result);
-        Assert.Equal("recovered-message-id", result.MessageId);
     }
 
     [Fact]
