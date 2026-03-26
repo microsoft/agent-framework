@@ -84,8 +84,15 @@ class RawOpenAIEmbeddingClient(
     ) -> None:
         """Initialize a raw OpenAI embedding client with OpenAI-only routing.
 
-        This overload describes the OpenAI shape. Explicit keyword arguments are used first,
-        then ``OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Use this overload when you want the generic OpenAI embeddings endpoint. The
+        constructor reads ``model`` from the explicit argument first and then from
+        ``OPENAI_EMBEDDING_MODEL``. Authentication and endpoint settings come from
+        the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
+        then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
+        ``env_file_path`` or the process environment.
+
+        Azure-specific environment variables are ignored for this overload unless an
+        explicit Azure signal is provided via the Azure overload shape.
         """
         ...
 
@@ -106,9 +113,19 @@ class RawOpenAIEmbeddingClient(
     ) -> None:
         """Initialize a raw OpenAI embedding client with Azure routing.
 
-        This overload describes the Azure shape. Explicit Azure inputs force Azure routing,
-        and missing Azure values fall back to ``AZURE_OPENAI_*`` values from ``env_file_path``
-        or the process environment.
+        Use this overload when you want Azure OpenAI embeddings. Passing
+        ``azure_endpoint``, ``api_version``, or ``credential`` is an explicit Azure
+        signal and forces Azure routing even when ``OPENAI_API_KEY`` is also present.
+        The constructor reads the deployment name from the explicit ``model``
+        argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
+        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+
+        Authentication and endpoint settings come from the explicit Azure arguments
+        first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+        ``AZURE_OPENAI_API_KEY``, and ``AZURE_OPENAI_API_VERSION`` in
+        ``env_file_path`` or the process environment. ``credential`` is the
+        preferred Azure auth surface; ``api_key`` remains supported for Azure key
+        auth and callable token providers for compatibility.
         """
         ...
 
@@ -316,8 +333,15 @@ class OpenAIEmbeddingClient(
     ) -> None:
         """Initialize an OpenAI embedding client with OpenAI-only routing.
 
-        This overload describes the OpenAI shape. Explicit keyword arguments are used first,
-        then ``OPENAI_*`` values from ``env_file_path`` or the process environment.
+        Use this overload when you want the generic OpenAI embeddings endpoint. The
+        constructor reads ``model`` from the explicit argument first and then from
+        ``OPENAI_EMBEDDING_MODEL``. Authentication and endpoint settings come from
+        the explicit ``api_key``, ``org_id``, and ``base_url`` arguments first and
+        then from ``OPENAI_API_KEY``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL`` in
+        ``env_file_path`` or the process environment.
+
+        Azure-specific environment variables are ignored for this overload unless an
+        explicit Azure signal is provided via the Azure overload shape.
         """
         ...
 
@@ -339,9 +363,19 @@ class OpenAIEmbeddingClient(
     ) -> None:
         """Initialize an OpenAI embedding client with Azure routing.
 
-        This overload describes the Azure shape. Explicit Azure inputs force Azure routing,
-        and missing Azure values fall back to ``AZURE_OPENAI_*`` values from ``env_file_path``
-        or the process environment.
+        Use this overload when you want Azure OpenAI embeddings. Passing
+        ``azure_endpoint``, ``api_version``, or ``credential`` is an explicit Azure
+        signal and forces Azure routing even when ``OPENAI_API_KEY`` is also present.
+        The constructor reads the deployment name from the explicit ``model``
+        argument first and then from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
+        falling back to ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+
+        Authentication and endpoint settings come from the explicit Azure arguments
+        first and then from ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+        ``AZURE_OPENAI_API_KEY``, and ``AZURE_OPENAI_API_VERSION`` in
+        ``env_file_path`` or the process environment. ``credential`` is the
+        preferred Azure auth surface; ``api_key`` remains supported for Azure key
+        auth and callable token providers for compatibility.
         """
         ...
 
