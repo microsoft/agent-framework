@@ -266,12 +266,12 @@ class CosmosConversationStore:
             conditions.append("c.status = @status")
             parameters.append({"name": "@status", "value": status})
 
-        query = f"""
-            SELECT * FROM c
-            WHERE {' AND '.join(conditions)}
-            ORDER BY c.updated_at DESC
-            OFFSET @offset LIMIT @limit
-        """
+        # Build WHERE clause from fixed condition set (not user input)
+        where_clause = " AND ".join(conditions)
+        query = (
+            f"SELECT * FROM c WHERE {where_clause} "  # nosec B608
+            "ORDER BY c.updated_at DESC OFFSET @offset LIMIT @limit"
+        )
         parameters.extend(
             [
                 {"name": "@offset", "value": offset},

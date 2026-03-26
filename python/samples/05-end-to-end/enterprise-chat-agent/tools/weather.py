@@ -24,10 +24,11 @@ def get_weather(location: str) -> dict:
     # Simulated weather data (replace with actual API call in production)
     conditions = ["sunny", "cloudy", "light rain", "partly cloudy", "overcast"]
 
+    # Random is used for mock demo data, not for security purposes
     return {
         "location": location,
-        "temp": random.randint(32, 85),
-        "condition": random.choice(conditions),
-        "humidity": random.randint(30, 90),
+        "temp": random.randint(32, 85),  # nosec B311
+        "condition": random.choice(conditions),  # nosec B311
+        "humidity": random.randint(30, 90),  # nosec B311
         "unit": "fahrenheit",
     }
