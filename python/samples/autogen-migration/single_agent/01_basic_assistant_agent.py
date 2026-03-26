@@ -1,7 +1,18 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#     "autogen-agentchat",
+#     "autogen-ext[openai]",
+# ]
+# ///
+# Run with any PEP 723 compatible runner, e.g.:
+#   uv run samples/autogen-migration/single_agent/01_basic_assistant_agent.py
+
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
 
+from agent_framework import Agent
 from dotenv import load_dotenv
 
 """Basic AutoGen AssistantAgent vs Agent Framework Agent.
@@ -39,8 +50,9 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
 
     # AF constructs a lightweight Agent backed by OpenAIChatClient
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
-    agent = client.as_agent(
+    client = OpenAIChatClient(model="gpt-4.1-mini")
+    agent = Agent(
+        client=client,
         name="assistant",
         instructions="You are a helpful assistant. Answer in one sentence.",
     )

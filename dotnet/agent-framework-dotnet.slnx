@@ -57,6 +57,7 @@
     <Project Path="samples/02-agents/Agents/Agent_Step16_Declarative/Agent_Step16_Declarative.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step17_AdditionalAIContext/Agent_Step17_AdditionalAIContext.csproj" />
     <Project Path="samples/02-agents/Agents/Agent_Step18_CompactionPipeline/Agent_Step18_CompactionPipeline.csproj" />
+    <Project Path="samples/02-agents/Agents/Agent_Step19_InFunctionLoopCheckpointing/Agent_Step19_InFunctionLoopCheckpointing.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/DeclarativeAgents/">
     <Project Path="samples/02-agents/DeclarativeAgents/ChatClient/DeclarativeChatClientAgents.csproj" />
@@ -76,6 +77,8 @@
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/04_WorkflowMcpTool/04_WorkflowMcpTool.csproj" />
+    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/05_WorkflowAndAgents/05_WorkflowAndAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />

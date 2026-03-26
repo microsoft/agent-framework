@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import cast
 
-from agent_framework import AgentResponse, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentResponse, WorkflowBuilder
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -19,12 +19,12 @@ This sample creates two agents: a Writer agent creates or edits content, and a R
 evaluates and provides feedback.
 
 Purpose:
-Show how to create agents from AzureOpenAIResponsesClient and use them directly in a workflow. Demonstrate
+Show how to create agents from FoundryChatClient and use them directly in a workflow. Demonstrate
 how agents can be used in a workflow.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, edges, events, and streaming or non-streaming runs.
 """
@@ -33,19 +33,21 @@ Prerequisites:
 async def main():
     """Build and run a simple two node agent workflow: Writer then Reviewer."""
     # Create the Azure chat client. AzureCliCredential uses your current az login.
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
-    writer_agent = client.as_agent(
+    writer_agent = Agent(
+        client=client,
         instructions=(
             "You are an excellent content writer. You create new content and edit contents based on the feedback."
         ),
         name="writer",
     )
 
-    reviewer_agent = client.as_agent(
+    reviewer_agent = Agent(
+        client=client,
         instructions=(
             "You are an excellent content reviewer."
             "Provide actionable feedback to the writer about the provided content."

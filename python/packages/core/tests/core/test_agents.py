@@ -1950,13 +1950,13 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from agent_framework._sessions import InMemoryHistoryProvider
-    from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient, OpenAIChatCompletionClient
 
     @tool(approval_mode="never_require")
     def search_hotels(city: str) -> str:
         return f"Found 3 hotels in {city}"
 
-    responses_client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    responses_client = OpenAIChatClient(model="test-model", api_key="test-key")
     responses_agent = Agent(
         client=responses_client,
         tools=[search_hotels],
@@ -2024,7 +2024,7 @@ async def test_shared_local_storage_cross_provider_responses_history_does_not_le
     responses_replay_call = next(item for item in responses_replay_input if item.get("type") == "function_call")
     assert responses_replay_call["id"] == "fc_provider123"
 
-    chat_client = OpenAIChatClient(model_id="test-model", api_key="test-key")
+    chat_client = OpenAIChatCompletionClient(model="test-model", api_key="test-key")
     chat_agent = Agent(client=chat_client)
 
     chat_response = ChatCompletion(

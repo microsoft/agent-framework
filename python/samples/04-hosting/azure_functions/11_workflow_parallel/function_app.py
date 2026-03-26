@@ -19,6 +19,11 @@ Key architectural points:
 - Different agents run in parallel when they're in the same iteration
 - Activities (executors) also run in parallel when pending together
 - Mixed agent/executor fan-outs execute concurrently
+
+Prerequisites:
+- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT_NAME`
+- Sign in with Azure CLI (`az login`) for `AzureCliCredential`
+- Ensure Azurite and the Durable Task Scheduler emulator are running
 """
 
 import json
@@ -28,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Executor,
     Workflow,
@@ -36,17 +42,13 @@ from agent_framework import (
     executor,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
-from agent_framework_azurefunctions import AgentFunctionApp
-from azure.identity import AzureCliCredential
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.openai import OpenAIChatCompletionClient
+from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from pydantic import BaseModel
 from typing_extensions import Never
 
 logger = logging.getLogger(__name__)
-
-AZURE_OPENAI_ENDPOINT_ENV = "AZURE_OPENAI_ENDPOINT"
-AZURE_OPENAI_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"
-AZURE_OPENAI_API_KEY_ENV = "AZURE_OPENAI_API_KEY"
 
 # Agent names
 SENTIMENT_AGENT_NAME = "SentimentAnalysisAgent"
@@ -334,30 +336,6 @@ class MixedResultCollector(Executor):
 # ============================================================================
 
 
-def _build_client_kwargs() -> dict[str, Any]:
-    """Build Azure OpenAI client kwargs from environment variables."""
-    endpoint = os.getenv(AZURE_OPENAI_ENDPOINT_ENV)
-    if not endpoint:
-        raise RuntimeError(f"{AZURE_OPENAI_ENDPOINT_ENV} environment variable is required.")
-
-    deployment = os.getenv(AZURE_OPENAI_DEPLOYMENT_ENV)
-    if not deployment:
-        raise RuntimeError(f"{AZURE_OPENAI_DEPLOYMENT_ENV} environment variable is required.")
-
-    client_kwargs: dict[str, Any] = {
-        "endpoint": endpoint,
-        "deployment_name": deployment,
-    }
-
-    api_key = os.getenv(AZURE_OPENAI_API_KEY_ENV)
-    if api_key:
-        client_kwargs["api_key"] = api_key
-    else:
-        client_kwargs["credential"] = AzureCliCredential()
-
-    return client_kwargs
-
-
 def _create_workflow() -> Workflow:
     """Create the parallel workflow definition.
 
@@ -381,11 +359,16 @@ def _create_workflow() -> Workflow:
                        └─> statistics_processor ─┤
                                                  └──> final_report
     """
-    client_kwargs = _build_client_kwargs()
-    chat_client = AzureOpenAIChatClient(**client_kwargs)
+    credential = AzureCliCredential()
+
+    chat_client = OpenAIChatCompletionClient(
+        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+        api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
+    )
 
     # Create agents for parallel analysis
-    sentiment_agent = chat_client.as_agent(
+    sentiment_agent = Agent(
+        client=chat_client,
         name=SENTIMENT_AGENT_NAME,
         instructions=(
             "You are a sentiment analysis expert. Analyze the sentiment of the given text. "
@@ -395,7 +378,8 @@ def _create_workflow() -> Workflow:
         default_options={"response_format": SentimentResult},
     )
 
-    keyword_agent = chat_client.as_agent(
+    keyword_agent = Agent(
+        client=chat_client,
         name=KEYWORD_AGENT_NAME,
         instructions=(
             "You are a keyword extraction expert. Extract important keywords and categories "
@@ -406,7 +390,8 @@ def _create_workflow() -> Workflow:
     )
 
     # Create summary agent for Pattern 3 (mixed parallel)
-    summary_agent = chat_client.as_agent(
+    summary_agent = Agent(
+        client=chat_client,
         name=SUMMARY_AGENT_NAME,
         instructions=(
             "You are a summarization expert. Given analysis results (sentiment and keywords), "

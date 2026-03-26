@@ -7,9 +7,9 @@ from typing import Annotated, Any, Literal
 
 from agent_framework import Message, SupportsChatGetResponse, tool
 from agent_framework.azure import (
-    AzureAIAgentClient,
     AzureOpenAIAssistantsClient,
 )
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIAssistantsClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
@@ -70,16 +70,12 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     """Create a built-in chat client from a name."""
     from agent_framework.amazon import BedrockChatClient
     from agent_framework.anthropic import AnthropicClient
-    from agent_framework.azure import (
-        AzureOpenAIChatClient,
-        AzureOpenAIResponsesClient,
-    )
     from agent_framework.ollama import OllamaChatClient
-    from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+    from agent_framework.openai import OpenAIResponsesClient
 
     # 1. Create OpenAI clients.
     if client_name == "openai_chat":
-        return OpenAIChatClient()
+        return FoundryChatClient()
     if client_name == "openai_responses":
         return OpenAIResponsesClient()
     if client_name == "openai_assistants":
@@ -93,13 +89,13 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
 
     # 2. Create Azure OpenAI clients.
     if client_name == "azure_openai_chat":
-        return AzureOpenAIChatClient(credential=AzureCliCredential())
+        return FoundryChatClient(credential=AzureCliCredential())
     if client_name == "azure_openai_responses":
-        return AzureOpenAIResponsesClient(credential=AzureCliCredential(), api_version="preview")
+        return FoundryChatClient(credential=AzureCliCredential(), api_version="preview")
     if client_name == "azure_openai_responses_foundry":
-        return AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        return FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         )
     if client_name == "azure_openai_assistants":
@@ -107,7 +103,7 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
 
     # 3. Create Azure AI client.
     if client_name == "azure_ai_agent":
-        return AzureAIAgentClient(credential=AsyncAzureCliCredential())
+        return FoundryChatClient(credential=AsyncAzureCliCredential())
 
     raise ValueError(f"Unsupported client name: {client_name}")
 
@@ -123,7 +119,7 @@ async def main(client_name: ClientName = "openai_chat") -> None:
     print(f"User: {message.text}")
 
     # 2. Run with context-managed clients.
-    if isinstance(client, OpenAIAssistantsClient | AzureOpenAIAssistantsClient | AzureAIAgentClient):
+    if isinstance(client, OpenAIAssistantsClient | AzureOpenAIAssistantsClient | FoundryChatClient):
         async with client:
             if stream:
                 response_stream = client.get_response([message], stream=True, options={"tools": get_weather})

@@ -15,8 +15,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar, cast
 
-from agent_framework import ChatContext, ChatMiddleware, SupportsChatGetResponse, chat_middleware
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, ChatContext, ChatMiddleware, SupportsChatGetResponse, chat_middleware
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import RateLimitError
@@ -104,7 +104,7 @@ def with_rate_limit_retry(*, retry_attempts: int = RETRY_ATTEMPTS) -> Callable[[
 
 
 @with_rate_limit_retry()
-class RetryingAzureOpenAIChatClient(AzureOpenAIChatClient):
+class RetryingFoundryChatClient(FoundryChatClient):
     """Azure OpenAI Chat client with class-decorator-based retry behavior."""
 
 
@@ -186,7 +186,8 @@ async def class_decorator_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace
     # AzureCliCredential with your preferred authentication option.
-    agent = RetryingAzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=RetryingFoundryChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
     )
 
@@ -204,7 +205,8 @@ async def class_based_middleware_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace
     # AzureCliCredential with your preferred authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=FoundryChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         middleware=[RateLimitRetryMiddleware(max_attempts=3)],
     )
@@ -223,7 +225,8 @@ async def function_based_middleware_example() -> None:
 
     # For authentication, run `az login` command in terminal or replace
     # AzureCliCredential with your preferred authentication option.
-    agent = AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    agent = Agent(
+        client=FoundryChatClient(credential=AzureCliCredential()),
         instructions="You are a helpful assistant.",
         middleware=[rate_limit_retry_middleware],
     )
@@ -239,7 +242,7 @@ async def main() -> None:
     print("=== Auto-Retry Rate Limiting Sample ===")
     print(
         "Demonstrates two approaches for automatic retry on rate limit (429) errors.\n"
-        "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME (and optionally\n"
+        "Set AZURE_OPENAI_ENDPOINT and FOUNDRY_MODEL (and optionally\n"
         "AZURE_OPENAI_API_KEY) before running, or populate a .env file."
     )
 

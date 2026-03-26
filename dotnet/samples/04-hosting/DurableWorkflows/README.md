@@ -48,3 +48,4 @@ $env:DURABLE_TASK_SCHEDULER_CONNECTION_STRING = "AccountEndpoint=http://localhos
 | [01_SequentialWorkflow](AzureFunctions/01_SequentialWorkflow/) | Sequential workflow hosted in Azure Functions |
 | [02_ConcurrentWorkflow](AzureFunctions/02_ConcurrentWorkflow/) | Concurrent workflow hosted in Azure Functions |
 | [03_WorkflowHITL](AzureFunctions/03_WorkflowHITL/) | Human-in-the-loop workflow hosted in Azure Functions |
+| [04_WorkflowMcpTool](AzureFunctions/04_WorkflowMcpTool/) | Workflow exposed as an MCP tool |

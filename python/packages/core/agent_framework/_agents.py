@@ -24,9 +24,6 @@ from typing import (
 )
 from uuid import uuid4
 
-from mcp import types
-from mcp.server.lowlevel import Server
-from mcp.shared.exceptions import McpError
 from pydantic import BaseModel
 
 from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
@@ -71,6 +68,9 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from mcp import types
+    from mcp.server.lowlevel import Server
+
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._types import ChatOptions
 
@@ -1369,6 +1369,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         Returns:
             The MCP server instance.
         """
+        try:
+            from mcp import types
+            from mcp.server.lowlevel import Server
+            from mcp.shared.exceptions import McpError
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
+            ) from exc
+
         server_args: dict[str, Any] = {
             "name": server_name,
             "version": version,
@@ -1469,8 +1478,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
 
 class Agent(
-    AgentTelemetryLayer,
     AgentMiddlewareLayer,
+    AgentTelemetryLayer,
     RawAgent[OptionsCoT],
     Generic[OptionsCoT],
 ):

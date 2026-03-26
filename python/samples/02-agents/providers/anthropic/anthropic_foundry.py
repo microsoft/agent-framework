@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import asyncio
 
+from agent_framework import Agent
 from agent_framework.anthropic import AnthropicClient
 from anthropic import AsyncAnthropicFoundry
 from dotenv import load_dotenv
@@ -42,7 +42,8 @@ async def main() -> None:
     # Create web search tool configuration using instance method
     web_search_tool = client.get_web_search_tool()
 
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         name="DocsAgent",
         instructions="You are a helpful agent for both Microsoft docs questions and general questions.",
         tools=[mcp_tool, web_search_tool],

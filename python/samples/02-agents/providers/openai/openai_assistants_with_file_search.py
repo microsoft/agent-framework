@@ -50,7 +50,7 @@ async def main() -> None:
 
     agent = await provider.create_agent(
         name="SearchAssistant",
-        model=os.environ.get("OPENAI_CHAT_MODEL_ID", "gpt-4"),
+        model=os.environ.get("OPENAI_MODEL", "gpt-4"),
         instructions="You are a helpful assistant that searches files in a knowledge base.",
         tools=[chat_client.get_file_search_tool()],
     )

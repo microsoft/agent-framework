@@ -10,20 +10,8 @@ using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
-public class AIAgentHostExecutorTests
+public class AIAgentHostExecutorTests : AIAgentHostingExecutorTestsBase
 {
-    private const string TestAgentId = nameof(TestAgentId);
-    private const string TestAgentName = nameof(TestAgentName);
-
-    private static readonly string[] s_messageStrings = [
-        "",
-        "Hello world!",
-        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
-        "Quisque dignissim ante odio, at facilisis orci porta a. Duis mi augue, fringilla eu egestas a, pellentesque sed lacus."
-    ];
-
-    private static List<ChatMessage> TestMessages => TestReplayAgent.ToChatMessages(s_messageStrings);
-
     [Theory]
     [InlineData(null, null)]
     [InlineData(null, true)]
@@ -50,30 +38,7 @@ public class AIAgentHostExecutorTests
         bool expectingEvents = turnSetting ?? executorSetting ?? false;
 
         AgentResponseUpdateEvent[] updates = testContext.Events.OfType<AgentResponseUpdateEvent>().ToArray();
-        if (expectingEvents)
-        {
-            // The way TestReplayAgent is set up, it will emit one update per non-empty AIContent
-            List<AIContent> expectedUpdateContents = TestMessages.SelectMany(message => message.Contents).ToList();
-
-            updates.Should().HaveCount(expectedUpdateContents.Count);
-            for (int i = 0; i < updates.Length; i++)
-            {
-                AgentResponseUpdateEvent updateEvent = updates[i];
-                AIContent expectedUpdateContent = expectedUpdateContents[i];
-
-                updateEvent.ExecutorId.Should().Be(agent.GetDescriptiveId());
-
-                AgentResponseUpdate update = updateEvent.Update;
-                update.AuthorName.Should().Be(TestAgentName);
-                update.AgentId.Should().Be(TestAgentId);
-                update.Contents.Should().HaveCount(1);
-                update.Contents[0].Should().BeEquivalentTo(expectedUpdateContent);
-            }
-        }
-        else
-        {
-            updates.Should().BeEmpty();
-        }
+        CheckResponseUpdateEventsAgainstTestMessages(updates, expectingEvents, agent.GetDescriptiveId());
     }
 
     [Theory]
@@ -92,30 +57,7 @@ public class AIAgentHostExecutorTests
 
         // Assert
         AgentResponseEvent[] updates = testContext.Events.OfType<AgentResponseEvent>().ToArray();
-        if (executorSetting)
-        {
-            updates.Should().HaveCount(1);
-
-            AgentResponseEvent responseEvent = updates[0];
-            responseEvent.ExecutorId.Should().Be(agent.GetDescriptiveId());
-
-            AgentResponse response = responseEvent.Response;
-            response.AgentId.Should().Be(TestAgentId);
-            response.Messages.Should().HaveCount(TestMessages.Count - 1);
-
-            for (int i = 0; i < response.Messages.Count; i++)
-            {
-                ChatMessage responseMessage = response.Messages[i];
-                ChatMessage expectedMessage = TestMessages[i + 1]; // Skip the first empty message
-
-                responseMessage.AuthorName.Should().Be(TestAgentName);
-                responseMessage.Text.Should().Be(expectedMessage.Text);
-            }
-        }
-        else
-        {
-            updates.Should().BeEmpty();
-        }
+        CheckResponseEventsAgainstTestMessages(updates, expectingResponse: executorSetting, agent.GetDescriptiveId());
     }
 
     private static ChatMessage UserMessage => new(ChatRole.User, "Hello from User!") { AuthorName = "User" };

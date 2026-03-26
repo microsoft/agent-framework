@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -1080,7 +1080,8 @@ def test_configure_otel_providers_reads_env_sensitive_data(monkeypatch):
     # Simulate load_dotenv() setting env var after import
     monkeypatch.setenv("ENABLE_SENSITIVE_DATA", "true")
 
-    observability.configure_otel_providers()
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers()
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
 
@@ -1135,7 +1136,8 @@ def test_configure_otel_providers_explicit_param_overrides_env(monkeypatch):
     importlib.reload(observability)
 
     # Explicit False should override the env var True
-    observability.configure_otel_providers(enable_sensitive_data=False)
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_sensitive_data=False)
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is False
 
 
@@ -1196,7 +1198,8 @@ def test_enable_instrumentation_does_not_clobber_console_exporters(monkeypatch):
     importlib.reload(observability)
 
     # Set console exporters via configure_otel_providers
-    observability.configure_otel_providers(enable_console_exporters=True)
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_console_exporters=True)
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
 
     # Calling enable_instrumentation should not clobber the value
@@ -1224,7 +1227,8 @@ def test_enable_instrumentation_with_sensitive_data_does_not_touch_console_expor
     importlib.reload(observability)
 
     # Set console exporters via configure_otel_providers
-    observability.configure_otel_providers(enable_console_exporters=True)
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_console_exporters=True)
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
 
     # Calling enable_instrumentation with explicit sensitive_data should not clobber console exporters
@@ -1275,7 +1279,8 @@ def test_configure_otel_providers_reads_env_console_exporters(monkeypatch):
     # Simulate load_dotenv() setting env var after import
     monkeypatch.setenv("ENABLE_CONSOLE_EXPORTERS", "true")
 
-    observability.configure_otel_providers()
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers()
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is True
 
 
@@ -1298,7 +1303,8 @@ def test_configure_otel_providers_explicit_console_exporters_overrides_env(monke
     importlib.reload(observability)
 
     # Explicit False should override the env var True
-    observability.configure_otel_providers(enable_console_exporters=False)
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(enable_console_exporters=False)
     assert observability.OBSERVABILITY_SETTINGS.enable_console_exporters is False
 
 
@@ -2003,6 +2009,14 @@ async def test_agent_streaming_observability(span_exporter: InMemorySpanExporter
     assert len(updates) == 2
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
+
+
+def test_agent_middleware_wraps_agent_telemetry() -> None:
+    """Agent middleware must run outside telemetry so middleware time is excluded from agent latency."""
+    from agent_framework import Agent
+    from agent_framework._middleware import AgentMiddlewareLayer
+
+    assert Agent.__mro__.index(AgentMiddlewareLayer) < Agent.__mro__.index(AgentTelemetryLayer)
 
 
 # region Test AgentTelemetryLayer error cases
@@ -3049,11 +3063,12 @@ def test_configure_otel_providers_with_env_file_path(monkeypatch, tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text("ENABLE_INSTRUMENTATION=true\n")
 
-    observability.configure_otel_providers(
-        env_file_path=str(env_file),
-        enable_sensitive_data=True,
-        vs_code_extension_port=None,
-    )
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(
+            env_file_path=str(env_file),
+            enable_sensitive_data=True,
+            vs_code_extension_port=None,
+        )
 
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.enable_sensitive_data is True
@@ -3078,11 +3093,12 @@ def test_configure_otel_providers_with_env_file_and_vs_code_port(monkeypatch, tm
     env_file = tmp_path / ".env"
     env_file.write_text("ENABLE_INSTRUMENTATION=true\n")
 
-    observability.configure_otel_providers(
-        env_file_path=str(env_file),
-        env_file_encoding="utf-8",
-        vs_code_extension_port=4317,
-    )
+    with patch.object(observability.OBSERVABILITY_SETTINGS, "_configure"):
+        observability.configure_otel_providers(
+            env_file_path=str(env_file),
+            env_file_encoding="utf-8",
+            vs_code_extension_port=4317,
+        )
 
     assert observability.OBSERVABILITY_SETTINGS.enable_instrumentation is True
     assert observability.OBSERVABILITY_SETTINGS.vs_code_extension_port == 4317

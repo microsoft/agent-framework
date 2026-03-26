@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+from agent_framework import Agent
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -36,7 +37,8 @@ runtime_schema = {
 async def non_streaming_example() -> None:
     print("=== Non-streaming runtime JSON schema example ===")
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )
@@ -69,7 +71,8 @@ async def non_streaming_example() -> None:
 async def streaming_example() -> None:
     print("=== Streaming runtime JSON schema example ===")
 
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="RuntimeSchemaAgent",
         instructions="Return only JSON that matches the provided schema. Do not add commentary.",
     )

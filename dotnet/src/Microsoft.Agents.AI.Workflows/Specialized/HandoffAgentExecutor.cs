@@ -14,13 +14,19 @@ namespace Microsoft.Agents.AI.Workflows.Specialized;
 
 internal sealed class HandoffAgentExecutorOptions
 {
-    public HandoffAgentExecutorOptions(string? handoffInstructions, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
+    public HandoffAgentExecutorOptions(string? handoffInstructions, bool emitAgentResponseEvents, bool? emitAgentResponseUpdateEvents, HandoffToolCallFilteringBehavior toolCallFilteringBehavior)
     {
         this.HandoffInstructions = handoffInstructions;
+        this.EmitAgentResponseEvents = emitAgentResponseEvents;
+        this.EmitAgentResponseUpdateEvents = emitAgentResponseUpdateEvents;
         this.ToolCallFilteringBehavior = toolCallFilteringBehavior;
     }
 
     public string? HandoffInstructions { get; set; }
+
+    public bool EmitAgentResponseEvents { get; set; }
+
+    public bool? EmitAgentResponseUpdateEvents { get; set; }
 
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
 }
@@ -250,7 +256,14 @@ internal sealed class HandoffAgentExecutor(
             }
         }
 
-        allMessages.AddRange(updates.ToAgentResponse().Messages);
+        AgentResponse agentResponse = updates.ToAgentResponse();
+
+        if (options.EmitAgentResponseEvents)
+        {
+            await context.YieldOutputAsync(agentResponse, cancellationToken).ConfigureAwait(false);
+        }
+
+        allMessages.AddRange(agentResponse.Messages);
 
         roleChanges.ResetUserToAssistantForChangedRoles();
 
@@ -259,7 +272,7 @@ internal sealed class HandoffAgentExecutor(
         async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
         {
             updates.Add(update);
-            if (message.TurnToken.EmitEvents is true)
+            if (message.TurnToken.ShouldEmitStreamingEvents(options.EmitAgentResponseUpdateEvents))
             {
                 await context.YieldOutputAsync(update, cancellationToken).ConfigureAwait(false);
             }

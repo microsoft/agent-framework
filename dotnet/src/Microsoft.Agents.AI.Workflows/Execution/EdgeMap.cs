@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -93,6 +94,18 @@ internal sealed class EdgeMap
         }
 
         return portRunner.ChaseEdgeAsync(new MessageEnvelope(response, ExecutorIdentity.None), this._stepTracer, cancellationToken);
+    }
+
+    internal bool TryGetResponsePortExecutorId(string portId, [NotNullWhen(true)] out string? executorId)
+    {
+        if (this._portEdgeRunners.TryGetValue(portId, out ResponseEdgeRunner? portRunner))
+        {
+            executorId = portRunner.ExecutorId;
+            return true;
+        }
+
+        executorId = null;
+        return false;
     }
 
     internal async ValueTask<Dictionary<EdgeId, PortableValue>> ExportStateAsync()

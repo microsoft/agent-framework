@@ -5,8 +5,8 @@ from random import randint
 from typing import TYPE_CHECKING, Annotated
 
 from agent_framework import Message, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import get_tracer
-from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -103,7 +103,7 @@ async def main() -> None:
     with get_tracer().start_as_current_span("Zero Code", kind=SpanKind.CLIENT) as current_span:
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
-        client = OpenAIResponsesClient()
+        client = FoundryChatClient()
 
         await run_chat_client(client, stream=True)
         await run_chat_client(client, stream=False)
