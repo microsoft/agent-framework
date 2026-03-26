@@ -104,7 +104,9 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "flit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "mypy", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "poethepoet", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "prek", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyright", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -126,7 +128,9 @@ requires-dist = [{ name = "agent-framework-core", extras = ["all"], editable = "
 [package.metadata.requires-dev]
 dev = [
     { name = "flit", specifier = "==3.12.0" },
+    { name = "mcp", extras = ["ws"], specifier = ">=1.24.0,<2" },
     { name = "mypy", specifier = "==1.19.1" },
+    { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
     { name = "poethepoet", specifier = "==0.42.1" },
     { name = "prek", specifier = "==0.3.4" },
     { name = "pyright", specifier = "==1.1.408" },
@@ -210,6 +214,8 @@ dependencies = [
     { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-inference", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -219,6 +225,8 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.7.0,<4" },
     { name = "azure-ai-agents", specifier = ">=1.2.0b5,<1.2.0b6" },
     { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
+    { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
+    { name = "azure-identity", specifier = ">=1,<2" },
 ]
 
 [[package]]
@@ -340,14 +348,7 @@ name = "agent-framework-core"
 version = "1.0.0rc5"
 source = { editable = "packages/core" }
 dependencies = [
-    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "mcp", extra = ["ws"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "opentelemetry-semantic-conventions-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "python-dotenv", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -374,9 +375,11 @@ all = [
     { name = "agent-framework-lab", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-mem0", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ollama", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-orchestrations", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-purview", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-redis", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mcp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [package.metadata]
@@ -400,17 +403,12 @@ requires-dist = [
     { name = "agent-framework-lab", marker = "extra == 'all'", editable = "packages/lab" },
     { name = "agent-framework-mem0", marker = "extra == 'all'", editable = "packages/mem0" },
     { name = "agent-framework-ollama", marker = "extra == 'all'", editable = "packages/ollama" },
+    { name = "agent-framework-openai", marker = "extra == 'all'", editable = "packages/openai" },
     { name = "agent-framework-orchestrations", marker = "extra == 'all'", editable = "packages/orchestrations" },
     { name = "agent-framework-purview", marker = "extra == 'all'", editable = "packages/purview" },
     { name = "agent-framework-redis", marker = "extra == 'all'", editable = "packages/redis" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
-    { name = "azure-identity", specifier = ">=1,<2" },
-    { name = "mcp", extras = ["ws"], specifier = ">=1.24.0,<2" },
-    { name = "openai", specifier = ">=1.99.0,<3" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.24.0,<2" },
     { name = "opentelemetry-api", specifier = ">=1.39.0,<2" },
-    { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
-    { name = "opentelemetry-semantic-conventions-ai", specifier = ">=0.4.13,<0.4.14" },
-    { name = "packaging", specifier = ">=24.1,<25" },
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "python-dotenv", specifier = ">=1,<2" },
     { name = "typing-extensions", specifier = ">=4.15.0,<5" },
@@ -450,6 +448,7 @@ dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "fastapi", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "uvicorn", extra = ["standard"], marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -470,6 +469,7 @@ requires-dist = [
     { name = "agent-framework-orchestrations", marker = "extra == 'dev'", editable = "packages/orchestrations" },
     { name = "fastapi", specifier = ">=0.115.0,<0.133.1" },
     { name = "openai", specifier = ">=1.99.0,<3" },
+    { name = "opentelemetry-sdk", specifier = ">=1.39.0,<2" },
     { name = "pytest", marker = "extra == 'all'", specifier = "==9.0.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0,<0.42.0" },
@@ -581,6 +581,7 @@ dependencies = [
 gaia = [
     { name = "huggingface-hub", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "opentelemetry-api", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "opentelemetry-sdk", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "orjson", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyarrow", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pydantic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -623,6 +624,7 @@ requires-dist = [
     { name = "loguru", marker = "extra == 'tau2'", specifier = ">=0.7.3" },
     { name = "numpy", marker = "extra == 'tau2'" },
     { name = "opentelemetry-api", marker = "extra == 'gaia'", specifier = ">=1.39.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'gaia'", specifier = ">=1.39.0,<2" },
     { name = "orjson", marker = "extra == 'gaia'", specifier = ">=3.10.7,<4" },
     { name = "pyarrow", marker = "extra == 'gaia'", specifier = ">=18.0.0" },
     { name = "pydantic", marker = "extra == 'gaia'", specifier = ">=2.0.0" },
@@ -4260,15 +4262,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6d/c0/4ae7973f3c2cfd2b6e321f1675626f0dab0a97027cc7a297474c9c8f3d04/opentelemetry_semantic_conventions-0.61b0.tar.gz", hash = "sha256:072f65473c5d7c6dc0355b27d6c9d1a679d63b6d4b4b16a9773062cb7e31192a", size = 145755, upload-time = "2026-03-04T14:17:32.664Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b2/37/cc6a55e448deaa9b27377d087da8615a3416d8ad523d5960b78dbeadd02a/opentelemetry_semantic_conventions-0.61b0-py3-none-any.whl", hash = "sha256:fa530a96be229795f8cef353739b618148b0fe2b4b3f005e60e262926c4d38e2", size = 231621, upload-time = "2026-03-04T14:17:19.33Z" },
-]
-
-[[package]]
-name = "opentelemetry-semantic-conventions-ai"
-version = "0.4.13"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ba/e6/40b59eda51ac47009fb47afcdf37c6938594a0bd7f3b9fadcbc6058248e3/opentelemetry_semantic_conventions_ai-0.4.13.tar.gz", hash = "sha256:94efa9fb4ffac18c45f54a3a338ffeb7eedb7e1bb4d147786e77202e159f0036", size = 5368, upload-time = "2025-08-22T10:14:17.387Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/b5/cf25da2218910f0d6cdf7f876a06bed118c4969eacaf60a887cbaef44f44/opentelemetry_semantic_conventions_ai-0.4.13-py3-none-any.whl", hash = "sha256:883a30a6bb5deaec0d646912b5f9f6dcbb9f6f72557b73d0f2560bf25d13e2d5", size = 6080, upload-time = "2025-08-22T10:14:16.477Z" },
 ]
 
 [[package]]

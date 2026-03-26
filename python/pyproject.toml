@@ -39,6 +39,8 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.19.1",
     "pyright==1.1.408",
+    "mcp[ws]>=1.24.0,<2",
+    "opentelemetry-sdk>=1.39.0,<2",
     #tasks
     "poethepoet==0.42.1",
     "rich==13.7.1",
