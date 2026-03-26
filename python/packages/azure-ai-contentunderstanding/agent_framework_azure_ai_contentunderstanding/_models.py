@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, TypedDict
 
+from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
+
 
 class AnalysisSection(str, Enum):
     """Selects which sections of the CU output to pass to the LLM."""
@@ -27,9 +29,6 @@ class AnalysisSection(str, Enum):
 
     SECTIONS = "sections"
     """Document structural hierarchy."""
-
-
-from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
 
 
 class DocumentEntry(TypedDict):
