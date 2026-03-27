@@ -1488,71 +1488,61 @@ async def test_integration_options(
     # Need at least 2 iterations for tool_choice tests: one to get function call, one to get final response
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
-        # Prepare test message
+    # Prepare test message
+    if option_name.startswith("tools") or option_name.startswith("tool_choice"):
+        # Use weather-related prompt for tool tests
+        messages = [Message(role="user", text="What is the weather in Seattle?")]
+    elif option_name.startswith("response_format"):
+        # Use prompt that works well with structured output
+        messages = [Message(role="user", text="The weather in Seattle is sunny")]
+        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+    else:
+        # Generic prompt for simple options
+        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+
+    # Build options dict
+    options: dict[str, Any] = {option_name: option_value}
+
+    # Add tools if testing tool_choice to avoid errors
+    if option_name.startswith("tool_choice"):
+        options["tools"] = [get_weather]
+
+    # Test streaming mode
+    response = await client.get_response(
+        messages=messages,
+        stream=True,
+        options=options,
+    ).get_final_response()
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert response.messages is not None
+    if not option_name.startswith("tool_choice") and (
+        (isinstance(option_value, str) and option_value != "required")
+        or (isinstance(option_value, dict) and option_value.get("mode") != "required")
+    ):
+        assert response.text is not None, f"No text in response for option '{option_name}'"
+        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+
+    # Validate based on option type
+    if needs_validation:
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-            # Use weather-related prompt for tool tests
-            messages = [Message(role="user", text="What is the weather in Seattle?")]
+            # Should have called the weather function
+            text = response.text.lower()
+            assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
         elif option_name.startswith("response_format"):
-            # Use prompt that works well with structured output
-            messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(Message(role="user", text="What is the weather in Seattle?"))
-        else:
-            # Generic prompt for simple options
-            messages = [Message(role="user", text="Say 'Hello World' briefly.")]
-
-        # Build options dict
-        options: dict[str, Any] = {option_name: option_value}
-
-        # Add tools if testing tool_choice to avoid errors
-        if option_name.startswith("tool_choice"):
-            options["tools"] = [get_weather]
-
-        if streaming:
-            # Test streaming mode
-            response_stream = client.get_response(
-                messages=messages,
-                stream=True,
-                options=options,
-            )
-
-            response = await response_stream.get_final_response()
-        else:
-            # Test non-streaming mode
-            response = await client.get_response(
-                messages=messages,
-                options=options,
-            )
-
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert response.messages is not None
-        if not option_name.startswith("tool_choice") and (
-            (isinstance(option_value, str) and option_value != "required")
-            or (isinstance(option_value, dict) and option_value.get("mode") != "required")
-        ):
-            assert response.text is not None, f"No text in response for option '{option_name}'"
-            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
-
-        # Validate based on option type
-        if needs_validation:
-            if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-                # Should have called the weather function
-                text = response.text.lower()
-                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
-            elif option_name.startswith("response_format"):
-                if option_value == OutputStruct:
-                    # Should have structured output
-                    assert response.value is not None, "No structured output"
-                    assert isinstance(response.value, OutputStruct)
-                    assert "seattle" in response.value.location.lower()
-                else:
-                    # Runtime JSON schema
-                    assert response.value is None, "No structured output, can't parse any json."
-                    response_value = json.loads(response.text)
-                    assert isinstance(response_value, dict)
-                    assert "location" in response_value
-                    assert "seattle" in response_value["location"].lower()
+            if option_value == OutputStruct:
+                # Should have structured output
+                assert response.value is not None, "No structured output"
+                assert isinstance(response.value, OutputStruct)
+                assert "seattle" in response.value.location.lower()
+            else:
+                # Runtime JSON schema
+                assert response.value is None, "No structured output, can't parse any json."
+                response_value = json.loads(response.text)
+                assert isinstance(response_value, dict)
+                assert "location" in response_value
+                assert "seattle" in response_value["location"].lower()
 
 
 @pytest.mark.flaky

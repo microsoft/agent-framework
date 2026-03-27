@@ -321,15 +321,10 @@ async def test_azure_openai_chat_completion_client_agent_basic_run() -> None:
 async def test_azure_openai_chat_completion_client_agent_basic_run_streaming() -> None:
     async with (
         AzureCliCredential() as credential,
-        Agent(
-            client=OpenAIChatCompletionClient(credential=credential),
-        ) as agent,
+        Agent(client=OpenAIChatCompletionClient(credential=credential)) as agent,
     ):
         full_text = ""
-        async for chunk in agent.run(
-            "Please respond with exactly: 'This is a streaming response test.'",
-            stream=True,
-        ):
+        async for chunk in agent.run("Please respond with exactly: 'This is a streaming response test.'", stream=True):
             assert isinstance(chunk, AgentResponseUpdate)
             if chunk.text:
                 full_text += chunk.text

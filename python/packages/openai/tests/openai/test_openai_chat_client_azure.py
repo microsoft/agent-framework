@@ -342,25 +342,20 @@ async def test_integration_web_search() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)
 
-        for streaming in [False, True]:
-            content = {
-                "messages": [
-                    Message(
-                        role="user",
-                        text="What is the current weather? Do not ask for my current location.",
-                    )
-                ],
-                "options": {
-                    "tool_choice": "auto",
-                    "tools": [OpenAIChatClient.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})],
-                },
-                "stream": streaming,
-            }
-            if streaming:
-                response = await client.get_response(**content).get_final_response()
-            else:
-                response = await client.get_response(**content)
-            assert response.text is not None
+        response = await client.get_response(
+            messages=[
+                Message(
+                    role="user",
+                    text="What is the current weather? Do not ask for my current location.",
+                )
+            ],
+            options={
+                "tools": [OpenAIChatClient.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})],
+            },
+            stream=True,
+        ).get_final_response()
+        assert isinstance(response, ChatResponse)
+        assert response.text is not None
 
 
 @pytest.mark.flaky

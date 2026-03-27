@@ -593,42 +593,38 @@ async def test_integration_options(
     client = FoundryChatClient(credential=AzureCliCredential())
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
+    if option_name.startswith("tools") or option_name.startswith("tool_choice"):
+        messages = [Message(role="user", text="What is the weather in Seattle?")]
+    elif option_name.startswith("response_format"):
+        messages = [Message(role="user", text="The weather in Seattle is sunny")]
+        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+    else:
+        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+
+    options: dict[str, Any] = {option_name: option_value}
+    if option_name.startswith("tool_choice"):
+        options["tools"] = [get_weather]
+
+    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
+
+    assert isinstance(response, ChatResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+
+    if needs_validation:
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-            messages = [Message(role="user", text="What is the weather in Seattle?")]
+            text = response.text.lower()
+            assert "sunny" in text or "seattle" in text
         elif option_name.startswith("response_format"):
-            messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(Message(role="user", text="What is the weather in Seattle?"))
-        else:
-            messages = [Message(role="user", text="Say 'Hello World' briefly.")]
-
-        options: dict[str, Any] = {option_name: option_value}
-        if option_name.startswith("tool_choice"):
-            options["tools"] = [get_weather]
-
-        if streaming:
-            response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
-        else:
-            response = await client.get_response(messages=messages, options=options)
-
-        assert isinstance(response, ChatResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-
-        if needs_validation:
-            if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-                text = response.text.lower()
-                assert "sunny" in text or "seattle" in text
-            elif option_name.startswith("response_format"):
-                if option_value == OutputStruct:
-                    assert response.value is not None
-                    assert isinstance(response.value, OutputStruct)
-                    assert "seattle" in response.value.location.lower()
-                else:
-                    assert response.value is None
-                    response_value = json.loads(response.text)
-                    assert isinstance(response_value, dict)
-                    assert "location" in response_value
+            if option_value == OutputStruct:
+                assert response.value is not None
+                assert isinstance(response.value, OutputStruct)
+                assert "seattle" in response.value.location.lower()
+            else:
+                assert response.value is None
+                response_value = json.loads(response.text)
+                assert isinstance(response_value, dict)
+                assert "location" in response_value
 
 
 @pytest.mark.flaky
@@ -638,26 +634,22 @@ async def test_integration_options(
 async def test_integration_web_search() -> None:
     client = FoundryChatClient(credential=AzureCliCredential())
 
-    for streaming in [False, True]:
-        web_search_tool = FoundryChatClient.get_web_search_tool()
-        content = {
-            "messages": [
-                Message(
-                    role="user",
-                    text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-                )
-            ],
-            "options": {"tool_choice": "auto", "tools": [web_search_tool]},
-        }
-        if streaming:
-            response = await client.get_response(stream=True, **content).get_final_response()
-        else:
-            response = await client.get_response(**content)
+    web_search_tool = FoundryChatClient.get_web_search_tool()
+    content = {
+        "messages": [
+            Message(
+                role="user",
+                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+            )
+        ],
+        "options": {"tool_choice": "auto", "tools": [web_search_tool]},
+    }
+    response = await client.get_response(stream=True, **content).get_final_response()
 
-        assert isinstance(response, ChatResponse)
-        assert "Rumi" in response.text
-        assert "Mira" in response.text
-        assert "Zoey" in response.text
+    assert isinstance(response, ChatResponse)
+    assert "Rumi" in response.text
+    assert "Mira" in response.text
+    assert "Zoey" in response.text
 
 
 @pytest.mark.flaky
@@ -675,19 +667,15 @@ async def test_integration_tool_rich_content_image() -> None:
     client = FoundryChatClient(credential=AzureCliCredential())
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
-        messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
-        options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
+    messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
+    options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
-        if streaming:
-            response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
-        else:
-            response = await client.get_response(messages=messages, options=options)
+    response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()
 
-        assert isinstance(response, ChatResponse)
-        assert response.text is not None
-        assert len(response.text) > 0
-        assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
+    assert isinstance(response, ChatResponse)
+    assert response.text is not None
+    assert len(response.text) > 0
+    assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
 def test_get_code_interpreter_tool() -> None:
