@@ -1,13 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host multiple Foundry-powered agents inside a single Azure Functions app.
+"""Host multiple Azure OpenAI-powered agents inside a single Azure Functions app.
 
 Components used in this sample:
-- FoundryChatClient to create agents bound to a shared Foundry deployment.
+- OpenAIChatCompletionClient configured for Azure OpenAI.
 - AgentFunctionApp to register multiple agents and expose dedicated HTTP endpoints.
 - Custom tool functions to demonstrate tool invocation from different agents.
 
-Prerequisites: set `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
+Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and sign in with Azure CLI before starting the Functions host."""
 
 import logging
 import os
@@ -15,8 +15,8 @@ from typing import Any
 
 from agent_framework import Agent, tool
 from agent_framework.azure import AgentFunctionApp
-from agent_framework.foundry import FoundryChatClient
-from azure.identity.aio import AzureCliCredential
+from agent_framework.openai import OpenAIChatCompletionClient
+from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -60,10 +60,9 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 
 # 1. Create multiple agents, each with its own instruction set and tools.
-client = FoundryChatClient(
-    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-    model=os.environ["FOUNDRY_MODEL"],
-    credential=AzureCliCredential(),
+client = OpenAIChatCompletionClient(
+    model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+    api_key=get_bearer_token_provider(AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
 )
 
 weather_agent = Agent(
