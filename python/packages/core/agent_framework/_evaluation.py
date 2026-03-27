@@ -15,9 +15,9 @@ Cloud evaluator example:
     from agent_framework import evaluate_agent, EvalResults
     from agent_framework_azure_ai import FoundryEvals
 
-    evals = FoundryEvals(project_client=client, model_deployment="gpt-4o")
+    evals = FoundryEvals(project_client=client, model="gpt-4o")
     results = await evaluate_agent(agent=agent, queries=["Hello"], evaluators=evals)
-    results.assert_passed()
+    results.raise_for_status()
 
 Local evaluator example:
 
@@ -39,7 +39,7 @@ import contextlib
 import inspect
 import json
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -58,10 +58,15 @@ from ._tools import FunctionTool
 from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
+    from ._agents import SupportsAgentRun
     from ._workflows._agent_executor import AgentExecutorResponse
     from ._workflows._workflow import Workflow, WorkflowRunResult
 
 logger = logging.getLogger(__name__)
+
+
+class EvalNotPassedError(Exception):
+    """Raised when evaluation results contain failures."""
 
 
 # region Core types
@@ -130,11 +135,36 @@ class ExpectedToolCall:
 
     Attributes:
         name: The tool/function name (e.g. ``"get_weather"``).
-        arguments: Expected arguments.  ``None`` means "don't check arguments".
+        arguments: Expected arguments.  ``None`` means "don't check arguments" or "no arguments".
     """
 
     name: str
     arguments: dict[str, Any] | None = None
+
+
+def _split_last_turn(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+    """Split at the last user message (default strategy)."""
+    last_user_idx = -1
+    for i, msg in enumerate(conversation):
+        if msg.role == "user":
+            last_user_idx = i
+    if last_user_idx >= 0:
+        return conversation[: last_user_idx + 1], conversation[last_user_idx + 1 :]
+    return [], list(conversation)
+
+
+def _split_full(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+    """Split after the first user message (evaluates whole trajectory)."""
+    for i, msg in enumerate(conversation):
+        if msg.role == "user":
+            return conversation[: i + 1], conversation[i + 1 :]
+    return [], list(conversation)
+
+
+_BUILT_IN_SPLITTERS: dict[ConversationSplit, Callable[[list[Message]], tuple[list[Message], list[Message]]]] = {
+    ConversationSplit.LAST_TURN: _split_last_turn,
+    ConversationSplit.FULL: _split_full,
+}
 
 
 class EvalItem:
@@ -190,9 +220,7 @@ class EvalItem:
         """Split ``self.conversation`` into (query_messages, response_messages)."""
         if callable(split) and not isinstance(split, ConversationSplit):
             return split(self.conversation)
-        if split == ConversationSplit.FULL:
-            return self._split_full()
-        return self._split_last_turn()
+        return _BUILT_IN_SPLITTERS[split](self.conversation)
 
     def split_messages(
         self,
@@ -206,45 +234,15 @@ class EvalItem:
         effective = split or self.split_strategy or ConversationSplit.LAST_TURN
         return self._split_conversation(effective)
 
-    def _split_last_turn(self) -> tuple[list[Message], list[Message]]:
-        """Split at the last user message (default strategy)."""
-        return self._split_last_turn_static(self.conversation)
-
     @staticmethod
     def _split_last_turn_static(
         conversation: list[Message],
     ) -> tuple[list[Message], list[Message]]:
         """Split at the last user message.  Usable as a fallback in custom splitters."""
-        last_user_idx = -1
-        for i, msg in enumerate(conversation):
-            if msg.role == "user":
-                last_user_idx = i
+        return _split_last_turn(conversation)
 
-        if last_user_idx >= 0:
-            return (
-                conversation[: last_user_idx + 1],
-                conversation[last_user_idx + 1 :],
-            )
-        return [], list(conversation)
-
-    def _split_full(self) -> tuple[list[Message], list[Message]]:
-        """Split after the first user message (evaluates whole trajectory)."""
-        first_user_idx = -1
-        for i, msg in enumerate(self.conversation):
-            if msg.role == "user":
-                first_user_idx = i
-                break
-
-        if first_user_idx >= 0:
-            return (
-                self.conversation[: first_user_idx + 1],
-                self.conversation[first_user_idx + 1 :],
-            )
-        return [], list(self.conversation)
-
-    @classmethod
+    @staticmethod
     def per_turn_items(
-        cls,
         conversation: list[Message],
         *,
         tools: list[FunctionTool] | None = None,
@@ -278,7 +276,7 @@ class EvalItem:
             next_ui = user_indices[turn_idx + 1] if turn_idx + 1 < len(user_indices) else len(conversation)
 
             items.append(
-                cls(
+                EvalItem(
                     conversation=conversation[:next_ui],
                     tools=tools,
                     context=context,
@@ -356,7 +354,6 @@ class EvalItemResult:
         return self.status == "fail"
 
 
-@dataclass
 class EvalResults:
     """Results from an evaluation run by a single provider.
 
@@ -366,7 +363,7 @@ class EvalResults:
         run_id: The evaluation run ID (provider-specific).
         status: Run status - ``"completed"``, ``"failed"``, ``"canceled"``,
             or ``"timeout"`` if polling exceeded the deadline.
-        result_counts: Pass/fail/error counts, populated when completed.
+        result_counts: Pass/fail counts, populated when completed.
         report_url: URL to view results in the provider's portal.
         error: Error details when the run failed.
         per_evaluator: Per-evaluator result counts, keyed by evaluator name.
@@ -399,16 +396,30 @@ class EvalResults:
                 print(f"  {name}: {sub.passed}/{sub.total}")
     """
 
-    provider: str
-    eval_id: str
-    run_id: str
-    status: str
-    result_counts: dict[str, int] | None = None
-    report_url: str | None = None
-    error: str | None = None
-    per_evaluator: dict[str, dict[str, int]] = field(default_factory=lambda: dict[str, dict[str, int]]())
-    items: list[EvalItemResult] = field(default_factory=lambda: list[EvalItemResult]())
-    sub_results: dict[str, EvalResults] = field(default_factory=lambda: dict[str, EvalResults]())
+    def __init__(
+        self,
+        *,
+        provider: str,
+        eval_id: str = "",
+        run_id: str = "",
+        status: str = "completed",
+        result_counts: dict[str, int] | None = None,
+        report_url: str | None = None,
+        error: str | None = None,
+        per_evaluator: dict[str, dict[str, int]] | None = None,
+        items: list[EvalItemResult] | None = None,
+        sub_results: dict[str, EvalResults] | None = None,
+    ) -> None:
+        self.provider = provider
+        self.eval_id = eval_id
+        self.run_id = run_id
+        self.status = status
+        self.result_counts = result_counts
+        self.report_url = report_url
+        self.error = error
+        self.per_evaluator = per_evaluator or {}
+        self.items = items or []
+        self.sub_results = sub_results or {}
 
     @property
     def passed(self) -> int:
@@ -421,54 +432,50 @@ class EvalResults:
         return (self.result_counts or {}).get("failed", 0)
 
     @property
-    def errored(self) -> int:
-        """Number of errored results."""
-        return (self.result_counts or {}).get("errored", 0)
-
-    @property
     def total(self) -> int:
-        """Total number of results (passed + failed + errored)."""
-        return self.passed + self.failed + self.errored
+        """Total number of results (passed + failed)."""
+        return self.passed + self.failed
 
     @property
     def all_passed(self) -> bool:
-        """Whether all results passed with no failures or errors.
+        """Whether all results passed with no failures.
 
         For workflow evals with sub-agents, checks that all sub-results passed.
         Returns ``False`` if the run did not complete successfully.
         """
         if self.status not in ("completed",):
             return False
-        own_passed = self.failed == 0 and self.errored == 0 and self.total > 0 if self.result_counts else True
+        own_passed = self.failed == 0 and self.total > 0 if self.result_counts else True
         if self.sub_results:
             return own_passed and all(sub.all_passed for sub in self.sub_results.values())
-        # Leaf result - check own counts
-        return self.failed == 0 and self.errored == 0 and self.total > 0
+        return self.failed == 0 and self.total > 0
 
-    def assert_passed(self, msg: str | None = None) -> None:
-        """Assert all results passed. Raises ``AssertionError`` for CI use.
+    def raise_for_status(self, msg: str | None = None) -> None:
+        """Raise ``EvalNotPassedError`` if any results failed.
+
+        Similar to ``requests.Response.raise_for_status()`` — call after
+        evaluation to verify quality in CI pipelines or test suites.
 
         Args:
             msg: Optional custom failure message.
+
+        Raises:
+            EvalNotPassedError: When any results failed.
         """
         if not self.all_passed:
             detail = msg or (
                 f"Eval run {self.run_id} {self.status}: "
-                f"{self.passed} passed, {self.failed} failed, {self.errored} errored."
+                f"{self.passed} passed, {self.failed} failed."
             )
             if self.report_url:
                 detail += f" See {self.report_url} for details."
             if self.error:
                 detail += f" Error: {self.error}"
-            errored = [i for i in self.items if i.is_error]
-            if errored:
-                errors = [f"{i.item_id}: {i.error_code or 'unknown'}" for i in errored[:3]]
-                detail += f" Errored items: {'; '.join(errors)}."
             if self.sub_results:
                 failed = [name for name, sub in self.sub_results.items() if not sub.all_passed]
                 if failed:
                     detail += f" Failed: {', '.join(failed)}."
-            raise AssertionError(detail)
+            raise EvalNotPassedError(detail)
 
 
 # endregion
@@ -503,7 +510,7 @@ class Evaluator(Protocol):
         self,
         items: Sequence[EvalItem],
         *,
-        eval_name: str = "Agent Framework Eval",
+        eval_name: str,
     ) -> EvalResults:
         """Evaluate a batch of items and return results.
 
@@ -827,7 +834,7 @@ class CheckResult:
     check_name: str
 
 
-EvalCheck = Callable[[EvalItem], CheckResult | Any]
+EvalCheck = Callable[[EvalItem], CheckResult | Awaitable[CheckResult]]
 """A check function that takes an ``EvalItem`` and returns a ``CheckResult``.
 
 Both sync and async functions are supported.  Async checks should return
@@ -1315,7 +1322,7 @@ class LocalEvaluator:
             results = await evaluate_agent(
                 agent=agent,
                 queries=queries,
-                evaluators=[local, FoundryEvals(project_client=client, model_deployment="gpt-4o")],
+                evaluators=[local, FoundryEvals(project_client=client, model="gpt-4o")],
             )
     """
 
@@ -1398,7 +1405,7 @@ class LocalEvaluator:
 
 async def evaluate_agent(
     *,
-    agent: Any | None = None,
+    agent: SupportsAgentRun | None = None,
     queries: str | Sequence[str] | None = None,
     expected_output: str | Sequence[str] | None = None,
     expected_tool_calls: Sequence[ExpectedToolCall] | Sequence[Sequence[ExpectedToolCall]] | None = None,
@@ -1599,46 +1606,6 @@ async def evaluate_agent(
     return await _run_evaluators(evaluators, items, eval_name=name)
 
 
-async def evaluate_response(
-    *,
-    response: AgentResponse[Any] | Sequence[AgentResponse[Any]],
-    query: str | Message | Sequence[str | Message] | None = None,
-    agent: Any | None = None,
-    evaluators: Evaluator | Sequence[Evaluator],
-    eval_name: str = "Agent Framework Response Eval",
-) -> list[EvalResults]:
-    """Deprecated: use ``evaluate_agent(responses=...)`` instead.
-
-    Evaluate one or more agent responses that have already been produced.
-    This is a thin wrapper that delegates to ``evaluate_agent``.
-    """
-    import warnings
-
-    warnings.warn(
-        "evaluate_response() is deprecated; use evaluate_agent(responses=...) instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    # Normalize queries for evaluate_agent (it expects Sequence[str] | None)
-    responses_list = [response] if isinstance(response, AgentResponse) else list(response)
-    if query is not None:
-        queries_norm: list[str] = [str(q) for q in _normalize_queries(query, len(responses_list))]
-    else:
-        # Extract user messages from responses as queries
-        queries_norm = []
-        for resp in responses_list:
-            user_texts = [m.text for m in resp.messages if m.role == "user" and m.text]
-            queries_norm.append(" ".join(user_texts).strip() or "(no query)")
-
-    return await evaluate_agent(
-        agent=agent,
-        responses=response,
-        queries=queries_norm,
-        evaluators=evaluators,
-        eval_name=eval_name,
-    )
-
-
 async def evaluate_workflow(
     *,
     workflow: Workflow,
@@ -1687,7 +1654,7 @@ async def evaluate_workflow(
 
         from agent_framework_azure_ai import FoundryEvals
 
-        evals = FoundryEvals(project_client=client, model_deployment="gpt-4o")
+        evals = FoundryEvals(project_client=client, model="gpt-4o")
         result = await workflow.run("Plan a trip to Paris")
 
         eval_results = await evaluate_workflow(
@@ -1791,7 +1758,6 @@ async def evaluate_workflow(
             # Aggregate from sub-results
             total_passed = sum(s.passed for s in sub_results.values())
             total_failed = sum(s.failed for s in sub_results.values())
-            total_errored = sum(s.errored for s in sub_results.values())
             all_completed = all(s.status == "completed" for s in sub_results.values())
             overall_result = EvalResults(
                 provider=ev.name,
@@ -1801,7 +1767,6 @@ async def evaluate_workflow(
                 result_counts={
                     "passed": total_passed,
                     "failed": total_failed,
-                    "errored": total_errored,
                 },
             )
         else:

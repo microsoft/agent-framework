@@ -73,8 +73,8 @@ async def main() -> None:
             for score in item.scores:
                 print(f"    {score.name}: {'✓' if score.passed else '✗'}")
 
-    # Use in CI: will raise AssertionError if any check fails
-    # results[0].assert_passed()
+    # Use in CI: will raise EvalNotPassedError if any check fails
+    # results[0].raise_for_status()
 
 
 if __name__ == "__main__":

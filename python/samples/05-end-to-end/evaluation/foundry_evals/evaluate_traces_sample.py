@@ -59,7 +59,7 @@ async def main() -> None:
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.GROUNDEDNESS, FoundryEvals.TOOL_CALL_ACCURACY],
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
     )
 
     print(f"Status: {results.status}")
@@ -85,7 +85,7 @@ async def main() -> None:
         response_ids=response_ids,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
     )
 
     print(f"Status: {results.status}")
@@ -96,7 +96,7 @@ async def main() -> None:
     #     agent_id="travel-bot",
     #     evaluators=[FoundryEvals.INTENT_RESOLUTION, FoundryEvals.TASK_ADHERENCE],
     #     client=chat_client,
-    #     model_deployment=deployment,
+    #     model=deployment,
     #     lookback_hours=24,
     # )
 

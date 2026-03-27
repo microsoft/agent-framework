@@ -256,7 +256,7 @@ async def run_self_reflection_batch(
     )
     evals = FoundryEvals(
         client=judge_client,
-        model_deployment=judge_model,
+        model=judge_model,
         evaluators=[FoundryEvals.GROUNDEDNESS],
     )
 

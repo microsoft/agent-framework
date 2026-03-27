@@ -83,7 +83,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[researcher, planner]).build()
 
     # 4. Create the evaluator — provider config goes here, once
-    evals = FoundryEvals(client=client, model_deployment=deployment)
+    evals = FoundryEvals(client=client, model=deployment)
 
     # =========================================================================
     # Pattern 1: Post-hoc — evaluate a workflow run you already did
@@ -132,7 +132,7 @@ async def main() -> None:
         ],
         evaluators=FoundryEvals(
             client=client,
-            model_deployment=deployment,
+            model=deployment,
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TASK_ADHERENCE],
         ),
     )

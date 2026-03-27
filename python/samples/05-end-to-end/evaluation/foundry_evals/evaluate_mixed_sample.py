@@ -101,7 +101,7 @@ async def main() -> None:
     print("Pattern 2: Foundry evaluation only")
     print("=" * 60)
 
-    foundry = FoundryEvals(client=chat_client, model_deployment=deployment)
+    foundry = FoundryEvals(client=chat_client, model=deployment)
 
     results = await evaluate_agent(
         agent=agent,
@@ -116,7 +116,7 @@ async def main() -> None:
         if r.all_passed:
             print("✓ All passed")
         else:
-            print(f"✗ {r.failed} failed, {r.errored} errored")
+            print(f"✗ {r.failed} failed")
 
     # =========================================================================
     # Pattern 3: Mixed — local + Foundry in one call
@@ -133,7 +133,7 @@ async def main() -> None:
     )
 
     # Foundry: deep quality assessment
-    foundry = FoundryEvals(client=chat_client, model_deployment=deployment)
+    foundry = FoundryEvals(client=chat_client, model=deployment)
 
     # Pass both as a list — returns one EvalResults per provider
     results = await evaluate_agent(

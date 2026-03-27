@@ -836,39 +836,6 @@ class TestNumRepetitions:
         assert results[0].total == 2
         assert results[0].passed == 2
 
-    @pytest.mark.asyncio
-    async def test_evaluate_response_deprecation_warning(self):
-        """evaluate_response() emits DeprecationWarning and delegates."""
-        import warnings
-        from unittest.mock import MagicMock
-
-        from agent_framework._evaluation import evaluate_response
-        from agent_framework._types import AgentResponse, Message
-
-        mock_agent = MagicMock()
-        mock_agent.name = "test"
-        mock_agent.default_options = {}
-
-        response = AgentResponse(messages=[Message("assistant", ["reply"])])
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            results = await evaluate_response(
-                response=response,
-                query="test query",
-                agent=mock_agent,
-                evaluators=LocalEvaluator(keyword_check("reply")),
-            )
-            # Check deprecation warning was emitted
-            deprecation_warnings = [x for x in w if issubclass(x.category, DeprecationWarning)]
-            assert len(deprecation_warnings) == 1
-            assert "evaluate_response" in str(deprecation_warnings[0].message)
-
-        # Check delegation to evaluate_agent worked
-        assert len(results) == 1
-        assert results[0].total == 1
-        assert results[0].passed == 1
-
 
 # ---------------------------------------------------------------------------
 # r3 review: additional test coverage

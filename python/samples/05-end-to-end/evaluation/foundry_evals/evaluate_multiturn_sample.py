@@ -117,7 +117,7 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         # conversation_split defaults to LAST_TURN
     ).evaluate([item], eval_name="Split Strategy: LAST_TURN")
@@ -141,7 +141,7 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         conversation_split=ConversationSplit.FULL,
     ).evaluate([item], eval_name="Split Strategy: FULL")
@@ -169,7 +169,7 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
     ).evaluate(items, eval_name="Split Strategy: Per-Turn")
 

@@ -63,7 +63,7 @@ async def main() -> None:
     )
 
     # 3. Create the evaluator — provider config goes here, once
-    evals = FoundryEvals(client=chat_client, model_deployment=deployment)
+    evals = FoundryEvals(client=chat_client, model=deployment)
 
     # =========================================================================
     # Pattern 1: evaluate_agent(responses=...) — evaluate a response you already have
@@ -83,7 +83,7 @@ async def main() -> None:
         queries=[query],
         evaluators=FoundryEvals(
             client=chat_client,
-            model_deployment=deployment,
+            model=deployment,
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         ),
     )
@@ -95,7 +95,7 @@ async def main() -> None:
         if r.all_passed:
             print("✓ All passed")
         else:
-            print(f"✗ {r.failed} failed, {r.errored} errored")
+            print(f"✗ {r.failed} failed")
 
     # =========================================================================
     # Pattern 2a: evaluate_agent() — batch test queries
@@ -123,7 +123,7 @@ async def main() -> None:
         if r.all_passed:
             print("✓ All passed")
         else:
-            print(f"✗ {r.failed} failed, {r.errored} errored")
+            print(f"✗ {r.failed} failed")
 
     # =========================================================================
     # Pattern 2b: evaluate_agent() — with conversation split override
@@ -152,7 +152,7 @@ async def main() -> None:
         if r.all_passed:
             print("✓ All passed")
         else:
-            print(f"✗ {r.failed} failed, {r.errored} errored")
+            print(f"✗ {r.failed} failed")
 
     # =========================================================================
     # Pattern 3: FoundryEvals.evaluate() — manual control
@@ -183,7 +183,7 @@ async def main() -> None:
     # Submit directly to the evaluator
     tool_evals = FoundryEvals(
         client=chat_client,
-        model_deployment=deployment,
+        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
     )
     results = await tool_evals.evaluate(items, eval_name="Travel Assistant Eval")

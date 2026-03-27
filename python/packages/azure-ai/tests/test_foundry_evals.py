@@ -15,6 +15,7 @@ from agent_framework._evaluation import (
     AgentEvalConverter,
     ConversationSplit,
     EvalItem,
+    EvalNotPassedError,
     EvalResults,
     _extract_agent_eval_data,
     _extract_overall_query,
@@ -727,29 +728,29 @@ class TestBuildItemSchema:
 class TestFoundryEvals:
     def test_constructor_with_openai_client(self) -> None:
         mock_client = MagicMock()
-        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model="gpt-4o")
         assert fe.name == "Microsoft Foundry"
 
     def test_constructor_with_project_client(self) -> None:
         mock_oai = MagicMock(spec=AsyncOpenAI)
         mock_project = MagicMock()
         mock_project.get_openai_client.return_value = mock_oai
-        fe = FoundryEvals(project_client=mock_project, model_deployment="gpt-4o")
+        fe = FoundryEvals(project_client=mock_project, model="gpt-4o")
         assert fe.name == "Microsoft Foundry"
         mock_project.get_openai_client.assert_called_once()
 
     def test_constructor_no_client_raises(self) -> None:
         with pytest.raises(ValueError, match="Provide either"):
-            FoundryEvals(model_deployment="gpt-4o")
+            FoundryEvals(model="gpt-4o")
 
     def test_name_property(self) -> None:
-        fe = FoundryEvals(client=MagicMock(), model_deployment="gpt-4o")
+        fe = FoundryEvals(client=MagicMock(), model="gpt-4o")
         assert fe.name == "Microsoft Foundry"
 
     def test_evaluators_passed_in_constructor(self) -> None:
         fe = FoundryEvals(
             client=MagicMock(),
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=["relevance", "coherence"],
         )
         assert fe._evaluators == ["relevance", "coherence"]
@@ -789,7 +790,7 @@ class TestFoundryEvals:
 
         fe = FoundryEvals(
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE],
         )
         results = await fe.evaluate(items)
@@ -840,7 +841,7 @@ class TestFoundryEvals:
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
-        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model="gpt-4o")
         await fe.evaluate([EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])])
 
         # Verify default evaluators were used
@@ -876,7 +877,7 @@ class TestFoundryEvals:
             ),
         ]
 
-        fe = FoundryEvals(client=mock_client, model_deployment="gpt-4o")
+        fe = FoundryEvals(client=mock_client, model="gpt-4o")
         await fe.evaluate(items)
 
         run_call = mock_client.evals.runs.create.call_args
@@ -913,7 +914,7 @@ class TestFoundryEvals:
 
         fe = FoundryEvals(
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=[FoundryEvals.TOOL_CALL_ACCURACY],
         )
         await fe.evaluate(items)
@@ -943,7 +944,7 @@ class TestFoundryEvals:
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
 
-        fe = FoundryEvals(project_client=mock_project, model_deployment="gpt-4o")
+        fe = FoundryEvals(project_client=mock_project, model="gpt-4o")
         results = await fe.evaluate([EvalItem(conversation=[Message("user", ["Hi"]), Message("assistant", ["Hello"])])])
 
         assert results.status == "completed"
@@ -1065,7 +1066,6 @@ class TestEvalResults:
         assert r.all_passed
         assert r.passed == 3
         assert r.failed == 0
-        assert r.errored == 0
         assert r.total == 3
 
     def test_all_passed_false_on_failure(self) -> None:
@@ -1109,7 +1109,7 @@ class TestEvalResults:
         )
         assert not r.all_passed
 
-    def test_assert_passed_succeeds(self) -> None:
+    def test_raise_for_status_succeeds(self) -> None:
         r = EvalResults(
             provider="test",
             eval_id="e",
@@ -1117,9 +1117,9 @@ class TestEvalResults:
             status="completed",
             result_counts={"passed": 1, "failed": 0, "errored": 0},
         )
-        r.assert_passed()  # should not raise
+        r.raise_for_status()  # should not raise
 
-    def test_assert_passed_raises(self) -> None:
+    def test_raise_for_status_raises(self) -> None:
         r = EvalResults(
             provider="test",
             eval_id="e",
@@ -1127,13 +1127,13 @@ class TestEvalResults:
             status="completed",
             result_counts={"passed": 1, "failed": 1, "errored": 0},
         )
-        with pytest.raises(AssertionError, match="1 passed, 1 failed"):
-            r.assert_passed()
+        with pytest.raises(EvalNotPassedError, match="1 passed, 1 failed"):
+            r.raise_for_status()
 
-    def test_assert_passed_custom_message(self) -> None:
+    def test_raise_for_status_custom_message(self) -> None:
         r = EvalResults(provider="test", eval_id="e", run_id="r", status="failed")
-        with pytest.raises(AssertionError, match="custom error"):
-            r.assert_passed("custom error")
+        with pytest.raises(EvalNotPassedError, match="custom error"):
+            r.raise_for_status("custom error")
 
     def test_none_result_counts(self) -> None:
         r = EvalResults(provider="test", eval_id="e", run_id="r", status="completed")
@@ -1188,7 +1188,7 @@ class TestEvaluateAgentWithResponses:
         with pytest.raises(ValueError, match="Provide 'queries' alongside 'responses'"):
             await evaluate_agent(
                 responses=response,
-                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             )
 
     async def test_fallback_to_dataset_with_query(self) -> None:
@@ -1215,7 +1215,7 @@ class TestEvaluateAgentWithResponses:
         results = await evaluate_agent(
             responses=response,
             queries=["What's the weather?"],
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
         )
 
         assert results[0].status == "completed"
@@ -1260,7 +1260,7 @@ class TestEvaluateAgentWithResponses:
             responses=response,
             queries=["Do the thing"],
             agent=mock_agent,
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
         )
 
         assert results[0].status == "completed"
@@ -1300,7 +1300,7 @@ class TestEvaluateAgentWithResponses:
         results = await evaluate_agent(
             responses=responses,
             queries=["Question 1", "Question 2"],
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
         )
 
         assert results[0].passed == 2
@@ -1323,7 +1323,7 @@ class TestEvaluateAgentWithResponses:
             await evaluate_agent(
                 responses=responses,
                 queries=["Q1", "Q2", "Q3"],
-                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             )
 
     async def test_tool_evaluators_with_query_and_agent_uses_dataset_path(self) -> None:
@@ -1358,7 +1358,7 @@ class TestEvaluateAgentWithResponses:
 
         fe = FoundryEvals(
             client=mock_oai,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=[FoundryEvals.TOOL_CALL_ACCURACY],
         )
 
@@ -1441,7 +1441,7 @@ class TestEvalResultsSubResults:
         )
         assert parent.all_passed
 
-    def test_assert_passed_includes_failed_agents(self) -> None:
+    def test_raise_for_status_includes_failed_agents(self) -> None:
         parent = EvalResults(
             provider="test",
             eval_id="e1",
@@ -1465,8 +1465,8 @@ class TestEvalResultsSubResults:
                 ),
             },
         )
-        with pytest.raises(AssertionError, match="bad-agent"):
-            parent.assert_passed()
+        with pytest.raises(EvalNotPassedError, match="bad-agent"):
+            parent.raise_for_status()
 
 
 # ---------------------------------------------------------------------------
@@ -1632,7 +1632,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             include_overall=False,
         )
 
@@ -1662,7 +1662,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             queries=["Test query"],
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             include_overall=False,
         )
 
@@ -1691,7 +1691,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
         )
 
         # Should have per-agent sub_results AND overall
@@ -1707,7 +1707,7 @@ class TestEvaluateWorkflow:
         with pytest.raises(ValueError, match="Provide either"):
             await evaluate_workflow(
                 workflow=mock_workflow,
-                evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+                evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             )
 
     async def test_per_agent_only(self) -> None:
@@ -1728,7 +1728,7 @@ class TestEvaluateWorkflow:
         results = await evaluate_workflow(
             workflow=mock_workflow,
             workflow_result=wf_result,
-            evaluators=FoundryEvals(client=mock_oai, model_deployment="gpt-4o"),
+            evaluators=FoundryEvals(client=mock_oai, model="gpt-4o"),
             include_overall=False,
         )
 
@@ -1756,7 +1756,7 @@ class TestEvaluateWorkflow:
 
         fe = FoundryEvals(
             client=mock_oai,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         )
 
@@ -1818,7 +1818,7 @@ class TestEvaluateWorkflow:
 
         fe = FoundryEvals(
             client=mock_oai,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
         )
 
@@ -1931,7 +1931,7 @@ class TestEvalResultsWithItems:
         assert sum(1 for i in results.items if i.is_failed) == 1
         assert sum(1 for i in results.items if i.is_error) == 1
 
-    def test_assert_passed_includes_errored_items(self) -> None:
+    def test_raise_for_status_includes_errored_items(self) -> None:
         from agent_framework._evaluation import EvalItemResult
 
         results = EvalResults(
@@ -1945,8 +1945,8 @@ class TestEvalResultsWithItems:
                 EvalItemResult(item_id="i2", status="error", error_code="TimeoutError"),
             ],
         )
-        with pytest.raises(AssertionError, match="Errored items: i1: QueryExtractionError"):
-            results.assert_passed()
+        with pytest.raises(EvalNotPassedError, match="Errored items: i1: QueryExtractionError"):
+            results.raise_for_status()
 
 
 # ---------------------------------------------------------------------------
@@ -2130,7 +2130,7 @@ class TestEvaluateTraces:
         with pytest.raises(ValueError, match="Provide at least one of"):
             await evaluate_traces(
                 client=mock_client,
-                model_deployment="gpt-4o",
+                model="gpt-4o",
             )
 
     async def test_response_ids_path(self) -> None:
@@ -2166,7 +2166,7 @@ class TestEvaluateTraces:
         results = await evaluate_traces(
             response_ids=["resp_abc", "resp_def"],
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
         )
         assert results.status == "completed"
         assert results.eval_id == "eval_tr"
@@ -2205,7 +2205,7 @@ class TestEvaluateTraces:
         results = await evaluate_traces(
             trace_ids=["trace_1"],
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
         )
         assert results.status == "completed"
 
@@ -2246,7 +2246,7 @@ class TestEvaluateFoundryTarget:
             target={"type": "azure_ai_agent", "name": "my-agent"},
             test_queries=["Query 1", "Query 2"],
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
         )
         assert results.status == "completed"
         assert results.eval_id == "eval_tgt"
@@ -2425,7 +2425,7 @@ class TestEvaluateTracesAgentId:
         results = await evaluate_traces(
             agent_id="my-agent",
             client=mock_client,
-            model_deployment="gpt-4o",
+            model="gpt-4o",
             lookback_hours=24,
         )
         assert results.status == "completed"
@@ -2467,5 +2467,5 @@ class TestEvaluateFoundryTargetValidation:
                 target={"name": "my-agent"},  # missing "type"
                 test_queries=["Hello"],
                 client=mock_client,
-                model_deployment="gpt-4o",
+                model="gpt-4o",
             )
