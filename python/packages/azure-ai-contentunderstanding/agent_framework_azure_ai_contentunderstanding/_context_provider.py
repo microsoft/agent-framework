@@ -186,6 +186,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         ``filename`` (str):
             The document key used for tracking, status, and LLM references.
             Without a filename, a UUID-based key is generated.
+            Must be unique within a session — uploading a file with a
+            duplicate filename will be rejected and the file will not be
+            analyzed.
 
         ``analyzer_id`` (str):
             Per-file analyzer override. Takes priority over the provider-level
