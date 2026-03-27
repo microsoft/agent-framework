@@ -1273,4 +1273,89 @@ async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_
     assert len(response.messages) == 1
 
 
+async def test_streaming_terminal_task_artifacts_are_emitted_when_terminal_event_has_no_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that terminal task artifacts are still emitted when the final status event has no message."""
+    terminal_task = Task(
+        id="task-art-final",
+        context_id="ctx-art-final",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        artifacts=[
+            Artifact(
+                artifact_id="artifact-final",
+                parts=[Part(root=TextPart(text="Final artifact"))],
+            )
+        ],
+    )
+    terminal_event = TaskStatusUpdateEvent(
+        task_id="task-art-final",
+        context_id="ctx-art-final",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        final=True,
+    )
+    mock_a2a_client.responses.append((terminal_task, terminal_event))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].text == "Final artifact"
+    assert updates[0].message_id == "artifact-final"
+
+
+async def test_streaming_terminal_task_only_emits_unstreamed_artifacts(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that the terminal task only emits artifacts that were not already streamed incrementally."""
+    working_task = Task(id="task-art-mixed", context_id="ctx-art-mixed", status=TaskStatus(state=TaskState.working))
+    streamed_chunk = TaskArtifactUpdateEvent(
+        task_id="task-art-mixed",
+        context_id="ctx-art-mixed",
+        artifact=Artifact(
+            artifact_id="artifact-streamed",
+            parts=[Part(root=TextPart(text="Hello"))],
+        ),
+        append=False,
+    )
+    terminal_task = Task(
+        id="task-art-mixed",
+        context_id="ctx-art-mixed",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        artifacts=[
+            Artifact(
+                artifact_id="artifact-streamed",
+                parts=[Part(root=TextPart(text="Hello"))],
+            ),
+            Artifact(
+                artifact_id="artifact-final",
+                parts=[Part(root=TextPart(text="Goodbye"))],
+            ),
+        ],
+    )
+    terminal_event = TaskStatusUpdateEvent(
+        task_id="task-art-mixed",
+        context_id="ctx-art-mixed",
+        status=TaskStatus(state=TaskState.completed, message=None),
+        final=True,
+    )
+
+    mock_a2a_client.responses.extend(
+        [
+            (working_task, streamed_chunk),
+            (terminal_task, terminal_event),
+        ]
+    )
+
+    stream = a2a_agent.run("Hello", stream=True)
+    updates: list[AgentResponseUpdate] = []
+    async for update in stream:
+        updates.append(update)
+    response = await stream.get_final_response()
+
+    assert [update.text for update in updates] == ["Hello", "Goodbye"]
+    assert [message.text for message in response.messages] == ["Hello", "Goodbye"]
+
+
 # endregion

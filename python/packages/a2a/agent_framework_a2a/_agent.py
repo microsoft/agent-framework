@@ -365,6 +365,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
             )
 
         all_updates: list[AgentResponseUpdate] = []
+        streamed_artifact_ids_by_task: dict[str, set[str]] = {}
         async for item in a2a_stream:
             if isinstance(item, A2AMessage):
                 # Process A2A Message
@@ -379,12 +380,20 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 yield update
             elif isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], Task):
                 task, update_event = item
-                for update in self._updates_from_task(
+                updates = self._updates_from_task(
                     task,
                     update_event=update_event,
                     background=background,
                     emit_intermediate=emit_intermediate,
+                    streamed_artifact_ids=streamed_artifact_ids_by_task.get(task.id),
+                )
+                if isinstance(update_event, TaskArtifactUpdateEvent) and any(
+                    update.raw_representation is update_event for update in updates
                 ):
+                    streamed_artifact_ids_by_task.setdefault(task.id, set()).add(update_event.artifact.artifact_id)
+                if task.status.state in TERMINAL_TASK_STATES:
+                    streamed_artifact_ids_by_task.pop(task.id, None)
+                for update in updates:
                     all_updates.append(update)
                     yield update
             else:
@@ -407,6 +416,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         update_event: TaskStatusUpdateEvent | TaskArtifactUpdateEvent | None = None,
         background: bool = False,
         emit_intermediate: bool = False,
+        streamed_artifact_ids: set[str] | None = None,
     ) -> list[AgentResponseUpdate]:
         """Convert an A2A Task into AgentResponseUpdate(s).
 
@@ -423,11 +433,15 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         if emit_intermediate and update_event is not None:
             if event_updates := self._updates_from_task_update_event(update_event):
                 return event_updates
-            if status.state in TERMINAL_TASK_STATES:
-                return []
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
+            if task.artifacts is not None and streamed_artifact_ids:
+                task_messages = [
+                    message
+                    for message in task_messages
+                    if getattr(message.raw_representation, "artifact_id", None) not in streamed_artifact_ids
+                ]
             if task_messages:
                 return [
                     AgentResponseUpdate(
@@ -439,6 +453,8 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                     )
                     for message in task_messages
                 ]
+            if task.artifacts is not None:
+                return []
             return [AgentResponseUpdate(contents=[], role="assistant", response_id=task.id, raw_representation=task)]
 
         if background and status.state in IN_PROGRESS_TASK_STATES:
