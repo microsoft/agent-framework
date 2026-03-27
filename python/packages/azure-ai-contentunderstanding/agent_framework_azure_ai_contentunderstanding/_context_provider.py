@@ -333,6 +333,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                         "Error while uploading document '%s' to vector store; dropping from pending list.",
                         upload_key,
                     )
+                    context.extend_instructions(
+                        self.source_id,
+                        f"Document '{upload_key}' was analyzed but failed to upload "
+                        "to the vector store. The document content is not available for search.",
+                    )
             self._pending_uploads = remaining_uploads
 
         # 2. Detect CU-supported file attachments, strip them from input, and return for analysis
@@ -755,7 +760,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     self.source_id,
                     f"Document '{entry['filename']}' analysis is now complete."
                     + (
-                        " Use file_search to retrieve relevant sections."
+                        " The document is being indexed in the vector store and will become"
+                        " searchable via file_search shortly."
                         if self.file_search
                         else " The content is provided above."
                     ),
