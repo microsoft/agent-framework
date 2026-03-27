@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -41,8 +42,21 @@ from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field
 from pytest import fixture
 
-from agent_framework_azure_ai import AzureAIClient, AzureAISettings
-from agent_framework_azure_ai._shared import from_azure_ai_tools
+from agent_framework_azure_ai import AzureAIClient, AzureAISettings  # noqa: E402
+from agent_framework_azure_ai._shared import from_azure_ai_tools  # noqa: E402
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"RawAzureAIClient is deprecated\..*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"AzureAIClient is deprecated\..*",
+    category=DeprecationWarning,
+)
+
+pytestmark = pytest.mark.filterwarnings("ignore:AzureAIClient is deprecated\\..*:DeprecationWarning")
 
 
 @pytest.fixture

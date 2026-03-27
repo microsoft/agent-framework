@@ -571,4 +571,25 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
     if format_type in {"json_object", "text"}:
         return {"type": format_type}
 
+    # Handle raw JSON schemas (e.g. {"type": "object", "properties": {...}})
+    # by wrapping them in the expected json_schema envelope.
+    # Detect by checking for JSON Schema primitive types or known schema keywords.
+    json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+    json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+    if format_type in json_schema_primitive_types or (
+        format_type is None and any(k in response_format for k in json_schema_keywords)
+    ):
+        schema = dict(response_format)
+        if schema.get("type") == "object" and "additionalProperties" not in schema:
+            schema["additionalProperties"] = False
+        # Pop title from schema since OpenAI strict mode rejects unknown keys;
+        # use it as the schema name in the envelope instead.
+        name = str(schema.pop("title", None) or "response")
+        return {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+            "strict": True,
+        }
+
     raise IntegrationInvalidRequestException("Unsupported response_format provided for Azure AI client.")

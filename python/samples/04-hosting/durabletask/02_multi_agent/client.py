@@ -8,7 +8,7 @@ each with their own specialized capabilities and tools.
 
 Prerequisites:
 - The worker must be running with both agents registered
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME when running the worker
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Durable Task Scheduler must be running
 """

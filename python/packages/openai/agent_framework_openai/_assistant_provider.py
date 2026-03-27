@@ -15,7 +15,7 @@ from openai import AsyncOpenAI
 from openai.types.beta.assistant import Assistant
 from pydantic import BaseModel
 
-from ._assistants_client import OpenAIAssistantsClient
+from ._assistants_client import OpenAIAssistantsClient  # type: ignore[reportDeprecated]
 from ._shared import OpenAISettings, from_assistant_tools, to_assistant_tools
 
 if TYPE_CHECKING:
@@ -538,7 +538,7 @@ class OpenAIAssistantProvider(Generic[OptionsCoT]):
             A configured Agent instance.
         """
         # Create the chat client with the assistant
-        client = OpenAIAssistantsClient(
+        client = OpenAIAssistantsClient(  # type: ignore[reportDeprecated]
             model=assistant.model,
             assistant_id=assistant.id,
             assistant_name=assistant.name,

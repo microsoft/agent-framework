@@ -27,6 +27,10 @@ agent_framework_openai/
 
 All clients follow the Raw + Full-Featured pattern (e.g., `RawOpenAIChatClient` + `OpenAIChatClient`).
 
+The generic OpenAI clients support both OpenAI and Azure OpenAI routing. Precedence is:
+explicit Azure inputs (`credential`, `azure_endpoint`, `api_version`) → OpenAI API key
+(`OPENAI_API_KEY`) → Azure environment fallback (`AZURE_OPENAI_*`).
+
 ## Dependencies
 
 - `agent-framework-core` — core abstractions

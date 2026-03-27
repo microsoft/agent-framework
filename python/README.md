@@ -47,7 +47,7 @@ Set as environment variables, or create a .env file at your project root:
 
 ```bash
 OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL_ID=...
+OPENAI_MODEL=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
@@ -57,15 +57,25 @@ FOUNDRY_PROJECT_ENDPOINT=...
 FOUNDRY_MODEL=...
 ```
 
+For the generic OpenAI clients (`OpenAIChatClient` and `OpenAIChatCompletionClient`), configuration
+resolves in this order:
+
+1. Explicit Azure inputs such as `credential` or `azure_endpoint`
+2. `OPENAI_API_KEY` / explicit OpenAI API-key parameters
+3. Azure environment fallback such as `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+
+This means mixed shells default to OpenAI when `OPENAI_API_KEY` is present. To force Azure routing,
+pass an explicit Azure input such as `credential=AzureCliCredential()`.
+
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
 
 ```python
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
-client = AzureOpenAIChatClient(
+client = OpenAIChatClient(
     api_key='',
-    endpoint='',
-    deployment_name='',
+    azure_endpoint='',
+    model='',
     api_version='',
 )
 ```

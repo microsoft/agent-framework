@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -398,6 +398,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         # from_azure_ai_tools converts hosted tools (MCP, code interpreter, file search, web search)
         # but function tools need the actual implementations from provided_tools
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", details.definition.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -405,9 +407,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             name=details.name,
             description=details.description,
             instructions=details.definition.instructions,
-            model_id=details.definition.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

@@ -404,6 +404,32 @@ def test_convert_response_format_json_schema_missing_schema_raises() -> None:
         _convert_response_format({"type": "json_schema", "json_schema": {}})
 
 
+def test_convert_response_format_raw_json_schema_with_properties() -> None:
+    """Test raw JSON schema with properties is wrapped in json_schema envelope."""
+    result = _convert_response_format({"type": "object", "properties": {"x": {"type": "string"}}, "title": "MyOutput"})
+
+    assert result["type"] == "json_schema"
+    assert result["name"] == "MyOutput"
+    assert result["strict"] is True
+    assert result["schema"]["additionalProperties"] is False
+    assert "title" not in result["schema"]
+
+
+def test_convert_response_format_raw_json_schema_no_title() -> None:
+    """Test raw JSON schema without title defaults name to 'response'."""
+    result = _convert_response_format({"type": "object", "properties": {"x": {"type": "string"}}})
+
+    assert result["name"] == "response"
+
+
+def test_convert_response_format_raw_json_schema_with_anyof() -> None:
+    """Test raw JSON schema with anyOf keyword is detected."""
+    result = _convert_response_format({"anyOf": [{"type": "string"}, {"type": "number"}]})
+
+    assert result["type"] == "json_schema"
+    assert result["strict"] is True
+
+
 def test_from_azure_ai_tools_mcp_approval_mode_always() -> None:
     """Test from_azure_ai_tools converts MCP require_approval='always' to dict."""
     tools = [
