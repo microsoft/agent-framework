@@ -1871,3 +1871,113 @@ class TestAnalyzerAutoDetectionE2E:
         assert state["documents"]["invoice.pdf"]["analyzer_id"] == "prebuilt-invoice"
         call_args = mock_cu_client.begin_analyze_binary.call_args
         assert call_args[0][0] == "prebuilt-invoice"
+
+
+class TestWarningsExtraction:
+    """Verify that CU analysis warnings are included in extracted output."""
+
+    def test_warnings_included_when_present(self) -> None:
+        """Non-empty warnings list should appear in extracted result with code/message/target."""
+        provider = _make_provider()
+        fixture = {
+            "contents": [
+                {
+                    "path": "input1",
+                    "markdown": "Some content",
+                    "kind": "document",
+                }
+            ],
+            "warnings": [
+                {"code": "ImageQuality", "message": "Page 3 was blurry", "target": "page_3"},
+                {"message": "Low resolution detected"},
+            ],
+        }
+        result_obj = AnalysisResult(fixture)
+        extracted = provider._extract_sections(result_obj)
+        assert "warnings" in extracted
+        warnings = extracted["warnings"]
+        assert isinstance(warnings, list)
+        assert len(warnings) == 2
+        # First warning has code + message + target
+        assert warnings[0]["code"] == "ImageQuality"
+        assert warnings[0]["message"] == "Page 3 was blurry"
+        assert warnings[0]["target"] == "page_3"
+        # Second warning has only message (no code/target)
+        assert "code" not in warnings[1]
+        assert warnings[1]["message"] == "Low resolution detected"
+        assert "target" not in warnings[1]
+
+    def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
+        """Empty/None warnings should not appear in extracted result."""
+        provider = _make_provider()
+        extracted = provider._extract_sections(pdf_analysis_result)
+        assert "warnings" not in extracted
+
+
+class TestCategoryExtraction:
+    """Verify that content-level category is included in extracted output."""
+
+    def test_category_included_single_segment(self) -> None:
+        """Category from classifier analyzer should appear in single-segment output."""
+        provider = _make_provider()
+        fixture = {
+            "contents": [
+                {
+                    "path": "input1",
+                    "markdown": "Contract text...",
+                    "kind": "document",
+                    "category": "Legal Contract",
+                }
+            ],
+        }
+        result_obj = AnalysisResult(fixture)
+        extracted = provider._extract_sections(result_obj)
+        assert extracted.get("category") == "Legal Contract"
+
+    def test_category_omitted_when_none(self, pdf_analysis_result: AnalysisResult) -> None:
+        """No category should be in output when analyzer doesn't classify."""
+        provider = _make_provider()
+        extracted = provider._extract_sections(pdf_analysis_result)
+        assert "category" not in extracted
+
+
+class TestContentRangeSupport:
+    """Verify that content_range from additional_properties is passed to CU."""
+
+    async def test_content_range_passed_to_begin_analyze(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """content_range in additional_properties should be forwarded to AnalysisInput."""
+        from azure.ai.contentunderstanding.models import AnalysisInput
+
+        mock_cu_client.begin_analyze = AsyncMock(return_value=_make_mock_poller(pdf_analysis_result))
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze pages 1-3"),
+                Content.from_uri(
+                    "https://example.com/report.pdf",
+                    media_type="application/pdf",
+                    additional_properties={"filename": "report.pdf", "content_range": "1-3"},
+                ),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
+
+        # Verify begin_analyze was called with AnalysisInput containing content_range
+        mock_cu_client.begin_analyze.assert_called_once()
+        call_kwargs = mock_cu_client.begin_analyze.call_args
+        inputs_arg = call_kwargs.kwargs.get("inputs") or call_kwargs[1].get("inputs")
+        assert inputs_arg is not None
+        assert len(inputs_arg) == 1
+        assert isinstance(inputs_arg[0], AnalysisInput)
+        assert inputs_arg[0].content_range == "1-3"
+        assert inputs_arg[0].url == "https://example.com/report.pdf"

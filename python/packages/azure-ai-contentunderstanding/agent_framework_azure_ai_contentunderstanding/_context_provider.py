@@ -33,7 +33,7 @@ from agent_framework import (
 from agent_framework._sessions import AgentSession
 from agent_framework._settings import load_settings
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
-from azure.ai.contentunderstanding.models import AnalysisResult
+from azure.ai.contentunderstanding.models import AnalysisInput, AnalysisResult
 from azure.core.credentials import AzureKeyCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -195,6 +195,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             (e.g., ``prebuilt-invoice`` for invoices alongside
             ``prebuilt-documentSearch`` for general documents).
 
+        ``content_range`` (str):
+            Subset of the input to analyze. For documents, use 1-based page
+            numbers (e.g., ``"1-3"`` for pages 1-3, ``"1,3,5-"`` for pages
+            1, 3, and 5 onward). For audio/video, use milliseconds
+            (e.g., ``"0-60000"`` for the first 60 seconds).
+
         Example::
 
             Content.from_data(
@@ -202,6 +208,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 additional_properties={
                     "filename": "invoice.pdf",
                     "analyzer_id": "prebuilt-invoice",
+                    "content_range": "1-3",
                 },
             )
     """
@@ -649,11 +656,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         filename = doc_key
 
         # Per-file analyzer override from additional_properties
-        per_file_analyzer = (
-            content.additional_properties.get("analyzer_id")
-            if content.additional_properties
-            else None
-        )
+        props = content.additional_properties or {}
+        per_file_analyzer = props.get("analyzer_id")
+        content_range = props.get("content_range")
         resolved_analyzer = per_file_analyzer or self._resolve_analyzer_id(media_type)
         t0 = time.monotonic()
 
@@ -662,7 +667,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if content.type == "uri" and content.uri and not content.uri.startswith("data:"):
                 poller = await self._client.begin_analyze(
                     resolved_analyzer,
-                    body={"inputs": [{"url": content.uri}]},
+                    inputs=[AnalysisInput(url=content.uri, content_range=content_range)],
                 )
             elif binary_data:
                 poller = await self._client.begin_analyze_binary(
@@ -843,6 +848,22 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         if not contents:
             return extracted
 
+        # --- Warnings from the CU service (ODataV4Format with code/message/target) ---
+        if result.warnings:
+            warnings_out: list[dict[str, str]] = []
+            for w in result.warnings:
+                entry: dict[str, str] = {}
+                code = getattr(w, "code", None)
+                if code:
+                    entry["code"] = code
+                msg = getattr(w, "message", None)
+                entry["message"] = msg if msg else str(w)
+                target = getattr(w, "target", None)
+                if target:
+                    entry["target"] = target
+                warnings_out.append(entry)
+            extracted["warnings"] = warnings_out
+
         # --- Media metadata (from first segment) ---
         first = contents[0]
         kind = getattr(first, "kind", None)
@@ -885,6 +906,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     fields[name] = entry_dict
                 if fields:
                     extracted["fields"] = fields
+            # Content-level category (e.g. from classifier analyzers)
+            category = getattr(contents[0], "category", None)
+            if category:
+                extracted["category"] = category
             return extracted
 
         # --- Multi-segment: per-segment output (video scenes, long audio) ---
@@ -924,6 +949,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 if seg_fields:
                     seg["fields"] = seg_fields
 
+            # Per-segment category (e.g. from classifier analyzers)
+            category = getattr(content, "category", None)
+            if category:
+                seg["category"] = category
+
             segments_out.append(seg)
 
         extracted["segments"] = segments_out
@@ -951,12 +981,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         # Object fields → recursively resolve nested sub-fields
         if field_type == "object" and raw is not None and isinstance(raw, dict):
             return {
-                k: ContentUnderstandingContextProvider._flatten_field(v) for k, v in raw.items()
+                str(k): ContentUnderstandingContextProvider._flatten_field(v)
+                for k, v in cast(dict[str, Any], raw).items()
             }
 
         # Array fields → list of flattened items (each with value + optional confidence)
         if field_type == "array" and raw is not None and isinstance(raw, list):
-            return [ContentUnderstandingContextProvider._flatten_field(item) for item in raw]
+            return [
+                ContentUnderstandingContextProvider._flatten_field(item)
+                for item in cast(list[Any], raw)
+            ]
 
         # Scalar fields (string, number, date, etc.) — .value returns native Python type
         return raw
