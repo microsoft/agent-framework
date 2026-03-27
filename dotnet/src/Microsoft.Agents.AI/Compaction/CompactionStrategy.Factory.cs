@@ -2,7 +2,6 @@
 
 using System;
 using Microsoft.Extensions.AI;
-using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Compaction;
 
@@ -62,16 +61,12 @@ public abstract partial class CompactionStrategy
     /// </remarks>
     /// <param name="approach">
     /// The compaction approach that controls which strategy or pipeline to use.
-    /// <see cref="CompactionApproach.Gentle"/> does not require a <paramref name="chatClient"/>;
-    /// <see cref="CompactionApproach.Balanced"/> and <see cref="CompactionApproach.Aggressive"/> require one.
     /// </param>
     /// <param name="size">
     /// The context-size profile that controls token and message thresholds.
     /// </param>
     /// <param name="chatClient">
     /// The <see cref="IChatClient"/> used for LLM-based summarization.
-    /// Required when <paramref name="approach"/> is <see cref="CompactionApproach.Balanced"/> or
-    /// <see cref="CompactionApproach.Aggressive"/>; ignored for <see cref="CompactionApproach.Gentle"/>.
     /// </param>
     /// <returns>A <see cref="CompactionStrategy"/> configured for the specified approach and size.</returns>
     /// <exception cref="ArgumentNullException">
@@ -80,21 +75,16 @@ public abstract partial class CompactionStrategy
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="approach"/> or <paramref name="size"/> is not a defined enum value.
     /// </exception>
-    public static CompactionStrategy Create(CompactionApproach approach, CompactionSize size, IChatClient? chatClient = null)
+    public static CompactionStrategy Create(CompactionApproach approach, CompactionSize size, IChatClient chatClient)
     {
-        if (approach is CompactionApproach.Balanced or CompactionApproach.Aggressive)
-        {
-            _ = Throw.IfNull(chatClient);
-        }
-
         int tokenLimit = GetTokenLimit(size);
         int messageLimit = GetMessageLimit(size);
 
         return approach switch
         {
-            CompactionApproach.Gentle => CreateGentlePipeline(tokenLimit, messageLimit),
-            CompactionApproach.Balanced => CreateBalancedPipeline(tokenLimit, messageLimit, chatClient!),
-            CompactionApproach.Aggressive => CreateAggressivePipeline(tokenLimit, messageLimit, GetTurnLimit(size), chatClient!),
+            CompactionApproach.Gentle => CreateGentlePipeline(tokenLimit, messageLimit, chatClient),
+            CompactionApproach.Balanced => CreateBalancedPipeline(tokenLimit, messageLimit, chatClient),
+            CompactionApproach.Aggressive => CreateAggressivePipeline(tokenLimit, messageLimit, GetTurnLimit(size), chatClient),
             _ => throw new ArgumentOutOfRangeException(nameof(approach), approach, null),
         };
     }
@@ -123,35 +113,59 @@ public abstract partial class CompactionStrategy
         _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
     };
 
-    private static PipelineCompactionStrategy CreateGentlePipeline(int tokenLimit, int messageLimit) =>
-        new(
-            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(messageLimit)),
-            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+    private static PipelineCompactionStrategy CreateGentlePipeline(int tokenLimit, int messageLimit, IChatClient chatClient)
+    {
+        int messageTarget = messageLimit * 4 / 5;
+        int tokenTarget = tokenLimit * 4 / 5;
+
+        return new(
+            new ToolResultCompactionStrategy(
+                trigger: CompactionTriggers.MessagesExceed(messageLimit),
+                target: CompactionTriggers.MessagesBelow(messageTarget)),
+            new SummarizationCompactionStrategy(
+                chatClient,
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)));
+    }
 
     private static PipelineCompactionStrategy CreateBalancedPipeline(int tokenLimit, int messageLimit, IChatClient chatClient)
     {
-        // Early stages trigger at two-thirds of the limit so the pipeline has room to compact
-        // incrementally before reaching the emergency truncation backstop at the full limit.
-        int earlyMessageTrigger = messageLimit * 2 / 3;
-        int earlyTokenTrigger = tokenLimit * 2 / 3;
+        int messageTarget = messageLimit * 3 / 4;
+        int tokenTarget = tokenLimit * 4 / 5;
 
         return new(
-            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(earlyMessageTrigger)),
-            new SummarizationCompactionStrategy(chatClient, CompactionTriggers.TokensExceed(earlyTokenTrigger)),
-            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+            new ToolResultCompactionStrategy(
+                trigger: CompactionTriggers.MessagesExceed(messageLimit),
+                target: CompactionTriggers.MessagesBelow(messageTarget)),
+            new SummarizationCompactionStrategy(
+                chatClient,
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)),
+            new TruncationCompactionStrategy(
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)));
     }
 
     private static PipelineCompactionStrategy CreateAggressivePipeline(int tokenLimit, int messageLimit, int turnLimit, IChatClient chatClient)
     {
         // Early stages trigger at half the limit so compaction kicks in sooner and
         // the sliding window and truncation backstop are reached less often.
-        int earlyMessageTrigger = messageLimit / 2;
-        int earlyTokenTrigger = tokenLimit / 2;
+        int messageTarget = messageLimit * 3 / 4;
+        int tokenTarget = tokenLimit * 3 / 4;
 
         return new(
-            new ToolResultCompactionStrategy(CompactionTriggers.MessagesExceed(earlyMessageTrigger)),
-            new SummarizationCompactionStrategy(chatClient, CompactionTriggers.TokensExceed(earlyTokenTrigger)),
-            new SlidingWindowCompactionStrategy(CompactionTriggers.TurnsExceed(turnLimit)),
-            new TruncationCompactionStrategy(CompactionTriggers.TokensExceed(tokenLimit)));
+            new ToolResultCompactionStrategy(
+                trigger: CompactionTriggers.MessagesExceed(messageLimit),
+                target: CompactionTriggers.MessagesBelow(messageTarget)),
+            new SummarizationCompactionStrategy(
+                chatClient,
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)),
+            new SlidingWindowCompactionStrategy(
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)),
+            new TruncationCompactionStrategy(
+                trigger: CompactionTriggers.TokensExceed(tokenLimit),
+                target: CompactionTriggers.TokensBelow(tokenTarget)));
     }
 }

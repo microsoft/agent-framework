@@ -17,21 +17,18 @@ public enum CompactionApproach
     /// <summary>
     /// Applies the lightest available compaction techniques.
     /// Collapses old tool call groups into concise summaries and uses truncation as an emergency backstop.
-    /// Does not require a summarization <see cref="Microsoft.Extensions.AI.IChatClient"/>.
     /// </summary>
     Gentle,
 
     /// <summary>
     /// Balances context preservation with compaction efficiency.
     /// Applies tool result collapsing, LLM-based summarization, and truncation as an emergency backstop.
-    /// Requires a summarization <see cref="Microsoft.Extensions.AI.IChatClient"/>.
     /// </summary>
     Balanced,
 
     /// <summary>
     /// Applies the most aggressive available compaction techniques.
     /// Applies tool result collapsing, LLM-based summarization, turn-based sliding window, and truncation.
-    /// Requires a summarization <see cref="Microsoft.Extensions.AI.IChatClient"/>.
     /// </summary>
     Aggressive,
 }

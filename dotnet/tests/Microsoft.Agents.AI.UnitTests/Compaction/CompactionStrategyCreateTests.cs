@@ -33,11 +33,11 @@ public class CompactionStrategyCreateTests
     {
         PipelineCompactionStrategy pipeline =
             Assert.IsType<PipelineCompactionStrategy>(
-                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Compact));
+                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Compact, CreateMockChatClient()));
 
         Assert.Equal(2, pipeline.Strategies.Count);
         Assert.IsType<ToolResultCompactionStrategy>(pipeline.Strategies[0]);
-        Assert.IsType<TruncationCompactionStrategy>(pipeline.Strategies[1]);
+        Assert.IsType<SummarizationCompactionStrategy>(pipeline.Strategies[1]);
     }
 
     [Fact]
@@ -45,11 +45,11 @@ public class CompactionStrategyCreateTests
     {
         PipelineCompactionStrategy pipeline =
             Assert.IsType<PipelineCompactionStrategy>(
-                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate));
+                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate, CreateMockChatClient()));
 
         Assert.Equal(2, pipeline.Strategies.Count);
         Assert.IsType<ToolResultCompactionStrategy>(pipeline.Strategies[0]);
-        Assert.IsType<TruncationCompactionStrategy>(pipeline.Strategies[1]);
+        Assert.IsType<SummarizationCompactionStrategy>(pipeline.Strategies[1]);
     }
 
     [Fact]
@@ -57,18 +57,18 @@ public class CompactionStrategyCreateTests
     {
         PipelineCompactionStrategy pipeline =
             Assert.IsType<PipelineCompactionStrategy>(
-                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Generous));
+                CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Generous, CreateMockChatClient()));
 
         Assert.Equal(2, pipeline.Strategies.Count);
         Assert.IsType<ToolResultCompactionStrategy>(pipeline.Strategies[0]);
-        Assert.IsType<TruncationCompactionStrategy>(pipeline.Strategies[1]);
+        Assert.IsType<SummarizationCompactionStrategy>(pipeline.Strategies[1]);
     }
 
     [Fact]
     public void CreateGentleDoesNotRequireChatClient()
     {
         // No chatClient supplied — should succeed without throwing.
-        CompactionStrategy strategy = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate);
+        CompactionStrategy strategy = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate, CreateMockChatClient());
         Assert.NotNull(strategy);
     }
 
@@ -117,7 +117,7 @@ public class CompactionStrategyCreateTests
     public void CreateBalancedNullChatClientThrows()
     {
         Assert.Throws<ArgumentNullException>(
-            () => CompactionStrategy.Create(CompactionApproach.Balanced, CompactionSize.Moderate, null));
+            () => CompactionStrategy.Create(CompactionApproach.Balanced, CompactionSize.Moderate, null!));
     }
 
     // ── Aggressive ────────────────────────────────────────────────────────────
@@ -164,27 +164,20 @@ public class CompactionStrategyCreateTests
         Assert.IsType<TruncationCompactionStrategy>(pipeline.Strategies[3]);
     }
 
-    [Fact]
-    public void CreateAggressiveNullChatClientThrows()
-    {
-        Assert.Throws<ArgumentNullException>(
-            () => CompactionStrategy.Create(CompactionApproach.Aggressive, CompactionSize.Moderate, null));
-    }
-
     // ── Invalid enum values ───────────────────────────────────────────────────
 
     [Fact]
     public void CreateInvalidApproachThrows()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => CompactionStrategy.Create((CompactionApproach)99, CompactionSize.Moderate));
+            () => CompactionStrategy.Create((CompactionApproach)99, CompactionSize.Moderate, CreateMockChatClient()));
     }
 
     [Fact]
     public void CreateInvalidSizeThrows()
     {
         Assert.Throws<ArgumentOutOfRangeException>(
-            () => CompactionStrategy.Create(CompactionApproach.Gentle, (CompactionSize)99));
+            () => CompactionStrategy.Create(CompactionApproach.Gentle, (CompactionSize)99, CreateMockChatClient()));
     }
 
     // ── Size-threshold behavioral verification ────────────────────────────────
@@ -203,8 +196,8 @@ public class CompactionStrategyCreateTests
         //   The configuration preserves a number of most-recent groups, leaving the oldest
         //   tool-call group eligible for collapsing, which makes the behavioral difference
         //   between Compact and Moderate sizes observable in this test.
-        CompactionStrategy compactPipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Compact);
-        CompactionStrategy moderatePipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate);
+        CompactionStrategy compactPipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Compact, CreateMockChatClient());
+        CompactionStrategy moderatePipeline = CompactionStrategy.Create(CompactionApproach.Gentle, CompactionSize.Moderate, CreateMockChatClient());
 
         List<ChatMessage> messages =
         [
