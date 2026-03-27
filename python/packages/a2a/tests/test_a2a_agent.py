@@ -1213,6 +1213,36 @@ async def test_streaming_artifact_update_event_yields_content(
     assert updates[0].raw_representation == update_event
 
 
+async def test_streaming_status_update_event_yields_content(
+    a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
+) -> None:
+    """Test that streaming status update events surface message content directly from the update event."""
+    update_event = TaskStatusUpdateEvent(
+        task_id="task-status",
+        context_id="ctx-status",
+        status=TaskStatus(
+            state=TaskState.working,
+            message=A2AMessage(
+                message_id=str(uuid4()),
+                role=A2ARole.agent,
+                parts=[Part(root=TextPart(text="Still working"))],
+            ),
+        ),
+        final=False,
+    )
+    task = Task(id="task-status", context_id="ctx-status", status=TaskStatus(state=TaskState.working, message=None))
+    mock_a2a_client.responses.append((task, update_event))
+
+    updates: list[AgentResponseUpdate] = []
+    async for update in a2a_agent.run("Hello", stream=True):
+        updates.append(update)
+
+    assert len(updates) == 1
+    assert updates[0].text == "Still working"
+    assert updates[0].role == "assistant"
+    assert updates[0].raw_representation == update_event
+
+
 async def test_streaming_artifact_update_event_does_not_duplicate_terminal_task_artifacts(
     a2a_agent: A2AAgent, mock_a2a_client: MockA2AClient
 ) -> None:

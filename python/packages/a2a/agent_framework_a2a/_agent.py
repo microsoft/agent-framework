@@ -509,6 +509,9 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
                 )
             ]
 
+        if not isinstance(update_event, TaskStatusUpdateEvent):
+            return []
+
         message = update_event.status.message
         if message is None or not message.parts:
             return []
