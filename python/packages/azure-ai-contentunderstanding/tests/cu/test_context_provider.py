@@ -1877,7 +1877,7 @@ class TestWarningsExtraction:
     """Verify that CU analysis warnings are included in extracted output."""
 
     def test_warnings_included_when_present(self) -> None:
-        """Non-empty warnings list should appear in extracted result with code/message/target."""
+        """Non-empty warnings list should appear with code/message/target (RAI warnings)."""
         provider = _make_provider()
         fixture = {
             "contents": [
@@ -1888,8 +1888,15 @@ class TestWarningsExtraction:
                 }
             ],
             "warnings": [
-                {"code": "ImageQuality", "message": "Page 3 was blurry", "target": "page_3"},
-                {"message": "Low resolution detected"},
+                {
+                    "code": "ContentFiltered",
+                    "message": "Content was filtered due to Responsible AI policy.",
+                    "target": "contents/0/markdown",
+                },
+                {
+                    "code": "ContentFiltered",
+                    "message": "Violence content detected and filtered.",
+                },
             ],
         }
         result_obj = AnalysisResult(fixture)
@@ -1899,12 +1906,12 @@ class TestWarningsExtraction:
         assert isinstance(warnings, list)
         assert len(warnings) == 2
         # First warning has code + message + target
-        assert warnings[0]["code"] == "ImageQuality"
-        assert warnings[0]["message"] == "Page 3 was blurry"
-        assert warnings[0]["target"] == "page_3"
-        # Second warning has only message (no code/target)
-        assert "code" not in warnings[1]
-        assert warnings[1]["message"] == "Low resolution detected"
+        assert warnings[0]["code"] == "ContentFiltered"
+        assert warnings[0]["message"] == "Content was filtered due to Responsible AI policy."
+        assert warnings[0]["target"] == "contents/0/markdown"
+        # Second warning has code + message but no target
+        assert warnings[1]["code"] == "ContentFiltered"
+        assert warnings[1]["message"] == "Violence content detected and filtered."
         assert "target" not in warnings[1]
 
     def test_warnings_omitted_when_empty(self, pdf_analysis_result: AnalysisResult) -> None:
@@ -1933,6 +1940,70 @@ class TestCategoryExtraction:
         result_obj = AnalysisResult(fixture)
         extracted = provider._extract_sections(result_obj)
         assert extracted.get("category") == "Legal Contract"
+
+    def test_category_in_multi_segment_video(self) -> None:
+        """Each segment should carry its own category in multi-segment output."""
+        provider = _make_provider()
+        fixture = {
+            "contents": [
+                {
+                    "path": "input1",
+                    "kind": "audioVisual",
+                    "startTimeMs": 0,
+                    "endTimeMs": 30000,
+                    "markdown": "Opening scene with product showcase.",
+                    "category": "ProductDemo",
+                    "fields": {
+                        "Summary": {
+                            "type": "string",
+                            "valueString": "Product demo intro",
+                        }
+                    },
+                },
+                {
+                    "path": "input1",
+                    "kind": "audioVisual",
+                    "startTimeMs": 30000,
+                    "endTimeMs": 60000,
+                    "markdown": "Customer testimonial segment.",
+                    "category": "Testimonial",
+                    "fields": {
+                        "Summary": {
+                            "type": "string",
+                            "valueString": "Customer feedback",
+                        }
+                    },
+                },
+            ],
+        }
+        result_obj = AnalysisResult(fixture)
+        extracted = provider._extract_sections(result_obj)
+
+        # Top-level metadata
+        assert extracted["kind"] == "audioVisual"
+        assert extracted["duration_seconds"] == 60.0
+
+        # Segments should have per-segment category
+        segments = extracted["segments"]
+        assert isinstance(segments, list)
+        assert len(segments) == 2
+
+        # First segment: ProductDemo
+        assert segments[0]["category"] == "ProductDemo"
+        assert segments[0]["start_time_s"] == 0.0
+        assert segments[0]["end_time_s"] == 30.0
+        assert segments[0]["markdown"] == "Opening scene with product showcase."
+        assert "Summary" in segments[0]["fields"]
+
+        # Second segment: Testimonial
+        assert segments[1]["category"] == "Testimonial"
+        assert segments[1]["start_time_s"] == 30.0
+        assert segments[1]["end_time_s"] == 60.0
+        assert segments[1]["markdown"] == "Customer testimonial segment."
+
+        # Top-level concatenated markdown for file_search
+        assert "Opening scene" in extracted["markdown"]
+        assert "Customer testimonial" in extracted["markdown"]
 
     def test_category_omitted_when_none(self, pdf_analysis_result: AnalysisResult) -> None:
         """No category should be in output when analyzer doesn't classify."""

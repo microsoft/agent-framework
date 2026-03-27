@@ -878,8 +878,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         global_start: int | None = None
         global_end: int | None = None
         for content in contents:
-            s = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
-            e = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
+            s = getattr(content, "start_time_ms", None)
+            if s is None:
+                s = getattr(content, "startTimeMs", None)
+            e = getattr(content, "end_time_ms", None)
+            if e is None:
+                e = getattr(content, "endTimeMs", None)
             if s is not None:
                 global_start = s if global_start is None else min(global_start, s)
             if e is not None:
@@ -922,8 +926,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             seg: dict[str, object] = {}
 
             # Time range for this segment
-            s = getattr(content, "start_time_ms", None) or getattr(content, "startTimeMs", None)
-            e = getattr(content, "end_time_ms", None) or getattr(content, "endTimeMs", None)
+            s = getattr(content, "start_time_ms", None)
+            if s is None:
+                s = getattr(content, "startTimeMs", None)
+            e = getattr(content, "end_time_ms", None)
+            if e is None:
+                e = getattr(content, "endTimeMs", None)
             if s is not None:
                 seg["start_time_s"] = round(s / 1000, 1)
             if e is not None:
