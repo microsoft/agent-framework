@@ -128,7 +128,7 @@ public sealed class AgentInlineSkillTests
         // Assert
         Assert.Contains("<name>my-skill</name>", content);
         Assert.Contains("<description>x&lt;y&gt;z&quot;w &amp; it&apos;s more</description>", content);
-        Assert.Contains("1 & 2 < 3", content); // instructions are not escaped
+        Assert.Contains("1 &amp; 2 &lt; 3", content); // instructions are escaped
     }
 
     [Fact]

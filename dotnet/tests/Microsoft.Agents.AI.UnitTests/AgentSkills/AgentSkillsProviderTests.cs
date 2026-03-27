@@ -589,9 +589,17 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert — all three skills should be present in alphabetical order in the prompt
         Assert.NotNull(result.Instructions);
-        Assert.Contains("file-skill-1", result.Instructions);
-        Assert.Contains("inline-skill", result.Instructions);
-        Assert.Contains("file-skill-2", result.Instructions);
+        var instructions = result.Instructions!;
+        var indexFileSkill1 = instructions.IndexOf("file-skill-1", StringComparison.Ordinal);
+        var indexFileSkill2 = instructions.IndexOf("file-skill-2", StringComparison.Ordinal);
+        var indexInlineSkill = instructions.IndexOf("inline-skill", StringComparison.Ordinal);
+
+        Assert.True(indexFileSkill1 >= 0, "file-skill-1 should be present in the instructions.");
+        Assert.True(indexFileSkill2 >= 0, "file-skill-2 should be present in the instructions.");
+        Assert.True(indexInlineSkill >= 0, "inline-skill should be present in the instructions.");
+
+        Assert.True(indexFileSkill1 < indexFileSkill2, "file-skill-1 should appear before file-skill-2.");
+        Assert.True(indexFileSkill2 < indexInlineSkill, "file-skill-2 should appear before inline-skill.");
     }
 
     [Fact]

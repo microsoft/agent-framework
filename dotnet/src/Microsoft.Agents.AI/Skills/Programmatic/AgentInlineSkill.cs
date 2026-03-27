@@ -17,9 +17,11 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// All calls to <see cref="AddResource(string, object, string?)"/>,
 /// <see cref="AddResource(string, Delegate, string?)"/>, and <see cref="AddScript"/>
-/// must be made before the skill is passed to an <see cref="AgentSkillsProvider"/> or
-/// <see cref="AgentSkillsProviderBuilder"/>. Calls made after that point will not be
-/// reflected in the generated <see cref="Content"/>.
+/// must be made before the skill's <see cref="Content"/> is first accessed.
+/// Calls made after that point will not be reflected in the generated
+/// <see cref="Content"/>. In typical usage, this means configuring all
+/// resources and scripts before registering the skill with an
+/// <see cref="AgentSkillsProvider"/> or <see cref="AgentSkillsProviderBuilder"/>.
 /// </remarks>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public sealed class AgentInlineSkill : AgentSkill
@@ -38,7 +40,7 @@ public sealed class AgentInlineSkill : AgentSkill
     public AgentInlineSkill(AgentSkillFrontmatter frontmatter, string instructions)
     {
         this.Frontmatter = Throw.IfNull(frontmatter);
-        this._instructions = Throw.IfNull(instructions);
+        this._instructions = Throw.IfNullOrWhitespace(instructions);
     }
 
     /// <summary>
@@ -131,7 +133,7 @@ public sealed class AgentInlineSkill : AgentSkill
         sb.Append($"<name>{EscapeXmlString(this.Frontmatter.Name)}</name>\n")
         .Append($"<description>{EscapeXmlString(this.Frontmatter.Description)}</description>\n\n")
         .Append("<instructions>\n")
-        .Append(this._instructions)
+        .Append(EscapeXmlString(this._instructions))
         .Append("\n</instructions>");
 
         if (this.Resources is { Count: > 0 })
