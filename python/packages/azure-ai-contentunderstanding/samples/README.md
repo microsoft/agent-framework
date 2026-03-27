@@ -7,8 +7,8 @@ These samples demonstrate how to use the `agent-framework-azure-ai-contentunders
 1. Azure CLI logged in: `az login`
 2. Environment variables set (or `.env` file in the `python/` directory):
    ```
-   AZURE_AI_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
-   AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4.1
+   AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+   AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
    AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
    ```
 
@@ -19,8 +19,8 @@ These samples demonstrate how to use the `agent-framework-azure-ai-contentunders
 | # | Sample | Description | Run |
 |---|--------|-------------|-----|
 | 01 | [Document Q&A](01-get-started/01_document_qa.py) | Upload a PDF, ask questions with CU-powered extraction | `uv run samples/01-get-started/01_document_qa.py` |
-| 02 | [Multi-Turn Session](01-get-started/02_multi_turn_session.py) | Persistent session with cached results + tool retrieval | `uv run samples/01-get-started/02_multi_turn_session.py` |
-| 03 | [Multi-Modal Chat](01-get-started/03_multimodal_chat.py) | Multi-file session with background processing | `uv run samples/01-get-started/03_multimodal_chat.py` |
+| 02 | [Multi-Turn Session](01-get-started/02_multi_turn_session.py) | AgentSession persistence across turns | `uv run samples/01-get-started/02_multi_turn_session.py` |
+| 03 | [Multi-Modal Chat](01-get-started/03_multimodal_chat.py) | PDF + audio + video parallel analysis | `uv run samples/01-get-started/03_multimodal_chat.py` |
 | 04 | [Invoice Processing](01-get-started/04_invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/01-get-started/04_invoice_processing.py` |
 | 05 | [Background Analysis](01-get-started/05_background_analysis.py) | Non-blocking analysis with status tracking | `uv run samples/01-get-started/05_background_analysis.py` |
 | 06 | [Large Doc + file_search](01-get-started/06_large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/01-get-started/06_large_doc_file_search.py` |

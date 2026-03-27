@@ -15,7 +15,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Agent, Content, Message
+from agent_framework import Agent, AgentSession, Content, Message
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -89,8 +89,8 @@ async def main() -> None:
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=credential,
         analyzer_id="prebuilt-documentSearch",
-        max_wait=60.0,
-        file_search=FileSearchConfig.from_openai(
+        max_wait=None,  # wait until CU analysis + vector store upload finishes
+        file_search=FileSearchConfig.from_foundry(
             openai_client,
             vector_store_id=vector_store.id,
             file_search_tool=file_search_tool,
@@ -112,6 +112,8 @@ async def main() -> None:
             context_providers=[cu],
         )
 
+        session = AgentSession()
+
         # Turn 1: Upload — CU extracts and uploads to vector store automatically
         print("--- Turn 1: Upload document ---")
         response = await agent.run(
@@ -122,17 +124,20 @@ async def main() -> None:
                     Content.from_data(
                         pdf_bytes,
                         "application/pdf",
-                        # Always provide filename — used as the document key
                         additional_properties={"filename": SAMPLE_PDF_PATH.name},
                     ),
                 ],
-            )
+            ),
+            session=session,
         )
         print(f"Agent: {response}\n")
 
         # Turn 2: Follow-up — file_search retrieves relevant chunks (token efficient)
         print("--- Turn 2: Follow-up (RAG) ---")
-        response = await agent.run("What numbers or financial metrics are mentioned?")
+        response = await agent.run(
+            "What numbers or financial metrics are mentioned?",
+            session=session,
+        )
         print(f"Agent: {response}\n")
 
     # Vector store is automatically cleaned up when the provider closes

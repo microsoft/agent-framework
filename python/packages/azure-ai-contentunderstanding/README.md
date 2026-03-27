@@ -15,38 +15,54 @@ pip install --pre agent-framework-azure-ai-contentunderstanding
 ## Quick Start
 
 ```python
-from agent_framework import Agent, Message, Content
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, AgentSession, Message, Content
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 
-credential = DefaultAzureCredential()
+credential = AzureCliCredential()
 
 cu = ContentUnderstandingContextProvider(
     endpoint="https://my-resource.cognitiveservices.azure.com/",
     credential=credential,
+    max_wait=None,  # wait until analysis finishes
 )
 
-async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
-    agent = Agent(client=llm_client, context_providers=[cu])
+client = FoundryChatClient(
+    project_endpoint="https://your-project.services.ai.azure.com",
+    model="gpt-4.1",
+    credential=credential,
+)
 
-    response = await agent.run(Message(role="user", contents=[
-        Content.from_text("What's on this invoice?"),
-        Content.from_data(pdf_bytes, "application/pdf",
-                          additional_properties={"filename": "invoice.pdf"}),
-    ]))
+async with cu:
+    agent = Agent(
+        client=client,
+        name="DocumentQA",
+        instructions="You are a helpful document analyst.",
+        context_providers=[cu],
+    )
+    session = AgentSession()
+
+    response = await agent.run(
+        Message(role="user", contents=[
+            Content.from_text("What's on this invoice?"),
+            Content.from_data(pdf_bytes, "application/pdf",
+                              additional_properties={"filename": "invoice.pdf"}),
+        ]),
+        session=session,
+    )
     print(response.text)
 ```
 
 ## Features
 
 - **Automatic file detection** — Scans input messages for supported file attachments and analyzes them automatically.
-- **Multi-document sessions** — Tracks multiple analyzed documents per session with status tracking (`pending`/`ready`/`failed`).
+- **Multi-document sessions** — Tracks multiple analyzed documents per session with status tracking (`analyzing`/`uploading`/`ready`/`failed`).
 - **Background processing** — Configurable timeout with async background fallback for large files or slow analysis.
 - **Output filtering** — Passes only relevant sections (markdown, fields) to the LLM, reducing token usage by >90%.
 - **Auto-registered tools** — `list_documents()` tool lets the LLM query document status. Full document content is injected into conversation history for follow-up turns.
 - **All CU modalities** — Documents, images, audio, and video via prebuilt or custom analyzers.
-- **Multi-segment video/audio merging** — CU splits long video/audio into multiple scene segments. The provider automatically merges all segments: markdown is concatenated, fields are collected per-segment, and duration spans the full range. Speaker names are not identified by CU (only `<Speaker N>` diarization labels).
+- **Multi-segment video/audio** — CU splits long video/audio into multiple scene segments. The provider merges markdown across segments and organizes fields per-segment with time ranges. Duration spans the full range. Speaker diarization uses `<Speaker N>` labels (no speaker identification).
 
 ## Supported File Types
 
@@ -108,8 +124,8 @@ The `samples/` directory contains runnable examples. Each sample uses [PEP 723](
 Set these in your shell or in a `.env` file in the `python/` directory:
 
 ```bash
-AZURE_AI_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
-AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4.1
+AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
 AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
 ```
 
@@ -119,20 +135,12 @@ You also need to be logged in with `az login` (for `AzureCliCredential`).
 
 ```bash
 # From the python/ directory:
-uv run packages/azure-ai-contentunderstanding/samples/document_qa.py
-uv run packages/azure-ai-contentunderstanding/samples/invoice_processing.py
-uv run packages/azure-ai-contentunderstanding/samples/multimodal_chat.py
+uv run packages/azure-ai-contentunderstanding/samples/01-get-started/01_document_qa.py
+uv run packages/azure-ai-contentunderstanding/samples/01-get-started/02_multi_turn_session.py
+uv run packages/azure-ai-contentunderstanding/samples/01-get-started/03_multimodal_chat.py
 ```
 
-| Sample | Description |
-|--------|-------------|
-| [document_qa.py](samples/document_qa.py) | Upload a PDF, ask questions, follow-up with cached results |
-| [multimodal_chat.py](samples/multimodal_chat.py) | Multi-file session with status tracking |
-| [devui_multimodal_agent/](samples/devui_multimodal_agent/) | Web UI for file upload + CU-powered chat |
-| [devui_azure_openai_file_search_agent/](samples/devui_azure_openai_file_search_agent/) | Web UI combining CU + Azure OpenAI file_search RAG |
-| [devui_foundry_file_search_agent/](samples/devui_foundry_file_search_agent/) | Web UI combining CU + Foundry file_search RAG |
-| [large_doc_file_search.py](samples/large_doc_file_search.py) | CU extraction + OpenAI vector store RAG |
-| [invoice_processing.py](samples/invoice_processing.py) | Structured field extraction with `prebuilt-invoice` analyzer |
+See [`samples/README.md`](samples/README.md) for the full list of samples.
 
 ## Multi-Segment Video/Audio Processing
 
@@ -148,8 +156,8 @@ Azure Content Understanding splits long video and audio files into multiple scen
 The context provider merges these automatically:
 - **Duration**: computed from global `min(startTimeMs)` to `max(endTimeMs)`
 - **Markdown**: concatenated across all segments (separated by `---`)
-- **Fields**: when the same field (e.g. `Summary`) appears in multiple segments,
-  values are collected into a list with per-segment indices
+- **Fields**: organized per-segment with time ranges, so each segment's
+  extracted fields (e.g. `Summary`) are grouped with its own content
 - **Metadata** (kind, resolution): taken from the first segment
 
 ### Speaker Identification Limitation
