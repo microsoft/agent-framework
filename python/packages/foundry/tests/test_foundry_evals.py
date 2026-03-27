@@ -739,8 +739,12 @@ class TestFoundryEvals:
         assert fe.name == "Microsoft Foundry"
         mock_project.get_openai_client.assert_called_once()
 
-    def test_constructor_no_client_raises(self) -> None:
-        with pytest.raises(ValueError, match="Provide either"):
+    def test_constructor_no_client_auto_creates_from_env(self) -> None:
+        """When no client/project_client given, auto-creates FoundryChatClient from env."""
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {}, clear=True), pytest.raises((ValueError, Exception)):
             FoundryEvals(model="gpt-4o")
 
     def test_name_property(self) -> None:

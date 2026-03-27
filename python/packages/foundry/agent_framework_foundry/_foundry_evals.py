@@ -13,14 +13,15 @@ Example:
     from agent_framework import evaluate_agent
     from agent_framework.foundry import FoundryEvals
 
-    evals = FoundryEvals(project_client=project_client, model="gpt-4o")
+    # Zero-config: reads FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL from env
+    evals = FoundryEvals()
     results = await evaluate_agent(
         agent=my_agent,
         queries=["What's the weather in Seattle?"],
         evaluators=evals,
     )
-    assert results.all_passed
-    print(results.report_url)
+    results[0].raise_for_status()
+    print(results[0].report_url)
 """
 
 from __future__ import annotations
@@ -537,6 +538,13 @@ class FoundryEvals:
             evals = FoundryEvals(client=chat_client)
             results = await evaluate_agent(agent=agent, queries=queries, evaluators=evals)
 
+        Zero-config with environment variables (``FOUNDRY_PROJECT_ENDPOINT``
+        and ``FOUNDRY_MODEL``):
+
+        .. code-block:: python
+
+            evals = FoundryEvals()  # reads env vars via FoundryChatClient
+
     **Evaluator selection:**
 
     By default, runs ``relevance``, ``coherence``, and ``task_adherence``.
@@ -546,7 +554,9 @@ class FoundryEvals:
     Args:
         client: A ``FoundryChatClient`` instance.  The ``builtin.*``
             evaluators are a Foundry feature and require a Foundry endpoint.
-            Provide this or *project_client*.
+            When omitted (and *project_client* is also omitted), a
+            ``FoundryChatClient`` is auto-created from ``FOUNDRY_PROJECT_ENDPOINT``
+            and ``FOUNDRY_MODEL`` environment variables.
         project_client: An ``AIProjectClient`` instance (sync or async).
             Provide this or *client*.
         model: Model deployment name for the evaluator LLM judge.
@@ -604,6 +614,11 @@ class FoundryEvals:
         timeout: float = 180.0,
     ):
         self.name = "Microsoft Foundry"
+
+        # Auto-create a FoundryChatClient from env vars when no client is provided
+        if client is None and project_client is None:
+            client = FoundryChatClient(model=model or "gpt-4o")
+
         self._client = _resolve_openai_client(client, project_client)
         # Resolve model: explicit param > client.model > error
         resolved_model = model or (client.model if client is not None else None)
