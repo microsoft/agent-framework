@@ -278,7 +278,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     async def close(self) -> None:
         """Close the underlying CU client and cancel pending tasks."""
-        tasks_to_cancel = []
+        tasks_to_cancel: list[asyncio.Task[AnalysisResult]] = []
         for task in self._pending_tasks.values():
             if not task.done():
                 task.cancel()
