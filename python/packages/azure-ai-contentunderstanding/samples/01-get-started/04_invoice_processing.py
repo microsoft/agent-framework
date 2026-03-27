@@ -47,11 +47,13 @@ async def main() -> None:
     # 1. Set up credentials and CU context provider
     credential = AzureCliCredential()
 
-    # Use prebuilt-invoice analyzer for structured field extraction
+    # Default analyzer is prebuilt-documentSearch (RAG-optimized).
+    # Per-file override via additional_properties["analyzer_id"] lets us
+    # use prebuilt-invoice for structured field extraction on specific files.
     cu = ContentUnderstandingContextProvider(
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=credential,
-        analyzer_id="prebuilt-invoice",
+        analyzer_id="prebuilt-documentSearch",  # default for all files
         max_wait=None,  # wait until CU analysis finishes
         output_sections=[
             AnalysisSection.MARKDOWN,
@@ -98,8 +100,13 @@ async def main() -> None:
                     Content.from_data(
                         pdf_bytes,
                         "application/pdf",
-                        # Always provide filename — used as the document key
-                        additional_properties={"filename": SAMPLE_PDF_PATH.name},
+                        # Per-file analyzer override: use prebuilt-invoice for
+                        # structured field extraction (VendorName, InvoiceTotal, etc.)
+                        # instead of the provider default (prebuilt-documentSearch).
+                        additional_properties={
+                            "filename": SAMPLE_PDF_PATH.name,
+                            "analyzer_id": "prebuilt-invoice",
+                        },
                     ),
                 ],
             ),

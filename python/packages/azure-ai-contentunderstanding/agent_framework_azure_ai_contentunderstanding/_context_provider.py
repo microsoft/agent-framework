@@ -177,6 +177,31 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             attribution and tool registration. Defaults to ``"azure_ai_contentunderstanding"``.
         env_file_path: Path to a ``.env`` file for loading settings.
         env_file_encoding: Encoding of the ``.env`` file.
+
+    Per-file ``additional_properties`` on ``Content`` objects:
+        The provider reads the following keys from
+        ``Content.additional_properties`` (passed via ``Content.from_data()``
+        or ``Content.from_uri()``):
+
+        ``filename`` (str):
+            The document key used for tracking, status, and LLM references.
+            Without a filename, a UUID-based key is generated.
+
+        ``analyzer_id`` (str):
+            Per-file analyzer override. Takes priority over the provider-level
+            ``analyzer_id``. Useful for mixing analyzers in the same turn
+            (e.g., ``prebuilt-invoice`` for invoices alongside
+            ``prebuilt-documentSearch`` for general documents).
+
+        Example::
+
+            Content.from_data(
+                pdf_bytes, "application/pdf",
+                additional_properties={
+                    "filename": "invoice.pdf",
+                    "analyzer_id": "prebuilt-invoice",
+                },
+            )
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_contentunderstanding"
@@ -542,13 +567,25 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     ) -> DocumentEntry | None:
         """Analyze a single file via CU with timeout handling.
 
+        The analyzer is resolved in priority order:
+        1. Per-file override via ``content.additional_properties["analyzer_id"]``
+        2. Provider-level default via ``self.analyzer_id``
+        3. Auto-detect by media type (document/audio/video)
+
         Returns:
             A ``DocumentEntry`` (ready, analyzing, or failed), or ``None`` if
             file data could not be extracted.
         """
         media_type = content.media_type or "application/octet-stream"
         filename = doc_key
-        resolved_analyzer = self._resolve_analyzer_id(media_type)
+
+        # Per-file analyzer override from additional_properties
+        per_file_analyzer = (
+            content.additional_properties.get("analyzer_id")
+            if content.additional_properties
+            else None
+        )
+        resolved_analyzer = per_file_analyzer or self._resolve_analyzer_id(media_type)
         t0 = time.monotonic()
 
         try:

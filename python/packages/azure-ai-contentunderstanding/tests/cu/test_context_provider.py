@@ -1663,3 +1663,46 @@ class TestAnalyzerAutoDetectionE2E:
         assert state["documents"]["call.mp3"]["analyzer_id"] == "prebuilt-invoice"
         call_args = mock_cu_client.begin_analyze_binary.call_args
         assert call_args[0][0] == "prebuilt-invoice"
+
+    async def test_per_file_analyzer_overrides_provider_default(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """Per-file analyzer_id in additional_properties overrides provider-level default."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(
+            return_value=_make_mock_poller(pdf_analysis_result),
+        )
+        # Provider default is prebuilt-documentSearch
+        provider = _make_provider(
+            mock_client=mock_cu_client,
+            analyzer_id="prebuilt-documentSearch",
+        )
+
+        msg = Message(
+            role="user",
+            contents=[
+                Content.from_text("Process this invoice"),
+                Content.from_data(
+                    _SAMPLE_PDF_BYTES,
+                    "application/pdf",
+                    # Per-file override to prebuilt-invoice
+                    additional_properties={
+                        "filename": "invoice.pdf",
+                        "analyzer_id": "prebuilt-invoice",
+                    },
+                ),
+            ],
+        )
+        context = _make_context([msg])
+        state: dict[str, Any] = {}
+        session = AgentSession()
+
+        await provider.before_run(
+            agent=_make_mock_agent(), session=session, context=context, state=state
+        )
+
+        # Per-file override should win
+        assert state["documents"]["invoice.pdf"]["analyzer_id"] == "prebuilt-invoice"
+        call_args = mock_cu_client.begin_analyze_binary.call_args
+        assert call_args[0][0] == "prebuilt-invoice"
