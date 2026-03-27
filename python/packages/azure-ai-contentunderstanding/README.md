@@ -98,6 +98,8 @@ asyncio.run(main())
 | Audio | WAV, MP3, M4A, FLAC, OGG |
 | Video | MP4, MOV, AVI, WebM |
 
+For the complete list of supported file types and size limits, see [Azure Content Understanding service limits](https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits).
+
 ### Environment Variables
 
 The provider supports automatic endpoint resolution from environment variables.
@@ -115,10 +117,12 @@ Set these in your shell or in a `.env` file:
 AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
 AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
-AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
 ```
 
 You also need to be logged in with `az login` (for `AzureCliCredential`).
 
-- [Microsoft Agent Framework](https://aka.ms/agent-framework)
-- [Azure Content Understanding](https://learn.microsoft.com/azure/ai-services/content-understanding/)
+### Next steps
+
+- Explore the [samples directory](samples/) for complete code examples
+- Read the [Azure Content Understanding documentation](https://learn.microsoft.com/azure/ai-services/content-understanding/) for detailed service information
+- Learn more about the [Microsoft Agent Framework](https://aka.ms/agent-framework)
