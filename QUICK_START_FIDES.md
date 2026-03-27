@@ -53,6 +53,15 @@ agent = main_client.create_agent(
 
 ## How It Works
 
+### Tiered Label Propagation
+
+When a tool returns a result, the middleware determines its security label using a strict 3-tier priority:
+
+1. **Tier 1 — Embedded labels**: Per-item `additional_properties.security_label` in the result
+2. **Tier 2 — `source_integrity`**: Tool's declared `source_integrity` (if set)
+3. **Tier 3 — Input labels join**: `combine_labels()` of input argument labels
+4. **Default**: `UNTRUSTED` when no labels exist from any tier
+
 ### Automatic Variable Hiding (Integrity)
 
 1. **Tool returns result** → Middleware checks integrity label

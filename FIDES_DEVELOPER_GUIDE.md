@@ -52,18 +52,22 @@ label = ContentLabel(
 )
 ```
 
-### 2. Label Tracking Middleware with Data-Flow Labeling
+### 2. Label Tracking Middleware with Tiered Label Propagation
 
-`LabelTrackingFunctionMiddleware` uses a **data-flow based labeling scheme** where the output label of a tool is determined by combining the labels of all its inputs plus the data's embedded labels:
+`LabelTrackingFunctionMiddleware` uses a **tiered label propagation** scheme where the result label of a tool call is determined by a strict 3-tier priority:
 
-```
-output_label = combine_labels(input_labels + per_item_labels)
-```
+| Priority | Source | Used When |
+|----------|--------|-----------|
+| **Tier 1** (Highest) | Per-item embedded labels (`additional_properties.security_label`) | Tool result items include explicit labels |
+| **Tier 2** | Tool's `source_integrity` declaration | No embedded labels, but tool declares `source_integrity` |
+| **Tier 3** (Lowest) | Join of input argument labels (`combine_labels`) | No embedded labels AND no `source_integrity` declared |
+| **Default** | `UNTRUSTED` | No labels from any tier |
 
-**Data-Flow Labeling:**
-- **input_labels**: Labels extracted from arguments (VariableReferenceContent, labeled data)
-- **per_item_labels**: Labels embedded in result items via `additional_properties.security_label`
-- **fallback**: Tool's `source_integrity` if no per-item labels (defaults to UNTRUSTED)
+**Tiered Label Propagation:**
+- **Tier 1: Embedded labels** in result items via `additional_properties.security_label` — highest priority, used per-item
+- **Tier 2: `source_integrity`** declaration on the tool — authoritative for the trust level of the tool's output, regardless of input labels
+- **Tier 3: Input labels join** — `combine_labels(*input_labels)` from arguments (VariableReferenceContent, labeled data)
+- **Default**: `UNTRUSTED` when no labels exist from any tier
 
 **Per-Item Embedded Labels (RECOMMENDED for Mixed-Trust Data):**
 Tools returning mixed-trust data should embed labels on each item in `additional_properties.security_label`:
@@ -81,13 +85,14 @@ The middleware automatically:
 - Keeps items with `integrity: "trusted"` visible in LLM context
 - Combines labels from all items for the overall result label
 
-**Tool-Level Source Integrity (Fallback):**
-If items don't have embedded labels, the tool can declare a fallback via `source_integrity`:
+**Tool-Level Source Integrity (Tier 2 Fallback):**
+If items don't have embedded labels, the tool can declare a fallback via `source_integrity`.
+When declared, `source_integrity` alone determines the result label — input argument labels are NOT combined in. This means a tool declaring `source_integrity="trusted"` always produces trusted output regardless of what inputs it received:
 - `source_integrity="trusted"`: Tool produces trusted data (internal computations)
 - `source_integrity="untrusted"`: Tool fetches untrusted data
-- (not set): Defaults to **UNTRUSTED** for safety
+- (not set): Falls back to tier 3 (join of input labels) or **UNTRUSTED** default
 
-**Note:** For action tools (sinks like `send_email`), `source_integrity` doesn't apply since they don't produce data. Their result inherits labels from inputs.
+**Note:** For action tools (sinks like `send_email`), `source_integrity` doesn't apply since they don't produce data. Their result inherits labels from inputs (tier 3).
 
 **Context Label Tracking:**
 - Context label starts as **TRUSTED + PUBLIC** on first call

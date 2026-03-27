@@ -81,6 +81,7 @@ def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None
         "high": IntegrityLabel.TRUSTED,
     }
     
+    # Initialize with most permissive labels; we'll tighten them based on field values
     most_restrictive_integrity = IntegrityLabel.TRUSTED
     most_restrictive_confidentiality = ConfidentialityLabel.PUBLIC
     
@@ -98,7 +99,7 @@ def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None
                 # Non-empty list of user IDs = private/restricted access
                 return ConfidentialityLabel.PRIVATE
             else:
-                # Empty list - treat as public for safety
+                # Empty list - treat as public
                 return ConfidentialityLabel.PUBLIC
         elif isinstance(conf_value, str):
             if conf_value.lower() == "public":
@@ -157,27 +158,34 @@ def _parse_github_mcp_labels(labels_data: dict[str, Any]) -> ContentLabel | None
 class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     """Middleware that tracks and propagates security labels through tool invocations.
     
-    Data-Flow Labeling Scheme:
-    This middleware uses data-flow based labeling where the output label of a tool
-    is determined by combining the labels of all its inputs plus the tool's source
-    integrity declaration:
+    Tiered Label Propagation:
+    The result label of a tool call is determined by a strict 3-tier priority:
     
-        output_label = combine_labels(input_labels + source_label)
-    
-    - input_labels: Labels extracted from arguments (VariableReferenceContent, etc.)
-    - source_label: Tool's declared source_integrity (defaults to UNTRUSTED for safety)
+    +----------+------------------------------------------+----------------------------+
+    | Priority | Source                                   | When used                  |
+    +==========+==========================================+============================+
+    | Tier 1   | Per-item embedded labels in the result   | Always wins if present     |
+    |          | (additional_properties.security_label)    |                            |
+    +----------+------------------------------------------+----------------------------+
+    | Tier 2   | Tool's source_integrity declaration       | No embedded labels         |
+    +----------+------------------------------------------+----------------------------+
+    | Tier 3   | Join (combine_labels) of input arg labels| No embedded labels AND     |
+    |          |                                          | no source_integrity        |
+    +----------+------------------------------------------+----------------------------+
     
     Tools can declare their source_integrity in additional_properties:
     - source_integrity="trusted": Tool produces trusted data (e.g., internal computation)
     - source_integrity="untrusted": Tool fetches external/untrusted data
-    - (not set): Defaults to UNTRUSTED for safety - tools must opt-in to TRUSTED
+    - (not set): Falls back to tier 3 (input label join), or UNTRUSTED if no inputs
     
     This middleware:
-    1. Extracts labels from tool input arguments (recursive inspection)
-    2. Checks tool's source_integrity declaration
-    3. Combines input labels + source label for the output
-    4. Maintains confidentiality labels based on tool declarations
-    5. Automatically hides untrusted content using variable indirection
+    1. Extracts labels from tool input arguments (tier 3 input)
+    2. Checks tool's source_integrity declaration (tier 2)
+    3. Executes the tool
+    4. Checks for per-item embedded labels in the result (tier 1 — highest priority)
+    5. Falls back to tier 2 or tier 3 when no embedded labels exist
+    6. Maintains confidentiality labels based on tool declarations
+    7. Automatically hides untrusted content using variable indirection
     
     Attributes:
         default_integrity: Default integrity for tools without source_integrity declaration.
@@ -434,8 +442,8 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         Recursively inspects the arguments passed to a tool to find any
         VariableReferenceContent objects or labeled data, and collects their labels.
         
-        Data-flow labeling: The output label of a tool is determined by combining
-        the labels of all its inputs, plus the tool's source_integrity property.
+        These labels are used as the tier-3 fallback (lowest priority) when
+        neither embedded labels nor a source_integrity declaration are present.
         
         Args:
             context: The function invocation context containing arguments.
@@ -521,21 +529,33 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         context: FunctionInvocationContext,
         call_next: Callable[[], Awaitable[None]],
     ) -> None:
-        """Process function invocation with data-flow based label tracking.
+        """Process function invocation with tiered label propagation.
         
-        Data-flow labeling scheme:
-        - output_label = combine_labels(input_labels + source_label)
-        - input_labels: Labels extracted from arguments (VariableReferenceContent, etc.)
-        - source_label: Tool's declared source_integrity (defaults to UNTRUSTED for safety)
+        Label propagation follows a strict 3-tier priority for determining the
+        result label of a tool call:
         
-        The context label tracks the cumulative security state:
-        - Starts as TRUSTED + PUBLIC
-        - Gets updated (tainted) based on tool results added to context
-        - Policy enforcement uses the context label to validate tool calls
+        1. **Tier 1 (Highest)**: Per-item embedded labels in the tool result
+           (``additional_properties.security_label``). If present, these labels
+           are used directly for each item.
+        2. **Tier 2**: The tool's ``source_integrity`` declaration. If the tool
+           explicitly declares ``source_integrity`` in its ``additional_properties``,
+           that declaration alone determines the fallback label (input argument
+           labels are NOT combined in).
+        3. **Tier 3 (Lowest)**: The join (``combine_labels``) of all input argument
+           labels. Used only when there are no embedded labels AND no
+           ``source_integrity`` declaration.
+        
+        Two metadata keys are set on the context:
+        
+        - ``context.metadata["result_label"]``: The security label of THIS tool
+          call's result (per-call). Set once after result processing.
+        - ``context.metadata["context_label"]``: The cumulative conversation
+          security state (cross-call). Used by ``PolicyEnforcementFunctionMiddleware``
+          to validate subsequent tool calls.
         
         Args:
             context: The function invocation context.
-            next: Callback to continue to next middleware or function execution.
+            call_next: Callback to continue to next middleware or function execution.
         """
         # Set thread-local middleware reference for tools to access
         _current_middleware.instance = self
@@ -543,53 +563,54 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         try:
             function_name = context.function.name
             
-            # ========== Data-Flow Based Labeling ==========
+            # ========== Tiered Label Propagation ==========
             # Step 1: Extract labels from input arguments
             input_labels = self._get_input_labels(context)
             
-            # Step 2: Get tool's source_integrity declaration
-            # Default to UNTRUSTED for safety (tools fetching external data)
-            source_integrity = self._get_source_integrity(context)
-            if source_integrity is None:
-                # Default: tools without explicit declaration are treated as UNTRUSTED
-                # This is the safe default - tools must explicitly opt-in to TRUSTED
-                source_integrity = self.default_integrity
-            
-            # Step 3: Create source label from tool's declaration
-            source_label = ContentLabel(
-                integrity=source_integrity,
-                confidentiality=ConfidentialityLabel.PUBLIC,  # Source doesn't affect confidentiality
-                metadata={"source": "tool_declaration", "function_name": function_name}
-            )
-            
-            # Step 4: Combine all labels (input labels + source label)
-            all_labels = input_labels + [source_label]
-            combined_integrity_label = combine_labels(*all_labels) if all_labels else ContentLabel()
+            # Step 2: Get tool's source_integrity declaration (may be None)
+            declared_source_integrity = self._get_source_integrity(context)
             
             # Get confidentiality from function additional_properties or use default
             confidentiality = self._get_function_confidentiality(context)
             
-            # Create the final call label
-            call_label = ContentLabel(
-                integrity=combined_integrity_label.integrity,
-                confidentiality=confidentiality,
-                metadata={
-                    "source": "data_flow",
-                    "function_name": function_name,
-                    "input_labels_count": len(input_labels),
-                    "source_integrity": source_integrity.value,
-                }
-            )
+            # Step 3: Build tiered fallback_label
+            # This label is used for result items that have NO embedded labels.
+            # Priority: source_integrity declaration (tier 2) > input labels join (tier 3)
+            if declared_source_integrity is not None:
+                # Tier 2: Tool explicitly declared source_integrity — use it alone.
+                # Input argument labels are NOT combined in; the tool's declaration
+                # is authoritative for the trust level of its output.
+                fallback_label = ContentLabel(
+                    integrity=declared_source_integrity,
+                    confidentiality=confidentiality,
+                    metadata={"source": "source_integrity", "function_name": function_name}
+                )
+            elif input_labels:
+                # Tier 3: No source_integrity declared — join all input labels.
+                combined = combine_labels(*input_labels)
+                fallback_label = ContentLabel(
+                    integrity=combined.integrity,
+                    confidentiality=confidentiality,
+                    metadata={"source": "input_labels_join", "function_name": function_name}
+                )
+            else:
+                # Tier 3 fallback: No source_integrity AND no input labels.
+                # Default to UNTRUSTED for safety.
+                fallback_label = ContentLabel(
+                    integrity=self.default_integrity,
+                    confidentiality=confidentiality,
+                    metadata={"source": "default", "function_name": function_name}
+                )
             
-            # Store both the call label AND the current context label in metadata
-            # Policy enforcement will use the context label for validation
-            context.metadata["security_label"] = call_label
+            # context_label: cumulative conversation security state (cross-call).
+            # Used by PolicyEnforcementFunctionMiddleware to validate tool calls.
             context.metadata["context_label"] = self._context_label
             
             logger.info(
-                f"Tool call '{function_name}' labeled (data-flow): {call_label.integrity.value}, "
-                f"{call_label.confidentiality.value} "
-                f"(inputs: {len(input_labels)}, source: {source_integrity.value})"
+                f"Tool call '{function_name}' fallback label (tiered): "
+                f"{fallback_label.integrity.value}, {fallback_label.confidentiality.value} "
+                f"(inputs: {len(input_labels)}, source_integrity: "
+                f"{declared_source_integrity.value if declared_source_integrity else 'not declared'})"
             )
             logger.info(
                 f"Current context label: {self._context_label.integrity.value}, "
@@ -609,10 +630,10 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 )
                 return
             
-            # Result inherits the call label (data-flow: output = f(inputs))
-            result_label = call_label
+            # Default result label is the fallback (used when result is None)
+            result_label = fallback_label
             
-            # Process result for per-item embedded labels
+            # Process result for per-item embedded labels (tier 1)
             if context.result is not None:
                 original_result = context.result
                 
@@ -628,18 +649,18 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                     except (ValueError, TypeError):
                         pass  # Not valid JSON — treat as a plain string
                 
-                # First, process for per-item embedded labels
-                # This allows tools to return mixed-trust data (e.g., some emails trusted, others not)
-                # Items with additional_properties.security_label.integrity="untrusted" are auto-hidden
+                # Process for per-item embedded labels (tier 1 overrides fallback).
+                # Items with additional_properties.security_label get their embedded
+                # label; items without it get the tiered fallback_label.
                 context.result, result_label = self._process_result_with_embedded_labels(
                     _parsed_result,
                     function_name,
-                    fallback_label=call_label,  # Use call label for items without embedded labels
+                    fallback_label=fallback_label,
                 )
                 
-                # Update the security_label metadata with the combined result label
-                # This reflects the combined labels from all items (including embedded labels)
-                context.metadata["security_label"] = result_label
+                # result_label: the security label of THIS tool call's result (per-call).
+                # Reflects whichever tier was used (embedded > source_integrity > input join).
+                context.metadata["result_label"] = result_label
                 
                 # Attach overall label to result if it's a FunctionResultContent
                 self._attach_label_to_result(context, result_label)
@@ -779,21 +800,21 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
     ) -> tuple[Any, ContentLabel]:
         """Recursively process result, respecting per-item embedded labels.
         
-        Items can embed their own security labels in additional_properties.security_label,
-        consistent with how FunctionResultContent stores labels. This allows tools to
-        return mixed-trust data where some items are trusted and others are untrusted.
+        This implements the first tier of the label propagation priority:
+        items with embedded labels (``additional_properties.security_label``)
+        use those labels directly. Items without embedded labels fall back to
+        ``fallback_label``, which is either the tool's ``source_integrity``
+        declaration (tier 2) or the join of input argument labels (tier 3).
         
         Untrusted items are automatically hidden and replaced with VariableReferenceContent.
         Trusted items pass through unchanged.
         
-        If an item has no embedded label, the fallback_label is used. If that fallback
-        is UNTRUSTED, the item is hidden.
-        
         Args:
             result: The result to process (may be dict, list, or primitive).
             function_name: Name of the function that produced the result.
-            fallback_label: Label to use if item has no embedded label.
-            context_label: Label of the current context.
+            fallback_label: Label to use when an item has no embedded label.
+                This is determined by the tiered priority in ``process()``:
+                tier 2 (source_integrity) or tier 3 (input labels join).
         Returns:
             Tuple of (processed_result, combined_label).
             - processed_result: Result with untrusted items replaced by variable references

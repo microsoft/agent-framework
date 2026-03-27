@@ -42,6 +42,7 @@ The FIDES defense system consists of eight main components:
 
 2. **`_security_middleware.py`** (~600+ lines)
    - `LabelTrackingFunctionMiddleware` - Tracks and propagates security labels
+     - **Tiered label propagation**: (1) embedded labels, (2) source_integrity, (3) input labels join
      - Automatic variable hiding (`auto_hide_untrusted` flag)
      - Per-middleware `ContentVariableStore` instance
      - Thread-local storage for tool access
@@ -50,7 +51,7 @@ The FIDES defense system consists of eight main components:
      - Message-level tracking (`label_message()`, `label_messages()`, `get_all_message_labels()`)
      - Content lineage tracking (`track_lineage()`, `get_lineage()`, `get_all_lineage()`)
    - `PolicyEnforcementFunctionMiddleware` - Enforces security policies
-     - Uses context label for policy decisions
+     - Uses `context_label` (cumulative conversation state) for policy decisions
      - Data exfiltration prevention via `max_allowed_confidentiality`
      - Audit log for all violations
 
@@ -217,7 +218,7 @@ lineage = middleware.track_lineage(
 
 ### Deterministic Defense
 
-1. **Always labeling**: Every tool call receives a label
+1. **Tiered label propagation**: Every tool result receives a label via 3-tier priority (embedded > source_integrity > input labels join)
 2. **Context tracking**: Cumulative security state tracked across turns
 3. **Policy enforcement**: Violations blocked before execution
 4. **Content isolation**: Untrusted content stored as variables

@@ -304,8 +304,8 @@ class TestLabelTrackingMiddleware:
         
         await middleware.process(context, next_fn)
         
-        assert "security_label" in context.metadata
-        label = context.metadata["security_label"]
+        assert "result_label" in context.metadata
+        label = context.metadata["result_label"]
         assert isinstance(label, ContentLabel)
     
     @pytest.mark.asyncio
@@ -337,7 +337,7 @@ class TestLabelTrackingMiddleware:
         
         await middleware.process(context, next_fn)
         
-        label = context.metadata["security_label"]
+        label = context.metadata["result_label"]
         assert label.integrity == IntegrityLabel.TRUSTED
     
     @pytest.mark.asyncio
@@ -355,13 +355,18 @@ class TestLabelTrackingMiddleware:
         
         await middleware.process(context, next_fn)
         
-        label = context.metadata["security_label"]
+        label = context.metadata["result_label"]
         # Should default to UNTRUSTED (safe default)
         assert label.integrity == IntegrityLabel.UNTRUSTED
     
     @pytest.mark.asyncio
     async def test_input_labels_propagate_to_output(self, middleware):
-        """Test that untrusted input labels propagate to output."""
+        """Test that source_integrity overrides input labels (tier 2 > tier 3).
+        
+        When a tool declares source_integrity="trusted", that declaration is
+        authoritative for the trust level of its output, regardless of the
+        input argument labels.
+        """
         # Create a trusted function
         class TrustedArgs(BaseModel):
             data: dict
@@ -393,10 +398,9 @@ class TestLabelTrackingMiddleware:
         
         await middleware.process(context, next_fn)
         
-        label = context.metadata["security_label"]
-        # Even though source_integrity is trusted, input has untrusted label
-        # Combined result should be UNTRUSTED
-        assert label.integrity == IntegrityLabel.UNTRUSTED
+        label = context.metadata["result_label"]
+        # source_integrity="trusted" (tier 2) overrides untrusted input label (tier 3)
+        assert label.integrity == IntegrityLabel.TRUSTED
     
     @pytest.mark.asyncio
     async def test_variable_reference_input_labels_extracted(self, middleware):
@@ -437,9 +441,10 @@ class TestLabelTrackingMiddleware:
         
         await middleware.process(context, next_fn)
         
-        label = context.metadata["security_label"]
-        # The VariableReferenceContent label should be extracted and combined
-        assert label.integrity == IntegrityLabel.UNTRUSTED
+        label = context.metadata["result_label"]
+        # source_integrity="trusted" (tier 2) overrides the VariableReferenceContent
+        # label from input (tier 3) — the tool's declaration is authoritative
+        assert label.integrity == IntegrityLabel.TRUSTED
 
 
 class TestPolicyEnforcementMiddleware:
@@ -479,9 +484,9 @@ class TestPolicyEnforcementMiddleware:
             arguments=args
         )
         
-        # Set trusted label
+        # Set trusted context label (policy enforcement reads context_label)
         label = ContentLabel(integrity=IntegrityLabel.TRUSTED)
-        context.metadata["security_label"] = label
+        context.metadata["context_label"] = label
         
         async def next_fn():
             context.result = "mock result"
@@ -1118,8 +1123,8 @@ class TestContextLabelTracking:
         
         await middleware.process(context, next_fn)
         
-        # Both call label and context label should be in metadata
-        assert "security_label" in context.metadata
+        # Both result label and context label should be in metadata
+        assert "result_label" in context.metadata
         assert "context_label" in context.metadata
         assert isinstance(context.metadata["context_label"], ContentLabel)
     
@@ -1245,8 +1250,7 @@ class TestPolicyEnforcementWithContextLabel:
             arguments=args
         )
         
-        # Set up labels as if label_middleware ran
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
+        # Set up context_label as if label_middleware ran
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -1284,7 +1288,6 @@ class TestPolicyEnforcementWithContextLabel:
             arguments=args
         )
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -2193,7 +2196,7 @@ class TestPerItemEmbeddedLabels:
         assert result["security_label"]["integrity"] == "untrusted"
         
         # The call/result label should be UNTRUSTED
-        label = context.metadata.get("security_label")
+        label = context.metadata.get("result_label")
         assert label.integrity == IntegrityLabel.UNTRUSTED
     
     @pytest.mark.asyncio
@@ -2268,7 +2271,7 @@ class TestPerItemEmbeddedLabels:
         
         # Combined label should be UNTRUSTED (most restrictive integrity)
         # and PRIVATE (most restrictive confidentiality)
-        label = context.metadata.get("security_label")
+        label = context.metadata.get("result_label")
         assert label.integrity == IntegrityLabel.UNTRUSTED
         assert label.confidentiality == ConfidentialityLabel.PRIVATE
     
@@ -2339,6 +2342,171 @@ class TestPerItemEmbeddedLabels:
         assert result[0]["data"] == "untrusted but visible"
 
 
+# ========== Tests for Tiered Label Propagation Priority ==========
+
+class TestTieredLabelPropagation:
+    """Tests for the 3-tier label propagation priority.
+    
+    Tier 1 (Highest): Per-item embedded labels in tool result
+    Tier 2: Tool's source_integrity declaration
+    Tier 3 (Lowest): Join of input argument labels
+    """
+
+    @pytest.fixture
+    def middleware(self):
+        """Create middleware instance."""
+        return LabelTrackingFunctionMiddleware()
+
+    @pytest.mark.asyncio
+    async def test_source_integrity_overrides_input_labels(self, middleware):
+        """Test that source_integrity (tier 2) overrides input labels (tier 3).
+        
+        When a tool declares source_integrity="trusted", that declaration is
+        authoritative even when input arguments carry untrusted labels.
+        """
+        class Args(BaseModel):
+            data: dict
+
+        async def fn(data: dict) -> str:
+            return "result"
+
+        function = FunctionTool(
+            fn=fn,
+            name="trusted_processor",
+            description="Trusted processor",
+            args_schema=Args,
+            additional_properties={"source_integrity": "trusted"}
+        )
+
+        # Input has an untrusted label embedded in the argument
+        args = function.args_schema(data={
+            "content": "test",
+            "security_label": {"integrity": "untrusted", "confidentiality": "public"}
+        })
+        context = FunctionInvocationContext(function=function, arguments=args)
+
+        async def next_fn():
+            context.result = "plain result with no embedded labels"
+
+        await middleware.process(context, next_fn)
+
+        label = context.metadata["result_label"]
+        # Tier 2 (source_integrity=trusted) wins over tier 3 (untrusted input)
+        assert label.integrity == IntegrityLabel.TRUSTED
+
+    @pytest.mark.asyncio
+    async def test_embedded_labels_override_source_integrity(self, middleware):
+        """Test that embedded labels (tier 1) override source_integrity (tier 2).
+        
+        Even when a tool declares source_integrity="trusted", per-item embedded
+        labels in the result take precedence.
+        """
+        class Args(BaseModel):
+            pass
+
+        async def fn() -> list:
+            return []
+
+        function = FunctionTool(
+            fn=fn,
+            name="trusted_fetcher",
+            description="Trusted fetcher",
+            args_schema=Args,
+            additional_properties={"source_integrity": "trusted"}
+        )
+
+        args = function.args_schema()
+        context = FunctionInvocationContext(function=function, arguments=args)
+
+        async def next_fn():
+            context.result = [
+                {
+                    "id": 1,
+                    "data": "untrusted external data",
+                    "additional_properties": {
+                        "security_label": {"integrity": "untrusted", "confidentiality": "public"}
+                    }
+                },
+            ]
+
+        await middleware.process(context, next_fn)
+
+        label = context.metadata["result_label"]
+        # Tier 1 (embedded label: untrusted) wins over tier 2 (source_integrity: trusted)
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+
+    @pytest.mark.asyncio
+    async def test_no_source_integrity_falls_back_to_input_labels(self, middleware):
+        """Test that without source_integrity, input labels (tier 3) determine the result.
+        
+        When a tool has no source_integrity declaration and the result has no
+        embedded labels, the join of input argument labels is used.
+        """
+        class Args(BaseModel):
+            data: dict
+
+        async def fn(data: dict) -> str:
+            return "result"
+
+        # No source_integrity declared
+        function = FunctionTool(
+            fn=fn,
+            name="generic_processor",
+            description="Generic processor",
+            args_schema=Args,
+        )
+
+        # Input has an untrusted label
+        args = function.args_schema(data={
+            "content": "test",
+            "security_label": {"integrity": "untrusted", "confidentiality": "public"}
+        })
+        context = FunctionInvocationContext(function=function, arguments=args)
+
+        async def next_fn():
+            context.result = "plain result"
+
+        await middleware.process(context, next_fn)
+
+        # No source_integrity (tier 2 absent), so tier 3: join of input labels
+        # Input has untrusted label → result is untrusted
+        result = json.loads(context.result) if isinstance(context.result, str) else context.result
+        # Result should be hidden since it's untrusted
+        assert isinstance(result, dict) and result.get("type") == "variable_reference"
+
+    @pytest.mark.asyncio
+    async def test_no_labels_anywhere_defaults_untrusted(self, middleware):
+        """Test that with no labels anywhere, the result defaults to UNTRUSTED.
+        
+        No source_integrity, no input labels, no embedded labels → safe default.
+        """
+        class Args(BaseModel):
+            arg: str = "default"
+
+        async def fn(arg: str = "default") -> str:
+            return "result"
+
+        # No source_integrity, no additional_properties
+        function = FunctionTool(
+            fn=fn,
+            name="plain_function",
+            description="Plain function",
+            args_schema=Args,
+        )
+
+        args = function.args_schema()
+        context = FunctionInvocationContext(function=function, arguments=args)
+
+        async def next_fn():
+            context.result = "plain result"
+
+        await middleware.process(context, next_fn)
+
+        label = context.metadata["result_label"]
+        # No source_integrity + no input labels + no embedded labels → UNTRUSTED default
+        assert label.integrity == IntegrityLabel.UNTRUSTED
+
+
 # ========== Tests for max_allowed_confidentiality (Data Exfiltration Prevention) ==========
 
 class TestMaxAllowedConfidentiality:
@@ -2391,7 +2559,6 @@ class TestMaxAllowedConfidentiality:
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -2418,7 +2585,6 @@ class TestMaxAllowedConfidentiality:
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -2446,7 +2612,6 @@ class TestMaxAllowedConfidentiality:
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -2473,7 +2638,6 @@ class TestMaxAllowedConfidentiality:
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
@@ -2517,7 +2681,6 @@ class TestMaxAllowedConfidentiality:
         args = function.args_schema()
         context = FunctionInvocationContext(function=function, arguments=args)
         
-        context.metadata["security_label"] = ContentLabel(integrity=IntegrityLabel.TRUSTED)
         context.metadata["context_label"] = label_middleware.get_context_label()
         
         async def next_fn():
