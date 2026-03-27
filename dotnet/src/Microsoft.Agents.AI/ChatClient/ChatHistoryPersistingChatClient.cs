@@ -51,6 +51,26 @@ internal sealed class ChatHistoryPersistingChatClient : DelegatingChatClient
     internal const string PersistedMarkerKey = "_chatHistoryPersisted";
 
     /// <summary>
+    /// A sentinel value set on <see cref="ChatOptions.ConversationId"/> by <see cref="ChatClientAgent"/>
+    /// when per-service-call persistence is active and no real conversation ID exists.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This signals to <see cref="FunctionInvokingChatClient"/> that the chat history is being managed
+    /// externally (by this decorator), which prevents it from adding duplicate <see cref="FunctionCallContent"/>
+    /// messages into the request during approval-response processing. Without this sentinel,
+    /// <see cref="FunctionInvokingChatClient"/> would reconstruct function-call messages from approval
+    /// responses and append them to the original messages — but the loaded history already contains
+    /// those same function calls, causing duplicate tool-call entries that the model rejects.
+    /// </para>
+    /// <para>
+    /// This decorator strips the sentinel before forwarding requests to the inner client, so the
+    /// underlying model never sees it.
+    /// </para>
+    /// </remarks>
+    internal const string LocalHistoryConversationId = "_agent_local_history";
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ChatHistoryPersistingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying chat client that will handle the core operations.</param>
@@ -87,6 +107,7 @@ internal sealed class ChatHistoryPersistingChatClient : DelegatingChatClient
         CancellationToken cancellationToken = default)
     {
         var (agent, session) = GetRequiredAgentAndSession();
+        options = StripLocalHistoryConversationId(options);
 
         ChatResponse response;
         try
@@ -130,6 +151,7 @@ internal sealed class ChatHistoryPersistingChatClient : DelegatingChatClient
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var (agent, session) = GetRequiredAgentAndSession();
+        options = StripLocalHistoryConversationId(options);
 
         List<ChatResponseUpdate> responseUpdates = [];
 
@@ -309,5 +331,21 @@ internal sealed class ChatHistoryPersistingChatClient : DelegatingChatClient
                 content.AdditionalProperties[PersistedMarkerKey] = true;
             }
         }
+    }
+
+    /// <summary>
+    /// If the <paramref name="options"/> carry the <see cref="LocalHistoryConversationId"/> sentinel,
+    /// returns a clone with the conversation ID cleared so the inner client never sees it.
+    /// Otherwise returns the original <paramref name="options"/> unchanged.
+    /// </summary>
+    private static ChatOptions? StripLocalHistoryConversationId(ChatOptions? options)
+    {
+        if (options?.ConversationId == LocalHistoryConversationId)
+        {
+            options = options.Clone();
+            options.ConversationId = null;
+        }
+
+        return options;
     }
 }

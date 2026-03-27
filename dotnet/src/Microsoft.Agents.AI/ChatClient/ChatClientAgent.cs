@@ -788,6 +788,13 @@ public sealed partial class ChatClientAgent : AIAgent
             chatOptions.ConversationId = typedSession.ConversationId;
         }
 
+        // When per-service-call persistence is active, set a sentinel conversation ID so that
+        // FunctionInvokingChatClient treats locally-persisted history the same as service-managed
+        // history. This prevents it from adding duplicate FunctionCallContent messages into the
+        // request when processing approval responses — the loaded history already contains them.
+        // ChatHistoryPersistingChatClient strips the sentinel before forwarding to the inner client.
+        chatOptions = this.SetLocalHistoryConversationIdIfNeeded(chatOptions);
+
         // Materialize the accumulated messages once at the end of the provider pipeline, reusing the existing list if possible.
         List<ChatMessage> messagesList = inputMessagesForChatClient as List<ChatMessage> ?? inputMessagesForChatClient.ToList();
 
@@ -927,6 +934,26 @@ public sealed partial class ChatClientAgent : AIAgent
             var persistingClient = this.ChatClient.GetService<ChatHistoryPersistingChatClient>();
             return persistingClient?.MarkOnly == false;
         }
+    }
+
+    /// <summary>
+    /// Sets the <see cref="ChatHistoryPersistingChatClient.LocalHistoryConversationId"/> sentinel on
+    /// <paramref name="chatOptions"/> when per-service-call persistence is active and no real
+    /// conversation ID is present.
+    /// </summary>
+    /// <returns>
+    /// The (possibly new) <see cref="ChatOptions"/> with the sentinel set, or the original
+    /// <paramref name="chatOptions"/> if no sentinel is needed.
+    /// </returns>
+    private ChatOptions? SetLocalHistoryConversationIdIfNeeded(ChatOptions? chatOptions)
+    {
+        if (this.PersistsChatHistoryPerServiceCall && string.IsNullOrWhiteSpace(chatOptions?.ConversationId))
+        {
+            chatOptions ??= new ChatOptions();
+            chatOptions.ConversationId = ChatHistoryPersistingChatClient.LocalHistoryConversationId;
+        }
+
+        return chatOptions;
     }
 
     /// <summary>
