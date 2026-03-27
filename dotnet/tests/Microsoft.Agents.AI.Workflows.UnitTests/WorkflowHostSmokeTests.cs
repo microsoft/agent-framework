@@ -206,7 +206,7 @@ internal sealed class TurnTrackingStartExecutor : ChatProtocolExecutor
     }
 }
 
-public class WorkflowHostSmokeTests
+public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
 {
     private sealed class AlwaysFailsAIAgent(bool failByThrowing) : AIAgent
     {
@@ -730,5 +730,71 @@ public class WorkflowHostSmokeTests
             .SelectMany(u => u.Contents.OfType<ErrorContent>())
             .Should()
             .BeEmpty();
+    }
+
+    private async Task Run_AsAgent_OutgoingMessagesInHistoryAsync(Workflow workflow, bool runAsync)
+    {
+        // Arrange
+        AIAgent workflowAgent = workflow.AsAIAgent();
+
+        // Act
+        AgentSession session = await workflowAgent.CreateSessionAsync();
+        AgentResponse response;
+        if (runAsync)
+        {
+            List<AgentResponseUpdate> updates = [];
+            await foreach (AgentResponseUpdate update in workflowAgent.RunStreamingAsync(session))
+            {
+                // Skip WorkflowEvent updates, which do not get persisted in ChatHistory; we cannot skip
+                // them after because of a deleterious interaction with .ToAgentResponse() due to the
+                // empty initial message (which is created without a MessageId). When running through the
+                // message merger, it does the right thing internally.
+                if (!string.IsNullOrEmpty(update.Text))
+                {
+                    updates.Add(update);
+                }
+            }
+
+            response = updates.ToAgentResponse();
+        }
+        else
+        {
+            response = await workflowAgent.RunAsync(session);
+        }
+
+        // Assert
+        WorkflowSession workflowSession = session.Should().BeOfType<WorkflowSession>().Subject;
+
+        ChatMessage[] responseMessages = response.Messages.Where(message => message.Contents.Any())
+                                                          .ToArray();
+
+        ChatMessage[] sessionMessages = workflowSession.ChatHistoryProvider.GetAllMessages(workflowSession)
+                                                                           .ToArray();
+
+        // Since we never sent an incoming message, the expectation is that there should be nothing in the session
+        // except the response
+        responseMessages.Should().BeEquivalentTo(sessionMessages, options => options.WithStrictOrdering());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Test_SingleAgent_AsAgent_OutgoingMessagesInHistoryAsync(bool runAsync)
+    {
+        // Arrange
+        TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
+        Workflow singleAgentWorkflow = new WorkflowBuilder(agent).Build();
+        return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(singleAgentWorkflow, runAsync);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Test_Handoffs_AsAgent_OutgoingMessagesInHistoryAsync(bool runAsync)
+    {
+        // Arrange
+        TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
+        Workflow handoffWorkflow = new HandoffWorkflowBuilder(agent).Build();
+        return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(handoffWorkflow, runAsync);
     }
 }

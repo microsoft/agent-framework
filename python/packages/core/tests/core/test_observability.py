@@ -207,7 +207,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
-    response = await client.get_response(messages=messages, model_id="Test")
+    response = await client.get_response(messages=messages, options={"model_id": "Test"})
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
@@ -232,7 +232,7 @@ async def test_chat_client_streaming_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    stream = client.get_response(stream=True, messages=messages, model_id="Test")
+    stream = client.get_response(stream=True, messages=messages, options={"model_id": "Test"})
     async for update in stream:
         updates.append(update)
     await stream.get_final_response()
@@ -1540,7 +1540,7 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Test error"):
-        await client.get_response(messages=messages, model_id="Test")
+        await client.get_response(messages=messages, options={"model_id": "Test"})
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
@@ -1570,7 +1570,7 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Streaming error"):
-        async for _ in client.get_response(messages=messages, stream=True, model_id="Test"):
+        async for _ in client.get_response(messages=messages, stream=True, options={"model_id": "Test"}):
             pass
 
     spans = span_exporter.get_finished_spans()
@@ -2075,7 +2075,7 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, model_id="Test")
+    response = await client.get_response(messages=messages, options={"model_id": "Test"})
 
     assert response is not None
     assert response.finish_reason == "stop"
@@ -2165,7 +2165,7 @@ async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemo
     messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, model_id="Test")
+    response = await client.get_response(messages=messages, options={"model_id": "Test"})
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -2181,7 +2181,7 @@ async def test_chat_client_streaming_when_disabled(mock_chat_client, span_export
 
     span_exporter.clear()
     updates = []
-    async for update in client.get_response(messages=messages, stream=True, model_id="Test"):
+    async for update in client.get_response(messages=messages, stream=True, options={"model_id": "Test"}):
         updates.append(update)
 
     assert len(updates) == 2  # Still works functionally
@@ -2661,7 +2661,7 @@ async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client,
     messages = [Message(role="user", text=japanese_text)]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, model_id="Test")
+    response = await client.get_response(messages=messages, options={"model_id": "Test"})
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
