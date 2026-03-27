@@ -11,7 +11,7 @@ Example:
 .. code-block:: python
 
     from agent_framework import evaluate_agent
-    from agent_framework_azure_ai import FoundryEvals
+    from agent_framework.foundry import FoundryEvals
 
     evals = FoundryEvals(project_client=project_client, model="gpt-4o")
     results = await evaluate_agent(
@@ -39,8 +39,9 @@ from agent_framework._evaluation import (
     EvalResults,
     EvalScoreResult,
 )
-from agent_framework_foundry import FoundryChatClient
 from openai import AsyncOpenAI
+
+from ._chat_client import FoundryChatClient
 
 if TYPE_CHECKING:
     from azure.ai.projects.aio import AIProjectClient
@@ -520,7 +521,7 @@ class FoundryEvals:
 
     .. code-block:: python
 
-        from agent_framework_azure_ai import FoundryEvals
+        from agent_framework.foundry import FoundryEvals
 
         evaluators = [FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY]
 
@@ -530,8 +531,7 @@ class FoundryEvals:
         .. code-block:: python
 
             from agent_framework import evaluate_agent
-            from agent_framework_azure_ai import FoundryEvals
-            from agent_framework_foundry import FoundryChatClient
+            from agent_framework.foundry import FoundryEvals, FoundryChatClient
 
             chat_client = FoundryChatClient(model="gpt-4o")
             evals = FoundryEvals(client=chat_client)

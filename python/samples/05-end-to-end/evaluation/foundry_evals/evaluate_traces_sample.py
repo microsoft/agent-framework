@@ -19,8 +19,7 @@ Prerequisites:
 import asyncio
 import os
 
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_ai import FoundryEvals, evaluate_traces
+from agent_framework.foundry import FoundryChatClient, FoundryEvals, evaluate_traces
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv

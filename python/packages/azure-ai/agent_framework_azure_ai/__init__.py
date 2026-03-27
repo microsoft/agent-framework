@@ -24,11 +24,6 @@ from ._embedding_client import (
     RawAzureAIInferenceEmbeddingClient,
 )
 from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
-from ._foundry_evals import (
-    FoundryEvals,
-    evaluate_foundry_target,
-    evaluate_traces,
-)
 from ._project_provider import AzureAIProjectAgentProvider  # pyright: ignore[reportDeprecated]
 from ._shared import AzureAISettings
 
@@ -60,10 +55,7 @@ __all__ = [
     "AzureOpenAISettings",
     "AzureTokenProvider",
     "AzureUserSecurityContext",
-    "FoundryEvals",
     "RawAzureAIClient",
     "RawAzureAIInferenceEmbeddingClient",
     "__version__",
-    "evaluate_foundry_target",
-    "evaluate_traces",
 ]

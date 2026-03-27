@@ -25,7 +25,7 @@ from agent_framework._evaluation import (
 from agent_framework._workflows._workflow import WorkflowRunResult
 from openai import AsyncOpenAI
 
-from agent_framework_azure_ai._foundry_evals import (
+from agent_framework_foundry._foundry_evals import (
     FoundryEvals,
     _build_item_schema,
     _build_testing_criteria,
@@ -1956,7 +1956,7 @@ class TestEvalResultsWithItems:
 
 class TestFetchOutputItems:
     async def test_fetches_and_converts_output_items(self) -> None:
-        from agent_framework_azure_ai._foundry_evals import _fetch_output_items
+        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         # Build mock output items matching the OpenAI SDK schema
         mock_result = MagicMock()
@@ -2018,7 +2018,7 @@ class TestFetchOutputItems:
         assert item.error_code is None
 
     async def test_handles_errored_item(self) -> None:
-        from agent_framework_azure_ai._foundry_evals import _fetch_output_items
+        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_error = MagicMock()
         mock_error.code = "QueryExtractionError"
@@ -2050,7 +2050,7 @@ class TestFetchOutputItems:
         assert len(item.scores) == 0
 
     async def test_handles_api_failure_gracefully(self) -> None:
-        from agent_framework_azure_ai._foundry_evals import _fetch_output_items
+        from agent_framework_foundry._foundry_evals import _fetch_output_items
 
         mock_client = MagicMock()
         mock_client.evals.runs.output_items.list = AsyncMock(side_effect=TypeError("API error"))
@@ -2067,7 +2067,7 @@ class TestFetchOutputItems:
 class TestPollEvalRun:
     async def test_timeout_returns_timeout_status(self) -> None:
         """Poll timeout returns EvalResults with status='timeout'."""
-        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_pending = MagicMock()
@@ -2081,7 +2081,7 @@ class TestPollEvalRun:
 
     async def test_failed_run_returns_error(self) -> None:
         """Failed run returns EvalResults with error message."""
-        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_failed = MagicMock()
@@ -2099,7 +2099,7 @@ class TestPollEvalRun:
 
     async def test_canceled_run_returns_canceled_status(self) -> None:
         """Canceled run returns EvalResults with status='canceled'."""
-        from agent_framework_azure_ai._foundry_evals import _poll_eval_run
+        from agent_framework_foundry._foundry_evals import _poll_eval_run
 
         mock_client = MagicMock()
         mock_canceled = MagicMock()
@@ -2124,7 +2124,7 @@ class TestPollEvalRun:
 class TestEvaluateTraces:
     async def test_raises_without_required_args(self) -> None:
         """Raises ValueError when no response_ids, trace_ids, or agent_id given."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
         with pytest.raises(ValueError, match="Provide at least one of"):
@@ -2135,7 +2135,7 @@ class TestEvaluateTraces:
 
     async def test_response_ids_path(self) -> None:
         """evaluate_traces with response_ids uses the responses API path."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -2183,7 +2183,7 @@ class TestEvaluateTraces:
 
     async def test_trace_ids_path(self) -> None:
         """evaluate_traces with trace_ids builds azure_ai_traces data source."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -2223,7 +2223,7 @@ class TestEvaluateTraces:
 class TestEvaluateFoundryTarget:
     async def test_happy_path(self) -> None:
         """evaluate_foundry_target creates eval + run and polls to completion."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_foundry_target
+        from agent_framework_foundry._foundry_evals import evaluate_foundry_target
 
         mock_client = MagicMock()
 
@@ -2381,13 +2381,13 @@ class TestEvaluatorSetConsistency:
     """Verify that _AGENT_EVALUATORS and _TOOL_EVALUATORS are subsets of _BUILTIN_EVALUATORS."""
 
     def test_agent_evaluators_subset(self):
-        from agent_framework_azure_ai._foundry_evals import _AGENT_EVALUATORS, _BUILTIN_EVALUATORS
+        from agent_framework_foundry._foundry_evals import _AGENT_EVALUATORS, _BUILTIN_EVALUATORS
 
         diff = _AGENT_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
         assert not diff, f"_AGENT_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
 
     def test_tool_evaluators_subset(self):
-        from agent_framework_azure_ai._foundry_evals import _BUILTIN_EVALUATORS, _TOOL_EVALUATORS
+        from agent_framework_foundry._foundry_evals import _BUILTIN_EVALUATORS, _TOOL_EVALUATORS
 
         diff = _TOOL_EVALUATORS - set(_BUILTIN_EVALUATORS.values())
         assert not diff, f"_TOOL_EVALUATORS has names not in _BUILTIN_EVALUATORS: {diff}"
@@ -2401,7 +2401,7 @@ class TestEvaluatorSetConsistency:
 class TestEvaluateTracesAgentId:
     async def test_agent_id_only_path(self) -> None:
         """evaluate_traces with agent_id only builds azure_ai_traces data source."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_traces
+        from agent_framework_foundry._foundry_evals import evaluate_traces
 
         mock_client = MagicMock()
 
@@ -2459,7 +2459,7 @@ class TestFilterToolEvaluatorsRaises:
 class TestEvaluateFoundryTargetValidation:
     async def test_target_without_type_raises(self) -> None:
         """target dict without 'type' key raises ValueError."""
-        from agent_framework_azure_ai._foundry_evals import evaluate_foundry_target
+        from agent_framework_foundry._foundry_evals import evaluate_foundry_target
 
         mock_client = MagicMock()
         with pytest.raises(ValueError, match="'type' key"):

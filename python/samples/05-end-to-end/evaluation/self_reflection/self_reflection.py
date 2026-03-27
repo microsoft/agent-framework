@@ -19,8 +19,7 @@ from typing import Any
 
 import pandas as pd
 from agent_framework import Agent, EvalItem, Message
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_ai import FoundryEvals
+from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 

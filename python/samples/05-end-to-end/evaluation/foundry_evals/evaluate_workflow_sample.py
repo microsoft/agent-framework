@@ -18,8 +18,7 @@ import asyncio
 import os
 
 from agent_framework import Agent, evaluate_workflow
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_ai import FoundryEvals
+from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from agent_framework_orchestrations import SequentialBuilder
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential

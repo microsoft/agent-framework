@@ -462,7 +462,7 @@ class FoundryEvals:
 ### Azure AI: FoundryEvals Constants
 
 ```python
-from agent_framework_azure_ai import FoundryEvals
+from agent_framework.foundry import FoundryEvals
 
 evaluators = [FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY]
 ```

@@ -13,7 +13,7 @@ Cloud evaluator example:
 .. code-block:: python
 
     from agent_framework import evaluate_agent, EvalResults
-    from agent_framework_azure_ai import FoundryEvals
+    from agent_framework.foundry import FoundryEvals
 
     evals = FoundryEvals(project_client=client, model="gpt-4o")
     results = await evaluate_agent(agent=agent, queries=["Hello"], evaluators=evals)
@@ -438,20 +438,21 @@ class EvalResults:
 
     @property
     def all_passed(self) -> bool:
-        """Whether all results passed with no failures.
+        """Whether all results passed with no failures or errors.
 
         For workflow evals with sub-agents, checks that all sub-results passed.
         Returns ``False`` if the run did not complete successfully.
         """
         if self.status not in ("completed",):
             return False
-        own_passed = self.failed == 0 and self.total > 0 if self.result_counts else True
+        errored = (self.result_counts or {}).get("errored", 0)
+        own_passed = self.failed == 0 and errored == 0 and self.total > 0 if self.result_counts else True
         if self.sub_results:
             return own_passed and all(sub.all_passed for sub in self.sub_results.values())
-        return self.failed == 0 and self.total > 0
+        return self.failed == 0 and errored == 0 and self.total > 0
 
     def raise_for_status(self, msg: str | None = None) -> None:
-        """Raise ``EvalNotPassedError`` if any results failed.
+        """Raise ``EvalNotPassedError`` if any results failed or errored.
 
         Similar to ``requests.Response.raise_for_status()`` — call after
         evaluation to verify quality in CI pipelines or test suites.
@@ -460,13 +461,16 @@ class EvalResults:
             msg: Optional custom failure message.
 
         Raises:
-            EvalNotPassedError: When any results failed.
+            EvalNotPassedError: When any results failed or errored.
         """
         if not self.all_passed:
+            errored = (self.result_counts or {}).get("errored", 0)
             detail = msg or (
                 f"Eval run {self.run_id} {self.status}: "
                 f"{self.passed} passed, {self.failed} failed."
             )
+            if errored:
+                detail += f" {errored} errored."
             if self.report_url:
                 detail += f" See {self.report_url} for details."
             if self.error:
@@ -475,6 +479,11 @@ class EvalResults:
                 failed = [name for name, sub in self.sub_results.items() if not sub.all_passed]
                 if failed:
                     detail += f" Failed: {', '.join(failed)}."
+            if self.items:
+                errored_items = [i for i in self.items if i.is_error]
+                if errored_items:
+                    summaries = [f"{i.item_id}: {i.error_code or 'unknown'}" for i in errored_items]
+                    detail += f" Errored items: {', '.join(summaries)}."
             raise EvalNotPassedError(detail)
 
 
@@ -1317,7 +1326,7 @@ class LocalEvaluator:
 
         .. code-block:: python
 
-            from agent_framework_azure_ai import FoundryEvals
+            from agent_framework.foundry import FoundryEvals
 
             results = await evaluate_agent(
                 agent=agent,
@@ -1652,7 +1661,7 @@ async def evaluate_workflow(
 
     .. code-block:: python
 
-        from agent_framework_azure_ai import FoundryEvals
+        from agent_framework.foundry import FoundryEvals
 
         evals = FoundryEvals(project_client=client, model="gpt-4o")
         result = await workflow.run("Plan a trip to Paris")

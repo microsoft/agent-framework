@@ -26,8 +26,7 @@ from agent_framework import (
     keyword_check,
     tool_called_check,
 )
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_ai import FoundryEvals
+from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv

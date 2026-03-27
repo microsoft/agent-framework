@@ -2,10 +2,11 @@
 
 """Evaluate an agent using Azure AI Foundry's built-in evaluators.
 
-This sample demonstrates three patterns:
+This sample demonstrates two patterns:
 1. evaluate_agent(responses=...) — Evaluate a response you already have.
 2. evaluate_agent(queries=...) — Run the agent against test queries and evaluate in one call.
-3. FoundryEvals.evaluate() — Full control with direct evaluator access.
+
+See ``evaluate_tool_calls_sample.py`` for tool-call accuracy evaluation.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
@@ -15,9 +16,8 @@ Prerequisites:
 import asyncio
 import os
 
-from agent_framework import Agent, AgentEvalConverter, ConversationSplit, evaluate_agent
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_azure_ai import FoundryEvals
+from agent_framework import Agent, ConversationSplit, evaluate_agent
+from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from azure.ai.projects.aio import AIProjectClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -153,44 +153,6 @@ async def main() -> None:
             print("✓ All passed")
         else:
             print(f"✗ {r.failed} failed")
-
-    # =========================================================================
-    # Pattern 3: FoundryEvals.evaluate() — manual control
-    # =========================================================================
-    print()
-    print("=" * 60)
-    print("Pattern 3: FoundryEvals.evaluate() — manual control")
-    print("=" * 60)
-
-    queries = [
-        "What's the weather in Paris?",
-        "Find me a flight from London to Seattle",
-    ]
-
-    items = []
-    for q in queries:
-        response = await agent.run(q)
-        print(f"Query: {q}")
-        print(f"Response: {response.text[:100]}...")
-
-        item = AgentEvalConverter.to_eval_item(query=q, response=response, agent=agent)
-        items.append(item)
-
-        print(f"  Has tools: {item.tools is not None}")
-        if item.tools:
-            print(f"  Tools: {[t.name for t in item.tools]}")
-
-    # Submit directly to the evaluator
-    tool_evals = FoundryEvals(
-        client=chat_client,
-        model=deployment,
-        evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
-    )
-    results = await tool_evals.evaluate(items, eval_name="Travel Assistant Eval")
-
-    print(f"\nStatus: {results.status}")
-    print(f"Results: {results.passed}/{results.total} passed")
-    print(f"Portal: {results.report_url}")
 
 
 if __name__ == "__main__":
