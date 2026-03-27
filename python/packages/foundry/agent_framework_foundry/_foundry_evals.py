@@ -277,7 +277,7 @@ async def _poll_eval_run(
             if run.status == "failed":
                 # run.error is an EvalAPIError object (code + message)
                 err = run.error
-                if err is not None:
+                if err is not None:  # pyright: ignore[reportUnnecessaryComparison]
                     error_msg = getattr(err, "message", None) or str(err)
 
             items: list[EvalItemResult] = []

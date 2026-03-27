@@ -14,7 +14,6 @@ from agent_framework._evaluation import (
     ExpectedToolCall,
     LocalEvaluator,
     _coerce_result,
-    _normalize_queries,
     evaluator,
     keyword_check,
     tool_call_args_match,
@@ -871,38 +870,6 @@ class TestToolCalledCheckModeAny:
         result = check(item)
         assert result.passed is False
         assert "None of expected tools" in result.reason
-
-
-class TestNormalizeQueries:
-    """Tests for _normalize_queries branches and validation."""
-
-    def test_single_string_replicates(self):
-        """Single string query replicates to match expected_count."""
-        result = _normalize_queries("hello", 3)
-        assert result == ["hello", "hello", "hello"]
-
-    def test_single_message_replicates(self):
-        """Single Message replicates to match expected_count."""
-        msg = Message("user", ["test"])
-        result = _normalize_queries(msg, 2)
-        assert len(result) == 2
-        assert result[0] is msg
-
-    def test_list_of_messages_replicates(self):
-        """List of Messages (multi-turn query) replicates."""
-        msgs = [Message("user", ["Q1"]), Message("assistant", ["A1"])]
-        result = _normalize_queries(msgs, 2)
-        assert len(result) == 2
-
-    def test_list_of_strings_passthrough(self):
-        """List of strings passes through as-is."""
-        result = _normalize_queries(["Q1", "Q2", "Q3"], 3)
-        assert result == ["Q1", "Q2", "Q3"]
-
-    def test_count_mismatch_raises(self):
-        """Mismatched count raises ValueError."""
-        with pytest.raises(ValueError, match="does not match"):
-            _normalize_queries(["Q1", "Q2"], 3)
 
 
 class TestCoerceResultScoreError:

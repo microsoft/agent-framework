@@ -1795,23 +1795,6 @@ async def evaluate_workflow(
 # region Internal helpers
 
 
-def _normalize_queries(
-    query: str | Message | Sequence[str | Message],
-    expected_count: int,
-) -> list[str | Message | Sequence[Message]]:
-    """Normalize query input to a list matching the expected count."""
-    if isinstance(query, (str, Message)):
-        queries: list[str | Message | Sequence[Message]] = [query] * expected_count  # type: ignore[list-item]
-    elif isinstance(query, list) and len(query) > 0 and isinstance(query[0], Message):
-        queries = [query] * expected_count  # type: ignore[list-item]
-    else:
-        queries = list(query)  # type: ignore[arg-type]
-
-    if len(queries) != expected_count:
-        raise ValueError(f"Number of queries ({len(queries)}) does not match number of responses ({expected_count}).")
-    return queries
-
-
 def _build_overall_item(
     query: str,
     workflow_result: WorkflowRunResult,
