@@ -19,7 +19,7 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 import filetype
 from agent_framework import (
@@ -31,6 +31,7 @@ from agent_framework import (
     SessionContext,
 )
 from agent_framework._sessions import AgentSession
+from agent_framework._settings import load_settings
 from azure.ai.contentunderstanding.aio import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import AnalysisResult
 from azure.core.credentials import AzureKeyCredential
@@ -121,6 +122,21 @@ _MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
 _DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
 
 
+class ContentUnderstandingSettings(TypedDict, total=False):
+    """Settings for ContentUnderstandingContextProvider with auto-loading from environment.
+
+    Settings are resolved in this order: explicit keyword arguments, values from an
+    explicitly provided .env file, then environment variables with the prefix
+    ``AZURE_CONTENTUNDERSTANDING_``.
+
+    Keys:
+        endpoint: Azure AI Foundry endpoint URL.
+            Can be set via environment variable ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.
+    """
+
+    endpoint: str | None
+
+
 class ContentUnderstandingContextProvider(BaseContextProvider):
     """Context provider that analyzes file attachments using Azure Content Understanding.
 
@@ -134,6 +150,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     Args:
         endpoint: Azure AI Foundry endpoint URL
             (e.g., ``"https://<your-foundry-resource>.services.ai.azure.com/"``).
+            Can also be set via environment variable
+            ``AZURE_CONTENTUNDERSTANDING_ENDPOINT``.
         credential: An ``AzureKeyCredential`` for API key auth or an
             ``AsyncTokenCredential`` (e.g., ``DefaultAzureCredential``) for
             Microsoft Entra ID auth.
@@ -157,6 +175,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             implementation for other vector store services.
         source_id: Unique identifier for this provider instance, used for message
             attribution and tool registration. Defaults to ``"azure_ai_contentunderstanding"``.
+        env_file_path: Path to a ``.env`` file for loading settings.
+        env_file_encoding: Encoding of the ``.env`` file.
     """
 
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_contentunderstanding"
@@ -164,17 +184,40 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     def __init__(
         self,
-        endpoint: str,
-        credential: AzureCredentialTypes,
+        endpoint: str | None = None,
+        credential: AzureCredentialTypes | None = None,
         *,
         analyzer_id: str | None = None,
         max_wait: float | None = DEFAULT_MAX_WAIT_SECONDS,
         output_sections: list[AnalysisSection] | None = None,
         file_search: FileSearchConfig | None = None,
         source_id: str = DEFAULT_SOURCE_ID,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
     ) -> None:
         super().__init__(source_id)
-        self._endpoint = endpoint
+
+        # Load settings — explicit args take priority over env vars.
+        # Env vars use the prefix AZURE_CONTENTUNDERSTANDING_ (e.g.,
+        # AZURE_CONTENTUNDERSTANDING_ENDPOINT).
+        settings = load_settings(
+            ContentUnderstandingSettings,
+            env_prefix="AZURE_CONTENTUNDERSTANDING_",
+            required_fields=["endpoint"],
+            endpoint=endpoint,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+        )
+
+        resolved_endpoint: str = settings["endpoint"]  # type: ignore[assignment]  # validated by load_settings
+
+        if credential is None:
+            raise ValueError(
+                "Azure credential is required. Provide a 'credential' parameter "
+                "(e.g., AzureKeyCredential or AzureCliCredential)."
+            )
+
+        self._endpoint = resolved_endpoint
         self._credential = credential
         self.analyzer_id = analyzer_id
         self.max_wait = max_wait

@@ -125,6 +125,44 @@ class TestInit:
         )
         assert provider.max_wait is None
 
+    def test_endpoint_from_env_var(self, monkeypatch: Any) -> None:
+        """Endpoint can be loaded from AZURE_CONTENTUNDERSTANDING_ENDPOINT env var."""
+        monkeypatch.setenv(
+            "AZURE_CONTENTUNDERSTANDING_ENDPOINT",
+            "https://env-test.cognitiveservices.azure.com/",
+        )
+        provider = ContentUnderstandingContextProvider(credential=AsyncMock())
+        assert provider._endpoint == "https://env-test.cognitiveservices.azure.com/"
+
+    def test_explicit_endpoint_overrides_env_var(self, monkeypatch: Any) -> None:
+        """Explicit endpoint kwarg takes priority over env var."""
+        monkeypatch.setenv(
+            "AZURE_CONTENTUNDERSTANDING_ENDPOINT",
+            "https://env-test.cognitiveservices.azure.com/",
+        )
+        provider = ContentUnderstandingContextProvider(
+            endpoint="https://explicit.cognitiveservices.azure.com/",
+            credential=AsyncMock(),
+        )
+        assert provider._endpoint == "https://explicit.cognitiveservices.azure.com/"
+
+    def test_missing_endpoint_raises(self) -> None:
+        """Missing endpoint (no kwarg, no env var) raises an error."""
+        import pytest as _pytest
+        from agent_framework.exceptions import SettingNotFoundError
+
+        with _pytest.raises(SettingNotFoundError, match="endpoint"):
+            ContentUnderstandingContextProvider(credential=AsyncMock())
+
+    def test_missing_credential_raises(self) -> None:
+        """Missing credential raises ValueError."""
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="credential is required"):
+            ContentUnderstandingContextProvider(
+                endpoint="https://test.cognitiveservices.azure.com/",
+            )
+
 
 class TestAsyncContextManager:
     async def test_aenter_returns_self(self) -> None:

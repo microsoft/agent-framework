@@ -100,7 +100,19 @@ asyncio.run(main())
 
 ### Environment Variables
 
+The provider supports automatic endpoint resolution from environment variables.
+When ``endpoint`` is not passed to the constructor, it is loaded from
+``AZURE_CONTENTUNDERSTANDING_ENDPOINT``:
+
+```python
+# Endpoint auto-loaded from AZURE_CONTENTUNDERSTANDING_ENDPOINT env var
+cu = ContentUnderstandingContextProvider(credential=credential)
+```
+
+Set these in your shell or in a `.env` file:
+
 ```bash
+AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
 AZURE_AI_PROJECT_ENDPOINT=https://your-project.services.ai.azure.com
 AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
 AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
