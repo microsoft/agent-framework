@@ -8,7 +8,7 @@ Upload flow:
   1. CU extracts high-quality markdown (handles scanned PDFs, audio, video)
   2. Extracted markdown is auto-uploaded to an OpenAI vector store
   3. file_search tool is registered so the LLM retrieves top-k chunks
-  4. Vector store is cleaned up on server shutdown
+  4. Vector store is configured to auto-expire after inactivity
 
 This is ideal for large documents (100+ pages), long audio recordings,
 or multiple files in the same conversation where full-context injection
