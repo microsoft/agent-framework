@@ -341,8 +341,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FUNCTIONS_WORKER_RUNTIME: "python"
       DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
       AzureWebJobsStorage: "UseDevelopmentStorage=true"
