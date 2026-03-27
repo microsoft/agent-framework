@@ -47,6 +47,13 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
             AGUIEventTypes.ToolCallEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallEndEvent))) as ToolCallEndEvent,
             AGUIEventTypes.ToolCallResult => jsonElement.Deserialize(options.GetTypeInfo(typeof(ToolCallResultEvent))) as ToolCallResultEvent,
             AGUIEventTypes.StateSnapshot => jsonElement.Deserialize(options.GetTypeInfo(typeof(StateSnapshotEvent))) as StateSnapshotEvent,
+            AGUIEventTypes.ReasoningStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningStartEvent))) as ReasoningStartEvent,
+            AGUIEventTypes.ReasoningMessageStart => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageStartEvent))) as ReasoningMessageStartEvent,
+            AGUIEventTypes.ReasoningMessageContent => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageContentEvent))) as ReasoningMessageContentEvent,
+            AGUIEventTypes.ReasoningMessageEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageEndEvent))) as ReasoningMessageEndEvent,
+            AGUIEventTypes.ReasoningEnd => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningEndEvent))) as ReasoningEndEvent,
+            AGUIEventTypes.ReasoningMessageChunk => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningMessageChunkEvent))) as ReasoningMessageChunkEvent,
+            AGUIEventTypes.ReasoningEncryptedValue => jsonElement.Deserialize(options.GetTypeInfo(typeof(ReasoningEncryptedValueEvent))) as ReasoningEncryptedValueEvent,
             _ => throw new JsonException($"Unknown BaseEvent type discriminator: '{discriminator}'")
         };
 
@@ -101,6 +108,27 @@ internal sealed class BaseEventJsonConverter : JsonConverter<BaseEvent>
                 break;
             case StateDeltaEvent stateDelta:
                 JsonSerializer.Serialize(writer, stateDelta, options.GetTypeInfo(typeof(StateDeltaEvent)));
+                break;
+            case ReasoningStartEvent reasoningStart:
+                JsonSerializer.Serialize(writer, reasoningStart, options.GetTypeInfo(typeof(ReasoningStartEvent)));
+                break;
+            case ReasoningMessageStartEvent reasoningMessageStart:
+                JsonSerializer.Serialize(writer, reasoningMessageStart, options.GetTypeInfo(typeof(ReasoningMessageStartEvent)));
+                break;
+            case ReasoningMessageContentEvent reasoningMessageContent:
+                JsonSerializer.Serialize(writer, reasoningMessageContent, options.GetTypeInfo(typeof(ReasoningMessageContentEvent)));
+                break;
+            case ReasoningMessageEndEvent reasoningMessageEnd:
+                JsonSerializer.Serialize(writer, reasoningMessageEnd, options.GetTypeInfo(typeof(ReasoningMessageEndEvent)));
+                break;
+            case ReasoningEndEvent reasoningEnd:
+                JsonSerializer.Serialize(writer, reasoningEnd, options.GetTypeInfo(typeof(ReasoningEndEvent)));
+                break;
+            case ReasoningMessageChunkEvent reasoningMessageChunk:
+                JsonSerializer.Serialize(writer, reasoningMessageChunk, options.GetTypeInfo(typeof(ReasoningMessageChunkEvent)));
+                break;
+            case ReasoningEncryptedValueEvent reasoningEncryptedValue:
+                JsonSerializer.Serialize(writer, reasoningEncryptedValue, options.GetTypeInfo(typeof(ReasoningEncryptedValueEvent)));
                 break;
             default:
                 throw new InvalidOperationException($"Unknown event type: {value.GetType().Name}");

@@ -1111,4 +1111,149 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     #endregion
+
+    #region Reasoning Event Serialization Tests
+
+    [Fact]
+    public void ReasoningStartEvent_Serializes_WithCorrectTypeDiscriminator()
+    {
+        // Arrange
+        ReasoningStartEvent evt = new() { MessageId = "reason1" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningStartEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningStart, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+    }
+
+    [Fact]
+    public void ReasoningMessageStartEvent_Serializes_WithRoleReasoningAndMessageId()
+    {
+        // Arrange
+        ReasoningMessageStartEvent evt = new() { MessageId = "reason1" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningMessageStartEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningMessageStart, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+        Assert.Equal("reasoning", jsonElement.GetProperty("role").GetString());
+    }
+
+    [Fact]
+    public void ReasoningMessageContentEvent_Serializes_WithDeltaAndMessageId()
+    {
+        // Arrange
+        ReasoningMessageContentEvent evt = new() { MessageId = "reason1", Delta = "I am thinking" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningMessageContentEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningMessageContent, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+        Assert.Equal("I am thinking", jsonElement.GetProperty("delta").GetString());
+    }
+
+    [Fact]
+    public void ReasoningMessageEndEvent_Serializes_WithMessageId()
+    {
+        // Arrange
+        ReasoningMessageEndEvent evt = new() { MessageId = "reason1" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningMessageEndEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningMessageEnd, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+    }
+
+    [Fact]
+    public void ReasoningEndEvent_Serializes_WithMessageId()
+    {
+        // Arrange
+        ReasoningEndEvent evt = new() { MessageId = "reason1" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningEndEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningEnd, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+    }
+
+    [Fact]
+    public void ReasoningMessageChunkEvent_Serializes_WithDeltaAndMessageId()
+    {
+        // Arrange
+        ReasoningMessageChunkEvent evt = new() { MessageId = "reason1", Delta = "chunk" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningMessageChunkEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningMessageChunk, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("messageId").GetString());
+        Assert.Equal("chunk", jsonElement.GetProperty("delta").GetString());
+    }
+
+    [Fact]
+    public void ReasoningEncryptedValueEvent_Serializes_WithAllFields()
+    {
+        // Arrange
+        ReasoningEncryptedValueEvent evt = new() { EntityId = "reason1", EncryptedValue = "tok-abc123" };
+
+        // Act
+        string json = JsonSerializer.Serialize(evt, AGUIJsonSerializerContext.Default.ReasoningEncryptedValueEvent);
+        JsonElement jsonElement = JsonElement.Parse(json);
+
+        // Assert
+        Assert.Equal(AGUIEventTypes.ReasoningEncryptedValue, jsonElement.GetProperty("type").GetString());
+        Assert.Equal("reason1", jsonElement.GetProperty("entityId").GetString());
+        Assert.Equal("tok-abc123", jsonElement.GetProperty("encryptedValue").GetString());
+        Assert.Equal("message", jsonElement.GetProperty("subtype").GetString());
+    }
+
+    [Fact]
+    public void AllReasoningEventTypes_DeserializeViaBaseEventConverter_ToCorrectTypes()
+    {
+        // Arrange
+        BaseEvent[] events =
+        [
+            new ReasoningStartEvent { MessageId = "r1" },
+            new ReasoningMessageStartEvent { MessageId = "r1" },
+            new ReasoningMessageContentEvent { MessageId = "r1", Delta = "thinking" },
+            new ReasoningMessageEndEvent { MessageId = "r1" },
+            new ReasoningEndEvent { MessageId = "r1" },
+            new ReasoningMessageChunkEvent { MessageId = "r1", Delta = "chunk" },
+            new ReasoningEncryptedValueEvent { EntityId = "r1", EncryptedValue = "tok" }
+        ];
+
+        // Act
+        string json = JsonSerializer.Serialize(events, AGUIJsonSerializerContext.Default.Options);
+        var deserialized = JsonSerializer.Deserialize<BaseEvent[]>(json, AGUIJsonSerializerContext.Default.Options);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal(7, deserialized.Length);
+        Assert.IsType<ReasoningStartEvent>(deserialized[0]);
+        Assert.IsType<ReasoningMessageStartEvent>(deserialized[1]);
+        Assert.IsType<ReasoningMessageContentEvent>(deserialized[2]);
+        Assert.IsType<ReasoningMessageEndEvent>(deserialized[3]);
+        Assert.IsType<ReasoningEndEvent>(deserialized[4]);
+        Assert.IsType<ReasoningMessageChunkEvent>(deserialized[5]);
+        Assert.IsType<ReasoningEncryptedValueEvent>(deserialized[6]);
+    }
+
+    #endregion Reasoning Event Serialization Tests
 }
