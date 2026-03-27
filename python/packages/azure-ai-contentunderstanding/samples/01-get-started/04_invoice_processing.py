@@ -2,11 +2,11 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "agent-framework-azure-ai-contentunderstanding",
-#     "agent-framework-core",
+#     "agent-framework-foundry",
 #     "azure-identity",
 # ]
 # ///
-# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/03_invoice_processing.py
+# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/04_invoice_processing.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -14,9 +14,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Content, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
-from azure.core.credentials import AzureKeyCredential
+from agent_framework import Agent, Content, Message
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -37,7 +36,7 @@ with confidence scores — enabling precise, schema-aware document processing.
 
 Environment variables:
   AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
+  AZURE_OPENAI_DEPLOYMENT_NAME             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
@@ -45,9 +44,7 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_asset
 
 
 async def main() -> None:
-    # Auth: use API key if set, otherwise fall back to Azure CLI credential
-    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
-    credential = AzureKeyCredential(api_key) if api_key else AzureCliCredential()
+    credential = AzureCliCredential()
 
     # Use prebuilt-invoice analyzer for structured field extraction
     cu = ContentUnderstandingContextProvider(
@@ -60,14 +57,15 @@ async def main() -> None:
         ],
     )
 
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
     async with cu:
-        agent = client.as_agent(
+        agent = Agent(
+            client=client,
             name="InvoiceProcessor",
             instructions=(
                 "You are an invoice processing assistant. Use the extracted fields "
@@ -81,13 +79,7 @@ async def main() -> None:
         # --- Upload an invoice PDF ---
         print("--- Upload Invoice ---")
 
-        if SAMPLE_PDF_PATH.exists():
-            pdf_bytes = SAMPLE_PDF_PATH.read_bytes()
-            filename = SAMPLE_PDF_PATH.name
-        else:
-            print(f"Note: {SAMPLE_PDF_PATH} not found. Using a minimal test PDF.")
-            pdf_bytes = b"%PDF-1.0\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-            filename = "test_invoice.pdf"
+        pdf_bytes = SAMPLE_PDF_PATH.read_bytes()
 
         response = await agent.run(
             Message(
@@ -100,9 +92,8 @@ async def main() -> None:
                     Content.from_data(
                         pdf_bytes,
                         "application/pdf",
-                        # Always provide filename — used as the document key in list_documents()
-                        # and get_analyzed_document(). Without it, a hash-based key is generated.
-                        additional_properties={"filename": filename},
+                        # Always provide filename — used as the document key
+                        additional_properties={"filename": SAMPLE_PDF_PATH.name},
                     ),
                 ],
             )

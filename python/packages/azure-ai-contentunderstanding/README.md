@@ -44,7 +44,7 @@ async with cu, AzureOpenAIResponsesClient(credential=credential) as llm_client:
 - **Multi-document sessions** — Tracks multiple analyzed documents per session with status tracking (`pending`/`ready`/`failed`).
 - **Background processing** — Configurable timeout with async background fallback for large files or slow analysis.
 - **Output filtering** — Passes only relevant sections (markdown, fields) to the LLM, reducing token usage by >90%.
-- **Auto-registered tools** — `list_documents()` and `get_analyzed_document()` tools let the LLM query status and retrieve cached content on follow-up turns.
+- **Auto-registered tools** — `list_documents()` tool lets the LLM query document status. Full document content is injected into conversation history for follow-up turns.
 - **All CU modalities** — Documents, images, audio, and video via prebuilt or custom analyzers.
 - **Multi-segment video/audio merging** — CU splits long video/audio into multiple scene segments. The provider automatically merges all segments: markdown is concatenated, fields are collected per-segment, and duration spans the full range. Speaker names are not identified by CU (only `<Speaker N>` diarization labels).
 

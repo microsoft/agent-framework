@@ -881,14 +881,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     ) -> None:
         """Register document tools on the context.
 
-        In file_search mode, only ``list_documents`` is registered (for status
-        checking) — the LLM uses a backend-specific ``file_search`` tool for
-        content retrieval instead of ``get_analyzed_document``.
+        Only ``list_documents`` is registered — the full document content is
+        already injected into conversation history on the upload turn, so a
+        separate retrieval tool is not needed.
         """
-        tools: list[FunctionTool] = [self._make_list_documents_tool(documents)]
-        if not self.file_search:
-            tools.append(self._make_get_document_tool(documents))
-        context.extend_tools(self.source_id, tools)
+        context.extend_tools(
+            self.source_id,
+            [self._make_list_documents_tool(documents)],
+        )
 
     @staticmethod
     def _make_list_documents_tool(documents: dict[str, DocumentEntry]) -> FunctionTool:
@@ -916,51 +916,6 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 "with their analysis status (analyzing, uploading, ready, or failed)."
             ),
             func=list_documents,
-        )
-
-    def _make_get_document_tool(self, documents: dict[str, DocumentEntry]) -> FunctionTool:
-        """Create a tool that retrieves cached analysis for a specific document."""
-        docs_ref = documents
-        format_fn = self._format_result
-
-        def get_analyzed_document(document_name: str, section: str = "all") -> str:
-            """Retrieve the analyzed content of a previously uploaded document.
-
-            Args:
-                document_name: The name of the document to retrieve.
-                section: Which section to retrieve: "markdown", "fields", or "all".
-            """
-            entry = docs_ref.get(document_name)
-            if not entry:
-                return (
-                    f"No document found with name '{document_name}'. Use list_documents() to see available documents."
-                )
-            if entry["status"] == DocumentStatus.ANALYZING:
-                return f"Document '{document_name}' is still being analyzed. Please try again in a moment."
-            if entry["status"] == DocumentStatus.UPLOADING:
-                return f"Document '{document_name}' is being indexed for search. Please try again in a moment."
-            if entry["status"] == DocumentStatus.FAILED:
-                return f"Document '{document_name}' analysis failed: {entry.get('error', 'unknown error')}"
-            if not entry["result"]:
-                return f"No analysis result available for '{document_name}'."
-
-            result = entry["result"]
-            if section == "markdown":
-                md = result.get("markdown", "")
-                return str(md) if md else f"No markdown content available for '{document_name}'."
-            if section == "fields":
-                fields = result.get("fields")
-                if fields:
-                    return json.dumps(fields, indent=2, default=str)
-                return f"No extracted fields available for '{document_name}'."
-
-            return format_fn(entry["filename"], result)
-
-        return FunctionTool(
-            name="get_analyzed_document",
-            description="Retrieve the analyzed content of a previously uploaded document by name. "
-            "Use 'section' parameter to get 'markdown', 'fields', or 'all' (default).",
-            func=get_analyzed_document,
         )
 
     # ------------------------------------------------------------------

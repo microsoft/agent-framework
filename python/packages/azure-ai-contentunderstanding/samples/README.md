@@ -18,10 +18,11 @@ These samples demonstrate how to use the `agent-framework-azure-ai-contentunders
 
 | # | Sample | Description | Run |
 |---|--------|-------------|-----|
-| 01 | [Document Q&A](01-get-started/01_document_qa.py) | Upload a PDF, ask questions, follow-up with cached results | `uv run samples/01-get-started/01_document_qa.py` |
-| 02 | [Multi-Modal Chat](01-get-started/02_multimodal_chat.py) | Multi-file session with status tracking | `uv run samples/01-get-started/02_multimodal_chat.py` |
-| 03 | [Invoice Processing](01-get-started/03_invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/01-get-started/03_invoice_processing.py` |
-| 04 | [Large Doc + file_search](01-get-started/04_large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/01-get-started/04_large_doc_file_search.py` |
+| 01 | [Document Q&A](01-get-started/01_document_qa.py) | Upload a PDF, ask questions with CU-powered extraction | `uv run samples/01-get-started/01_document_qa.py` |
+| 02 | [Multi-Turn Session](01-get-started/02_multi_turn_session.py) | Persistent session with cached results + tool retrieval | `uv run samples/01-get-started/02_multi_turn_session.py` |
+| 03 | [Multi-Modal Chat](01-get-started/03_multimodal_chat.py) | Multi-file session with background processing | `uv run samples/01-get-started/03_multimodal_chat.py` |
+| 04 | [Invoice Processing](01-get-started/04_invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/01-get-started/04_invoice_processing.py` |
+| 05 | [Large Doc + file_search](01-get-started/05_large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/01-get-started/05_large_doc_file_search.py` |
 
 ### 02-devui — Interactive web UI samples
 
