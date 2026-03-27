@@ -54,9 +54,6 @@ def _make_failing_poller(error: Exception) -> AsyncMock:
 
 
 def _make_data_uri(data: bytes, media_type: str) -> str:
-    encoded = base64.b64encode(data).encode("ascii") if isinstance(data, bytes) else data
-    if isinstance(encoded, bytes):
-        encoded = encoded.decode("ascii")
     return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
 
 
