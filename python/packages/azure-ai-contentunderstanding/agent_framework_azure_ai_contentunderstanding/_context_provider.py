@@ -11,17 +11,13 @@ injects structured results into the LLM context.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
-import mimetypes
 import sys
 import time
-import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
-import filetype
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     BaseContextProvider,
@@ -45,80 +41,21 @@ else:
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
 
+from ._constants import DEFAULT_ANALYZER, MEDIA_TYPE_ANALYZER_MAP
+from ._detection import (
+    derive_doc_key,
+    detect_and_strip_files,
+    extract_binary,
+    is_supported_content,
+    sanitize_doc_key,
+    sniff_media_type,
+)
+from ._extraction import extract_field_value, extract_sections, flatten_field, format_result
 from ._models import AnalysisSection, DocumentEntry, DocumentStatus, FileSearchConfig
 
 logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
 AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
-
-# MIME types used to match against the resolved media type for routing files to CU analysis.
-# The media type may be provided via Content.media_type or inferred (e.g., via sniffing or filename)
-# when missing or generic (such as application/octet-stream). Only files whose resolved media type is
-# in this set will be processed; others are skipped.
-#
-# Supported input file types:
-# https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits
-SUPPORTED_MEDIA_TYPES: frozenset[str] = frozenset({
-    # Documents and images
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-    "image/tiff",
-    "image/bmp",
-    "image/heif",
-    "image/heic",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    # Text
-    "text/plain",
-    "text/html",
-    "text/markdown",
-    "text/rtf",
-    "text/xml",
-    "application/xml",
-    "message/rfc822",
-    "application/vnd.ms-outlook",
-    # Audio
-    "audio/wav",
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/mp4",
-    "audio/m4a",
-    "audio/flac",
-    "audio/ogg",
-    "audio/opus",
-    "audio/webm",
-    "audio/x-ms-wma",
-    "audio/aac",
-    "audio/amr",
-    "audio/3gpp",
-    # Video
-    "video/mp4",
-    "video/quicktime",
-    "video/x-msvideo",
-    "video/webm",
-    "video/x-flv",
-    "video/x-ms-wmv",
-    "video/x-ms-asf",
-    "video/x-matroska",
-})
-
-# Mapping from filetype's MIME output to our canonical SUPPORTED_MEDIA_TYPES values.
-# filetype uses some x-prefixed variants that differ from our set.
-_MIME_ALIASES: dict[str, str] = {
-    "audio/x-wav": "audio/wav",
-    "audio/x-flac": "audio/flac",
-    "video/x-m4v": "video/mp4",
-}
-
-# Mapping from media type prefix to the appropriate prebuilt CU analyzer.
-# Used when analyzer_id is None (auto-detect mode).
-_MEDIA_TYPE_ANALYZER_MAP: dict[str, str] = {
-    "audio/": "prebuilt-audioSearch",
-    "video/": "prebuilt-videoSearch",
-}
-_DEFAULT_ANALYZER: str = "prebuilt-documentSearch"
 
 
 class ContentUnderstandingSettings(TypedDict, total=False):
@@ -453,163 +390,32 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             )
 
     # ------------------------------------------------------------------
-    # File Detection
+    # File Detection (delegates to _detection module)
     # ------------------------------------------------------------------
 
-    def _detect_and_strip_files(
-        self,
-        context: SessionContext,
-    ) -> list[tuple[str, Content, bytes | None]]:
-        """Scan input messages for supported file content and prepare for CU analysis.
-
-        Scans for type ``data`` or ``uri`` content supported by Azure Content
-        Understanding, strips them from messages to prevent raw binary being sent
-        to the LLM, and returns metadata for CU analysis.
-
-        Detected files are tracked via ``doc_key`` (derived from filename, URL,
-        or UUID) and their analysis status is managed in session state.
-
-        When the upstream MIME type is unreliable (``application/octet-stream``
-        or missing), binary content sniffing via ``filetype`` is used to
-        determine the real media type, with ``mimetypes.guess_type`` as a
-        filename-based fallback.
-
-        Returns:
-            List of (doc_key, content_item, binary_data) tuples for files to analyze.
-        """
-        results: list[tuple[str, Content, bytes | None]] = []
-        strip_ids: set[int] = set()
-
-        for msg in context.input_messages:
-            for c in msg.contents:
-                if c.type not in ("data", "uri"):
-                    continue
-
-                media_type = c.media_type
-                # Fast path: already a known supported type
-                if media_type and media_type in SUPPORTED_MEDIA_TYPES:
-                    binary_data = self._extract_binary(c)
-                    results.append((self._derive_doc_key(c), c, binary_data))
-                    strip_ids.add(id(c))
-                    continue
-
-                # Slow path: unreliable MIME — sniff binary content
-                if (not media_type) or (media_type == "application/octet-stream"):
-                    binary_data = self._extract_binary(c)
-                    resolved = self._sniff_media_type(binary_data, c)
-                    if resolved and (resolved in SUPPORTED_MEDIA_TYPES):
-                        c.media_type = resolved
-                        results.append((self._derive_doc_key(c), c, binary_data))
-                        strip_ids.add(id(c))
-
-            # Strip detected files from input so raw binary isn't sent to LLM
-            msg.contents = [c for c in msg.contents if id(c) not in strip_ids]
-
-        return results
+    @staticmethod
+    def _detect_and_strip_files(context: SessionContext) -> list[tuple[str, Any, bytes | None]]:
+        return detect_and_strip_files(context)
 
     @staticmethod
-    def _sniff_media_type(binary_data: bytes | None, content: Content) -> str | None:
-        """Sniff the actual MIME type from binary data, with filename fallback.
-
-        Uses ``filetype`` (magic-bytes) first, then ``mimetypes.guess_type``
-        on the filename. Normalizes filetype's variant MIME values (e.g.
-        ``audio/x-wav`` → ``audio/wav``) via ``_MIME_ALIASES``.
-        """
-        # 1. Binary sniffing via filetype (needs only first 261 bytes)
-        if binary_data:
-            kind = filetype.guess(binary_data[:262])  # type: ignore[reportUnknownMemberType]
-            if kind:
-                mime: str = kind.mime  # type: ignore[reportUnknownMemberType]
-                return _MIME_ALIASES.get(mime, mime)
-
-        # 2. Filename extension fallback — try additional_properties first,
-        # then extract basename from external URL path
-        filename: str | None = None
-        if content.additional_properties:
-            filename = content.additional_properties.get("filename")
-        if not filename and content.uri and not content.uri.startswith("data:"):
-            # Extract basename from URL path (e.g. "https://example.com/report.pdf?v=1" → "report.pdf")
-            filename = content.uri.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
-        if filename:
-            guessed, _ = mimetypes.guess_type(filename)  # uses file extension to guess MIME type
-            if guessed:
-                return _MIME_ALIASES.get(guessed, guessed)
-
-        return None
+    def _sniff_media_type(binary_data: bytes | None, content: Any) -> str | None:
+        return sniff_media_type(binary_data, content)
 
     @staticmethod
-    def _is_supported_content(content: Content) -> bool:
-        """Check if a content item is a supported file type for CU analysis."""
-        if content.type not in ("data", "uri"):
-            return False
-        media_type = content.media_type
-        if not media_type:
-            return False
-        return media_type in SUPPORTED_MEDIA_TYPES
+    def _is_supported_content(content: Any) -> bool:
+        return is_supported_content(content)
 
     @staticmethod
     def _sanitize_doc_key(raw: str) -> str:
-        """Sanitize a document key to prevent prompt injection.
-
-        Removes control characters (newlines, tabs, etc.), collapses
-        whitespace, strips surrounding whitespace, and caps length at
-        255 characters.
-        """
-        import re as _re
-
-        # Remove control characters (C0/C1 controls, including \n, \r, \t)
-        cleaned = _re.sub(r"[\x00-\x1f\x7f-\x9f]", "", raw)
-        # Collapse whitespace
-        cleaned = " ".join(cleaned.split())
-        # Cap length
-        return cleaned[:255] if cleaned else f"doc_{uuid.uuid4().hex[:8]}"
+        return sanitize_doc_key(raw)
 
     @staticmethod
-    def _derive_doc_key(content: Content) -> str:
-        """Derive a unique document key from content metadata.
-
-        The key is used to track documents in session state. Duplicate keys
-        within a session are rejected (not re-analyzed) to prevent orphaned
-        vector store entries.
-
-        The returned key is sanitized to prevent prompt injection via
-        crafted filenames (control characters removed, length capped).
-
-        Priority: filename > URL basename > generated UUID.
-        """
-        # 1. Filename from additional_properties
-        if content.additional_properties:
-            filename = content.additional_properties.get("filename")
-            if filename and isinstance(filename, str):
-                return ContentUnderstandingContextProvider._sanitize_doc_key(filename)
-
-        # 2. URL path basename for external URIs (e.g. "https://example.com/report.pdf" → "report.pdf")
-        if content.type == "uri" and content.uri and not content.uri.startswith("data:"):
-            path = content.uri.split("?")[0].split("#")[0]  # strip query params and fragments
-            # rstrip("/") handles trailing slashes (e.g. ".../files/" → ".../files")
-            # rsplit("/", 1)[-1] splits from the right once to get the last path segment
-            basename = path.rstrip("/").rsplit("/", 1)[-1]
-            if basename:
-                return ContentUnderstandingContextProvider._sanitize_doc_key(basename)
-
-        # 3. Fallback: generate a unique ID for anonymous uploads (no filename, no URL)
-        return f"doc_{uuid.uuid4().hex[:8]}"
+    def _derive_doc_key(content: Any) -> str:
+        return derive_doc_key(content)
 
     @staticmethod
-    def _extract_binary(content: Content) -> bytes | None:
-        """Extract binary data from a data URI content item.
-
-        Only handles ``data:`` URIs (base64-encoded). Returns ``None`` for
-        external URLs — those are passed directly to CU via ``begin_analyze``.
-        """
-        if content.uri and content.uri.startswith("data:"):
-            try:
-                _, data_part = content.uri.split(",", 1)
-                return base64.b64decode(data_part)
-            except Exception:
-                logger.warning("Failed to decode base64 data URI")
-                return None
-        return None
+    def _extract_binary(content: Any) -> bytes | None:
+        return extract_binary(content)
 
     # ------------------------------------------------------------------
     # Analyzer Resolution
@@ -624,10 +430,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         """
         if self.analyzer_id is not None:
             return self.analyzer_id
-        for prefix, analyzer in _MEDIA_TYPE_ANALYZER_MAP.items():
+        for prefix, analyzer in MEDIA_TYPE_ANALYZER_MAP.items():
             if media_type.startswith(prefix):
                 return analyzer
-        return _DEFAULT_ANALYZER
+        return DEFAULT_ANALYZER
 
     # ------------------------------------------------------------------
     # Analysis
@@ -825,291 +631,23 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             del pending_tasks[key]
 
     # ------------------------------------------------------------------
-    # Output Extraction & Formatting
+    # Output Extraction & Formatting (delegates to _extraction module)
     # ------------------------------------------------------------------
 
     def _extract_sections(self, result: AnalysisResult) -> dict[str, object]:
-        """Extract configured sections from a CU analysis result.
-
-        For single-segment results (documents, images, short audio), returns a flat
-        dict with ``markdown`` and ``fields`` at the top level.
-
-        For multi-segment results (e.g. video split into scenes), fields are kept
-        with their respective segments in a ``segments`` list so the LLM can see
-        which fields belong to which part of the content:
-        - ``segments``: list of per-segment dicts with ``markdown``, ``fields``,
-          ``start_time_s``, and ``end_time_s``
-        - ``markdown``: still concatenated at top level for file_search uploads
-        - ``duration_seconds``: computed from the global time span
-        - ``kind`` / ``resolution``: taken from the first segment
-        """
-        extracted: dict[str, object] = {}
-        contents = result.contents
-        if not contents:
-            return extracted
-
-        # --- Warnings from the CU service (ODataV4Format with code/message/target) ---
-        if result.warnings:
-            warnings_out: list[dict[str, str]] = []
-            for w in result.warnings:
-                entry: dict[str, str] = {}
-                code = getattr(w, "code", None)
-                if code:
-                    entry["code"] = code
-                msg = getattr(w, "message", None)
-                entry["message"] = msg if msg else str(w)
-                target = getattr(w, "target", None)
-                if target:
-                    entry["target"] = target
-                warnings_out.append(entry)
-            extracted["warnings"] = warnings_out
-
-        # --- Media metadata (from first segment) ---
-        first = contents[0]
-        kind = getattr(first, "kind", None)
-        if kind:
-            extracted["kind"] = kind
-        width = getattr(first, "width", None)
-        height = getattr(first, "height", None)
-        if width and height:
-            extracted["resolution"] = f"{width}x{height}"
-
-        # Compute total duration from the global time span of all segments.
-        global_start: int | None = None
-        global_end: int | None = None
-        for content in contents:
-            s = getattr(content, "start_time_ms", None)
-            if s is None:
-                s = getattr(content, "startTimeMs", None)
-            e = getattr(content, "end_time_ms", None)
-            if e is None:
-                e = getattr(content, "endTimeMs", None)
-            if s is not None:
-                global_start = s if global_start is None else min(global_start, s)
-            if e is not None:
-                global_end = e if global_end is None else max(global_end, e)
-        if global_start is not None and global_end is not None:
-            extracted["duration_seconds"] = round((global_end - global_start) / 1000, 1)
-
-        is_multi_segment = len(contents) > 1
-
-        # --- Single-segment: flat output (documents, images, short audio) ---
-        if not is_multi_segment:
-            if AnalysisSection.MARKDOWN in self.output_sections and contents[0].markdown:
-                extracted["markdown"] = contents[0].markdown
-            if AnalysisSection.FIELDS in self.output_sections and contents[0].fields:
-                fields: dict[str, object] = {}
-                for name, field in contents[0].fields.items():
-                    entry_dict: dict[str, object] = {
-                        "type": getattr(field, "type", None),
-                        "value": self._extract_field_value(field),
-                    }
-                    confidence = getattr(field, "confidence", None)
-                    if confidence is not None:
-                        entry_dict["confidence"] = confidence
-                    fields[name] = entry_dict
-                if fields:
-                    extracted["fields"] = fields
-            # Content-level category (e.g. from classifier analyzers)
-            category = getattr(contents[0], "category", None)
-            if category:
-                extracted["category"] = category
-            return extracted
-
-        # --- Multi-segment: per-segment output (video scenes, long audio) ---
-        # Each segment keeps its own markdown + fields together so the LLM can
-        # see which fields (e.g. Summary) belong to which part of the content.
-        segments_out: list[dict[str, object]] = []
-        md_parts: list[str] = []  # also collect for top-level concatenated markdown
-
-        for content in contents:
-            seg: dict[str, object] = {}
-
-            # Time range for this segment
-            s = getattr(content, "start_time_ms", None)
-            if s is None:
-                s = getattr(content, "startTimeMs", None)
-            e = getattr(content, "end_time_ms", None)
-            if e is None:
-                e = getattr(content, "endTimeMs", None)
-            if s is not None:
-                seg["start_time_s"] = round(s / 1000, 1)
-            if e is not None:
-                seg["end_time_s"] = round(e / 1000, 1)
-
-            # Per-segment markdown
-            if AnalysisSection.MARKDOWN in self.output_sections and content.markdown:
-                seg["markdown"] = content.markdown
-                md_parts.append(content.markdown)
-
-            # Per-segment fields
-            if AnalysisSection.FIELDS in self.output_sections and content.fields:
-                seg_fields: dict[str, object] = {}
-                for name, field in content.fields.items():
-                    seg_entry: dict[str, object] = {
-                        "type": getattr(field, "type", None),
-                        "value": self._extract_field_value(field),
-                    }
-                    confidence = getattr(field, "confidence", None)
-                    if confidence is not None:
-                        seg_entry["confidence"] = confidence
-                    seg_fields[name] = seg_entry
-                if seg_fields:
-                    seg["fields"] = seg_fields
-
-            # Per-segment category (e.g. from classifier analyzers)
-            category = getattr(content, "category", None)
-            if category:
-                seg["category"] = category
-
-            segments_out.append(seg)
-
-        extracted["segments"] = segments_out
-
-        # Top-level concatenated markdown (used by file_search for vector store upload)
-        if md_parts:
-            extracted["markdown"] = "\n\n---\n\n".join(md_parts)
-
-        return extracted
+        return extract_sections(result, self.output_sections)
 
     @staticmethod
     def _extract_field_value(field: Any) -> object:
-        """Extract the plain Python value from a CU ``ContentField``.
-
-        Uses the SDK's ``.value`` convenience property, which dynamically
-        reads the correct ``value_*`` attribute for each field type.
-        Object and array types are recursively flattened so that the
-        output contains only plain Python primitives (str, int, float,
-        date, dict, list) — no SDK model objects or raw wire format
-        (``valueNumber``, ``spans``, ``source``, etc.).
-        """
-        field_type = getattr(field, "type", None)
-        raw = getattr(field, "value", None)
-
-        # Object fields → recursively resolve nested sub-fields
-        if field_type == "object" and raw is not None and isinstance(raw, dict):
-            return {
-                str(k): ContentUnderstandingContextProvider._flatten_field(v)
-                for k, v in cast(dict[str, Any], raw).items()
-            }
-
-        # Array fields → list of flattened items (each with value + optional confidence)
-        if field_type == "array" and raw is not None and isinstance(raw, list):
-            return [
-                ContentUnderstandingContextProvider._flatten_field(item)
-                for item in cast(list[Any], raw)
-            ]
-
-        # Scalar fields (string, number, date, etc.) — .value returns native Python type
-        return raw
+        return extract_field_value(field)
 
     @staticmethod
     def _flatten_field(field: Any) -> object:
-        """Flatten a CU ``ContentField`` into a ``{type, value, confidence}`` dict.
-
-        Used for sub-fields inside object and array types to preserve
-        per-field confidence scores. Confidence is omitted when ``None``
-        to reduce token usage.
-        """
-        field_type = getattr(field, "type", None)
-        value = ContentUnderstandingContextProvider._extract_field_value(field)
-        confidence = getattr(field, "confidence", None)
-
-        result: dict[str, object] = {"type": field_type, "value": value}
-        if confidence is not None:
-            result["confidence"] = confidence
-        return result
+        return flatten_field(field)
 
     @staticmethod
     def _format_result(filename: str, result: dict[str, object]) -> str:
-        """Format extracted CU result for LLM consumption.
-
-        For multi-segment results (video/audio with ``segments``), each segment's
-        markdown and fields are grouped together so the LLM can see which fields
-        belong to which part of the content.
-        """
-        kind = result.get("kind")
-        is_video = kind == "audioVisual"
-        is_audio = kind == "audio"
-
-        # Header — media-aware label
-        if is_video:
-            label = "Video analysis"
-        elif is_audio:
-            label = "Audio analysis"
-        else:
-            label = "Document analysis"
-        parts: list[str] = [f'{label} of "{filename}":']
-
-        # Media metadata line (duration, resolution)
-        meta_items: list[str] = []
-        duration = result.get("duration_seconds")
-        if duration is not None:
-            mins, secs = divmod(int(duration), 60)  # type: ignore[call-overload]
-            meta_items.append(f"Duration: {mins}:{secs:02d}")
-        resolution = result.get("resolution")
-        if resolution:
-            meta_items.append(f"Resolution: {resolution}")
-        if meta_items:
-            parts.append(" | ".join(meta_items))
-
-        # --- Multi-segment: format each segment with its own content + fields ---
-        raw_segments = result.get("segments")
-        segments: list[dict[str, object]] = (
-            cast(list[dict[str, object]], raw_segments) if isinstance(raw_segments, list) else []
-        )
-        if segments:
-            for i, seg in enumerate(segments):
-                # Segment header with time range
-                start = seg.get("start_time_s")
-                end = seg.get("end_time_s")
-                if start is not None and end is not None:
-                    s_min, s_sec = divmod(int(start), 60)  # type: ignore[call-overload]
-                    e_min, e_sec = divmod(int(end), 60)  # type: ignore[call-overload]
-                    parts.append(f"\n### Segment {i + 1} ({s_min}:{s_sec:02d} - {e_min}:{e_sec:02d})")
-                else:
-                    parts.append(f"\n### Segment {i + 1}")
-
-                # Segment markdown
-                seg_md = seg.get("markdown")
-                if seg_md:
-                    parts.append(f"\n```markdown\n{seg_md}\n```")
-
-                # Segment fields
-                seg_fields = seg.get("fields")
-                if isinstance(seg_fields, dict) and seg_fields:
-                    fields_json = json.dumps(seg_fields, indent=2, default=str)
-                    parts.append(f"\n**Fields:**\n```json\n{fields_json}\n```")
-
-            return "\n".join(parts)
-
-        # --- Single-segment: flat format ---
-        fields_raw = result.get("fields")
-        fields: dict[str, object] = cast(dict[str, object], fields_raw) if isinstance(fields_raw, dict) else {}
-
-        # For audio: promote Summary field as prose before markdown
-        if is_audio and fields:
-            summary_field = fields.get("Summary")
-            if isinstance(summary_field, dict):
-                sf = cast(dict[str, object], summary_field)
-                if sf.get("value"):
-                    parts.append(f"\n## Summary\n\n{sf['value']}")
-
-        # Markdown content
-        markdown = result.get("markdown")
-        if markdown:
-            parts.append(f"\n## Content\n\n```markdown\n{markdown}\n```")
-
-        # Fields section
-        if fields:
-            remaining = dict(fields)
-            if is_audio:
-                remaining = {k: v for k, v in remaining.items() if k != "Summary"}
-            if remaining:
-                fields_json = json.dumps(remaining, indent=2, default=str)
-                parts.append(f"\n## Extracted Fields\n\n```json\n{fields_json}\n```")
-
-        return "\n".join(parts)
+        return format_result(filename, result)
 
     # ------------------------------------------------------------------
     # Tool Registration
