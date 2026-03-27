@@ -477,7 +477,9 @@ async def test_integration_client_agent_existing_session():
     ) as first_agent:
         # Start a conversation and capture the session
         session = first_agent.create_session()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
+        first_response = await first_agent.run(
+            "My hobby is photography. Remember this.", session=session, options={"store": True}
+        )
 
         assert isinstance(first_response, AgentResponse)
         assert first_response.text is not None
@@ -492,7 +494,9 @@ async def test_integration_client_agent_existing_session():
             instructions="You are a helpful assistant with good memory.",
         ) as second_agent:
             # Reuse the preserved session
-            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
+            second_response = await second_agent.run(
+                "What is my hobby?", session=preserved_session, options={"store": True}
+            )
 
             assert isinstance(second_response, AgentResponse)
             assert second_response.text is not None
