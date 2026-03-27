@@ -108,10 +108,10 @@ Content of `.env` or `openai.env`:
 
 ```env
 OPENAI_API_KEY=""
-OPENAI_CHAT_MODEL_ID="gpt-4o-mini"
+OPENAI_MODEL="gpt-4o-mini"
 ```
 
-You will then configure the ChatClient class with the keyword argument `env_file_path`:
+You will then configure the ChatClient class with the keyword argument `env_file_path` (alternatively you can use `load_dotenv` in your code):
 
 ```python
 from agent_framework.openai import OpenAIChatClient

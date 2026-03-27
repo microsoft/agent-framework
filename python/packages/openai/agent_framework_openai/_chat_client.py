@@ -14,7 +14,6 @@ from collections.abc import (
     MutableMapping,
     Sequence,
 )
-from copy import copy
 from datetime import datetime, timezone
 from itertools import chain
 from typing import (
@@ -28,12 +27,12 @@ from typing import (
     cast,
     overload,
 )
-from urllib.parse import urljoin, urlparse
 
 from agent_framework._clients import BaseChatClient
-from agent_framework._middleware import ChatMiddlewareLayer
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
+from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
-from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
+from agent_framework._telemetry import USER_AGENT_KEY
 from agent_framework._tools import (
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
@@ -87,8 +86,7 @@ from pydantic import BaseModel
 
 from ._exceptions import OpenAIContentFilterException
 from ._shared import (
-    DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION,
-    get_api_key,
+    AzureTokenProvider,
     load_openai_service_settings,
     maybe_append_azure_endpoint_guidance,
 )
@@ -107,14 +105,15 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework._middleware import (
-        ChatMiddleware,
-        ChatMiddlewareCallable,
-        FunctionMiddleware,
-        FunctionMiddlewareCallable,
-    )
+    from azure.core.credentials import TokenCredential
+    from azure.core.credentials_async import AsyncTokenCredential
+
+    AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger("agent_framework.openai")
+
+DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION = "preview"
+
 OPENAI_SHELL_ENVIRONMENT_KEY = "openai.responses.shell.environment"
 OPENAI_SHELL_OUTPUT_TYPE_KEY = "openai.responses.shell.output_type"
 OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY = "openai.responses.local_shell.call_item_id"
@@ -139,7 +138,7 @@ class ReasoningOptions(TypedDict, total=False):
     See: https://platform.openai.com/docs/guides/reasoning
     """
 
-    effort: Literal["low", "medium", "high"]
+    effort: Literal["none", "low", "medium", "high", "xhigh"]
     """The effort level for reasoning. Higher effort means more reasoning tokens."""
 
     summary: Literal["auto", "concise", "detailed"]
@@ -272,41 +271,99 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     @overload
     def __init__(
         self,
-        *,
         model: str | None = None,
+        *,
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize a raw OpenAI Chat client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
 
     @overload
     def __init__(
         self,
-        *,
         model: str | None = None,
-        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
-        org_id: str | None = None,
-        base_url: str | None = None,
+        *,
         azure_endpoint: str,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
+        api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize a raw OpenAI Chat client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Responses default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted,
+                but ``credential`` is the preferred Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
 
     def __init__(
         self,
-        *,
         model: str | None = None,
+        *,
         model_id: str | None = None,
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         azure_endpoint: str | None = None,
@@ -314,33 +371,61 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
-        """Initialize a raw OpenAI Responses client.
+        """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
-            model: OpenAI model name.
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
+                or ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure.
             model_id: Deprecated alias for ``model``.
-            api_key: OpenAI API key, SecretString, or callable returning a key.
-            org_id: OpenAI organization ID.
-            base_url: Custom API base URL.
-            azure_endpoint: Azure OpenAI endpoint. When provided, the client uses
-                ``AsyncAzureOpenAI`` instead of ``AsyncOpenAI``. The value should be the
-                resource endpoint and should not end with ``/openai/v1``. For Azure OpenAI
-                key auth, either pass the resource endpoint without that suffix to
-                ``azure_endpoint`` or pass the full ``.../openai/v1`` URL to ``base_url``.
-                Can also be set via ``AZURE_OPENAI_ENDPOINT`` when no ``OPENAI_BASE_URL``
-                is configured.
-            api_version: Azure OpenAI API version. Can also be set via
-                ``AZURE_OPENAI_API_VERSION``.
+            api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
+                For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted for backwards compatibility,
+                but ``credential`` is the preferred Azure auth surface.
+            credential: Azure credential or token provider for Azure OpenAI auth. Passing this
+                is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
+                Credential objects require the optional ``azure-identity`` package.
+            org_id: OpenAI organization ID. Used only for OpenAI and resolved from
+                ``OPENAI_ORG_ID`` when not provided.
+            base_url: Base URL override. For OpenAI this maps to ``OPENAI_BASE_URL``.
+                For Azure this may be used instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure
+                falls back to ``AZURE_OPENAI_ENDPOINT``.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
             default_headers: Additional HTTP headers.
-            async_client: Pre-configured AsyncOpenAI client (skips client creation).
-            instruction_role: Role for instruction messages (e.g. ``"system"``).
-            env_file_path: Path to .env file for settings.
-            env_file_encoding: Encoding for .env file.
-            kwargs: Additional keyword arguments forwarded to ``BaseChatClient``.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
+                lookups.
+            env_file_encoding: Encoding for the ``.env`` file.
+
+        Notes:
+            Environment resolution and routing precedence are:
+
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
+            2. Explicit OpenAI API key or ``OPENAI_API_KEY``
+            3. Azure environment fallback
+
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_RESPONSES_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME``,
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
         """
         if model_id is not None and model is None:
             import warnings
@@ -348,102 +433,47 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
             model = model_id
 
-        openai_settings: dict[str, Any] = {}
-        use_azure_client = isinstance(async_client, AsyncAzureOpenAI)
-        if not async_client:
-            resolved_settings, use_azure_client = load_openai_service_settings(
-                model=model,
-                api_key=api_key,
-                org_id=org_id,
-                base_url=base_url,
-                azure_endpoint=azure_endpoint,
-                api_version=api_version,
-                env_file_path=env_file_path,
-                env_file_encoding=env_file_encoding,
-                azure_model_env_vars=("AZURE_OPENAI_DEPLOYMENT_NAME",),
-                default_azure_api_version=DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION,
-            )
-            openai_settings = dict(resolved_settings)
+        settings, client, use_azure_client = load_openai_service_settings(
+            model=model,
+            api_key=api_key,
+            credential=credential,
+            org_id=org_id,
+            base_url=base_url,
+            endpoint=azure_endpoint,
+            api_version=api_version,
+            default_azure_api_version=DEFAULT_AZURE_OPENAI_RESPONSES_API_VERSION,
+            default_headers=default_headers,
+            client=async_client,
+            env_file_path=env_file_path,
+            env_file_encoding=env_file_encoding,
+            openai_model_fields=("responses_model", "model"),
+            azure_deployment_fields=("responses_deployment_name", "deployment_name"),
+            responses_mode=True,
+        )
 
-            api_key_value = openai_settings.get("api_key")
-            if not api_key_value:
-                raise ValueError(
-                    "OpenAI API key is required. Set via the 'api_key' parameter or the "
-                    "'OPENAI_API_KEY' or 'AZURE_OPENAI_API_KEY' environment variables."
-                )
-            resolved_model = openai_settings.get("model") or model
-            if not resolved_model:
-                raise ValueError(
-                    "OpenAI model is required. Set via the 'model' parameter or the "
-                    "'OPENAI_MODEL' or 'AZURE_OPENAI_DEPLOYMENT_NAME' environment variables."
-                )
-            model = resolved_model
-
-            resolved_api_key = get_api_key(api_key_value)
-
-            # Merge APP_INFO into the headers
-            merged_headers = dict(copy(default_headers)) if default_headers else {}
-            if APP_INFO:
-                merged_headers.update(APP_INFO)
-                merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
-
-            client_args: dict[str, Any] = {"api_key": resolved_api_key, "default_headers": merged_headers}
-            if use_azure_client:
-                endpoint_value = openai_settings.get("azure_endpoint")
-                if (
-                    not openai_settings.get("base_url")
-                    and endpoint_value
-                    and (hostname := urlparse(str(endpoint_value)).hostname)
-                    and hostname.endswith(".openai.azure.com")
-                ):
-                    openai_settings["base_url"] = urljoin(str(endpoint_value), "/openai/v1/")
-
-                client_args.pop("api_key")
-                if resolved_api_version := openai_settings.get("api_version"):
-                    client_args["api_version"] = resolved_api_version
-                if resolved_base_url := openai_settings.get("base_url"):
-                    client_args["base_url"] = resolved_base_url
-                elif resolved_azure_endpoint := openai_settings.get("azure_endpoint"):
-                    client_args["azure_endpoint"] = resolved_azure_endpoint
-                if callable(resolved_api_key):
-                    client_args["azure_ad_token_provider"] = resolved_api_key
-                else:
-                    client_args["api_key"] = resolved_api_key
-                client_args["azure_deployment"] = resolved_model
-                async_client = AsyncAzureOpenAI(**client_args)
-            else:
-                if resolved_org_id := openai_settings.get("org_id"):
-                    client_args["organization"] = resolved_org_id
-                if resolved_base_url := openai_settings.get("base_url"):
-                    client_args["base_url"] = resolved_base_url
-
-                async_client = AsyncOpenAI(**client_args)
-
-        self.client = async_client
-        self.model: str | None = model.strip() if model else None
+        self.client = client
+        self.model: str = settings.get("model") or settings.get("deployment_name") or ""
 
         # Store configuration for serialization
-        resolved_base_url = openai_settings.get("base_url") or base_url
-        resolved_azure_endpoint = openai_settings.get("azure_endpoint") or azure_endpoint
-        resolved_api_version = openai_settings.get("api_version") or api_version
-        self.org_id = openai_settings.get("org_id") or org_id
-        self.base_url = str(resolved_base_url) if resolved_base_url else None
-        self.azure_endpoint = str(resolved_azure_endpoint) if resolved_azure_endpoint else None
-        self.api_version = str(resolved_api_version) if use_azure_client and resolved_api_version else None
+        self.org_id = settings.get("org_id")
+        self.base_url = settings.get("base_url")
+        self.azure_endpoint = settings.get("endpoint")
+        self.api_version = settings.get("api_version")
         if default_headers:
             self.default_headers: dict[str, Any] | None = {
                 k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
             }
         else:
             self.default_headers = None
-
-        if instruction_role is not None:
-            self.instruction_role = instruction_role
-
+        self.instruction_role = instruction_role
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+        )
 
     # region Inner Methods
 
@@ -451,7 +481,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-        **kwargs: Any,
     ) -> tuple[AsyncOpenAI, dict[str, Any], dict[str, Any]]:
         """Validate options and prepare the request.
 
@@ -460,7 +489,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         """
         client = self.client
         validated_options = await self._validate_options(options)
-        run_options = await self._prepare_options(messages, validated_options, **kwargs)
+        run_options = await self._prepare_options(messages, validated_options)
         return client, run_options, validated_options
 
     def _handle_request_error(self, ex: Exception) -> NoReturn:
@@ -517,7 +546,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         client,
                         run_options,
                         validated_options,
-                    ) = await self._prepare_request(messages, options, **kwargs)
+                    ) = await self._prepare_request(messages, options)
                     try:
                         if "text_format" in run_options:
                             async with client.responses.stream(**run_options) as response:
@@ -551,7 +580,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 except Exception as ex:
                     self._handle_request_error(ex)
                 return self._parse_response_from_openai(response, options=validated_options)
-            client, run_options, validated_options = await self._prepare_request(messages, options, **kwargs)
+            client, run_options, validated_options = await self._prepare_request(messages, options)
             try:
                 if "text_format" in run_options:
                     response = await client.responses.parse(stream=False, **run_options)
@@ -626,6 +655,27 @@ class RawOpenAIChatClient(  # type: ignore[misc]
 
         if format_type in {"json_object", "text"}:
             return {"type": format_type}
+
+        # Handle raw JSON schemas (e.g. {"type": "object", "properties": {...}})
+        # by wrapping them in the expected json_schema envelope.
+        # Detect by checking for JSON Schema primitive types or known schema keywords.
+        json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+        json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+        if format_type in json_schema_primitive_types or (
+            format_type is None and any(k in response_format for k in json_schema_keywords)
+        ):
+            schema = dict(response_format)
+            if schema.get("type") == "object" and "additionalProperties" not in schema:
+                schema["additionalProperties"] = False
+            # Pop title from schema since OpenAI strict mode rejects unknown keys;
+            # use it as the schema name in the envelope instead.
+            name = str(schema.pop("title", None) or "response")
+            return {
+                "type": "json_schema",
+                "name": name,
+                "schema": schema,
+                "strict": True,
+            }
 
         raise ChatClientInvalidRequestException("Unsupported response_format provided for Responses client.")
 
@@ -1091,7 +1141,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         self,
         messages: Sequence[Message],
         options: Mapping[str, Any],
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Take options dict and create the specific options for Responses API."""
         # Exclude keys that are not supported or handled separately
@@ -1113,7 +1162,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         # messages
         # Handle instructions by prepending to messages as system message
         # Only prepend instructions for the first turn (when no conversation/response ID exists)
-        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        conversation_id = options.get("conversation_id")
         if (instructions := options.get("instructions")) and not conversation_id:
             # First turn: prepend instructions as system message
             messages = prepend_instructions_to_messages(list(messages), instructions, role="system")
@@ -1121,7 +1170,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
         request_input = self._prepare_messages_for_openai(messages)
         if not request_input:
             raise ChatClientInvalidRequestException("Messages are required for chat completions")
-        conversation_id = self._get_current_conversation_id(options, **kwargs)
+        conversation_id = options.get("conversation_id")
         run_options["input"] = request_input
 
         # model id
@@ -1139,7 +1188,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                 run_options[new_key] = run_options.pop(old_key)
 
         # Handle different conversation ID formats
-        if conversation_id := self._get_current_conversation_id(options, **kwargs):
+        if conversation_id := options.get("conversation_id"):
             if conversation_id.startswith("resp_"):
                 # For response IDs, set previous_response_id and remove conversation property
                 run_options["previous_response_id"] = conversation_id
@@ -1192,14 +1241,6 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             if not self.model:
                 raise ValueError("model must be a non-empty string")
             options["model"] = self.model
-
-    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID, preferring kwargs over options.
-
-        This ensures runtime-updated conversation IDs (for example, from tool execution
-        loops) take precedence over the initial configuration provided in options.
-        """
-        return kwargs.get("conversation_id") or options.get("conversation_id")
 
     def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
         """Prepare the chat messages for a request.
@@ -1728,7 +1769,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         )
                     )
                 case "mcp_call":
-                    call_id = item.id
+                    call_id = getattr(item, "id", None) or getattr(item, "call_id", None) or ""
                     contents.append(
                         Content.from_mcp_server_tool_call(
                             call_id=call_id,
@@ -2118,27 +2159,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 raw_representation=event_item,
                             )
                         )
-                        result_output = (
-                            getattr(event_item, "result", None)
-                            or getattr(event_item, "output", None)
-                            or getattr(event_item, "outputs", None)
-                        )
-                        parsed_output: list[Content] | None = None
-                        if result_output:
-                            normalized = (  # pyright: ignore[reportUnknownVariableType]
-                                result_output
-                                if isinstance(result_output, Sequence)
-                                and not isinstance(result_output, (str, bytes, MutableMapping))
-                                else [result_output]
-                            )
-                            parsed_output = [Content.from_dict(output_item) for output_item in normalized]  # pyright: ignore[reportArgumentType,reportUnknownVariableType]
-                        contents.append(
-                            Content.from_mcp_server_tool_result(
-                                call_id=call_id,
-                                output=parsed_output,
-                                raw_representation=event_item,
-                            )
-                        )
+                        # Result deferred to response.output_item.done
                     case "code_interpreter_call":  # ResponseOutputCodeInterpreterCall
                         call_id = getattr(event_item, "call_id", None) or getattr(event_item, "id", None)
                         outputs: list[Content] = []
@@ -2408,6 +2429,21 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         )
                 else:
                     logger.debug("Unparsed annotation type in streaming: %s", ann_type)
+            case "response.output_item.done":
+                done_item = event.item
+                if getattr(done_item, "type", None) == "mcp_call":
+                    call_id = getattr(done_item, "id", None) or getattr(done_item, "call_id", None) or ""
+                    output_text = getattr(done_item, "output", None)
+                    parsed_output: list[Content] | None = (
+                        [Content.from_text(text=output_text)] if isinstance(output_text, str) else None
+                    )
+                    contents.append(
+                        Content.from_mcp_server_tool_result(
+                            call_id=call_id,
+                            output=parsed_output,
+                            raw_representation=done_item,
+                        )
+                    )
             case _:
                 logger.debug("Unparsed event of type: %s: %s", event.type, event)
 
@@ -2457,48 +2493,106 @@ class OpenAIChatClient(  # type: ignore[misc]
     @overload
     def __init__(
         self,
-        *,
         model: str | None = None,
+        *,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize an OpenAI Responses client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL``.
+            api_key: API key. When not provided explicitly, the constructor reads
+                ``OPENAI_API_KEY``. A callable API key is also supported.
+            org_id: OpenAI organization ID. When not provided explicitly, the constructor reads
+                ``OPENAI_ORG_ID``.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``OPENAI_BASE_URL``.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured OpenAI client.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Optional additional properties to include on all requests.
+            env_file_path: Optional ``.env`` file that is checked before the process environment
+                for ``OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
 
     @overload
     def __init__(
         self,
-        *,
         model: str | None = None,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
-        org_id: str | None = None,
-        base_url: str | None = None,
-        azure_endpoint: str,
+        *,
+        azure_endpoint: str | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         api_version: str | None = None,
+        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Initialize an OpenAI Responses client.
+
+        Keyword Args:
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
+                reads ``AZURE_OPENAI_ENDPOINT``.
+            credential: Azure credential or token provider for Entra auth.
+            api_version: Azure API version. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_API_VERSION`` and then uses the Responses default.
+            api_key: API key. For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted, but ``credential`` is the preferred
+                Azure auth surface.
+            base_url: Base URL override. When not provided explicitly, the constructor reads
+                ``AZURE_OPENAI_BASE_URL``. Use this instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            default_headers: Additional HTTP headers.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            middleware: Optional middleware to apply to the client.
+            function_invocation_configuration: Optional function invocation configuration override.
+            additional_properties: Optional additional properties to include on all requests.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables for ``AZURE_OPENAI_*`` values.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
 
     def __init__(
         self,
-        *,
         model: str | None = None,
+        *,
         api_key: str | Callable[[], str | Awaitable[str]] | None = None,
+        credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
         base_url: str | None = None,
         azure_endpoint: str | None = None,
@@ -2506,44 +2600,64 @@ class OpenAIChatClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
-        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an OpenAI Responses client.
 
         Keyword Args:
-            model: OpenAI model name, see https://platform.openai.com/docs/models.
-                Can also be set via environment variable OPENAI_MODEL.
-            api_key: The API key to use. If provided will override the env vars or .env file value.
-                Can also be set via environment variable OPENAI_API_KEY.
-            org_id: The org ID to use. If provided will override the env vars or .env file value.
-                Can also be set via environment variable OPENAI_ORG_ID.
-            base_url: The base URL to use. If provided will override the standard value.
-                Can also be set via environment variable OPENAI_BASE_URL.
-            azure_endpoint: Azure OpenAI endpoint. When provided, the client uses
-                ``AsyncAzureOpenAI``. The value should be the Azure resource endpoint and
-                should not end with ``/openai/v1``. For Azure OpenAI key auth, either pass
-                the resource endpoint without that suffix to ``azure_endpoint`` or pass the
-                full ``.../openai/v1`` URL to ``base_url`` instead. Can also be discovered
-                from ``AZURE_OPENAI_ENDPOINT`` when no OpenAI base URL is configured.
-            api_version: Azure OpenAI API version. Can also be set via
-                ``AZURE_OPENAI_API_VERSION``.
-            default_headers: The default headers mapping of string keys to
-                string values for HTTP requests.
-            async_client: An existing client to use.
-            instruction_role: The role to use for 'instruction' messages, for example,
-                "system" or "developer". If not provided, the default is "system".
-            env_file_path: Use the environment settings file as a fallback
-                to environment variables.
-            env_file_encoding: The encoding of the environment settings file.
+            model: Model identifier to use for the request. When not provided, the constructor
+                reads ``OPENAI_RESPONSES_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
+                routing, or ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`` and then
+                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
+            api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
+                For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
+                auth. A callable token provider is also accepted for backwards compatibility,
+                but ``credential`` is the preferred Azure auth surface.
+            credential: Azure credential or token provider for Azure OpenAI auth. Passing this
+                is an explicit Azure signal, even when ``OPENAI_API_KEY`` is also configured.
+                Credential objects require the optional ``azure-identity`` package.
+            org_id: OpenAI organization ID. Used only for OpenAI routing and resolved from
+                ``OPENAI_ORG_ID`` when not provided.
+            base_url: Base URL override. For OpenAI routing this maps to ``OPENAI_BASE_URL``.
+                For Azure routing this may be used instead of ``azure_endpoint`` when you want
+                to pass the full ``.../openai/v1`` base URL directly.
+            azure_endpoint: Azure resource endpoint. When not provided explicitly, Azure routing
+                falls back to ``AZURE_OPENAI_ENDPOINT``.
+            api_version: Azure API version to use once Azure routing is selected. When
+                not provided explicitly, Azure routing falls back to
+                ``AZURE_OPENAI_API_VERSION`` and then the Responses default.
+            default_headers: Default HTTP headers that are merged into each request.
+            async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
+                Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
+            instruction_role: Role to use for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
-            kwargs: Other keyword parameters.
+            additional_properties: Additional properties stored on the client instance.
+            env_file_path: Optional ``.env`` file that is checked before process environment
+                variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
+                lookups.
+            env_file_encoding: Encoding for the ``.env`` file.
+
+        Notes:
+            Environment resolution and routing precedence are:
+
+            1. Explicit Azure inputs (``azure_endpoint`` or ``credential``)
+            2. Explicit OpenAI API key or ``OPENAI_API_KEY``
+            3. Azure environment fallback
+
+            OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_RESPONSES_MODEL``,
+            ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
+            reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME``,
+            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
             .. code-block:: python
@@ -2576,6 +2690,7 @@ class OpenAIChatClient(  # type: ignore[misc]
         super().__init__(
             model=model,
             api_key=api_key,
+            credential=credential,
             org_id=org_id,
             base_url=base_url,
             azure_endpoint=azure_endpoint,
@@ -2587,7 +2702,9 @@ class OpenAIChatClient(  # type: ignore[misc]
             env_file_encoding=env_file_encoding,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
         )
 
 

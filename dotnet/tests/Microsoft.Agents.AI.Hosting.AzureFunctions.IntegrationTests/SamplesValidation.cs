@@ -35,7 +35,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
             .Build();
 
     private static bool s_infrastructureStarted;
-    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan s_orchestrationTimeout = TimeSpan.FromMinutes(2);
 
     // In CI, `dotnet run` builds the Functions project from scratch before the host starts, so 60s is not enough.
     private static readonly TimeSpan s_functionsReadyTimeout = TimeSpan.FromSeconds(180);

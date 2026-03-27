@@ -211,7 +211,7 @@ class TaskRunner:
             client=assistant_chat_client,
             instructions=assistant_system_prompt,
             tools=tools,
-            temperature=self.assistant_sampling_temperature,
+            default_options={"temperature": self.assistant_sampling_temperature},
             context_providers=[
                 SlidingWindowHistoryProvider(
                     system_message=assistant_system_prompt,
@@ -246,7 +246,7 @@ class TaskRunner:
         return Agent(
             client=user_simuator_chat_client,
             instructions=user_sim_system_prompt,
-            temperature=0.0,
+            default_options={"temperature": 0.0},
             # No sliding window for user simulator to maintain full conversation context
             # TODO(yuge): Consider adding user tools in future for more realistic scenarios
         )

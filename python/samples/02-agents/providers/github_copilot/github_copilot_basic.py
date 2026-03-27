@@ -19,11 +19,26 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.github import GitHubCopilotAgent
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import PermissionRequestResult
 from dotenv import load_dotenv
 from pydantic import Field
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
+    """Permission handler that prompts the user for approval."""
+    print(f"\n[Permission Request: {request.kind}]")
+
+    if request.full_command_text is not None:
+        print(f"  Command: {request.full_command_text}")
+
+    response = input("Approve? (y/n): ").strip().lower()
+    if response in ("y", "yes"):
+        return PermissionRequestResult(kind="approved")
+    return PermissionRequestResult(kind="denied-interactively-by-user")
 
 
 # NOTE: approval_mode="never_require" is for sample brevity. Use "always_require" in production;
@@ -45,6 +60,7 @@ async def non_streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:
@@ -61,6 +77,7 @@ async def streaming_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="You are a helpful weather agent.",
         tools=[get_weather],
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:
@@ -80,6 +97,7 @@ async def runtime_options_example() -> None:
     agent = GitHubCopilotAgent(
         instructions="Always respond in exactly 3 words.",
         tools=[get_weather],
+        default_options={"on_permission_request": prompt_permission},
     )
 
     async with agent:

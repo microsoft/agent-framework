@@ -445,6 +445,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
 
         # Merge tools: convert agent's hosted tools + user-provided function tools
         merged_tools = self._merge_tools(agent.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", agent.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -452,9 +454,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             name=agent.name,
             description=agent.description,
             instructions=agent.instructions,
-            model_id=agent.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

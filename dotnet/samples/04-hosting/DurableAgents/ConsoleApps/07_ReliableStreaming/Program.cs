@@ -285,6 +285,7 @@ async Task ReadStreamTask(string conversationId, string? cursor, CancellationTok
         if (chunk.Text != null)
         {
             Console.Write(chunk.Text);
+            Console.Out.Flush();
         }
 
         // Always update lastCursor to track the latest entry ID, even if text is null

@@ -141,9 +141,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_EMBEDDINGS_MODEL_ID: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
@@ -195,10 +194,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__EMBEDDINGDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
     defaults:
       run:
@@ -223,7 +222,9 @@ jobs:
           uv run pytest --import-mode=importlib
           packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
           packages/openai/tests/openai/test_openai_chat_client_azure.py
+          packages/openai/tests/openai/test_openai_embedding_client_azure.py
           packages/azure-ai/tests/azure_openai
+          --ignore=packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -333,15 +334,16 @@ jobs:
     environment: integration
     env:
       UV_PYTHON: "3.11"
-      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FUNCTIONS_WORKER_RUNTIME: "python"
       DURABLE_TASK_SCHEDULER_CONNECTION_STRING: "Endpoint=http://localhost:8080;TaskHub=default;Authentication=None"
       AzureWebJobsStorage: "UseDevelopmentStorage=true"
@@ -387,8 +389,8 @@ jobs:
           fail-on-empty: false
           title: Functions integration test results
 
-  python-tests-azure-ai:
-    name: Python Tests - Azure AI
+  python-tests-foundry:
+    name: Python Integration Tests - Foundry
     needs: paths-filter
     if: >
       github.event_name != 'pull_request' &&
@@ -401,8 +403,10 @@ jobs:
     env:
       AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
       AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
-      FOUNDRY_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      FOUNDRY_MODEL: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
+      FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
+      FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
+      FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
+      FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -424,9 +428,14 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Test with pytest
         timeout-minutes: 15
-        run: |
-          uv run --directory packages/azure-ai poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
-          uv run --directory packages/foundry poe integration-tests -n logical --dist worksteal --timeout=120 --session-timeout=900 --timeout_method thread --retries 2 --retry-delay 5
+        run: >
+          uv run pytest --import-mode=importlib
+          packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
+          packages/foundry/tests
+          -m integration
+          -n logical --dist worksteal
+          --timeout=120 --session-timeout=900 --timeout_method thread
+          --retries 2 --retry-delay 5
         working-directory: ./python
       - name: Test Azure AI samples
         timeout-minutes: 10
@@ -513,7 +522,7 @@ jobs:
         python-tests-azure-openai,
         python-tests-misc-integration,
         python-tests-functions,
-        python-tests-azure-ai,
+        python-tests-foundry,
         python-tests-cosmos,
       ]
     steps:

@@ -24,7 +24,7 @@ AIAgent agent = await aiProjectClient.CreateAIAgentAsync(name: VisionName, model
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
-    await DataContent.LoadFromAsync("assets/walkway.jpg"),
+    await DataContent.LoadFromAsync("Assets/walkway.jpg"),
 ]);
 
 AgentSession session = await agent.CreateSessionAsync();
