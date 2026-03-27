@@ -297,10 +297,8 @@ async def _poll_eval_run(
         if remaining <= 0:
             return EvalResults(provider=provider, eval_id=eval_id, run_id=run_id, status="timeout")
         logger.debug("Eval run %s status: %s (%.0fs remaining)", run_id, run.status, remaining)
-        # Clamp sleep: at least 1s (rate-limit protection), at most 60s
-        # (prevents a single long sleep from consuming the whole timeout),
-        # and never longer than the remaining time.
-        await asyncio.sleep(min(max(poll_interval, 1.0), remaining, 60.0))
+        # At least 1s between polls (rate-limit protection), capped by remaining time.
+        await asyncio.sleep(min(max(poll_interval, 1.0), remaining))
 
 
 def _extract_result_counts(run: RunRetrieveResponse) -> dict[str, int] | None:
