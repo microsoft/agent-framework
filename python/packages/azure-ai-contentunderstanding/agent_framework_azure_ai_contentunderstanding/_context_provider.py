@@ -350,15 +350,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         # 3. Analyze new files using CU (track elapsed time for combined timeout)
         file_start_times: dict[str, float] = {}
+        accepted_keys: set[str] = set()  # doc_keys successfully accepted for analysis this turn
         for doc_key, content_item, binary_data in new_files:
             # Reject duplicate filenames — re-analyzing would orphan vector store entries
             if doc_key in documents:
                 logger.warning("Duplicate document key '%s' — skipping (already exists in session).", doc_key)
                 context.extend_instructions(
                     self.source_id,
-                    f"IMPORTANT: The user tried to upload '{doc_key}', but a file with that name "
-                    "was already uploaded earlier in this session. The new upload was REJECTED — "
-                    "it was NOT analyzed. Tell the user explicitly that a file with the same name "
+                    f"The user tried to upload '{doc_key}', but a file with that name "
+                    "was already uploaded earlier in this session. The new upload was rejected "
+                    "and was not analyzed. Tell the user that a file with the same name "
                     "already exists and they need to rename the file before uploading again.",
                 )
                 continue
@@ -366,13 +367,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context)
             if doc_entry:
                 documents[doc_key] = doc_entry
+                accepted_keys.add(doc_key)
 
         # 4. Inject content for ready documents and register tools
         if documents:
             self._register_tools(documents, context)
 
-        # 5. On upload turns, inject content for all ready docs from this turn
-        for doc_key, _, _ in new_files:
+        # 5. On upload turns, inject content for docs accepted this turn
+        for doc_key in accepted_keys:
             entry = documents.get(doc_key)
             if entry and entry["status"] == DocumentStatus.READY and entry["result"]:
                 # Upload to vector store if file_search is configured
@@ -532,6 +534,23 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         return media_type in SUPPORTED_MEDIA_TYPES
 
     @staticmethod
+    def _sanitize_doc_key(raw: str) -> str:
+        """Sanitize a document key to prevent prompt injection.
+
+        Removes control characters (newlines, tabs, etc.), collapses
+        whitespace, strips surrounding whitespace, and caps length at
+        255 characters.
+        """
+        import re as _re
+
+        # Remove control characters (C0/C1 controls, including \n, \r, \t)
+        cleaned = _re.sub(r"[\x00-\x1f\x7f-\x9f]", "", raw)
+        # Collapse whitespace
+        cleaned = " ".join(cleaned.split())
+        # Cap length
+        return cleaned[:255] if cleaned else f"doc_{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
     def _derive_doc_key(content: Content) -> str:
         """Derive a unique document key from content metadata.
 
@@ -539,13 +558,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         within a session are rejected (not re-analyzed) to prevent orphaned
         vector store entries.
 
-        Priority: filename > URL basename > content hash.
+        The returned key is sanitized to prevent prompt injection via
+        crafted filenames (control characters removed, length capped).
+
+        Priority: filename > URL basename > generated UUID.
         """
         # 1. Filename from additional_properties
         if content.additional_properties:
             filename = content.additional_properties.get("filename")
             if filename and isinstance(filename, str):
-                return str(filename)
+                return ContentUnderstandingContextProvider._sanitize_doc_key(filename)
 
         # 2. URL path basename for external URIs (e.g. "https://example.com/report.pdf" → "report.pdf")
         if content.type == "uri" and content.uri and not content.uri.startswith("data:"):
@@ -554,7 +576,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             # rsplit("/", 1)[-1] splits from the right once to get the last path segment
             basename = path.rstrip("/").rsplit("/", 1)[-1]
             if basename:
-                return basename
+                return ContentUnderstandingContextProvider._sanitize_doc_key(basename)
 
         # 3. Fallback: generate a unique ID for anonymous uploads (no filename, no URL)
         return f"doc_{uuid.uuid4().hex[:8]}"
