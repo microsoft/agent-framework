@@ -17,7 +17,7 @@ The Model Context Protocol (MCP) is an open standard for connecting AI agents to
 ## Prerequisites
 
 - `OPENAI_API_KEY` environment variable
-- `OPENAI_RESPONSES_MODEL_ID` environment variable
+- `OPENAI_RESPONSES_MODEL` environment variable
 
 For `mcp_github_pat.py`:
 - `GITHUB_PAT` - Your GitHub Personal Access Token (create at https://github.com/settings/tokens)

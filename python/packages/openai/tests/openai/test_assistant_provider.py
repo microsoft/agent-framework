@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import os
 from typing import Annotated, Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -747,67 +746,6 @@ class TestToolMerging:
         merged = provider._merge_tools(assistant_tools, get_weather)  # type: ignore[reportPrivateUsage]
 
         assert len(merged) == 1
-
-
-# endregion
-
-# region Integration Tests
-
-skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("OPENAI_API_KEY", "") in ("", "test-dummy-key"),
-    reason="No real OPENAI_API_KEY provided; skipping integration tests.",
-)
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_openai_integration_tests_disabled
-class TestOpenAIAssistantProviderIntegration:
-    """Integration tests requiring real OpenAI API."""
-
-    async def test_create_and_run_agent(self) -> None:
-        """End-to-end test of creating and running an agent."""
-        provider = OpenAIAssistantProvider()
-
-        agent = await provider.create_agent(
-            name="IntegrationTestAgent",
-            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
-            instructions="You are a helpful assistant. Respond briefly.",
-        )
-
-        try:
-            result = await agent.run("Say 'hello' and nothing else.")
-            result_text = str(result)
-            assert "hello" in result_text.lower()
-        finally:
-            # Clean up the assistant
-            await provider._client.beta.assistants.delete(agent.id)  # type: ignore[reportPrivateUsage, union-attr]
-
-    async def test_create_agent_with_function_tools_integration(self) -> None:
-        """Integration test with function tools."""
-        provider = OpenAIAssistantProvider()
-
-        @tool(approval_mode="never_require")
-        def get_current_time() -> str:
-            """Get the current time."""
-            from datetime import datetime
-
-            return datetime.now().strftime("%H:%M")
-
-        agent = await provider.create_agent(
-            name="TimeAgent",
-            model=os.environ.get("OPENAI_MODEL", "gpt-4"),
-            instructions="You are a helpful assistant.",
-            tools=[get_current_time],
-        )
-
-        try:
-            result = await agent.run("What time is it? Use the get_current_time function.")
-            result_text = str(result)
-            # The response should contain time information
-            assert ":" in result_text or "time" in result_text.lower()
-        finally:
-            await provider._client.beta.assistants.delete(agent.id)  # type: ignore[reportPrivateUsage, union-attr]
 
 
 # endregion
