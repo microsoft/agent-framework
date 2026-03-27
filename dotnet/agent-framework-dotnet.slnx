@@ -77,8 +77,6 @@
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/01_SequentialWorkflow/01_SequentialWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/02_ConcurrentWorkflow/02_ConcurrentWorkflow.csproj" />
     <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/03_WorkflowHITL/03_WorkflowHITL.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/04_WorkflowMcpTool/04_WorkflowMcpTool.csproj" />
-    <Project Path="samples/04-hosting/DurableWorkflows/AzureFunctions/05_WorkflowAndAgents/05_WorkflowAndAgents.csproj" />
   </Folder>
   <Folder Name="/Samples/GettingStarted/">
     <File Path="samples/GettingStarted/README.md" />
@@ -105,6 +103,7 @@
   <Folder Name="/Samples/02-agents/AgentSkills/">
     <File Path="samples/02-agents/AgentSkills/README.md" />
     <Project Path="samples/02-agents/AgentSkills/Agent_Step01_FileBasedSkills/Agent_Step01_FileBasedSkills.csproj" />
+    <Project Path="samples/02-agents/AgentSkills/Agent_Step02_CodeDefinedSkills/Agent_Step02_CodeDefinedSkills.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/AGUI/Step05_StateManagement/">
     <Project Path="samples/02-agents/AGUI/Step05_StateManagement/Client/Client.csproj" />
@@ -454,10 +453,6 @@
     <File Path="src/Shared/Samples/TestConfiguration.cs" />
     <File Path="src/Shared/Samples/TextOutputHelperExtensions.cs" />
     <File Path="src/Shared/Samples/XunitLogger.cs" />
-  </Folder>
-  <Folder Name="/Solution Items/src/Shared/Redaction/">
-    <File Path="src/Shared/Redaction/README.md" />
-    <File Path="src/Shared/Redaction/ReplacingRedactor.cs" />
   </Folder>
   <Folder Name="/Solution Items/src/Shared/Throw/">
     <File Path="src/Shared/Throw/README.md" />

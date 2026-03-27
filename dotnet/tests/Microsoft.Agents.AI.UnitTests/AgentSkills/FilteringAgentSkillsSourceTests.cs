@@ -12,12 +12,14 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class FilteringAgentSkillsSourceTests
 {
     [Fact]
-    public async Task GetSkillsAsync_PredicateIncludesAll_ReturnsAllSkillsAsync()
+    public async Task GetSkillsAsync_PredicateIncludesAll_ReturnsAllSkills()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(
-            new TestAgentSkill("skill-a", "A", "Instructions A."),
-            new TestAgentSkill("skill-b", "B", "Instructions B."));
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+            new AgentInlineSkill("skill-b", "B", "Instructions B."),
+        });
         var source = new FilteringAgentSkillsSource(inner, _ => true);
 
         // Act
@@ -28,12 +30,14 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PredicateExcludesAll_ReturnsEmptyAsync()
+    public async Task GetSkillsAsync_PredicateExcludesAll_ReturnsEmpty()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(
-            new TestAgentSkill("skill-a", "A", "Instructions A."),
-            new TestAgentSkill("skill-b", "B", "Instructions B."));
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+            new AgentInlineSkill("skill-b", "B", "Instructions B."),
+        });
         var source = new FilteringAgentSkillsSource(inner, _ => false);
 
         // Act
@@ -44,13 +48,15 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PartialFilter_ReturnsMatchingSkillsOnlyAsync()
+    public async Task GetSkillsAsync_PartialFilter_ReturnsMatchingSkillsOnly()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(
-            new TestAgentSkill("keep-me", "Keep", "Instructions."),
-            new TestAgentSkill("drop-me", "Drop", "Instructions."),
-            new TestAgentSkill("keep-also", "KeepAlso", "Instructions."));
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("keep-me", "Keep", "Instructions."),
+            new AgentInlineSkill("drop-me", "Drop", "Instructions."),
+            new AgentInlineSkill("keep-also", "KeepAlso", "Instructions."),
+        });
         var source = new FilteringAgentSkillsSource(
             inner,
             skill => skill.Frontmatter.Name.StartsWith("keep", StringComparison.OrdinalIgnoreCase));
@@ -64,10 +70,10 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_EmptySource_ReturnsEmptyAsync()
+    public async Task GetSkillsAsync_EmptySource_ReturnsEmpty()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(Array.Empty<AgentSkill>());
+        var inner = new AgentInMemorySkillsSource(Array.Empty<AgentSkill>());
         var source = new FilteringAgentSkillsSource(inner, _ => true);
 
         // Act
@@ -81,7 +87,7 @@ public sealed class FilteringAgentSkillsSourceTests
     public void Constructor_NullPredicate_Throws()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(Array.Empty<AgentSkill>());
+        var inner = new AgentInMemorySkillsSource(Array.Empty<AgentSkill>());
 
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() => new FilteringAgentSkillsSource(inner, null!));
@@ -95,14 +101,16 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PreservesOrderAsync()
+    public async Task GetSkillsAsync_PreservesOrder()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(
-            new TestAgentSkill("alpha", "Alpha", "Instructions."),
-            new TestAgentSkill("beta", "Beta", "Instructions."),
-            new TestAgentSkill("gamma", "Gamma", "Instructions."),
-            new TestAgentSkill("delta", "Delta", "Instructions."));
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("alpha", "Alpha", "Instructions."),
+            new AgentInlineSkill("beta", "Beta", "Instructions."),
+            new AgentInlineSkill("gamma", "Gamma", "Instructions."),
+            new AgentInlineSkill("delta", "Delta", "Instructions."),
+        });
 
         // Keep only alpha and gamma
         var source = new FilteringAgentSkillsSource(

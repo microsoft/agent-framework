@@ -13,12 +13,14 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class DeduplicatingAgentSkillsSourceTests
 {
     [Fact]
-    public async Task GetSkillsAsync_NoDuplicates_ReturnsAllSkillsAsync()
+    public async Task GetSkillsAsync_NoDuplicates_ReturnsAllSkills()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(
-            new TestAgentSkill("skill-a", "A", "Instructions A."),
-            new TestAgentSkill("skill-b", "B", "Instructions B."));
+        var inner = new AgentInMemorySkillsSource(new AgentSkill[]
+        {
+            new AgentInlineSkill("skill-a", "A", "Instructions A."),
+            new AgentInlineSkill("skill-b", "B", "Instructions B."),
+        });
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
@@ -29,16 +31,16 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_WithDuplicates_KeepsFirstOccurrenceAsync()
+    public async Task GetSkillsAsync_WithDuplicates_KeepsFirstOccurrence()
     {
         // Arrange
         var skills = new AgentSkill[]
         {
-            new TestAgentSkill("dupe", "First", "Instructions 1."),
-            new TestAgentSkill("dupe", "Second", "Instructions 2."),
-            new TestAgentSkill("unique", "Unique", "Instructions 3."),
+            new AgentInlineSkill("dupe", "First", "Instructions 1."),
+            new AgentInlineSkill("dupe", "Second", "Instructions 2."),
+            new AgentInlineSkill("unique", "Unique", "Instructions 3."),
         };
-        var inner = new TestAgentSkillsSource(skills);
+        var inner = new AgentInMemorySkillsSource(skills);
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
@@ -51,9 +53,9 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_CaseInsensitiveDuplication_KeepsFirstAsync()
+    public async Task GetSkillsAsync_CaseInsensitiveDuplication_KeepsFirst()
     {
-        // Arrange — use a custom source that returns skills with same name but different casing
+        // Arrange - Use a custom source that returns skills with same name but different casing
         var inner = new FakeDuplicateCaseSource();
         var source = new DeduplicatingAgentSkillsSource(inner);
 
@@ -66,10 +68,10 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_EmptySource_ReturnsEmptyAsync()
+    public async Task GetSkillsAsync_EmptySource_ReturnsEmpty()
     {
         // Arrange
-        var inner = new TestAgentSkillsSource(System.Array.Empty<AgentSkill>());
+        var inner = new AgentInMemorySkillsSource(System.Array.Empty<AgentSkill>());
         var source = new DeduplicatingAgentSkillsSource(inner);
 
         // Act
@@ -90,8 +92,8 @@ public sealed class DeduplicatingAgentSkillsSourceTests
             // two skills with the same lowercase name to test case-insensitive dedup.
             var skills = new List<AgentSkill>
             {
-                new TestAgentSkill("my-skill", "First", "Instructions 1."),
-                new TestAgentSkill("my-skill", "Second", "Instructions 2."),
+                new AgentInlineSkill("my-skill", "First", "Instructions 1."),
+                new AgentInlineSkill("my-skill", "Second", "Instructions 2."),
             };
             return Task.FromResult<IList<AgentSkill>>(skills);
         }
