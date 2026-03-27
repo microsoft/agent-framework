@@ -918,9 +918,7 @@ async def test_use_latest_version_no_spurious_warning_for_empty_tools(
     actually being overridden.  Regression test for
     https://github.com/microsoft/agent-framework/issues/4681
     """
-    client = create_test_azure_ai_client(
-        mock_project_client, agent_name="existing-agent", use_latest_version=True
-    )
+    client = create_test_azure_ai_client(mock_project_client, agent_name="existing-agent", use_latest_version=True)
 
     # Mock existing agent
     mock_existing_agent = MagicMock()
@@ -955,9 +953,7 @@ async def test_use_latest_version_warns_for_non_empty_tools(
     runtime tools while use_latest_version=True, the client should warn that
     the tools differ from the agent's creation-time configuration.
     """
-    client = create_test_azure_ai_client(
-        mock_project_client, agent_name="existing-agent", use_latest_version=True
-    )
+    client = create_test_azure_ai_client(mock_project_client, agent_name="existing-agent", use_latest_version=True)
 
     # Mock existing agent
     mock_existing_agent = MagicMock()
