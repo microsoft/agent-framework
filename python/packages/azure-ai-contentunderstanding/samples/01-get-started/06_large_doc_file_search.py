@@ -141,9 +141,10 @@ async def main() -> None:
         )
         print(f"Agent: {response}\n")
 
-    # Vector store is automatically cleaned up when the provider closes
+    # Explicitly delete the vector store created for this sample
+    await openai_client.beta.vector_stores.delete(vector_store.id)
     await openai_client.close()
-    print("Done. Vector store cleaned up automatically.")
+    print("Done. Vector store deleted and client closed.")
 
 
 if __name__ == "__main__":
