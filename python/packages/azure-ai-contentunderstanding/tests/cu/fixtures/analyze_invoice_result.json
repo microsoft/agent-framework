@@ -15,15 +15,95 @@
         },
         "DueDate": {
           "type": "date",
+          "valueDate": "2025-02-15",
           "confidence": 0.793
         },
         "InvoiceDate": {
           "type": "date",
+          "valueDate": "2025-01-15",
           "confidence": 0.693
         },
         "InvoiceId": {
           "type": "string",
+          "valueString": "INV-100",
           "confidence": 0.489
+        },
+        "AmountDue": {
+          "type": "object",
+          "valueObject": {
+            "Amount": {
+              "type": "number",
+              "valueNumber": 610,
+              "confidence": 0.758
+            },
+            "CurrencyCode": {
+              "type": "string",
+              "valueString": "USD"
+            }
+          }
+        },
+        "SubtotalAmount": {
+          "type": "object",
+          "valueObject": {
+            "Amount": {
+              "type": "number",
+              "valueNumber": 100,
+              "confidence": 0.902
+            },
+            "CurrencyCode": {
+              "type": "string",
+              "valueString": "USD"
+            }
+          }
+        },
+        "LineItems": {
+          "type": "array",
+          "valueArray": [
+            {
+              "type": "object",
+              "valueObject": {
+                "Description": {
+                  "type": "string",
+                  "valueString": "Consulting Services",
+                  "confidence": 0.664
+                },
+                "Quantity": {
+                  "type": "number",
+                  "valueNumber": 2,
+                  "confidence": 0.957
+                },
+                "UnitPrice": {
+                  "type": "object",
+                  "valueObject": {
+                    "Amount": {
+                      "type": "number",
+                      "valueNumber": 30,
+                      "confidence": 0.956
+                    },
+                    "CurrencyCode": {
+                      "type": "string",
+                      "valueString": "USD"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "valueObject": {
+                "Description": {
+                  "type": "string",
+                  "valueString": "Document Fee",
+                  "confidence": 0.712
+                },
+                "Quantity": {
+                  "type": "number",
+                  "valueNumber": 3,
+                  "confidence": 0.939
+                }
+              }
+            }
+          ]
         }
       },
       "kind": "document",

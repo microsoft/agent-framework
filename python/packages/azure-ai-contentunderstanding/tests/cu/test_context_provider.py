@@ -537,6 +537,65 @@ class TestOutputFiltering:
         assert fields["VendorName"]["value"] is not None
         assert fields["VendorName"]["confidence"] is not None
 
+    def test_object_field_flattened(self, invoice_analysis_result: AnalysisResult) -> None:
+        """Object fields (e.g. AmountDue with Amount+CurrencyCode) should be recursively flattened."""
+        provider = _make_provider()
+        result = provider._extract_sections(invoice_analysis_result)
+
+        fields = result.get("fields")
+        assert isinstance(fields, dict)
+        assert "AmountDue" in fields
+
+        amount_due = fields["AmountDue"]
+        assert amount_due["type"] == "object"
+        # Value should be a flattened dict with plain Python values, not raw SDK dicts
+        value = amount_due["value"]
+        assert isinstance(value, dict)
+        assert value["Amount"] == 610.0
+        assert value["CurrencyCode"] == "USD"
+
+    def test_array_field_flattened(self, invoice_analysis_result: AnalysisResult) -> None:
+        """Array fields (e.g. LineItems) should be recursively flattened."""
+        provider = _make_provider()
+        result = provider._extract_sections(invoice_analysis_result)
+
+        fields = result.get("fields")
+        assert isinstance(fields, dict)
+        assert "LineItems" in fields
+
+        line_items = fields["LineItems"]
+        assert line_items["type"] == "array"
+        value = line_items["value"]
+        assert isinstance(value, list)
+        assert len(value) == 2
+
+        # First item should have flattened sub-fields
+        item0 = value[0]
+        assert isinstance(item0, dict)
+        assert item0["Description"] == "Consulting Services"
+        assert item0["Quantity"] == 2.0
+        # Nested object within array item
+        assert isinstance(item0["UnitPrice"], dict)
+        assert item0["UnitPrice"]["Amount"] == 30.0
+        assert item0["UnitPrice"]["CurrencyCode"] == "USD"
+
+        # Second item
+        item1 = value[1]
+        assert item1["Description"] == "Document Fee"
+        assert item1["Quantity"] == 3.0
+
+    def test_subtotal_object_field(self, invoice_analysis_result: AnalysisResult) -> None:
+        """SubtotalAmount object field should flatten to {Amount, CurrencyCode}."""
+        provider = _make_provider()
+        result = provider._extract_sections(invoice_analysis_result)
+
+        fields = result.get("fields")
+        assert isinstance(fields, dict)
+        subtotal = fields["SubtotalAmount"]
+        assert subtotal["type"] == "object"
+        assert subtotal["value"]["Amount"] == 100.0
+        assert subtotal["value"]["CurrencyCode"] == "USD"
+
 
 class TestDuplicateDocumentKey:
     async def test_duplicate_filename_rejected(

@@ -930,12 +930,28 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     @staticmethod
     def _extract_field_value(field: Any) -> object:
-        """Extract the value from a CU field, trying multiple attribute names."""
-        for attr in ("value_string", "value_number", "value_date", "value"):
-            value = getattr(field, attr, None)
-            if value is not None:
-                return value
-        return None
+        """Extract the plain Python value from a CU ``ContentField``.
+
+        Uses the SDK's ``.value`` convenience property, which dynamically
+        reads the correct ``value_*`` attribute for each field type.
+        Object and array types are recursively flattened so that the
+        output contains only plain Python primitives (str, int, float,
+        date, dict, list) — no SDK model objects or raw wire format
+        (``valueNumber``, ``spans``, ``source``, etc.).
+        """
+        field_type = getattr(field, "type", None)
+        raw = getattr(field, "value", None)
+
+        # Object fields → recursively resolve nested sub-fields
+        if field_type == "object" and raw is not None and isinstance(raw, dict):
+            return {k: ContentUnderstandingContextProvider._extract_field_value(v) for k, v in raw.items()}
+
+        # Array fields → list of resolved items
+        if field_type == "array" and raw is not None and isinstance(raw, list):
+            return [ContentUnderstandingContextProvider._extract_field_value(item) for item in raw]
+
+        # Scalar fields (string, number, date, etc.) — .value returns native Python type
+        return raw
 
     @staticmethod
     def _format_result(filename: str, result: dict[str, object]) -> str:
