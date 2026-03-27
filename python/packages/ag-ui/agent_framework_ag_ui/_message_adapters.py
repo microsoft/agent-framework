@@ -30,6 +30,8 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
     """Normalize tool ordering and inject synthetic results for AG-UI edge cases."""
     sanitized: list[Message] = []
     pending_tool_call_ids: set[str] | None = None
+    # Buffer tool results that arrive before their assistant message (out-of-order history)
+    orphaned_tool_results: dict[str, Message] = {}
     pending_confirm_changes_id: str | None = None
 
     for msg in messages:
@@ -77,6 +79,16 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
             pending_confirm_changes_id = (
                 str(confirm_changes_call.call_id) if confirm_changes_call and confirm_changes_call.call_id else None
             )
+
+            # Re-inject any buffered tool results that belong to this assistant message.
+            # This handles out-of-order histories where tool results arrive before their
+            # assistant message (e.g. from CopilotKit's message snapshot merging).
+            for call_id in list(tool_ids):
+                if call_id in orphaned_tool_results:
+                    sanitized.append(orphaned_tool_results.pop(call_id))
+                    if pending_tool_call_ids:
+                        pending_tool_call_ids.discard(call_id)
+
             continue
 
         if role_value == "user":
@@ -172,6 +184,10 @@ def _sanitize_tool_history(messages: list[Message]) -> list[Message]:
 
         if role_value == "tool":
             if not pending_tool_call_ids:
+                # Tool result arrived before its assistant message — buffer it for later.
+                for content in msg.contents or []:
+                    if content.type == "function_result" and content.call_id:
+                        orphaned_tool_results[str(content.call_id)] = msg
                 continue
             keep = False
             for content in msg.contents or []:
