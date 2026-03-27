@@ -77,19 +77,19 @@ public abstract partial class CompactionStrategy
     /// </exception>
     public static CompactionStrategy Create(CompactionApproach approach, CompactionSize size, IChatClient chatClient)
     {
-        int tokenLimit = GetTokenLimit(size);
-        int messageLimit = GetMessageLimit(size);
+        int tokenLimit = GetTokenCountLimit(size);
+        int messageLimit = GetMessageCountLimit(size);
 
         return approach switch
         {
             CompactionApproach.Gentle => CreateGentlePipeline(tokenLimit, messageLimit, chatClient),
             CompactionApproach.Balanced => CreateBalancedPipeline(tokenLimit, messageLimit, chatClient),
-            CompactionApproach.Aggressive => CreateAggressivePipeline(tokenLimit, messageLimit, GetTurnLimit(size), chatClient),
+            CompactionApproach.Aggressive => CreateAggressivePipeline(tokenLimit, messageLimit, GetTurnCountLimit(size), chatClient),
             _ => throw new ArgumentOutOfRangeException(nameof(approach), approach, null),
         };
     }
 
-    private static int GetTokenLimit(CompactionSize size) => size switch
+    private static int GetTokenCountLimit(CompactionSize size) => size switch
     {
         CompactionSize.Compact => 0x1FFF,  // 8k
         CompactionSize.Moderate => 0x7FFF, // 32k
@@ -97,7 +97,7 @@ public abstract partial class CompactionStrategy
         _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
     };
 
-    private static int GetMessageLimit(CompactionSize size) => size switch
+    private static int GetMessageCountLimit(CompactionSize size) => size switch
     {
         CompactionSize.Compact => 50,
         CompactionSize.Moderate => 500,
@@ -105,7 +105,7 @@ public abstract partial class CompactionStrategy
         _ => throw new ArgumentOutOfRangeException(nameof(size), size, null),
     };
 
-    private static int GetTurnLimit(CompactionSize size) => size switch
+    private static int GetTurnCountLimit(CompactionSize size) => size switch
     {
         CompactionSize.Compact => 25,
         CompactionSize.Moderate => 250,
