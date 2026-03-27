@@ -305,9 +305,34 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         # 1b. Upload any documents that completed in the background (file_search mode)
         if self._pending_uploads:
+            # Use a bounded timeout so before_run() stays responsive and does not block
+            # indefinitely on slow vector store indexing.
+            upload_timeout = getattr(self, "max_wait", None)
+            remaining_uploads: list[tuple[str, DocumentEntry]] = []
             for upload_key, upload_entry in self._pending_uploads:
-                await self._upload_to_vector_store(upload_key, upload_entry)
-            self._pending_uploads.clear()
+                try:
+                    if upload_timeout is not None:
+                        await asyncio.wait_for(
+                            self._upload_to_vector_store(upload_key, upload_entry),
+                            timeout=upload_timeout,
+                        )
+                    else:
+                        await self._upload_to_vector_store(upload_key, upload_entry)
+                except asyncio.TimeoutError:
+                    # Leave timed-out uploads pending so they can be retried on a later turn.
+                    logger.warning(
+                        "Timed out while uploading document '%s' to vector store; will retry later.",
+                        upload_key,
+                    )
+                    remaining_uploads.append((upload_key, upload_entry))
+                except Exception:
+                    # Log unexpected failures and drop the upload entry; this matches prior
+                    # behavior where all pending uploads were cleared regardless of outcome.
+                    logger.exception(
+                        "Error while uploading document '%s' to vector store; dropping from pending list.",
+                        upload_key,
+                    )
+            self._pending_uploads = remaining_uploads
 
         # 2. Detect CU-supported file attachments, strip them from input, and return for analysis
         new_files = self._detect_and_strip_files(context)
