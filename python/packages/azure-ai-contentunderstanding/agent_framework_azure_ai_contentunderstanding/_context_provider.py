@@ -815,10 +815,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             parts.append(" | ".join(meta_items))
 
         # --- Multi-segment: format each segment with its own content + fields ---
-        segments = result.get("segments")
-        if isinstance(segments, list) and len(segments) > 0:
+        raw_segments = result.get("segments")
+        segments: list[dict[str, object]] = (
+            cast(list[dict[str, object]], raw_segments) if isinstance(raw_segments, list) else []
+        )
+        if segments:
             for i, seg in enumerate(segments):
-                seg = cast(dict[str, object], seg)
                 # Segment header with time range
                 start = seg.get("start_time_s")
                 end = seg.get("end_time_s")
