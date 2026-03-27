@@ -34,18 +34,6 @@ class AnalysisSection(str, Enum):
     FIELDS = "fields"
     """Extracted typed fields with confidence scores (when available)."""
 
-    FIELD_GROUNDING = "field_grounding"
-    """Page numbers and source locations for each extracted field."""
-
-    TABLES = "tables"
-    """Structured table data — already embedded in markdown."""
-
-    PARAGRAPHS = "paragraphs"
-    """Text segments with span offsets."""
-
-    SECTIONS = "sections"
-    """Document structural hierarchy."""
-
 
 class DocumentEntry(TypedDict):
     """Tracks the analysis state of a single document in session state."""

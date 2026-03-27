@@ -16,17 +16,13 @@ class TestAnalysisSection:
     def test_values(self) -> None:
         assert AnalysisSection.MARKDOWN == "markdown"
         assert AnalysisSection.FIELDS == "fields"
-        assert AnalysisSection.FIELD_GROUNDING == "field_grounding"
-        assert AnalysisSection.TABLES == "tables"
-        assert AnalysisSection.PARAGRAPHS == "paragraphs"
-        assert AnalysisSection.SECTIONS == "sections"
 
     def test_is_string(self) -> None:
         assert isinstance(AnalysisSection.MARKDOWN, str)
         assert isinstance(AnalysisSection.FIELDS, str)
 
     def test_members(self) -> None:
-        assert len(AnalysisSection) == 6
+        assert len(AnalysisSection) == 2
 
 
 class TestDocumentEntry:
