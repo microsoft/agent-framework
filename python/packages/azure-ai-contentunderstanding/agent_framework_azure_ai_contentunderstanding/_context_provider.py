@@ -51,9 +51,10 @@ logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
 AzureCredentialTypes = AzureKeyCredential | AsyncTokenCredential
 
-# MIME types used to match against Content.media_type for routing files to CU analysis.
-# Only files whose media_type is set by the client and matches this set will be processed;
-# files without a media_type are ignored.
+# MIME types used to match against the resolved media type for routing files to CU analysis.
+# The media type may be provided via Content.media_type or inferred (e.g., via sniffing or filename)
+# when missing or generic (such as application/octet-stream). Only files whose resolved media type is
+# in this set will be processed; others are skipped.
 #
 # Supported input file types:
 # https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits
