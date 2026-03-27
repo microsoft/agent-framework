@@ -984,6 +984,63 @@ def test_sanitize_json_confirm_changes_response():
     assert len(result) >= 1
 
 
+def test_sanitize_out_of_order_tool_result_is_preserved():
+    """Tool result arriving before its assistant message is buffered and re-injected after it."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    tool_msg = Message(
+        role="tool",
+        contents=[Content.from_function_result(call_id="c1", result="chart data")],
+    )
+    assistant_msg = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="pieChart", arguments="{}")],
+    )
+
+    result = _sanitize_tool_history([tool_msg, assistant_msg])
+
+    roles = [m.role for m in result]
+    assert roles == ["assistant", "tool"], f"Expected [assistant, tool], got {roles}"
+    tool_results = [m for m in result if m.role == "tool"]
+    assert len(tool_results) == 1
+    assert tool_results[0].contents[0].call_id == "c1"
+
+
+def test_sanitize_out_of_order_multi_result_message_no_duplicates():
+    """A batched tool message with multiple results is split — each result goes to the right turn, no duplicates."""
+    from agent_framework_ag_ui._message_adapters import _sanitize_tool_history
+
+    # Single tool message carrying results for two separate tool calls
+    batched_tool_msg = Message(
+        role="tool",
+        contents=[
+            Content.from_function_result(call_id="c1", result="result_1"),
+            Content.from_function_result(call_id="c2", result="result_2"),
+        ],
+    )
+    assistant_1 = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c1", name="tool_a", arguments="{}")],
+    )
+    assistant_2 = Message(
+        role="assistant",
+        contents=[Content.from_function_call(call_id="c2", name="tool_b", arguments="{}")],
+    )
+
+    result = _sanitize_tool_history([batched_tool_msg, assistant_1, assistant_2])
+
+    tool_messages = [m for m in result if m.role == "tool"]
+    # Each result should appear exactly once — no duplicates
+    all_call_ids = [
+        c.call_id
+        for m in tool_messages
+        for c in (m.contents or [])
+        if c.type == "function_result"
+    ]
+    assert sorted(all_call_ids) == ["c1", "c2"], f"Unexpected call_ids: {all_call_ids}"
+    assert len(all_call_ids) == 2, "Duplicate tool results detected"
+
+
 # ── Deduplication edge cases ──
 
 
