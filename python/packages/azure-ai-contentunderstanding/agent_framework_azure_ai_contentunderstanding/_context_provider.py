@@ -109,9 +109,7 @@ SUPPORTED_MEDIA_TYPES: frozenset[str] = frozenset({
 _MIME_ALIASES: dict[str, str] = {
     "audio/x-wav": "audio/wav",
     "audio/x-flac": "audio/flac",
-    "audio/mp4": "audio/m4a",
     "video/x-m4v": "video/mp4",
-    "video/x-matroska": "video/webm",
 }
 
 # Mapping from media type prefix to the appropriate prebuilt CU analyzer.
