@@ -12,7 +12,9 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 |--------|------|-------------|
 | `ContentUnderstandingContextProvider` | class | Main context provider — extends `BaseContextProvider` |
 | `AnalysisSection` | enum | Output section selector (MARKDOWN, FIELDS, etc.) |
-| `FileSearchConfig` | dataclass | Configuration for CU + OpenAI vector store RAG mode |
+| `DocumentStatus` | enum | Document lifecycle state (ANALYZING, UPLOADING, READY, FAILED) |
+| `FileSearchBackend` | ABC | Abstract vector store file operations interface |
+| `FileSearchConfig` | dataclass | Configuration for CU + vector store RAG mode |
 
 ## Architecture
 
@@ -35,8 +37,10 @@ into the Agent Framework as a context provider. It automatically analyzes file a
     uploaded to an OpenAI vector store and a `file_search` tool is registered on the context
     instead of injecting the full document content. This enables token-efficient retrieval
     for large documents.
-- **`_models.py`** — `AnalysisSection` enum, `DocumentEntry` TypedDict,
+- **`_models.py`** — `AnalysisSection` enum, `DocumentStatus` enum, `DocumentEntry` TypedDict,
   `FileSearchConfig` dataclass.
+- **`_file_search.py`** — `FileSearchBackend` ABC, `OpenAIFileSearchBackend`,
+  `FoundryFileSearchBackend`.
 
 ## Key Patterns
 
