@@ -67,9 +67,13 @@ else:
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import override  # type: ignore # pragma: no cover
+
+if sys.version_info >= (3, 13):
     from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import deprecated, override  # type: ignore # pragma: no cover
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
