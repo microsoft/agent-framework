@@ -317,15 +317,15 @@ class TestBeforeRunTimeout:
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
         assert state["documents"]["big_doc.pdf"]["status"] == DocumentStatus.ANALYZING
-        assert "big_doc.pdf" in provider._pending_tasks
+        assert "big_doc.pdf" in state.get("_pending_tasks", {})
 
         # Instructions should mention analyzing
         assert any("being analyzed" in instr for instr in context.instructions)
 
         # Clean up the background task
-        provider._pending_tasks["big_doc.pdf"].cancel()
+        state["_pending_tasks"]["big_doc.pdf"].cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
-            await provider._pending_tasks["big_doc.pdf"]
+            await state["_pending_tasks"]["big_doc.pdf"]
 
 
 class TestBeforeRunPendingResolution:
@@ -342,9 +342,9 @@ class TestBeforeRunPendingResolution:
 
         task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
         await asyncio.sleep(0.01)  # Let task complete
-        provider._pending_tasks["report.pdf"] = task
 
         state: dict[str, Any] = {
+            "_pending_tasks": {"report.pdf": task},
             "documents": {
                 "report.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -368,7 +368,7 @@ class TestBeforeRunPendingResolution:
 
         assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
         assert state["documents"]["report.pdf"]["result"] is not None
-        assert "report.pdf" not in provider._pending_tasks
+        assert "report.pdf" not in state.get("_pending_tasks", {})
 
 
 class TestBeforeRunPendingFailure:
@@ -383,9 +383,9 @@ class TestBeforeRunPendingFailure:
 
         task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(failing_task())
         await asyncio.sleep(0.01)  # Let task fail
-        provider._pending_tasks["bad_doc.pdf"] = task
 
         state: dict[str, Any] = {
+            "_pending_tasks": {"bad_doc.pdf": task},
             "documents": {
                 "bad_doc.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -1485,9 +1485,9 @@ class TestFileSearchIntegration:
 
         task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
         await asyncio.sleep(0.01)
-        provider._pending_tasks["report.pdf"] = task
 
         state: dict[str, Any] = {
+            "_pending_tasks": {"report.pdf": task},
             "documents": {
                 "report.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -1535,7 +1535,7 @@ class TestCloseCancel:
             await asyncio.sleep(100)
 
         task = asyncio.create_task(slow())
-        provider._pending_tasks["big_file.pdf"] = task  # type: ignore[assignment]
+        provider._all_pending_tasks.append(task)
 
         await provider.close()
 
@@ -1544,7 +1544,97 @@ class TestCloseCancel:
             await task
 
         assert task.cancelled()
-        assert len(provider._pending_tasks) == 0
+        assert len(provider._all_pending_tasks) == 0
+
+
+class TestSessionIsolation:
+    """Verify that per-session state (pending tasks, uploads) is isolated between sessions."""
+
+    async def test_background_task_isolated_per_session(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """A background task from session A must not leak into session B."""
+        mock_cu_client.begin_analyze_binary = AsyncMock(return_value=_make_slow_poller(pdf_analysis_result, delay=10.0))
+        provider = _make_provider(mock_client=mock_cu_client, max_wait=0.1)
+
+        # Session A: upload a file that times out → defers to background
+        msg_a = Message(
+            role="user",
+            contents=[
+                Content.from_text("Analyze this"),
+                _make_content_from_data(_SAMPLE_PDF_BYTES, "application/pdf", "report.pdf"),
+            ],
+        )
+        state_a: dict[str, Any] = {}
+        context_a = _make_context([msg_a])
+        await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_a, state=state_a)
+
+        # Session A should have a pending task
+        assert "report.pdf" in state_a.get("_pending_tasks", {})
+
+        # Session B: separate state, no pending tasks
+        state_b: dict[str, Any] = {}
+        msg_b = Message(role="user", contents=[Content.from_text("Hello")])
+        context_b = _make_context([msg_b])
+        await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_b, state=state_b)
+
+        # Session B must NOT see session A's pending task
+        assert "_pending_tasks" not in state_b or "report.pdf" not in state_b.get("_pending_tasks", {})
+        # Session B must NOT have session A's documents
+        assert "report.pdf" not in state_b.get("documents", {})
+
+        # Clean up
+        for task in state_a.get("_pending_tasks", {}).values():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
+    async def test_completed_task_resolves_in_correct_session(
+        self,
+        mock_cu_client: AsyncMock,
+        pdf_analysis_result: AnalysisResult,
+    ) -> None:
+        """A completed background task should only inject content into its own session."""
+        provider = _make_provider(mock_client=mock_cu_client)
+
+        # Simulate completed task in session A
+        async def return_result() -> AnalysisResult:
+            return pdf_analysis_result
+
+        task_a: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
+        await asyncio.sleep(0.01)
+
+        state_a: dict[str, Any] = {
+            "_pending_tasks": {"report.pdf": task_a},
+            "documents": {
+                "report.pdf": {
+                    "status": DocumentStatus.ANALYZING,
+                    "filename": "report.pdf",
+                    "media_type": "application/pdf",
+                    "analyzer_id": "prebuilt-documentSearch",
+                    "analyzed_at": None,
+                    "analysis_duration_s": None,
+                    "upload_duration_s": None,
+                    "result": None,
+                    "error": None,
+                },
+            },
+        }
+        state_b: dict[str, Any] = {}
+
+        # Run session A — should resolve the task
+        context_a = _make_context([Message(role="user", contents=[Content.from_text("Is it ready?")])])
+        await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_a, state=state_a)
+        assert state_a["documents"]["report.pdf"]["status"] == DocumentStatus.READY
+
+        # Run session B — must NOT have any documents or resolved content
+        context_b = _make_context([Message(role="user", contents=[Content.from_text("Hello")])])
+        await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_b, state=state_b)
+        assert "report.pdf" not in state_b.get("documents", {})
+        # Session B context should have no document-related instructions
+        assert not any("report.pdf" in instr for instr in context_b.instructions)
 
 
 class TestAnalyzerAutoDetectionE2E:

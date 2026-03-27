@@ -255,13 +255,13 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self._client = ContentUnderstandingClient(
             self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
         )
-        # Background CU analysis tasks keyed by doc_key, resolved on next before_run()
-        self._pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = {}
-        # Documents completed in background that still need vector store upload
-        self._pending_uploads: list[tuple[str, DocumentEntry]] = []
-        # Uploaded file IDs for file_search mode, tracked for cleanup on close().
-        # Works with any FileSearchBackend (OpenAI, Foundry, or custom).
-        self._uploaded_file_ids: list[str] = []
+        # Global copies of background tasks and uploaded file IDs — used only
+        # by close() for best-effort cleanup.  The authoritative per-session
+        # copies live in state["_pending_tasks"] / state["_uploaded_file_ids"]
+        # (populated in before_run).  These global lists may contain entries
+        # from multiple sessions; that is intentional for cleanup.
+        self._all_pending_tasks: list[asyncio.Task[AnalysisResult]] = []
+        self._all_uploaded_file_ids: list[str] = []
 
     async def __aenter__(self) -> Self:
         """Async context manager entry."""
@@ -277,18 +277,22 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         await self.close()
 
     async def close(self) -> None:
-        """Close the underlying CU client and cancel pending tasks."""
+        """Close the underlying CU client and cancel pending tasks.
+
+        Uses global tracking lists for best-effort cleanup across all
+        sessions that used this provider instance.
+        """
         tasks_to_cancel: list[asyncio.Task[AnalysisResult]] = []
-        for task in self._pending_tasks.values():
+        for task in self._all_pending_tasks:
             if not task.done():
                 task.cancel()
                 tasks_to_cancel.append(task)
-        self._pending_tasks.clear()
+        self._all_pending_tasks.clear()
         # Await cancelled tasks so they don't outlive the client
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         # Clean up uploaded files; the vector store itself is caller-managed.
-        if self.file_search and self._uploaded_file_ids:
+        if self.file_search and self._all_uploaded_file_ids:
             await self._cleanup_uploaded_files()
         await self._client.close()
 
@@ -306,24 +310,28 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         """
         documents: dict[str, DocumentEntry] = state.setdefault("documents", {})
 
+        # Per-session mutable state — isolated per session to prevent cross-session leakage.
+        pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = state.setdefault("_pending_tasks", {})
+        pending_uploads: list[tuple[str, DocumentEntry]] = state.setdefault("_pending_uploads", [])
+
         # 1. Resolve pending background tasks
-        self._resolve_pending_tasks(documents, context)
+        self._resolve_pending_tasks(pending_tasks, pending_uploads, documents, context)
 
         # 1b. Upload any documents that completed in the background (file_search mode)
-        if self._pending_uploads:
+        if pending_uploads:
             # Use a bounded timeout so before_run() stays responsive and does not block
             # indefinitely on slow vector store indexing.
             upload_timeout = getattr(self, "max_wait", None)
             remaining_uploads: list[tuple[str, DocumentEntry]] = []
-            for upload_key, upload_entry in self._pending_uploads:
+            for upload_key, upload_entry in pending_uploads:
                 try:
                     if upload_timeout is not None:
                         await asyncio.wait_for(
-                            self._upload_to_vector_store(upload_key, upload_entry),
+                            self._upload_to_vector_store(upload_key, upload_entry, state=state),
                             timeout=upload_timeout,
                         )
                     else:
-                        await self._upload_to_vector_store(upload_key, upload_entry)
+                        await self._upload_to_vector_store(upload_key, upload_entry, state=state)
                 except asyncio.TimeoutError:
                     # Leave timed-out uploads pending so they can be retried on a later turn.
                     logger.warning(
@@ -343,7 +351,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                         f"Document '{upload_key}' was analyzed but failed to upload "
                         "to the vector store. The document content is not available for search.",
                     )
-            self._pending_uploads = remaining_uploads
+            state["_pending_uploads"] = remaining_uploads
+            pending_uploads = remaining_uploads
 
         # 2. Detect CU-supported file attachments, strip them from input, and return for analysis
         new_files = self._detect_and_strip_files(context)
@@ -364,7 +373,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
                 continue
             file_start_times[doc_key] = time.monotonic()
-            doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context)
+            doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context, pending_tasks)
             if doc_entry:
                 documents[doc_key] = doc_entry
                 accepted_keys.add(doc_key)
@@ -384,7 +393,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                     if self.max_wait is not None:
                         elapsed = time.monotonic() - file_start_times.get(doc_key, time.monotonic())
                         remaining = max(0.0, self.max_wait - elapsed)
-                    uploaded = await self._upload_to_vector_store(doc_key, entry, timeout=remaining)
+                    uploaded = await self._upload_to_vector_store(doc_key, entry, timeout=remaining, state=state)
                     if uploaded:
                         context.extend_instructions(
                             self.source_id,
@@ -625,6 +634,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         content: Content,
         binary_data: bytes | None,
         context: SessionContext,
+        pending_tasks: dict[str, asyncio.Task[AnalysisResult]] | None = None,
     ) -> DocumentEntry | None:
         """Analyze a single file via CU with timeout handling.
 
@@ -674,7 +684,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 result = await asyncio.wait_for(poller.result(), timeout=self.max_wait)
             except asyncio.TimeoutError:
                 task = asyncio.create_task(self._background_poll(poller))
-                self._pending_tasks[doc_key] = task
+                if pending_tasks is not None:
+                    pending_tasks[doc_key] = task
+                self._all_pending_tasks.append(task)
                 context.extend_instructions(
                     self.source_id,
                     f"Document '{filename}' is being analyzed. Ask about it again in a moment.",
@@ -737,6 +749,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     def _resolve_pending_tasks(
         self,
+        pending_tasks: dict[str, asyncio.Task[AnalysisResult]],
+        pending_uploads: list[tuple[str, DocumentEntry]],
         documents: dict[str, DocumentEntry],
         context: SessionContext,
     ) -> None:
@@ -752,7 +766,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         """
         completed_keys: list[str] = []
 
-        for doc_key, task in self._pending_tasks.items():
+        for doc_key, task in pending_tasks.items():
             if not task.done():
                 continue
 
@@ -775,7 +789,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 if self.file_search:
                     # Upload to vector store — do NOT inject markdown into messages
                     # (this is a sync context; schedule the upload as a task)
-                    self._pending_uploads.append((doc_key, entry))
+                    pending_uploads.append((doc_key, entry))
                 else:
                     context.extend_messages(
                         self,
@@ -805,7 +819,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
 
         for key in completed_keys:
-            del self._pending_tasks[key]
+            del pending_tasks[key]
 
     # ------------------------------------------------------------------
     # Output Extraction & Formatting
@@ -1067,7 +1081,12 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
     # ------------------------------------------------------------------
 
     async def _upload_to_vector_store(
-        self, doc_key: str, entry: DocumentEntry, *, timeout: float | None = None
+        self,
+        doc_key: str,
+        entry: DocumentEntry,
+        *,
+        timeout: float | None = None,
+        state: dict[str, Any] | None = None,
     ) -> bool:
         """Upload CU-extracted markdown to the caller's vector store.
 
@@ -1081,7 +1100,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             entry: The document entry with extracted results.
             timeout: Max seconds to wait for upload + indexing. ``None`` waits
                 indefinitely. On timeout the upload is deferred to the
-                ``_pending_uploads`` queue for the next ``before_run()`` call.
+                per-session ``_pending_uploads`` queue for the next
+                ``before_run()`` call.
+            state: Per-session state dict for tracking uploaded file IDs and
+                pending uploads.
 
         Returns:
             True if the upload succeeded, False otherwise.
@@ -1108,7 +1130,10 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             )
             file_id = await asyncio.wait_for(upload_coro, timeout=timeout)
             upload_duration = round(time.monotonic() - t0, 2)
-            self._uploaded_file_ids.append(file_id)
+            # Track in per-session state and global list (for close() cleanup)
+            if state is not None:
+                state.setdefault("_uploaded_file_ids", []).append(file_id)
+            self._all_uploaded_file_ids.append(file_id)
             entry["status"] = DocumentStatus.READY
             entry["upload_duration_s"] = upload_duration
             logger.info("Uploaded '%s' to vector store in %.1fs (%s bytes).", doc_key, upload_duration, len(formatted))
@@ -1117,7 +1142,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         except asyncio.TimeoutError:
             logger.info("Vector store upload for '%s' timed out; deferring to background.", doc_key)
             entry["status"] = DocumentStatus.UPLOADING
-            self._pending_uploads.append((doc_key, entry))
+            if state is not None:
+                state.setdefault("_pending_uploads", []).append((doc_key, entry))
             return False
 
         except Exception as e:
@@ -1138,9 +1164,9 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         backend = self.file_search.backend
 
         try:
-            for file_id in self._uploaded_file_ids:
+            for file_id in self._all_uploaded_file_ids:
                 await backend.delete_file(file_id)
-            self._uploaded_file_ids.clear()
+            self._all_uploaded_file_ids.clear()
 
         except Exception as e:
             logger.warning("Failed to clean up uploaded files: %s", e)
