@@ -109,7 +109,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         ILoggerFactory? loggerFactory = null)
         : this(
             new DeduplicatingAgentSkillsSource(
-                new AgentFileSkillsSource(skillPaths, Throw.IfNull(scriptRunner), fileOptions, loggerFactory),
+                new AgentFileSkillsSource(skillPaths, scriptRunner, fileOptions, loggerFactory),
                 loggerFactory),
             options,
             loggerFactory)
