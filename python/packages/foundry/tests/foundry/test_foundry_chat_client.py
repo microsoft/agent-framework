@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -138,6 +139,26 @@ def test_init() -> None:
     assert client.model == _TEST_FOUNDRY_MODEL
     assert isinstance(client, SupportsChatGetResponse)
     assert client.project_client is mock_project_client
+
+
+def test_raw_foundry_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawFoundryChatClient.__init__)
+
+    assert "default_headers" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_foundry_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(FoundryChatClient.__init__)
+
+    assert "default_headers" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 def test_init_with_default_header() -> None:

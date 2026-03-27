@@ -67,8 +67,9 @@ else:
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import override  # type: ignore # pragma: no cover
+    from typing_extensions import deprecated, override  # type: ignore # pragma: no cover
 
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
@@ -208,6 +209,7 @@ OpenAIAssistantsOptionsT = TypeVar(
 # endregion
 
 
+@deprecated("OpenAIAssistantsClient is deprecated. Use OpenAIChatClient instead.")
 class OpenAIAssistantsClient(  # type: ignore[misc]
     OpenAIConfigMixin,
     FunctionInvocationLayer[OpenAIAssistantsOptionsT],
@@ -216,7 +218,11 @@ class OpenAIAssistantsClient(  # type: ignore[misc]
     BaseChatClient[OpenAIAssistantsOptionsT],
     Generic[OpenAIAssistantsOptionsT],
 ):
-    """OpenAI Assistants client with middleware, telemetry, and function invocation support."""
+    """OpenAI Assistants client with middleware, telemetry, and function invocation support.
+
+    .. deprecated::
+        OpenAIAssistantsClient is deprecated. Use :class:`OpenAIChatClient` instead.
+    """
 
     # region Hosted Tool Factory Methods
 

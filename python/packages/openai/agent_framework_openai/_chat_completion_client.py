@@ -194,6 +194,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -211,6 +214,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -230,6 +236,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -254,6 +263,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -274,9 +286,11 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -307,11 +321,13 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
-            kwargs: Additional keyword arguments forwarded to ``BaseChatClient``.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -367,7 +383,11 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+        )
 
     # region Hosted Tool Factory Methods
 

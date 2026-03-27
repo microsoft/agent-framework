@@ -79,6 +79,7 @@ class RawOpenAIEmbeddingClient(
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -95,6 +96,7 @@ class RawOpenAIEmbeddingClient(
                 ``OPENAI_BASE_URL``.
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -113,6 +115,7 @@ class RawOpenAIEmbeddingClient(
         base_url: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -136,6 +139,7 @@ class RawOpenAIEmbeddingClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -155,9 +159,9 @@ class RawOpenAIEmbeddingClient(
         api_version: str | None = None,
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw OpenAI embedding client.
 
@@ -187,11 +191,11 @@ class RawOpenAIEmbeddingClient(
             default_headers: Additional HTTP headers.
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
-            kwargs: Additional keyword arguments forwarded to ``BaseEmbeddingClient``.
 
         Notes:
             Environment resolution precedence is:
@@ -247,7 +251,7 @@ class RawOpenAIEmbeddingClient(
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(additional_properties=additional_properties)
 
     def service_url(self) -> str:
         """Get the URL of the service."""
