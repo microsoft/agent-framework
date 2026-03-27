@@ -10,13 +10,12 @@ Components used in this sample:
 Prerequisites: set `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and sign in with Azure CLI before starting the Functions host."""
 
 import logging
-import os
 from typing import Any
 
 from agent_framework import Agent, tool
 from agent_framework.azure import AgentFunctionApp
 from agent_framework.openai import OpenAIChatCompletionClient
-from azure.identity.aio import AzureCliCredential, get_bearer_token_provider
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -61,8 +60,7 @@ def calculate_tip(bill_amount: float, tip_percentage: float = 15.0) -> dict[str,
 
 # 1. Create multiple agents, each with its own instruction set and tools.
 client = OpenAIChatCompletionClient(
-    model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-    api_key=get_bearer_token_provider(AzureCliCredential(), "https://cognitiveservices.azure.com/.default"),
+    credential=AzureCliCredential(),
 )
 
 weather_agent = Agent(

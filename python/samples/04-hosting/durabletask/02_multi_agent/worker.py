@@ -22,7 +22,6 @@ from agent_framework.azure import DurableAIAgentWorker
 from agent_framework.openai import OpenAIChatCompletionClient
 from azure.identity import AzureCliCredential
 from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-from azure.identity.aio import get_bearer_token_provider as get_async_bearer_token_provider
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
@@ -76,10 +75,7 @@ def create_weather_agent():
     """
     return Agent(
         client=OpenAIChatCompletionClient(
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            api_key=get_async_bearer_token_provider(
-                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
-            ),
+            credential=AsyncAzureCliCredential(),
         ),
         name=WEATHER_AGENT_NAME,
         instructions="You are a helpful weather assistant. Provide current weather information.",
@@ -95,10 +91,7 @@ def create_math_agent():
     """
     return Agent(
         client=OpenAIChatCompletionClient(
-            model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-            api_key=get_async_bearer_token_provider(
-                AsyncAzureCliCredential(), "https://cognitiveservices.azure.com/.default"
-            ),
+            credential=AsyncAzureCliCredential(),
         ),
         name=MATH_AGENT_NAME,
         instructions="You are a helpful math assistant. Help users with calculations like tip calculations.",
