@@ -777,4 +777,361 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
     }
 
     #endregion State Delta Tests
+
+    #region Reasoning Tests
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageEndForWrongMessageId_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningMessageStartEvent { MessageId = "reason1" },
+            new ReasoningMessageContentEvent { MessageId = "reason1", Delta = "thinking..." },
+            new ReasoningMessageEndEvent { MessageId = "reason2" } // Wrong message ID
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+                // Consume stream to trigger exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningContent_EmitsCorrectReasoningEventSequenceAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("I need to think about this")]) { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        Assert.IsType<RunStartedEvent>(outputEvents[0]);
+        var reasoningStart = Assert.IsType<ReasoningStartEvent>(outputEvents[1]);
+        Assert.Equal("reason1", reasoningStart.MessageId);
+        var reasoningMessageStart = Assert.IsType<ReasoningMessageStartEvent>(outputEvents[2]);
+        Assert.Equal("reason1", reasoningMessageStart.MessageId);
+        var reasoningContent = Assert.IsType<ReasoningMessageContentEvent>(outputEvents[3]);
+        Assert.Equal("reason1", reasoningContent.MessageId);
+        Assert.Equal("I need to think about this", reasoningContent.Delta);
+        var reasoningMessageEnd = Assert.IsType<ReasoningMessageEndEvent>(outputEvents[4]);
+        Assert.Equal("reason1", reasoningMessageEnd.MessageId);
+        var reasoningEnd = Assert.IsType<ReasoningEndEvent>(outputEvents[5]);
+        Assert.Equal("reason1", reasoningEnd.MessageId);
+        Assert.IsType<RunFinishedEvent>(outputEvents[6]);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithMultipleReasoningDeltas_EmitsContentEventPerDeltaAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("First")]) { MessageId = "reason1" },
+            new(ChatRole.Assistant, [new TextReasoningContent(" step")]) { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        var contentEvents = outputEvents.OfType<ReasoningMessageContentEvent>().ToList();
+        Assert.Equal(2, contentEvents.Count);
+        Assert.Equal("First", contentEvents[0].Delta);
+        Assert.Equal(" step", contentEvents[1].Delta);
+
+        // Only one START/END pair
+        Assert.Single(outputEvents.OfType<ReasoningStartEvent>());
+        Assert.Single(outputEvents.OfType<ReasoningMessageStartEvent>());
+        Assert.Single(outputEvents.OfType<ReasoningMessageEndEvent>());
+        Assert.Single(outputEvents.OfType<ReasoningEndEvent>());
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningAndProtectedData_EmitsEncryptedValueEventAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("thinking") { ProtectedData = "encrypted-abc" }]) { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        var encryptedEvent = outputEvents.OfType<ReasoningEncryptedValueEvent>().Single();
+        Assert.Equal("reason1", encryptedEvent.EntityId);
+        Assert.Equal("encrypted-abc", encryptedEvent.EncryptedValue);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningFollowedByText_EmitsBothEventSequencesAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("thinking")]) { MessageId = "reason1" },
+            new(ChatRole.Assistant, [new TextContent("Hello")]) { MessageId = "msg1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        Assert.Contains(outputEvents, e => e is ReasoningStartEvent);
+        Assert.Contains(outputEvents, e => e is ReasoningMessageContentEvent);
+        Assert.Contains(outputEvents, e => e is ReasoningEndEvent);
+        Assert.Contains(outputEvents, e => e is TextMessageStartEvent);
+        Assert.Contains(outputEvents, e => e is TextMessageContentEvent);
+        Assert.Contains(outputEvents, e => e is TextMessageEndEvent);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageSequence_ProducesTextReasoningContentPerDeltaAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningStartEvent { MessageId = "reason1" },
+            new ReasoningMessageStartEvent { MessageId = "reason1" },
+            new ReasoningMessageContentEvent { MessageId = "reason1", Delta = "First thought" },
+            new ReasoningMessageContentEvent { MessageId = "reason1", Delta = " and more" },
+            new ReasoningMessageEndEvent { MessageId = "reason1" },
+            new ReasoningEndEvent { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, updates.Count);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
+        Assert.All(updates, u => Assert.Equal("reason1", u.MessageId));
+        var firstContent = Assert.IsType<TextReasoningContent>(updates[0].Contents[0]);
+        Assert.Equal("First thought", firstContent.Text);
+        var secondContent = Assert.IsType<TextReasoningContent>(updates[1].Contents[0]);
+        Assert.Equal(" and more", secondContent.Text);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningStartAndEndEvents_DoNotProduceUpdatesAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningStartEvent { MessageId = "reason1" },
+            new ReasoningEndEvent { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Empty(updates);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningEncryptedValueEvent_ProducesTextReasoningContentWithProtectedDataAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningEncryptedValueEvent { EntityId = "reason1", EncryptedValue = "secret-token" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Single(updates);
+        Assert.Equal(ChatRole.Assistant, updates[0].Role);
+        Assert.Equal("reason1", updates[0].MessageId);
+        var content = Assert.IsType<TextReasoningContent>(updates[0].Contents[0]);
+        Assert.Equal("secret-token", content.ProtectedData);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageChunks_ProducesTextReasoningContentPerChunkAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningMessageChunkEvent { MessageId = "reason1", Delta = "chunk one" },
+            new ReasoningMessageChunkEvent { MessageId = "reason1", Delta = " chunk two" },
+            new ReasoningMessageChunkEvent { MessageId = "reason1", Delta = "" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Equal(2, updates.Count);
+        Assert.All(updates, u => Assert.Equal(ChatRole.Assistant, u.Role));
+        var firstContent = Assert.IsType<TextReasoningContent>(updates[0].Contents[0]);
+        Assert.Equal("chunk one", firstContent.Text);
+        var secondContent = Assert.IsType<TextReasoningContent>(updates[1].Contents[0]);
+        Assert.Equal(" chunk two", secondContent.Text);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageChunkEmptyDelta_ProducesNoUpdateAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningMessageChunkEvent { MessageId = "reason1", Delta = "" }
+        ];
+
+        // Act
+        List<ChatResponseUpdate> updates = [];
+        await foreach (ChatResponseUpdate update in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            updates.Add(update);
+        }
+
+        // Assert
+        Assert.Empty(updates);
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageStartWhileMessageInProgress_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningMessageStartEvent { MessageId = "reason1" },
+            new ReasoningMessageStartEvent { MessageId = "reason2" } // Overlapping start
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+                // Consume stream to trigger exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsChatResponseUpdatesAsync_WithReasoningMessageEndWithoutStart_ThrowsInvalidOperationExceptionAsync()
+    {
+        // Arrange
+        List<BaseEvent> events =
+        [
+            new ReasoningMessageEndEvent { MessageId = "reason1" } // End without start
+        ];
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in events.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+            {
+                // Consume stream to trigger exception
+            }
+        });
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithProtectedDataOnly_EmitsEncryptedValueEventWithoutContentDeltaAsync()
+    {
+        // Arrange — TextReasoningContent with empty text but non-empty ProtectedData
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("") { ProtectedData = "encrypted-only" }]) { MessageId = "reason1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert — encrypted value should not be silently dropped
+        Assert.Contains(outputEvents, e => e is ReasoningStartEvent);
+        Assert.Contains(outputEvents, e => e is ReasoningMessageStartEvent);
+        Assert.DoesNotContain(outputEvents, e => e is ReasoningMessageContentEvent);
+        var encryptedEvent = outputEvents.OfType<ReasoningEncryptedValueEvent>().Single();
+        Assert.Equal("reason1", encryptedEvent.EntityId);
+        Assert.Equal("encrypted-only", encryptedEvent.EncryptedValue);
+        Assert.Contains(outputEvents, e => e is ReasoningMessageEndEvent);
+        Assert.Contains(outputEvents, e => e is ReasoningEndEvent);
+    }
+
+    [Fact]
+    public async Task ReasoningContent_RoundTrip_OutboundThenInbound_PreservesTextAndProtectedDataAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> outboundUpdates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("I'm thinking") { ProtectedData = "enc-value" }]) { MessageId = "reason1" }
+        ];
+
+        // Act - outbound: ChatResponseUpdate → AGUI events
+        List<BaseEvent> aguilEvents = [];
+        await foreach (BaseEvent evt in outboundUpdates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            aguilEvents.Add(evt);
+        }
+
+        // Act - inbound: AGUI events → ChatResponseUpdate
+        List<ChatResponseUpdate> inboundUpdates = [];
+        await foreach (ChatResponseUpdate update in aguilEvents.ToAsyncEnumerableAsync().AsChatResponseUpdatesAsync(AGUIJsonSerializerContext.Default.Options))
+        {
+            inboundUpdates.Add(update);
+        }
+
+        // Assert
+        var reasoningContents = inboundUpdates
+            .SelectMany(u => u.Contents)
+            .OfType<TextReasoningContent>()
+            .ToList();
+
+        Assert.Contains(reasoningContents, c => c.Text == "I'm thinking");
+        Assert.Contains(reasoningContents, c => c.ProtectedData == "enc-value");
+    }
+
+    #endregion Reasoning Tests
 }
