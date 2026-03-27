@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable OPENAI001 // Experimental OpenAI features
+
 using System.ClientModel;
 using OpenAI.Chat;
 

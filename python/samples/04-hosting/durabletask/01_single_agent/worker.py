@@ -6,8 +6,8 @@ This worker registers agents as durable entities and continuously listens for re
 The worker should run as a background service, processing incoming agent requests.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """
 
@@ -16,8 +16,10 @@ import logging
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient, DurableAIAgentWorker
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.azure import DurableAIAgentWorker
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 
@@ -35,7 +37,12 @@ def create_joker_agent() -> Agent:
     Returns:
         Agent: The configured Joker agent
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AsyncAzureCliCredential(),
+        ),
         name="Joker",
         instructions="You are good at telling jokes.",
     )
@@ -60,7 +67,7 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,

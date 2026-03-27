@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
+import json
 from collections.abc import AsyncIterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -1030,11 +1031,11 @@ def test_chat_tool_mode_from_dict():
 def test_chat_options_init() -> None:
     """Test that ChatOptions can be created as a TypedDict."""
     options: ChatOptions = {}
-    assert options.get("model_id") is None
+    assert options.get("model") is None
 
     # With values
-    options_with_model: ChatOptions = {"model_id": "gpt-4o", "temperature": 0.7}
-    assert options_with_model.get("model_id") == "gpt-4o"
+    options_with_model: ChatOptions = {"model": "gpt-4o", "temperature": 0.7}
+    assert options_with_model.get("model") == "gpt-4o"
     assert options_with_model.get("temperature") == 0.7
 
 
@@ -1068,18 +1069,18 @@ def test_chat_options_tool_choice_validation():
 def test_chat_options_merge(tool_tool, ai_tool) -> None:
     """Test merge_chat_options utility function."""
     options1: ChatOptions = {
-        "model_id": "gpt-4o",
+        "model": "gpt-4o",
         "tools": [tool_tool],
         "logit_bias": {"x": 1},
         "metadata": {"a": "b"},
     }
-    options2: ChatOptions = {"model_id": "gpt-4.1", "tools": [ai_tool]}
+    options2: ChatOptions = {"model": "gpt-4.1", "tools": [ai_tool]}
     assert options1 != options2
 
     # Merge options - override takes precedence for non-collection fields
     options3 = merge_chat_options(options1, options2)
 
-    assert options3.get("model_id") == "gpt-4.1"
+    assert options3.get("model") == "gpt-4.1"
     assert options3.get("tools") == [tool_tool, ai_tool]  # tools are combined
     assert options3.get("logit_bias") == {"x": 1}  # base value preserved
     assert options3.get("metadata") == {"a": "b"}  # base value preserved
@@ -1088,7 +1089,7 @@ def test_chat_options_merge(tool_tool, ai_tool) -> None:
 def test_chat_options_and_tool_choice_override() -> None:
     """Test that tool_choice from other takes precedence in ChatOptions merge."""
     # Agent-level defaults to "auto"
-    agent_options: ChatOptions = {"model_id": "gpt-4o", "tool_choice": "auto"}
+    agent_options: ChatOptions = {"model": "gpt-4o", "tool_choice": "auto"}
     # Run-level specifies "required"
     run_options: ChatOptions = {"tool_choice": "required"}
 
@@ -1096,19 +1097,19 @@ def test_chat_options_and_tool_choice_override() -> None:
 
     # Run-level should override agent-level
     assert merged.get("tool_choice") == "required"
-    assert merged.get("model_id") == "gpt-4o"  # Other fields preserved
+    assert merged.get("model") == "gpt-4o"  # Other fields preserved
 
 
 def test_chat_options_and_tool_choice_none_in_other_uses_self() -> None:
     """Test that when other.tool_choice is None, self.tool_choice is used."""
     agent_options: ChatOptions = {"tool_choice": "auto"}
-    run_options: ChatOptions = {"model_id": "gpt-4.1"}  # tool_choice is None
+    run_options: ChatOptions = {"model": "gpt-4.1"}  # tool_choice is None
 
     merged = merge_chat_options(agent_options, run_options)
 
     # Should keep agent-level tool_choice since run-level is None
     assert merged.get("tool_choice") == "auto"
-    assert merged.get("model_id") == "gpt-4.1"
+    assert merged.get("model") == "gpt-4.1"
 
 
 def test_chat_options_and_tool_choice_with_tool_mode() -> None:
@@ -1710,6 +1711,47 @@ def test_content_roundtrip_preserves_compaction_annotation_dict() -> None:
     assert annotation[GROUP_TOKEN_COUNT_KEY] is None
 
 
+def test_content_from_dict_via_json() -> None:
+    """Test Content.from_dict with data parsed from a JSON string."""
+    data = json.loads(json.dumps({"type": "text", "text": "Hello world"}))
+    content = Content.from_dict(data)
+    assert content.type == "text"
+    assert content.text == "Hello world"
+
+
+def test_content_from_dict_roundtrip_via_json() -> None:
+    """Test Content.from_dict roundtrip via to_dict and json.dumps."""
+    original = Content.from_function_call(call_id="call1", name="my_func", arguments={"key": "value"})
+    data = json.loads(json.dumps(original.to_dict()))
+    restored = Content.from_dict(data)
+    assert restored.type == "function_call"
+    assert restored.call_id == "call1"
+    assert restored.name == "my_func"
+    assert restored.arguments == {"key": "value"}
+
+
+def test_content_to_dict_exclude_none() -> None:
+    """Test Content.to_dict excludes None fields by default."""
+    content = Content.from_text("Hello")
+    d = content.to_dict()
+    parsed = json.loads(json.dumps(d))
+    assert "uri" not in parsed
+
+    d_with_none = content.to_dict(exclude_none=False)
+    parsed_with_none = json.loads(json.dumps(d_with_none))
+    assert "uri" in parsed_with_none
+    assert parsed_with_none["uri"] is None
+
+
+def test_content_to_dict_exclude_fields() -> None:
+    """Test Content.to_dict with explicit field exclusion."""
+    content = Content.from_text("Hello")
+    d = content.to_dict(exclude={"text"})
+    parsed = json.loads(json.dumps(d))
+    assert "text" not in parsed
+    assert parsed["type"] == "text"
+
+
 def test_chat_response_roundtrip_preserves_compaction_annotation_dict() -> None:
     response = ChatResponse(
         messages=[
@@ -1803,7 +1845,7 @@ def test_chat_response_complex_serialization():
             "output_token_count": 8,
             "total_token_count": 13,
         },
-        "model_id": "gpt-4",  # Test alias handling
+        "model": "gpt-4",  # Test alias handling
     }
 
     response = ChatResponse.from_dict(response_data)
@@ -1819,7 +1861,7 @@ def test_chat_response_complex_serialization():
     assert isinstance(response_dict["messages"][0], dict)
     assert isinstance(response_dict["finish_reason"], str)  # FinishReason serializes to string
     assert isinstance(response_dict["usage_details"], dict)
-    assert response_dict["model_id"] == "gpt-4"  # Should serialize as model_id
+    assert response_dict["model"] == "gpt-4"  # Should serialize as model_id
 
 
 def test_chat_response_update_all_content_types():
@@ -2267,7 +2309,7 @@ def test_chat_response_deepcopy_deep_copies_additional_properties():
                     "total_token_count": 30,
                 },
                 "response_id": "resp-123",
-                "model_id": "gpt-4",
+                "model": "gpt-4",
             },
             id="chat_response",
         ),

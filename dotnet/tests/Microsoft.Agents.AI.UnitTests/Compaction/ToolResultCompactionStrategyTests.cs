@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Compaction;
@@ -347,5 +348,91 @@ public class ToolResultCompactionStrategyTests
         // Assert — duplicate tool name results listed under same key
         List<ChatMessage> included = [.. groups.GetIncludedMessages()];
         Assert.Equal("[Tool Calls]\nget_weather:\n  - Sunny\n  - Rainy\nsearch_docs:\n  - Found 3 docs", included[1].Text);
+    }
+
+    [Fact]
+    public async Task CompactAsyncUsesCustomFormatterAsync()
+    {
+        // Arrange — custom formatter that produces a collapsed message count
+        static string CustomFormatter(CompactionMessageGroup group) =>
+            $"[Collapsed: {group.Messages.Count} messages]";
+
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            minimumPreservedGroups: 1)
+        {
+            ToolCallFormatter = CustomFormatter,
+        };
+
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "get_weather")]),
+            new ChatMessage(ChatRole.Tool, "Sunny"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        bool result = await strategy.CompactAsync(groups);
+
+        // Assert — custom formatter output used instead of default YAML-like format
+        Assert.True(result);
+        List<ChatMessage> included = [.. groups.GetIncludedMessages()];
+        Assert.Equal("[Collapsed: 2 messages]", included[1].Text);
+    }
+
+    [Fact]
+    public void ToolCallFormatterPropertyIsNullWhenNoneProvided()
+    {
+        // Arrange
+        ToolResultCompactionStrategy strategy = new(CompactionTriggers.Always);
+
+        // Assert — ToolCallFormatter is null when no custom formatter is provided
+        Assert.Null(strategy.ToolCallFormatter);
+    }
+
+    [Fact]
+    public void ToolCallFormatterPropertyReturnsCustomFormatterWhenProvided()
+    {
+        // Arrange
+        Func<CompactionMessageGroup, string> customFormatter = static _ => "custom";
+        ToolResultCompactionStrategy strategy = new(
+            CompactionTriggers.Always)
+        {
+            ToolCallFormatter = customFormatter
+        };
+
+        // Assert — ToolCallFormatter is the injected custom function
+        Assert.Same(customFormatter, strategy.ToolCallFormatter);
+    }
+
+    [Fact]
+    public async Task CompactAsyncCustomFormatterCanDelegateToDefaultAsync()
+    {
+        // Arrange — custom formatter that wraps the default output
+        static string WrappingFormatter(CompactionMessageGroup group) =>
+            $"CUSTOM_PREFIX\n{ToolResultCompactionStrategy.DefaultToolCallFormatter(group)}";
+
+        ToolResultCompactionStrategy strategy = new(
+            trigger: _ => true,
+            minimumPreservedGroups: 1)
+        {
+            ToolCallFormatter = WrappingFormatter
+        };
+
+        CompactionMessageIndex groups = CompactionMessageIndex.Create(
+        [
+            new ChatMessage(ChatRole.User, "Q1"),
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("c1", "fn")]),
+            new ChatMessage(ChatRole.Tool, "result"),
+            new ChatMessage(ChatRole.User, "Q2"),
+        ]);
+
+        // Act
+        await strategy.CompactAsync(groups);
+
+        // Assert — wrapped default output
+        List<ChatMessage> included = [.. groups.GetIncludedMessages()];
+        Assert.Equal("CUSTOM_PREFIX\n[Tool Calls]\nfn:\n  - result", included[1].Text);
     }
 }

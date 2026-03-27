@@ -4,6 +4,7 @@ import asyncio
 import os
 
 from agent_framework import (
+    Agent,
     AgentExecutor,
     AgentExecutorRequest,
     AgentExecutorResponse,
@@ -13,7 +14,7 @@ from agent_framework import (
     WorkflowRunState,
     executor,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -33,11 +34,11 @@ Notes:
 - Not all agents can share threads; usually only the same type of agents can share threads.
 
 Demonstrate:
-- Creating multiple agents with AzureOpenAIResponsesClient.
+- Creating multiple agents with FoundryChatClient.
 - Setting up a shared thread between agents.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
 - AZURE_AI_MODEL_DEPLOYMENT_NAME must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with agents, workflows, and executors in the agent framework.
@@ -57,20 +58,22 @@ async def intercept_agent_response(
 
 
 async def main() -> None:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
     # set the same context provider (same default source_id) for both agents to share the thread
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
         context_providers=[InMemoryHistoryProvider()],
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
         context_providers=[InMemoryHistoryProvider()],

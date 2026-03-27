@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
@@ -158,6 +159,10 @@ def to_azure_ai_agent_tools(
 ) -> list[ToolDefinition | dict[str, Any]]:
     """Convert Agent Framework tools to Azure AI V1 SDK tool definitions.
 
+    .. deprecated::
+        This function is deprecated and will be removed in a future release.
+        Use :func:`to_azure_ai_tools` instead for the V2 (Projects/Responses) API.
+
     Handles FunctionTool instances and dict-based tools from static factory methods.
 
     Args:
@@ -170,6 +175,12 @@ def to_azure_ai_agent_tools(
     Raises:
         ValueError: If tool configuration is invalid.
     """
+    warnings.warn(
+        "to_azure_ai_agent_tools() is deprecated and will be removed in a future release; "
+        "use to_azure_ai_tools() instead for the V2 (Projects/Responses) API.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not tools:
         return []
 
@@ -208,12 +219,22 @@ def from_azure_ai_agent_tools(
 ) -> list[dict[str, Any]]:
     """Convert Azure AI V1 SDK tool definitions to dict-based tools.
 
+    .. deprecated::
+        This function is deprecated and will be removed in a future release.
+        Use :func:`from_azure_ai_tools` instead for the V2 (Projects/Responses) API.
+
     Args:
         tools: Sequence of Azure AI V1 SDK tool definitions.
 
     Returns:
         List of dict-based tool definitions.
     """
+    warnings.warn(
+        "from_azure_ai_agent_tools() is deprecated and will be removed in a future release; "
+        "use from_azure_ai_tools() instead for the V2 (Projects/Responses) API.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not tools:
         return []
 

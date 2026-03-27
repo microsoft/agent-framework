@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using A2A;
-using Azure.AI.Agents.Persistent;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -12,16 +12,15 @@ namespace A2AServer;
 
 internal static class HostAgentFactory
 {
-    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string assistantId, IList<AITool>? tools = null)
+    internal static async Task<(AIAgent, AgentCard)> CreateFoundryHostAgentAsync(string agentType, string model, string endpoint, string agentName, IList<AITool>? tools = null)
     {
         // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
         // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
         // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-        var persistentAgentsClient = new PersistentAgentsClient(endpoint, new DefaultAzureCredential());
-        PersistentAgent persistentAgent = await persistentAgentsClient.Administration.GetAgentAsync(assistantId);
+        var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
-        AIAgent agent = await persistentAgentsClient
-            .GetAIAgentAsync(persistentAgent.Id, chatOptions: new() { Tools = tools });
+        AIAgent agent = await aiProjectClient
+            .GetAIAgentAsync(agentName, tools: tools);
 
         AgentCard agentCard = agentType.ToUpperInvariant() switch
         {
@@ -60,7 +59,7 @@ internal static class HostAgentFactory
             PushNotifications = false,
         };
 
-        var invoiceQuery = new AgentSkill()
+        var invoiceQuery = new A2A.AgentSkill()
         {
             Id = "id_invoice_agent",
             Name = "InvoiceQuery",
@@ -92,7 +91,7 @@ internal static class HostAgentFactory
             PushNotifications = false,
         };
 
-        var policyQuery = new AgentSkill()
+        var policyQuery = new A2A.AgentSkill()
         {
             Id = "id_policy_agent",
             Name = "PolicyAgent",
@@ -124,7 +123,7 @@ internal static class HostAgentFactory
             PushNotifications = false,
         };
 
-        var logisticsQuery = new AgentSkill()
+        var logisticsQuery = new A2A.AgentSkill()
         {
             Id = "id_logistics_agent",
             Name = "LogisticsQuery",

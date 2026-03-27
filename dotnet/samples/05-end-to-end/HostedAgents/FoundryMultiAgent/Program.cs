@@ -41,7 +41,7 @@ try
         .Build();
 
     Console.WriteLine("Starting Writer-Reviewer Workflow Agent Server on http://localhost:8088");
-    await workflow.AsAgent().RunAIAgentAsync();
+    await workflow.AsAIAgent().RunAIAgentAsync();
 }
 finally
 {

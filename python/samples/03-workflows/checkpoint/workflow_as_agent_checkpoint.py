@@ -20,18 +20,19 @@ Key concepts:
 - These are complementary: sessions track conversation, checkpoints track workflow state
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Environment variables configured for AzureOpenAIResponsesClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Environment variables configured for FoundryChatClient
 """
 
 import asyncio
 import os
 
 from agent_framework import (
+    Agent,
     InMemoryCheckpointStorage,
     InMemoryHistoryProvider,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -47,24 +48,26 @@ async def basic_checkpointing() -> None:
     print("Basic Checkpointing with Workflow as Agent")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="assistant",
         instructions="You are a helpful assistant. Keep responses brief.",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         name="reviewer",
         instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
     )
 
     workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
-    agent = workflow.as_agent(name="CheckpointedAgent")
+    agent = Agent(client=workflow, name="CheckpointedAgent")
 
     # Create checkpoint storage
     checkpoint_storage = InMemoryCheckpointStorage()
@@ -92,19 +95,20 @@ async def checkpointing_with_thread() -> None:
     print("Checkpointing with Thread Conversation History")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="memory_assistant",
         instructions="You are a helpful assistant with good memory. Reference previous conversation when relevant.",
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = workflow.as_agent(name="MemoryAgent")
+    agent = Agent(client=workflow, name="MemoryAgent")
 
     # Create both session (for conversation) and checkpoint storage (for workflow state)
     session = agent.create_session()
@@ -139,19 +143,20 @@ async def streaming_with_checkpoints() -> None:
     print("Streaming with Checkpointing")
     print("=" * 60)
 
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    assistant = client.as_agent(
+    assistant = Agent(
+        client=client,
         name="streaming_assistant",
         instructions="You are a helpful assistant.",
     )
 
     workflow = SequentialBuilder(participants=[assistant]).build()
-    agent = workflow.as_agent(name="StreamingCheckpointAgent")
+    agent = Agent(client=workflow, name="StreamingCheckpointAgent")
 
     checkpoint_storage = InMemoryCheckpointStorage()
 

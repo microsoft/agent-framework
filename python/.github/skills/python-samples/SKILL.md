@@ -41,11 +41,14 @@ Do **not** add sample-only dependencies to the root `pyproject.toml` dev group.
 ## Syntax Checking
 
 ```bash
-# Check samples for syntax errors and missing imports
-uv run poe samples-syntax
+# Format + lint samples
+uv run poe syntax -S
 
-# Lint samples
-uv run poe samples-lint
+# Check samples for syntax errors and missing imports
+uv run poe pyright -S
+
+# Lint samples only
+uv run poe syntax -S -C
 ```
 
 ## Documentation

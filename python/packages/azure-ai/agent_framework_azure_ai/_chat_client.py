@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Any, ClassVar, Generic, TypedDict, cast
 
@@ -35,7 +36,6 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidRequestException,
@@ -91,12 +91,14 @@ from azure.ai.agents.models import (
 )
 from pydantic import BaseModel
 
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, resolve_file_ids, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -117,6 +119,10 @@ __all__ = ["AzureAIAgentClient", "AzureAIAgentOptions"]
 
 class AzureAIAgentOptions(ChatOptions, total=False):
     """Azure AI Foundry Agent Service-specific options dict.
+
+    .. deprecated::
+        AzureAIAgentOptions is deprecated and will be removed in a future release.
+        Use :class:`AzureAIProjectAgentOptions` instead for the V2 (Projects/Responses) API.
 
     Extends base ChatOptions with Azure AI Agent Service parameters.
     Azure AI Agents provides a managed agent runtime with built-in
@@ -205,14 +211,25 @@ AzureAIAgentOptionsT = TypeVar(
 # endregion
 
 
+@deprecated(
+    "AzureAIAgentClient is deprecated. "
+    "It targets the V1 Agents Service API and has no direct replacement; "
+    "for new Foundry projects, use FoundryAgent."
+)
 class AzureAIAgentClient(
-    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     FunctionInvocationLayer[AzureAIAgentOptionsT],
+    ChatMiddlewareLayer[AzureAIAgentOptionsT],
     ChatTelemetryLayer[AzureAIAgentOptionsT],
     BaseChatClient[AzureAIAgentOptionsT],
     Generic[AzureAIAgentOptionsT],
 ):
-    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support."""
+    """Azure AI Agent Chat client with middleware, telemetry, and function invocation support.
+
+    .. deprecated::
+        AzureAIAgentClient is deprecated and will be removed in a future release.
+        It targets the V1 Agents Service API and has no direct replacement.
+        For new Foundry projects, use :class:`FoundryAgent`.
+    """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
     STORES_BY_DEFAULT: ClassVar[bool] = True  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -226,6 +243,11 @@ class AzureAIAgentClient(
         data_sources: list[VectorStoreDataSource] | None = None,
     ) -> CodeInterpreterTool:
         """Create a code interpreter tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            For new Foundry projects, configure hosted tools on the Foundry agent definition
+            in the service instead.
 
         Keyword Args:
             file_ids: List of uploaded file IDs or Content objects to make available to
@@ -256,6 +278,12 @@ class AzureAIAgentClient(
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_code_interpreter_tool() is deprecated and will be removed in a future release; "
+            "for new Foundry projects, configure hosted tools on the Foundry agent definition in the service instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         resolved = resolve_file_ids(file_ids)
         return CodeInterpreterTool(file_ids=resolved, data_sources=data_sources)
 
@@ -265,6 +293,11 @@ class AzureAIAgentClient(
         vector_store_ids: list[str],
     ) -> FileSearchTool:
         """Create a file search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            For new Foundry projects, configure hosted tools on the Foundry agent definition
+            in the service instead.
 
         Keyword Args:
             vector_store_ids: List of vector store IDs to search within.
@@ -282,6 +315,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_file_search_tool() is deprecated and will be removed in a future release; "
+            "for new Foundry projects, configure hosted tools on the Foundry agent definition in the service instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return FileSearchTool(vector_store_ids=vector_store_ids)
 
     @staticmethod
@@ -292,6 +331,11 @@ class AzureAIAgentClient(
         bing_custom_instance_id: str | None = None,
     ) -> BingGroundingTool | BingCustomSearchTool:
         """Create a web search tool configuration for Azure AI Agents.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            For new Foundry projects, configure hosted tools on the Foundry agent definition
+            in the service instead.
 
         For Azure AI Agents, web search uses Bing Grounding or Bing Custom Search.
         If no arguments are provided, attempts to read from environment variables.
@@ -333,6 +377,12 @@ class AzureAIAgentClient(
 
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_web_search_tool() is deprecated and will be removed in a future release; "
+            "for new Foundry projects, configure hosted tools on the Foundry agent definition in the service instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Try explicit Bing Custom Search parameters first, then environment variables
         resolved_custom_connection = bing_custom_connection_id or os.environ.get("BING_CUSTOM_CONNECTION_ID")
         resolved_custom_instance = bing_custom_instance_id or os.environ.get("BING_CUSTOM_INSTANCE_NAME")
@@ -368,6 +418,11 @@ class AzureAIAgentClient(
     ) -> McpTool:
         """Create a hosted MCP tool configuration for Azure AI Agents.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            For new Foundry projects, configure hosted tools on the Foundry agent definition
+            in the service instead.
+
         This configures an MCP (Model Context Protocol) server that will be called
         by Azure AI's service. The tools from this MCP server are executed remotely
         by Azure AI, not locally by your application.
@@ -400,6 +455,12 @@ class AzureAIAgentClient(
                 )
                 agent = ChatAgent(client, tools=[tool])
         """
+        warnings.warn(
+            "AzureAIAgentClient.get_mcp_tool() is deprecated and will be removed in a future release; "
+            "for new Foundry projects, configure hosted tools on the Foundry agent definition in the service instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         mcp_tool = McpTool(
             server_label=name.replace(" ", "_"),
             server_url=url or "",

@@ -2,6 +2,7 @@
 
 import asyncio
 
+from agent_framework import Agent
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
@@ -24,7 +25,8 @@ https://ollama.com/
 async def main() -> None:
     print("=== Response Reasoning Example ===")
 
-    agent = OllamaChatClient().as_agent(
+    agent = Agent(
+        client=OllamaChatClient(),
         name="TimeAgent",
         instructions="You are a helpful agent answer in one sentence.",
         default_options={"think": True},  # Enable Reasoning on agent level

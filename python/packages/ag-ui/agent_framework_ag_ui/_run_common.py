@@ -12,6 +12,12 @@ from typing import Any, cast
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
+    ReasoningEncryptedValueEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
     StateSnapshotEvent,
     TextMessageContentEvent,
@@ -120,6 +126,8 @@ class FlowState:
     tool_results: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
     tool_calls_ended: set[str] = field(default_factory=set)  # pyright: ignore[reportUnknownVariableType]
     interrupts: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    reasoning_messages: list[dict[str, Any]] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
+    accumulated_reasoning: dict[str, str] = field(default_factory=dict)  # pyright: ignore[reportUnknownVariableType]
 
     def get_tool_name(self, call_id: str | None) -> str | None:
         """Get tool name by call ID."""
@@ -224,27 +232,28 @@ def _emit_tool_call(
     return events
 
 
-def _emit_tool_result(
-    content: Content,
+def _emit_tool_result_common(
+    call_id: str,
+    raw_result: Any,
     flow: FlowState,
     predictive_handler: PredictiveStateHandler | None = None,
 ) -> list[BaseEvent]:
-    """Emit ToolCallResult events for function_result content."""
+    """Shared helper for emitting ToolCallEnd + ToolCallResult events and performing FlowState cleanup.
+
+    Both ``_emit_tool_result`` (standard function results) and ``_emit_mcp_tool_result``
+    (MCP server tool results) delegate to this function.
+    """
     events: list[BaseEvent] = []
 
-    if not content.call_id:
-        return events
+    events.append(ToolCallEndEvent(tool_call_id=call_id))
+    flow.tool_calls_ended.add(call_id)
 
-    events.append(ToolCallEndEvent(tool_call_id=content.call_id))
-    flow.tool_calls_ended.add(content.call_id)
-
-    raw_result = content.result if content.result is not None else ""
     result_content = raw_result if isinstance(raw_result, str) else json.dumps(make_json_safe(raw_result))
     message_id = generate_event_id()
     events.append(
         ToolCallResultEvent(
             message_id=message_id,
-            tool_call_id=content.call_id,
+            tool_call_id=call_id,
             content=result_content,
             role="tool",
         )
@@ -254,7 +263,7 @@ def _emit_tool_result(
         {
             "id": message_id,
             "role": "tool",
-            "toolCallId": content.call_id,
+            "toolCallId": call_id,
             "content": result_content,
         }
     )
@@ -268,12 +277,24 @@ def _emit_tool_result(
     flow.tool_call_name = None
 
     if flow.message_id:
-        logger.debug("Closing text message (issue #3568 fix): message_id=%s", flow.message_id)
+        logger.debug("Closing text message: message_id=%s", flow.message_id)
         events.append(TextMessageEndEvent(message_id=flow.message_id))
     flow.message_id = None
     flow.accumulated_text = ""
 
     return events
+
+
+def _emit_tool_result(
+    content: Content,
+    flow: FlowState,
+    predictive_handler: PredictiveStateHandler | None = None,
+) -> list[BaseEvent]:
+    """Emit ToolCallResult events for function_result content."""
+    if not content.call_id:
+        return []
+    raw_result = content.result if content.result is not None else ""
+    return _emit_tool_result_common(content.call_id, raw_result, flow, predictive_handler)
 
 
 def _emit_approval_request(
@@ -381,6 +402,141 @@ def _emit_oauth_consent(content: Content) -> list[BaseEvent]:
     )
 
 
+def _emit_mcp_tool_call(content: Content, flow: FlowState) -> list[BaseEvent]:
+    """Emit ToolCall start/args events for MCP server tool call content.
+
+    MCP tool calls arrive as complete items (not streamed deltas), so we emit a
+    ``ToolCallStartEvent`` (and, when arguments are present, a ``ToolCallArgsEvent``)
+    immediately. This maps MCP-specific fields (tool_name, server_name) to the
+    same AG-UI ToolCall* events used by regular function calls, making MCP tool
+    execution visible to AG-UI consumers. Completion/end events are handled
+    separately by ``_emit_mcp_tool_result``.
+    """
+    events: list[BaseEvent] = []
+
+    tool_call_id = content.call_id or generate_event_id()
+    tool_name = content.tool_name or "mcp_tool"
+
+    display_name = tool_name
+
+    events.append(
+        ToolCallStartEvent(
+            tool_call_id=tool_call_id,
+            tool_call_name=display_name,
+            parent_message_id=flow.message_id,
+        )
+    )
+
+    # Serialize arguments
+    args_str = ""
+    if content.arguments:
+        args_str = (
+            content.arguments if isinstance(content.arguments, str) else json.dumps(make_json_safe(content.arguments))
+        )
+        events.append(ToolCallArgsEvent(tool_call_id=tool_call_id, delta=args_str))
+
+    # Track in flow state for MESSAGES_SNAPSHOT
+    tool_entry = {
+        "id": tool_call_id,
+        "type": "function",
+        "function": {"name": display_name, "arguments": args_str},
+    }
+    flow.pending_tool_calls.append(tool_entry)
+    flow.tool_calls_by_id[tool_call_id] = tool_entry
+
+    return events
+
+
+def _emit_mcp_tool_result(
+    content: Content, flow: FlowState, predictive_handler: PredictiveStateHandler | None = None
+) -> list[BaseEvent]:
+    """Emit ToolCallResult events for MCP server tool result content.
+
+    Delegates to the shared _emit_tool_result_common helper using content.output
+    (the MCP-specific result field) instead of content.result.
+    """
+    if not content.call_id:
+        logger.warning("MCP tool result content missing call_id, skipping")
+        return []
+    raw_output = content.output if content.output is not None else ""
+    return _emit_tool_result_common(content.call_id, raw_output, flow, predictive_handler)
+
+
+def _emit_text_reasoning(content: Content, flow: FlowState | None = None) -> list[BaseEvent]:
+    """Emit AG-UI reasoning events for text_reasoning content.
+
+    Uses the protocol-defined reasoning event types so that AG-UI consumers
+    such as CopilotKit can render reasoning natively.
+
+    Only ``content.text`` is used for the visible reasoning message. If
+    ``content.protected_data`` is present it is emitted as a
+    ``ReasoningEncryptedValueEvent`` so that consumers can persist encrypted
+    reasoning for state continuity without conflating it with display text.
+
+    When *flow* is provided the reasoning message is persisted into
+    ``flow.reasoning_messages`` so that ``_build_messages_snapshot`` can
+    include it in the final ``MESSAGES_SNAPSHOT``.
+    """
+    text = content.text or ""
+    if not text and content.protected_data is None:
+        return []
+
+    message_id = content.id or generate_event_id()
+
+    events: list[BaseEvent] = [
+        ReasoningStartEvent(message_id=message_id),
+        ReasoningMessageStartEvent(message_id=message_id, role="assistant"),
+    ]
+
+    if text:
+        events.append(ReasoningMessageContentEvent(message_id=message_id, delta=text))
+
+    events.append(ReasoningMessageEndEvent(message_id=message_id))
+
+    if content.protected_data is not None:
+        events.append(
+            ReasoningEncryptedValueEvent(
+                subtype="message",
+                entity_id=message_id,
+                encrypted_value=content.protected_data,
+            )
+        )
+
+    events.append(ReasoningEndEvent(message_id=message_id))
+
+    # Persist reasoning into flow state for MESSAGES_SNAPSHOT.
+    # Accumulate reasoning text per message_id, similar to flow.accumulated_text,
+    # so that incremental deltas build the full reasoning string.
+    if flow is not None:
+        if text:
+            previous_text = flow.accumulated_reasoning.get(message_id, "")
+            flow.accumulated_reasoning[message_id] = previous_text + text
+        full_text = flow.accumulated_reasoning.get(message_id, text or "")
+
+        # Update existing reasoning entry for this message_id if present; otherwise append a new one.
+        existing_entry: dict[str, Any] | None = None
+        for entry in flow.reasoning_messages:
+            if isinstance(entry, dict) and entry.get("id") == message_id:
+                existing_entry = entry
+                break
+
+        if existing_entry is None:
+            reasoning_entry: dict[str, Any] = {
+                "id": message_id,
+                "role": "reasoning",
+                "content": full_text,
+            }
+            if content.protected_data is not None:
+                reasoning_entry["encryptedValue"] = content.protected_data
+            flow.reasoning_messages.append(reasoning_entry)
+        else:
+            existing_entry["content"] = full_text
+            if content.protected_data is not None:
+                existing_entry["encryptedValue"] = content.protected_data
+
+    return events
+
+
 def _emit_content(
     content: Any,
     flow: FlowState,
@@ -402,5 +558,11 @@ def _emit_content(
         return _emit_usage(content)
     if content_type == "oauth_consent_request":
         return _emit_oauth_consent(content)
+    if content_type == "mcp_server_tool_call":
+        return _emit_mcp_tool_call(content, flow)
+    if content_type == "mcp_server_tool_result":
+        return _emit_mcp_tool_result(content, flow, predictive_handler)
+    if content_type == "text_reasoning":
+        return _emit_text_reasoning(content, flow)
     logger.debug("Skipping unsupported content type in AG-UI emitter: %s", content_type)
     return []

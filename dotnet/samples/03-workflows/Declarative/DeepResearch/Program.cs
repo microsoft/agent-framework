@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using OpenAI.Responses;
@@ -275,7 +275,7 @@ internal sealed class Program
             Tools =
             {
                 AgentTool.CreateOpenApiTool(
-                    new OpenAPIFunctionDefinition(
+                    new OpenApiFunctionDefinition(
                         "weather-forecast",
                         BinaryData.FromString(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wttr.json"))),
                         new OpenAPIAnonymousAuthenticationDetails()))

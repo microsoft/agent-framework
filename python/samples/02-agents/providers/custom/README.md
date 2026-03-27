@@ -37,17 +37,17 @@ The framework provides `Raw...Client` classes (e.g., `RawOpenAIChatClient`, `Raw
 
 There is a defined ordering for applying layers that you should follow:
 
-1. **ChatMiddlewareLayer** - Should be applied **first** because it also prepares function middleware
-2. **FunctionInvocationLayer** - Handles tool/function calling loop
-3. **ChatTelemetryLayer** - Must be **inside** the function calling loop for correct per-call telemetry
+1. **FunctionInvocationLayer** - Handles the tool/function calling loop and should stay outermost
+2. **ChatMiddlewareLayer** - Wraps each model call in the loop and stays outside telemetry
+3. **ChatTelemetryLayer** - Must be inside the function calling loop so each model call gets its own telemetry span
 4. **Raw...Client** - The base implementation (e.g., `RawOpenAIChatClient`)
 
 Example of correct layer composition:
 
 ```python
 class MyCustomClient(
-    ChatMiddlewareLayer[TOptions],
     FunctionInvocationLayer[TOptions],
+    ChatMiddlewareLayer[TOptions],
     ChatTelemetryLayer[TOptions],
     RawOpenAIChatClient[TOptions],  # or BaseChatClient for custom implementations
     Generic[TOptions],

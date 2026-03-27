@@ -17,8 +17,8 @@ Both paths converge at Summarizer for final report.
 import os
 from typing import Any
 
-from agent_framework import AgentExecutorResponse, WorkflowBuilder
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, AgentExecutorResponse, WorkflowBuilder
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -63,10 +63,11 @@ def is_approved(message: Any) -> bool:
 
 
 # Create Azure OpenAI chat client
-client = AzureOpenAIChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
+client = FoundryChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
 
 # Create Writer agent - generates content
-writer = client.as_agent(
+writer = Agent(
+    client=client,
     name="Writer",
     instructions=(
         "You are an excellent content writer. "
@@ -76,7 +77,8 @@ writer = client.as_agent(
 )
 
 # Create Reviewer agent - evaluates and provides structured feedback
-reviewer = client.as_agent(
+reviewer = Agent(
+    client=client,
     name="Reviewer",
     instructions=(
         "You are an expert content reviewer. "
@@ -94,7 +96,8 @@ reviewer = client.as_agent(
 )
 
 # Create Editor agent - improves content based on feedback
-editor = client.as_agent(
+editor = Agent(
+    client=client,
     name="Editor",
     instructions=(
         "You are a skilled editor. "
@@ -105,7 +108,8 @@ editor = client.as_agent(
 )
 
 # Create Publisher agent - formats content for publication
-publisher = client.as_agent(
+publisher = Agent(
+    client=client,
     name="Publisher",
     instructions=(
         "You are a publishing agent. "
@@ -115,7 +119,8 @@ publisher = client.as_agent(
 )
 
 # Create Summarizer agent - creates final publication report
-summarizer = client.as_agent(
+summarizer = Agent(
+    client=client,
     name="Summarizer",
     instructions=(
         "You are a summarizer agent. "

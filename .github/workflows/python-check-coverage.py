@@ -41,8 +41,7 @@ ENFORCED_TARGETS: set[str] = {
     "packages.purview.agent_framework_purview",
     "packages.anthropic.agent_framework_anthropic",
     "packages.azure-ai-search.agent_framework_azure_ai_search",
-    "packages.core.agent_framework.azure",
-    "packages.core.agent_framework.openai",
+    "packages.openai.agent_framework_openai",
     # Individual files (if you want to enforce specific files instead of whole packages)
     "packages/core/agent_framework/observability.py",
     # Add more targets here as coverage improves
