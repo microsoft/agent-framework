@@ -877,10 +877,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if AnalysisSection.FIELDS in self.output_sections and contents[0].fields:
                 fields: dict[str, object] = {}
                 for name, field in contents[0].fields.items():
-                    value = self._extract_field_value(field)
+                    entry_dict: dict[str, object] = {
+                        "type": getattr(field, "type", None),
+                        "value": self._extract_field_value(field),
+                    }
                     confidence = getattr(field, "confidence", None)
-                    field_type = getattr(field, "type", None)
-                    fields[name] = {"type": field_type, "value": value, "confidence": confidence}
+                    if confidence is not None:
+                        entry_dict["confidence"] = confidence
+                    fields[name] = entry_dict
                 if fields:
                     extracted["fields"] = fields
             return extracted
@@ -911,10 +915,14 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             if AnalysisSection.FIELDS in self.output_sections and content.fields:
                 seg_fields: dict[str, object] = {}
                 for name, field in content.fields.items():
-                    value = self._extract_field_value(field)
+                    seg_entry: dict[str, object] = {
+                        "type": getattr(field, "type", None),
+                        "value": self._extract_field_value(field),
+                    }
                     confidence = getattr(field, "confidence", None)
-                    field_type = getattr(field, "type", None)
-                    seg_fields[name] = {"type": field_type, "value": value, "confidence": confidence}
+                    if confidence is not None:
+                        seg_entry["confidence"] = confidence
+                    seg_fields[name] = seg_entry
                 if seg_fields:
                     seg["fields"] = seg_fields
 
@@ -944,14 +952,33 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
         # Object fields → recursively resolve nested sub-fields
         if field_type == "object" and raw is not None and isinstance(raw, dict):
-            return {k: ContentUnderstandingContextProvider._extract_field_value(v) for k, v in raw.items()}
+            return {
+                k: ContentUnderstandingContextProvider._flatten_field(v) for k, v in raw.items()
+            }
 
-        # Array fields → list of resolved items
+        # Array fields → list of flattened items (each with value + optional confidence)
         if field_type == "array" and raw is not None and isinstance(raw, list):
-            return [ContentUnderstandingContextProvider._extract_field_value(item) for item in raw]
+            return [ContentUnderstandingContextProvider._flatten_field(item) for item in raw]
 
         # Scalar fields (string, number, date, etc.) — .value returns native Python type
         return raw
+
+    @staticmethod
+    def _flatten_field(field: Any) -> object:
+        """Flatten a CU ``ContentField`` into a ``{type, value, confidence}`` dict.
+
+        Used for sub-fields inside object and array types to preserve
+        per-field confidence scores. Confidence is omitted when ``None``
+        to reduce token usage.
+        """
+        field_type = getattr(field, "type", None)
+        value = ContentUnderstandingContextProvider._extract_field_value(field)
+        confidence = getattr(field, "confidence", None)
+
+        result: dict[str, object] = {"type": field_type, "value": value}
+        if confidence is not None:
+            result["confidence"] = confidence
+        return result
 
     @staticmethod
     def _format_result(filename: str, result: dict[str, object]) -> str:
