@@ -542,7 +542,7 @@ def test_response_reasoning_preserves_encrypted_content_with_summary() -> None:
     when reasoning summaries were also present because only the fallback (no-content,
     no-summary) branch captured it.
     """
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response = MagicMock()
     mock_response.output_parsed = None
@@ -587,7 +587,7 @@ def test_response_reasoning_preserves_encrypted_content_summary_only() -> None:
     Covers the case where the API returns summary + encrypted_content but no
     clear-text reasoning content.
     """
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response = MagicMock()
     mock_response.output_parsed = None
@@ -619,7 +619,7 @@ def test_response_reasoning_preserves_encrypted_content_summary_only() -> None:
 
 def test_response_reasoning_no_encrypted_content() -> None:
     """When encrypted_content is None/missing, additional_properties should not contain it."""
-    client = OpenAIResponsesClient(model_id="test-model", api_key="test-key")
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     mock_response = MagicMock()
     mock_response.output_parsed = None

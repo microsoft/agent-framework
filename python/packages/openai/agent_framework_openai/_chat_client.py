@@ -2271,7 +2271,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                         reasoning_id = getattr(event_item, "id", None)
                         added_reasoning = False
                         # Extract encrypted_content once so it is propagated
-                        # through whichever branch fires – mirrors the
+                        # through whichever branch fires - mirrors the
                         # non-streaming fix in _parse_response_from_openai.
                         # See #4644.
                         encrypted_content = getattr(event_item, "encrypted_content", None)
