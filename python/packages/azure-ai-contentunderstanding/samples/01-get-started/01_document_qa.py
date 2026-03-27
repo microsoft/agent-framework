@@ -75,6 +75,7 @@ async def main() -> None:
         )
 
         # --- Turn 1: Upload PDF and ask a question ---
+        # 4. Upload PDF and ask questions
         # The CU provider extracts markdown + fields from the PDF and injects
         # the full content into context so the agent can answer precisely.
         print("--- Upload PDF and ask questions ---")
@@ -105,3 +106,15 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Upload PDF and ask questions ---
+Agent: This document is an **invoice** for services and fees billed to
+  **MICROSOFT CORPORATION** (Invoice **INV-100**), including line items
+  (e.g., Consulting Services, Document Fee, Printing Fee) and a billing summary.
+  - **Vendor:** **CONTOSO LTD.**
+  - **Total amount due:** **$610.00**
+  [Input tokens: 988]
+"""

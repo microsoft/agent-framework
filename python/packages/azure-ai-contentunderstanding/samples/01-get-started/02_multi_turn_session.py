@@ -48,6 +48,7 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_asset
 
 
 async def main() -> None:
+    # 1. Set up credentials and CU context provider
     credential = AzureCliCredential()
 
     cu = ContentUnderstandingContextProvider(
@@ -57,12 +58,14 @@ async def main() -> None:
         max_wait=None,  # wait until CU analysis finishes (no background deferral)
     )
 
+    # 2. Set up the LLM client
     client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
+    # 3. Create agent and persistent session
     async with cu:
         agent = Agent(
             client=client,
@@ -77,7 +80,7 @@ async def main() -> None:
         # Create a persistent session — this keeps CU state across turns
         session = AgentSession()
 
-        # --- Turn 1: Upload PDF ---
+        # 4. Turn 1: Upload PDF
         # CU analyzes the PDF and injects full content into context.
         print("--- Turn 1: Upload PDF ---")
         pdf_bytes = SAMPLE_PDF_PATH.read_bytes()
@@ -99,15 +102,15 @@ async def main() -> None:
         print(f"Agent: {response}")
         print(f"  [Input tokens: {usage.get('input_token_count', 'N/A')}]\n")
 
-        # --- Turn 2: Unrelated question ---
-        # No document needed — agent answers directly with minimal tokens.
+        # 5. Turn 2: Unrelated question
+        # No document needed — agent answers from general knowledge.
         print("--- Turn 2: Unrelated question ---")
         response = await agent.run("What is the capital of France?", session=session)
         usage = response.usage_details or {}
         print(f"Agent: {response}")
         print(f"  [Input tokens: {usage.get('input_token_count', 'N/A')}]\n")
 
-        # --- Turn 3: Detailed follow-up ---
+        # 6. Turn 3: Detailed follow-up
         # The agent answers from the full document content that was injected
         # into conversation history in Turn 1. No re-analysis or tool call needed.
         print("--- Turn 3: Detailed follow-up ---")
@@ -122,3 +125,21 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Turn 1: Upload PDF ---
+Agent: This document is an **invoice** from **CONTOSO LTD.** to **MICROSOFT
+  CORPORATION**. Amount Due: $610.00. Invoice INV-100, dated 11/15/2019.
+  [Input tokens: 975]
+
+--- Turn 2: Unrelated question ---
+Agent: Paris.
+  [Input tokens: 1134]
+
+--- Turn 3: Detailed follow-up ---
+Agent: Shipping address (SHIP TO): Microsoft Delivery, 123 Ship St,
+  Redmond WA, 98052.
+  [Input tokens: 1155]
+"""

@@ -52,6 +52,7 @@ VIDEO_URL = f"{_CU_ASSETS}/videos/sdk_samples/FlightSimulator.mp4"
 
 
 async def main() -> None:
+    # 1. Set up credentials and CU context provider
     credential = AzureCliCredential()
 
     # No analyzer_id specified — the provider auto-detects from media type:
@@ -64,12 +65,14 @@ async def main() -> None:
         max_wait=None,  # wait until each analysis finishes
     )
 
+    # 2. Set up the LLM client
     client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
+    # 3. Create agent and session
     async with cu:
         agent = Agent(
             client=client,
@@ -168,3 +171,18 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Turn 1: Upload PDF + audio + video (parallel analysis) ---
+User: I'm uploading three files...
+  (CU analysis may take 1-2 minutes for audio/video files...)
+  [Analyzed in ~94s | Input tokens: ~2939]
+Agent: ### invoice.pdf: An invoice from CONTOSO LTD. to MICROSOFT CORPORATION...
+       ### callCenterRecording.mp3: A customer service call about point balance...
+       ### FlightSimulator.mp4: A clip discussing neural text-to-speech...
+
+--- Turn 2-5: Detail and cross-document questions ---
+(Agent answers from conversation history without re-analysis)
+"""

@@ -44,6 +44,7 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_asset
 
 
 async def main() -> None:
+    # 1. Set up credentials and CU context provider
     credential = AzureCliCredential()
 
     # Use prebuilt-invoice analyzer for structured field extraction
@@ -58,12 +59,14 @@ async def main() -> None:
         ],
     )
 
+    # 2. Set up the LLM client
     client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
+    # 3. Create agent and session
     async with cu:
         agent = Agent(
             client=client,
@@ -79,7 +82,7 @@ async def main() -> None:
 
         session = AgentSession()
 
-        # --- Upload an invoice PDF ---
+        # 4. Upload an invoice PDF
         print("--- Upload Invoice ---")
 
         pdf_bytes = SAMPLE_PDF_PATH.read_bytes()
@@ -104,7 +107,7 @@ async def main() -> None:
         )
         print(f"Agent: {response}\n")
 
-        # --- Follow-up: ask about specific fields ---
+        # 5. Follow-up: ask about specific fields
         print("--- Follow-up ---")
         response = await agent.run(
             "What is the payment term? Are there any fields with low confidence?",
@@ -115,3 +118,22 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Upload Invoice ---
+Agent: ## Key fields (invoice.pdf, page 1)
+  - Vendor name: CONTOSO LTD. (low confidence: 0.513)
+  - Total amount: USD $110.00 (low confidence: 0.782)
+  - Due date: 2019-12-15 (confidence: 0.979)
+  ## Line items:
+  1) Consulting Services -- 2 hours @ $30.00, total $60.00
+  2) Document Fee -- 3 @ $10.00, total $30.00
+  3) Printing Fee -- 10 pages @ $1.00, total $10.00
+
+--- Follow-up ---
+Agent: Payment term: Not provided (null, confidence 0.872)
+  Fields with low confidence (< 0.80): VendorName (0.513), CustomerName (0.436), ...
+  Line item descriptions: Consulting Services (0.585), Document Fee (0.520), ...
+"""

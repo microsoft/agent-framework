@@ -53,6 +53,7 @@ SAMPLE_PDF = Path(__file__).resolve().parents[1] / "shared" / "sample_assets" / 
 
 
 async def main() -> None:
+    # 1. Set up credentials and CU context provider with short timeout
     credential = AzureCliCredential()
 
     # Set max_wait=1.0 to force background deferral.
@@ -65,12 +66,14 @@ async def main() -> None:
         max_wait=1.0,  # 1 second — forces background deferral for most files
     )
 
+    # 2. Set up the LLM client
     client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
+    # 3. Create agent and session
     async with cu:
         agent = Agent(
             client=client,
@@ -85,7 +88,7 @@ async def main() -> None:
 
         session = AgentSession()
 
-        # --- Turn 1: Upload PDF (will timeout and defer to background) ---
+        # 4. Turn 1: Upload PDF (will timeout and defer to background)
         # The provider starts CU analysis but it won't finish within 1 second,
         # so it defers to a background task. The agent is told the document
         # status is "analyzing" and responds accordingly.
@@ -109,7 +112,7 @@ async def main() -> None:
         print(f"  [Input tokens: {usage.get('input_token_count', 'N/A')}]")
         print(f"Agent: {response}\n")
 
-        # --- Turn 2: Check status (analysis likely still in progress) ---
+        # 5. Turn 2: Check status (analysis likely still in progress)
         print("--- Turn 2: Check status ---")
         print("User: Is the invoice ready yet?")
         response = await agent.run("Is the invoice ready yet?", session=session)
@@ -117,11 +120,11 @@ async def main() -> None:
         print(f"  [Input tokens: {usage.get('input_token_count', 'N/A')}]")
         print(f"Agent: {response}\n")
 
-        # --- Wait for background analysis to complete ---
+        # 6. Wait for background analysis to complete
         print("  (Waiting 30 seconds for CU background analysis to finish...)\n")
         await asyncio.sleep(30)
 
-        # --- Turn 3: Ask again (background task should be resolved now) ---
+        # 7. Turn 3: Ask again (background task should be resolved now)
         # The provider checks the background task, finds it complete, and
         # injects the full document content into context. The agent can now
         # answer questions about the invoice.
@@ -138,3 +141,24 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Turn 1: Upload PDF (max_wait=1s, will defer to background) ---
+User: Analyze this invoice for me.
+  [Input tokens: 319]
+Agent: invoice.pdf is still being analyzed. Please ask again in a moment.
+
+--- Turn 2: Check status ---
+User: Is the invoice ready yet?
+  [Input tokens: 657]
+Agent: Not yet -- invoice.pdf is still in analyzing status.
+
+  (Waiting 30 seconds for CU background analysis to finish...)
+
+--- Turn 3: Ask again (analysis should be complete) ---
+User: What is the total amount due on the invoice?
+  [Input tokens: 1252]
+Agent: The amount due on the invoice is $610.00.
+"""

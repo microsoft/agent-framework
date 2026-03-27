@@ -58,9 +58,10 @@ SAMPLE_PDF_PATH = Path(__file__).resolve().parents[1] / "shared" / "sample_asset
 
 
 async def main() -> None:
+    # 1. Set up credentials
     credential = AzureCliCredential()
 
-    # Create async OpenAI client for vector store operations
+    # 2. Create async OpenAI client for vector store operations
     token = credential.get_token("https://cognitiveservices.azure.com/.default").token
     openai_client = AsyncAzureOpenAI(
         azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
@@ -68,21 +69,21 @@ async def main() -> None:
         azure_ad_token=token,
     )
 
-    # Create LLM client (needed for get_file_search_tool)
+    # 3. Create LLM client (needed for get_file_search_tool)
     client = FoundryChatClient(
         project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
         model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
         credential=credential,
     )
 
-    # Create vector store and file_search tool
+    # 4. Create vector store and file_search tool
     vector_store = await openai_client.vector_stores.create(
         name="cu_large_doc_demo",
         expires_after={"anchor": "last_active_at", "days": 1},
     )
     file_search_tool = client.get_file_search_tool(vector_store_ids=[vector_store.id])
 
-    # Configure CU provider with file_search integration
+    # 5. Configure CU provider with file_search integration
     # When file_search is set, CU-extracted markdown is automatically uploaded
     # to the vector store and the file_search tool is registered on the context.
     cu = ContentUnderstandingContextProvider(
@@ -147,3 +148,19 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+"""
+Sample output:
+
+--- Turn 1: Upload document ---
+Agent: An invoice from Contoso Ltd. to Microsoft Corporation (INV-100).
+  Line items: Consulting Services $60, Document Fee $30, Printing Fee $10.
+  Subtotal $100, Sales tax $10, Total $110, Previous balance $500, Amount due $610.
+
+--- Turn 2: Follow-up (RAG) ---
+Agent: Subtotal $100.00, Sales tax $10.00, Total $110.00,
+  Previous unpaid balance $500.00, Amount due $610.00.
+  Line items: 2 hours @ $30 = $60, 3 @ $10 = $30, 10 pages @ $1 = $10.
+
+Done. Vector store cleaned up automatically.
+"""

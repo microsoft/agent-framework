@@ -42,6 +42,7 @@ See the [samples directory](samples/) which demonstrates:
 - Interactive web UI with DevUI ([02-devui](samples/02-devui/))
 
 ```python
+import asyncio
 from agent_framework import Agent, AgentSession, Message, Content
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingContextProvider
@@ -52,7 +53,7 @@ credential = AzureCliCredential()
 cu = ContentUnderstandingContextProvider(
     endpoint="https://my-resource.cognitiveservices.azure.com/",
     credential=credential,
-    max_wait=None,  # wait until analysis finishes
+    max_wait=None,  # block until CU extraction completes before sending to LLM
 )
 
 client = FoundryChatClient(
@@ -61,24 +62,31 @@ client = FoundryChatClient(
     credential=credential,
 )
 
-async with cu:
-    agent = Agent(
-        client=client,
-        name="DocumentQA",
-        instructions="You are a helpful document analyst.",
-        context_providers=[cu],
-    )
-    session = AgentSession()
+async def main():
+    async with cu:
+        agent = Agent(
+            client=client,
+            name="DocumentQA",
+            instructions="You are a helpful document analyst.",
+            context_providers=[cu],
+        )
+        session = AgentSession()
 
-    response = await agent.run(
-        Message(role="user", contents=[
-            Content.from_text("What's on this invoice?"),
-            Content.from_data(pdf_bytes, "application/pdf",
-                              additional_properties={"filename": "invoice.pdf"}),
-        ]),
-        session=session,
-    )
-    print(response.text)
+        response = await agent.run(
+            Message(role="user", contents=[
+                Content.from_text("What's on this invoice?"),
+                Content.from_uri(
+                    "https://raw.githubusercontent.com/Azure-Samples/"
+                    "azure-ai-content-understanding-assets/main/document/invoice.pdf",
+                    media_type="application/pdf",
+                    additional_properties={"filename": "invoice.pdf"},
+                ),
+            ]),
+            session=session,
+        )
+        print(response.text)
+
+asyncio.run(main())
 ```
 
 ### Supported File Types
