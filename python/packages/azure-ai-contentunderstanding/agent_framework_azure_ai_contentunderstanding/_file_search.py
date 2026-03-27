@@ -18,11 +18,8 @@ the caller's responsibility — the backend only handles file upload/delete.
 from __future__ import annotations
 
 import io
-import logging
 from abc import ABC, abstractmethod
 from typing import Any
-
-logger = logging.getLogger("agent_framework.azure_ai_contentunderstanding")
 
 
 class FileSearchBackend(ABC):

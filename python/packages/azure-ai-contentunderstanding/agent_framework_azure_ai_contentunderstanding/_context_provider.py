@@ -278,10 +278,15 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
 
     async def close(self) -> None:
         """Close the underlying CU client and cancel pending tasks."""
+        tasks_to_cancel = []
         for task in self._pending_tasks.values():
             if not task.done():
                 task.cancel()
+                tasks_to_cancel.append(task)
         self._pending_tasks.clear()
+        # Await cancelled tasks so they don't outlive the client
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         # Clean up uploaded files; the vector store itself is caller-managed.
         if self.file_search and self._uploaded_file_ids:
             await self._cleanup_uploaded_files()
