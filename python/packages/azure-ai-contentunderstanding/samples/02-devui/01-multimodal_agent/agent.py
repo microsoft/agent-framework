@@ -61,8 +61,7 @@ agent = client.as_agent(
     instructions=(
         "You are a helpful document analysis assistant. "
         "When a user uploads files, they are automatically analyzed using Azure Content Understanding. "
-        "Use list_documents() to check which documents are ready, pending, or failed. "
-        "Use get_analyzed_document() to retrieve the content of a specific document. "
+        "Use list_documents() to check which documents are ready, pending, or failed and to see which files are available for answering questions. "
         "Tell the user if any documents are still being analyzed. "
         "You can process PDFs, scanned documents, handwritten images, audio recordings, and video files. "
         "When answering, cite specific content from the documents."
