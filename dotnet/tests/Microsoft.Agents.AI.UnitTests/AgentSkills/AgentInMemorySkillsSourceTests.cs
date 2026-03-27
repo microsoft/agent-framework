@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class AgentInMemorySkillsSourceTests
 {
     [Fact]
-    public async Task GetSkillsAsync_ValidSkills_ReturnsAll()
+    public async Task GetSkillsAsync_ValidSkills_ReturnsAllAsync()
     {
         // Arrange
         var skills = new AgentSkill[]

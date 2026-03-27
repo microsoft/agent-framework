@@ -97,9 +97,11 @@ public sealed class AgentInlineSkillResourceTests
     [Fact]
     public void Constructor_StaticValue_NullValue_Throws()
     {
-        // Act & Assert
+        // Act & Assert — cast needed to target the object overload
+#pragma warning disable IDE0004
         Assert.Throws<ArgumentNullException>(() =>
-            new AgentInlineSkillResource("my-res", null!));
+            new AgentInlineSkillResource("my-res", (object)null!));
+#pragma warning restore IDE0004
     }
 
     [Fact]
@@ -107,7 +109,7 @@ public sealed class AgentInlineSkillResourceTests
     {
         // Act & Assert
         Assert.Throws<ArgumentNullException>(() =>
-            new AgentInlineSkillResource("my-res", (Delegate)null!));
+            new AgentInlineSkillResource("my-res", null!));
     }
 
     [Fact]

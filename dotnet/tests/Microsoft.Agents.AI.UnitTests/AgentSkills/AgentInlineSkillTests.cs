@@ -244,8 +244,10 @@ public sealed class AgentInlineSkillTests
         // Arrange
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => skill.AddResource("config", null!));
+        // Act & Assert — cast needed to target the object overload
+#pragma warning disable IDE0004
+        Assert.Throws<ArgumentNullException>(() => skill.AddResource("config", (object)null!));
+#pragma warning restore IDE0004
     }
 
     [Fact]
@@ -255,7 +257,7 @@ public sealed class AgentInlineSkillTests
         var skill = new AgentInlineSkill("my-skill", "A valid skill.", "Instructions.");
 
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => skill.AddResource("config", (Delegate)null!));
+        Assert.Throws<ArgumentNullException>(() => skill.AddResource("config", null!));
     }
 
     [Fact]
