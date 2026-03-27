@@ -47,7 +47,7 @@ Some samples require extra tool-specific environment variables. See each sample 
 
 | Sample | Description |
 | --- | --- |
-| [FoundryAgent basics](./FoundryAgent_Step01/) | Create a FoundryAgent directly with endpoint and credentials |
+| [FoundryAgent lifecycle](./Agent_Step00_FoundryAgentLifecycle/) | Create a FoundryAgent directly with endpoint and credentials |
 | [Basics (Responses API)](./Agent_Step01_Basics/) | Create and run an agent using AsAIAgent extensions |
 | [Multi-turn conversation](./Agent_Step02.1_MultiturnConversation/) | Multi-turn using sessions and response ID chaining |
 | [Multi-turn with server conversations](./Agent_Step02.2_MultiturnWithServerConversations/) | Server-side conversations visible in Foundry UI |

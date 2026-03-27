@@ -11,7 +11,7 @@ informed: ""
 
 ## Context
 
-The Azure AI Foundry integration exposes two distinct usage patterns:
+The Microsoft Foundry integration exposes two distinct usage patterns:
 
 1. Direct Responses usage, where callers provide model, instructions, and tools at runtime.
 2. Server-side versioned agents, where callers create and manage `AgentVersion` resources through `AIProjectClient.Agents`.

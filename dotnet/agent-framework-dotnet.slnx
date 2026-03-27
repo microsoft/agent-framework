@@ -123,7 +123,7 @@
   </Folder>
   <Folder Name="/Samples/02-agents/AgentsWithFoundry/">
     <File Path="samples/02-agents/AgentsWithFoundry/README.md" />
-    <Project Path="samples/02-agents/AgentsWithFoundry/FoundryAgent_Step01/FoundryAgent_Step01.csproj" />
+    <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step00_FoundryAgentLifecycle/Agent_Step00_FoundryAgentLifecycle.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step01_Basics/Agent_Step01_Basics.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step02.1_MultiturnConversation/Agent_Step02.1_MultiturnConversation.csproj" />
     <Project Path="samples/02-agents/AgentsWithFoundry/Agent_Step02.2_MultiturnWithServerConversations/Agent_Step02.2_MultiturnWithServerConversations.csproj" />
