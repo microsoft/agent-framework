@@ -33,7 +33,7 @@ Then edit `.env` and add your API keys:
 ```bash
 # For OpenAI (minimum required)
 OPENAI_API_KEY="your-api-key-here"
-OPENAI_CHAT_MODEL_ID="gpt-4o-mini"
+OPENAI_CHAT_MODEL="gpt-4o-mini"
 
 # Or for Azure OpenAI
 AZURE_OPENAI_ENDPOINT="your-endpoint"

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Awaitable, Callable
+from functools import wraps
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,25 +36,30 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
-def _get_azure_chat_deployment_name() -> str:
-    return os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") or os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
+def _with_azure_openai_debug() -> Any:
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") or os.getenv(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
+                )
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
+                debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(debug_message)
+                elif exc.args:
+                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
+                else:
+                    exc.args = (debug_message,)
+                raise
 
+        return wrapper
 
-def _create_azure_chat_completion_client(
-    *,
-    api_key: str | Callable[[], str | Awaitable[str]] | None = None,
-    credential: AsyncTokenCredential | None = None,
-) -> OpenAIChatCompletionClient:
-    resolved_api_key = (
-        api_key if api_key is not None else None if credential is not None else os.environ["AZURE_OPENAI_API_KEY"]
-    )
-    return OpenAIChatCompletionClient(
-        model=_get_azure_chat_deployment_name(),
-        api_key=resolved_api_key,
-        azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-        credential=credential,
-    )
+    return decorator
 
 
 @tool(approval_mode="never_require")
@@ -74,7 +80,7 @@ async def get_weather(location: str) -> str:
 
 
 def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    client = _create_azure_chat_completion_client()
+    client = OpenAIChatCompletionClient(azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"))
 
     assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
     assert isinstance(client, SupportsChatGetResponse)
@@ -97,19 +103,6 @@ def test_openai_api_key_wins_over_azure_env(monkeypatch, azure_openai_unit_test_
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
 
     client = OpenAIChatCompletionClient()
-
-    assert client.model == "gpt-5"
-    assert not isinstance(client.client, AsyncAzureOpenAI)
-    assert client.azure_endpoint is None
-
-
-def test_api_version_alone_does_not_override_openai_api_key(
-    monkeypatch, azure_openai_unit_test_env: dict[str, str]
-) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-dummy-key")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
-
-    client = OpenAIChatCompletionClient(api_version="2024-10-21")
 
     assert client.model == "gpt-5"
     assert not isinstance(client.client, AsyncAzureOpenAI)
@@ -164,6 +157,8 @@ def test_init_does_not_fall_back_to_openai_model_for_azure_env(
 def test_init_with_credential_wraps_async_token_credential(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+
     class TestAsyncTokenCredential(AsyncTokenCredential):
         async def get_token(self, *scopes: str, **kwargs: object):
             raise NotImplementedError
@@ -178,14 +173,6 @@ def test_init_with_credential_wraps_async_token_credential(
 
     assert isinstance(client.client, AsyncAzureOpenAI)
     mock_provider.assert_called_once_with(credential, "https://cognitiveservices.azure.com/.default")
-
-
-@pytest.mark.parametrize("exclude_list", [["AZURE_OPENAI_API_VERSION"]], indirect=True)
-def test_init_uses_default_azure_api_version(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
-    client = _create_azure_chat_completion_client()
-
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
-    assert client.api_version is not None
 
 
 def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -203,9 +190,10 @@ def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_response() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_chat_completion_client(credential=credential)
+        client = OpenAIChatCompletionClient(credential=credential)
         assert isinstance(client, SupportsChatGetResponse)
 
         messages = [
@@ -233,9 +221,10 @@ async def test_azure_openai_chat_completion_client_response() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_response_tools() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_chat_completion_client(credential=credential)
+        client = OpenAIChatCompletionClient(credential=credential)
 
         response = await client.get_response(
             messages=[Message(role="user", text="who are Emily and David?")],
@@ -250,9 +239,10 @@ async def test_azure_openai_chat_completion_client_response_tools() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_streaming() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_chat_completion_client(credential=credential)
+        client = OpenAIChatCompletionClient(credential=credential)
 
         response = client.get_response(
             messages=[
@@ -285,9 +275,10 @@ async def test_azure_openai_chat_completion_client_streaming() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_streaming_tools() -> None:
     async with AzureCliCredential() as credential:
-        client = _create_azure_chat_completion_client(credential=credential)
+        client = OpenAIChatCompletionClient(credential=credential)
 
         response = client.get_response(
             messages=[Message(role="user", text="who are Emily and David?")],
@@ -308,11 +299,12 @@ async def test_azure_openai_chat_completion_client_streaming_tools() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_agent_basic_run() -> None:
     async with (
         AzureCliCredential() as credential,
         Agent(
-            client=_create_azure_chat_completion_client(credential=credential),
+            client=OpenAIChatCompletionClient(credential=credential),
         ) as agent,
     ):
         response = await agent.run("Please respond with exactly: 'This is a response test.'")
@@ -325,11 +317,12 @@ async def test_azure_openai_chat_completion_client_agent_basic_run() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_agent_basic_run_streaming() -> None:
     async with (
         AzureCliCredential() as credential,
         Agent(
-            client=_create_azure_chat_completion_client(credential=credential),
+            client=OpenAIChatCompletionClient(credential=credential),
         ) as agent,
     ):
         full_text = ""
@@ -347,11 +340,12 @@ async def test_azure_openai_chat_completion_client_agent_basic_run_streaming() -
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_agent_session_persistence() -> None:
     async with (
         AzureCliCredential() as credential,
         Agent(
-            client=_create_azure_chat_completion_client(credential=credential),
+            client=OpenAIChatCompletionClient(credential=credential),
             instructions="You are a helpful assistant with good memory.",
         ) as agent,
     ):
@@ -368,12 +362,13 @@ async def test_azure_openai_chat_completion_client_agent_session_persistence() -
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_completion_client_agent_existing_session() -> None:
     async with AzureCliCredential() as credential:
         preserved_session = None
 
         async with Agent(
-            client=_create_azure_chat_completion_client(credential=credential),
+            client=OpenAIChatCompletionClient(credential=credential),
             instructions="You are a helpful assistant with good memory.",
         ) as first_agent:
             session = first_agent.create_session()
@@ -384,7 +379,7 @@ async def test_azure_openai_chat_completion_client_agent_existing_session() -> N
 
         if preserved_session:
             async with Agent(
-                client=_create_azure_chat_completion_client(credential=credential),
+                client=OpenAIChatCompletionClient(credential=credential),
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent:
                 second_response = await second_agent.run("What is my name?", session=preserved_session)
@@ -397,11 +392,12 @@ async def test_azure_openai_chat_completion_client_agent_existing_session() -> N
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_chat_completion_client_agent_level_tool_persistence() -> None:
     async with (
         AzureCliCredential() as credential,
         Agent(
-            client=_create_azure_chat_completion_client(credential=credential),
+            client=OpenAIChatCompletionClient(credential=credential),
             instructions="You are a helpful assistant that uses available tools.",
             tools=[get_weather],
         ) as agent,

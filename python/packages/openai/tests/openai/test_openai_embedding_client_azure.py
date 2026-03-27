@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+from functools import wraps
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +25,32 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
     ),
     reason="No real Azure OpenAI endpoint or embedding deployment provided; skipping integration tests.",
 )
+
+
+def _with_azure_openai_debug() -> Any:
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                model = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") or os.getenv(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
+                )
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
+                debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(debug_message)
+                elif exc.args:
+                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
+                else:
+                    exc.args = (debug_message,)
+                raise
+
+        return wrapper
+
+    return decorator
 
 
 def _get_azure_embedding_deployment_name() -> str:
@@ -176,6 +204,7 @@ def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_get_embeddings() -> None:
     async with AzureCliCredential() as credential:
         client = _create_azure_embedding_client(credential=credential)
@@ -194,6 +223,7 @@ async def test_azure_openai_get_embeddings() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_get_embeddings_multiple() -> None:
     async with AzureCliCredential() as credential:
         client = _create_azure_embedding_client(credential=credential)
@@ -208,6 +238,7 @@ async def test_azure_openai_get_embeddings_multiple() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_get_embeddings_with_dimensions() -> None:
     async with AzureCliCredential() as credential:
         client = _create_azure_embedding_client(credential=credential)

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
 
-from agent_framework._middleware import ChatMiddlewareLayer
-from agent_framework._settings import load_settings
-from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
-from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
-from agent_framework._types import Content
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    ChatMiddlewareLayer,
+    Content,
+    FunctionInvocationConfiguration,
+    FunctionInvocationLayer,
+    load_settings,
+)
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -25,9 +28,8 @@ from azure.ai.projects.models import (
 )
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
-
-from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
-from ._shared import resolve_file_ids
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
@@ -43,14 +45,12 @@ else:
     from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework._middleware import (
-        ChatMiddleware,
-        ChatMiddlewareCallable,
-        FunctionMiddleware,
-        FunctionMiddlewareCallable,
-    )
+    from agent_framework import ChatAndFunctionMiddlewareTypes
 
 logger: logging.Logger = logging.getLogger("agent_framework.foundry")
+
+AzureTokenProvider = Callable[[], str | Awaitable[str]]
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 
 class FoundrySettings(TypedDict, total=False):
@@ -65,6 +65,33 @@ class FoundrySettings(TypedDict, total=False):
 
     model: str | None
     project_endpoint: str | None
+
+
+def resolve_file_ids(file_ids: Sequence[str | Content] | None) -> list[str] | None:
+    """Resolve file IDs from strings or hosted-file Content objects."""
+    if not file_ids:
+        return None
+
+    resolved: list[str] = []
+    for item in file_ids:
+        if isinstance(item, str):
+            if not item:
+                raise ValueError("file_ids must not contain empty strings.")
+            resolved.append(item)
+        elif isinstance(item, Content):
+            if item.type != "hosted_file":
+                raise ValueError(
+                    f"Unsupported Content type {item.type!r} for code interpreter file_ids. "
+                    "Only Content.from_hosted_file() is supported."
+                )
+            if item.file_id is None:
+                raise ValueError(
+                    "Content.from_hosted_file() item is missing a file_id. "
+                    "Ensure the Content object has a valid file_id before using it in file_ids."
+                )
+            resolved.append(item.file_id)
+
+    return resolved if resolved else None
 
 
 FoundryChatOptionsT = TypeVar(
@@ -492,9 +519,7 @@ class FoundryChatClient(  # type: ignore[misc]
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        middleware: (
-            Sequence[ChatMiddleware | ChatMiddlewareCallable | FunctionMiddleware | FunctionMiddlewareCallable] | None
-        ) = None,
+        middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         **kwargs: Any,
     ) -> None:

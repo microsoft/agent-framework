@@ -13,24 +13,37 @@ import sys
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
-from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework._settings import load_settings
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    AgentSession,
+    BaseContextProvider,
+    Message,
+    SessionContext,
+    load_settings,
+)
 from azure.ai.projects.aio import AIProjectClient
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from openai.types.responses import ResponseInputItemParam
 
-from ._entra_id_authentication import AzureCredentialTypes
-from ._shared import FoundryProjectSettings
-
 if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
+    from typing import Self, TypedDict  # pragma: no cover
 else:
-    from typing_extensions import Self  # pragma: no cover
+    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
-    from agent_framework._agents import SupportsAgentRun
+    from agent_framework import SupportsAgentRun
+
 
 logger = logging.getLogger(__name__)
+
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+
+
+class FoundryProjectSettings(TypedDict, total=False):
+    """Foundry project settings loaded from FOUNDRY_ environment variables."""
+
+    project_endpoint: str | None
 
 
 class FoundryMemoryProvider(BaseContextProvider):

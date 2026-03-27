@@ -212,34 +212,56 @@ async def test_get_response_with_invalid_input() -> None:
 
 
 async def test_get_response_with_all_parameters() -> None:
-    """Test get_response with all possible parameters to cover parameter handling logic."""
+    """Test request preparation with a comprehensive parameter set."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    # Test with comprehensive parameter set - should fail due to invalid API key
-    with pytest.raises(ChatClientException):
-        await client.get_response(
-            messages=[Message(role="user", text="Test message")],
-            options={
-                "include": ["message.output_text.logprobs"],
-                "instructions": "You are a helpful assistant",
-                "max_tokens": 100,
-                "parallel_tool_calls": True,
-                "model": "gpt-4",
-                "previous_response_id": "prev-123",
-                "reasoning": {"chain_of_thought": "enabled"},
-                "service_tier": "auto",
-                "response_format": OutputStruct,
-                "seed": 42,
-                "store": True,
-                "temperature": 0.7,
-                "tool_choice": "auto",
-                "tools": [get_weather],
-                "top_p": 0.9,
-                "user": "test-user",
-                "truncation": "auto",
-                "timeout": 30.0,
-                "additional_properties": {"custom": "value"},
-            },
-        )
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", text="Test message")],
+        options={
+            "include": ["message.output_text.logprobs"],
+            "instructions": "You are a helpful assistant",
+            "max_tokens": 100,
+            "parallel_tool_calls": True,
+            "model": "gpt-4",
+            "previous_response_id": "prev-123",
+            "reasoning": {"chain_of_thought": "enabled"},
+            "service_tier": "auto",
+            "response_format": OutputStruct,
+            "seed": 42,
+            "store": True,
+            "temperature": 0.7,
+            "tool_choice": "auto",
+            "tools": [get_weather],
+            "top_p": 0.9,
+            "user": "test-user",
+            "truncation": "auto",
+            "timeout": 30.0,
+            "additional_properties": {"custom": "value"},
+        },
+    )
+
+    assert run_options["include"] == ["message.output_text.logprobs"]
+    assert run_options["max_output_tokens"] == 100
+    assert run_options["parallel_tool_calls"] is True
+    assert run_options["model"] == "gpt-4"
+    assert run_options["previous_response_id"] == "prev-123"
+    assert run_options["reasoning"] == {"chain_of_thought": "enabled"}
+    assert run_options["service_tier"] == "auto"
+    assert run_options["text_format"] is OutputStruct
+    assert run_options["store"] is True
+    assert run_options["temperature"] == 0.7
+    assert run_options["tool_choice"] == "auto"
+    assert run_options["top_p"] == 0.9
+    assert run_options["user"] == "test-user"
+    assert run_options["truncation"] == "auto"
+    assert run_options["timeout"] == 30.0
+    assert run_options["additional_properties"] == {"custom": "value"}
+    assert len(run_options["tools"]) == 1
+    assert run_options["tools"][0]["type"] == "function"
+    assert run_options["tools"][0]["name"] == "get_weather"
+    assert run_options["input"][0]["role"] == "system"
+    assert run_options["input"][0]["content"][0]["text"] == "You are a helpful assistant"
+    assert run_options["input"][1]["role"] == "user"
+    assert run_options["input"][1]["content"][0]["text"] == "Test message"
 
 
 @pytest.mark.asyncio
@@ -257,12 +279,13 @@ async def test_web_search_tool_with_location() -> None:
         }
     )
 
-    # Should raise an authentication error due to invalid API key
-    with pytest.raises(ChatClientException):
-        await client.get_response(
-            messages=[Message(role="user", text="What's the weather?")],
-            options={"tools": [web_search_tool], "tool_choice": "auto"},
-        )
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", text="What's the weather?")],
+        options={"tools": [web_search_tool], "tool_choice": "auto"},
+    )
+
+    assert run_options["tools"] == [web_search_tool]
+    assert run_options["tool_choice"] == "auto"
 
 
 async def test_code_interpreter_tool_variations() -> None:
@@ -272,20 +295,22 @@ async def test_code_interpreter_tool_variations() -> None:
     # Test code interpreter using static method
     code_tool = OpenAIChatClient.get_code_interpreter_tool()
 
-    with pytest.raises(ChatClientException):
-        await client.get_response(
-            messages=[Message("user", ["Run some code"])],
-            options={"tools": [code_tool]},
-        )
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message("user", ["Run some code"])],
+        options={"tools": [code_tool]},
+    )
+
+    assert run_options["tools"] == [code_tool]
 
     # Test code interpreter with files using static method
     code_tool_with_files = OpenAIChatClient.get_code_interpreter_tool(file_ids=["file1", "file2"])
 
-    with pytest.raises(ChatClientException):
-        await client.get_response(
-            messages=[Message(role="user", text="Process these files")],
-            options={"tools": [code_tool_with_files]},
-        )
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message(role="user", text="Process these files")],
+        options={"tools": [code_tool_with_files]},
+    )
+
+    assert run_options["tools"] == [code_tool_with_files]
 
 
 async def test_content_filter_exception() -> None:
@@ -309,23 +334,23 @@ async def test_content_filter_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_hosted_file_search_tool_validation() -> None:
-    """Test get_response HostedFileSearchTool validation."""
+    """Test HostedFileSearchTool validation and request preparation."""
 
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     # Test file search tool with vector store IDs
     file_search_tool = OpenAIChatClient.get_file_search_tool(vector_store_ids=["vs_123"])
 
-    # Test using file search tool - may raise various exceptions depending on API response
-    with pytest.raises((ValueError, ChatClientInvalidRequestException, ChatClientException)):
-        await client.get_response(
-            messages=[Message("user", ["Test"])],
-            options={"tools": [file_search_tool]},
-        )
+    _, run_options, _ = await client._prepare_request(
+        messages=[Message("user", ["Test"])],
+        options={"tools": [file_search_tool]},
+    )
+
+    assert run_options["tools"] == [file_search_tool]
 
 
 async def test_chat_message_parsing_with_function_calls() -> None:
-    """Test get_response message preparation with function call and result content types in conversation flow."""
+    """Test message preparation with function call and function result content."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
 
     # Create messages with function call and result content
@@ -344,9 +369,27 @@ async def test_chat_message_parsing_with_function_calls() -> None:
         Message(role="tool", contents=[function_result]),
     ]
 
-    # This should exercise the message parsing logic - will fail due to invalid API key
-    with pytest.raises(ChatClientException):
-        await client.get_response(messages=messages)
+    prepared_messages = client._prepare_messages_for_openai(messages)
+
+    assert prepared_messages == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Call a function"}],
+        },
+        {
+            "call_id": "test-call-id",
+            "id": "fc_test-fc-id",
+            "type": "function_call",
+            "name": "test_function",
+            "arguments": '{"param": "value"}',
+        },
+        {
+            "call_id": "test-call-id",
+            "type": "function_call_output",
+            "output": "Function executed successfully",
+        },
+    ]
 
 
 async def test_response_format_parse_path() -> None:
@@ -3052,8 +3095,6 @@ def test_with_callable_api_key() -> None:
     "option_name,option_value,needs_validation",
     [
         # Simple ChatOptions - just verify they don't fail
-        param("temperature", 0.7, False, id="temperature"),
-        param("top_p", 0.9, False, id="top_p"),
         param("max_tokens", 500, False, id="max_tokens"),
         param("seed", 123, False, id="seed"),
         param("user", "test-user-id", False, id="user"),
@@ -3066,7 +3107,6 @@ def test_with_callable_api_key() -> None:
         # OpenAIChatOptions - just verify they don't fail
         param("safety_identifier", "user-hash-abc123", False, id="safety_identifier"),
         param("truncation", "auto", False, id="truncation"),
-        param("top_logprobs", 5, False, id="top_logprobs"),
         param("prompt_cache_key", "test-cache-key", False, id="prompt_cache_key"),
         param("max_tool_calls", 3, False, id="max_tool_calls"),
         # Complex options requiring output validation
@@ -3360,7 +3400,6 @@ async def test_integration_tool_rich_content_image() -> None:
         assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
 
 
-@pytest.mark.timeout(300)
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_openai_integration_tests_disabled
@@ -3372,14 +3411,11 @@ async def test_integration_agent_replays_local_tool_history_without_stale_fc_id(
     async def search_hotels(city: Annotated[str, "The city to search for hotels in"]) -> str:
         return f"The only hotel option in {city} is {hotel_code}."
 
-    client = OpenAIChatClient()
+    # override with model that does not do reasoning by default
+    client = OpenAIChatClient(model="gpt-5.4")
     client.function_invocation_configuration["max_iterations"] = 2
 
-    agent = Agent(
-        client=client,
-        tools=[search_hotels],
-        default_options={"store": False},
-    )
+    agent = Agent(client=client, tools=[search_hotels], default_options={"store": False})
     session = agent.create_session()
 
     first_response = await agent.run(

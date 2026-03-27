@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import os
+from functools import wraps
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agent_framework.azure import AzureOpenAIEmbeddingClient
-from agent_framework_openai import OpenAIEmbeddingOptions
+from agent_framework.openai import OpenAIEmbeddingOptions
 from azure.identity.aio import AzureCliCredential
 from openai.types import CreateEmbeddingResponse
 from openai.types import Embedding as OpenAIEmbedding
 from openai.types.create_embedding_response import Usage
+
+pytestmark = pytest.mark.filterwarnings("ignore:AzureOpenAIEmbeddingClient is deprecated\\..*:DeprecationWarning")
 
 
 def _make_openai_response(
@@ -116,6 +120,32 @@ skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
 )
 
 
+def _with_azure_openai_debug() -> Any:
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                model = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") or os.getenv(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
+                )
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
+                debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(debug_message)
+                elif exc.args:
+                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
+                else:
+                    exc.args = (debug_message,)
+                raise
+
+        return wrapper
+
+    return decorator
+
+
 def _get_azure_embedding_deployment_name() -> str:
     return os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME") or os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"]
 
@@ -140,6 +170,7 @@ def _create_azure_openai_embedding_client(
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_azure_openai_get_embeddings() -> None:
     """End-to-end test of Azure OpenAI embedding generation."""
     async with AzureCliCredential() as credential:
@@ -159,6 +190,7 @@ async def test_integration_azure_openai_get_embeddings() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_azure_openai_get_embeddings_multiple() -> None:
     """Test Azure OpenAI embedding generation for multiple inputs."""
     async with AzureCliCredential() as credential:
@@ -174,6 +206,7 @@ async def test_integration_azure_openai_get_embeddings_multiple() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_openai_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_azure_openai_get_embeddings_with_dimensions() -> None:
     """Test Azure OpenAI embedding generation with custom dimensions."""
     async with AzureCliCredential() as credential:

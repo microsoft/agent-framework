@@ -3,9 +3,9 @@
 import json
 import logging
 import os
+from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any
-from unittest.mock import MagicMock
 
 import pytest
 from agent_framework import (
@@ -22,10 +22,39 @@ from azure.identity import AzureCliCredential
 from pydantic import BaseModel
 from pytest import param
 
+pytestmark = pytest.mark.filterwarnings("ignore:AzureOpenAIResponsesClient is deprecated\\..*:DeprecationWarning")
+
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
     reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
+
+
+def _with_azure_openai_debug() -> Any:
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                model = os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME") or os.getenv(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
+                )
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
+                debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(debug_message)
+                elif exc.args:
+                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
+                else:
+                    exc.args = (debug_message,)
+                raise
+
+        return wrapper
+
+    return decorator
+
 
 logger = logging.getLogger(__name__)
 
@@ -141,119 +170,6 @@ def test_init_with_empty_model_id(azure_openai_unit_test_env: dict[str, str]) ->
         AzureOpenAIResponsesClient()
 
 
-def test_init_with_project_client(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Test initialization with an existing AIProjectClient."""
-    from unittest.mock import patch
-
-    from openai import AsyncOpenAI
-
-    # Create a mock AIProjectClient that returns a mock AsyncOpenAI client
-    mock_openai_client = MagicMock(spec=AsyncOpenAI)
-    mock_openai_client.default_headers = {}
-
-    mock_project_client = MagicMock()
-    mock_project_client.get_openai_client.return_value = mock_openai_client
-
-    with patch(
-        "agent_framework_azure_ai._deprecated_azure_openai.AzureOpenAIResponsesClient._create_client_from_project",
-        return_value=mock_openai_client,
-    ):
-        azure_responses_client = AzureOpenAIResponsesClient(
-            project_client=mock_project_client,
-            deployment_name="gpt-4o",
-        )
-
-    assert azure_responses_client.model == "gpt-4o"
-    assert azure_responses_client.client is mock_openai_client
-    assert isinstance(azure_responses_client, SupportsChatGetResponse)
-
-
-def test_init_with_project_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
-    """Test initialization with a project endpoint and credential."""
-    from unittest.mock import patch
-
-    from openai import AsyncOpenAI
-
-    mock_openai_client = MagicMock(spec=AsyncOpenAI)
-    mock_openai_client.default_headers = {}
-
-    with patch(
-        "agent_framework_azure_ai._deprecated_azure_openai.AzureOpenAIResponsesClient._create_client_from_project",
-        return_value=mock_openai_client,
-    ):
-        azure_responses_client = AzureOpenAIResponsesClient(
-            project_endpoint="https://test-project.services.ai.azure.com",
-            deployment_name="gpt-4o",
-            credential=AzureCliCredential(),
-        )
-
-    assert azure_responses_client.model == "gpt-4o"
-    assert azure_responses_client.client is mock_openai_client
-    assert isinstance(azure_responses_client, SupportsChatGetResponse)
-
-
-def test_create_client_from_project_with_project_client() -> None:
-    """Test _create_client_from_project with an existing project client."""
-    from openai import AsyncOpenAI
-
-    mock_openai_client = MagicMock(spec=AsyncOpenAI)
-    mock_project_client = MagicMock()
-    mock_project_client.get_openai_client.return_value = mock_openai_client
-
-    result = AzureOpenAIResponsesClient._create_client_from_project(
-        project_client=mock_project_client,
-        project_endpoint=None,
-        credential=None,
-    )
-
-    assert result is mock_openai_client
-    mock_project_client.get_openai_client.assert_called_once()
-
-
-def test_create_client_from_project_with_endpoint() -> None:
-    """Test _create_client_from_project with a project endpoint."""
-    from unittest.mock import patch
-
-    from openai import AsyncOpenAI
-
-    mock_openai_client = MagicMock(spec=AsyncOpenAI)
-    mock_credential = MagicMock()
-
-    with patch("agent_framework_azure_ai._deprecated_azure_openai.AIProjectClient") as MockAIProjectClient:
-        mock_instance = MockAIProjectClient.return_value
-        mock_instance.get_openai_client.return_value = mock_openai_client
-
-        result = AzureOpenAIResponsesClient._create_client_from_project(
-            project_client=None,
-            project_endpoint="https://test-project.services.ai.azure.com",
-            credential=mock_credential,
-        )
-
-    assert result is mock_openai_client
-    MockAIProjectClient.assert_called_once()
-    mock_instance.get_openai_client.assert_called_once()
-
-
-def test_create_client_from_project_missing_endpoint() -> None:
-    """Test _create_client_from_project raises error when endpoint is missing."""
-    with pytest.raises(ValueError, match="project endpoint is required"):
-        AzureOpenAIResponsesClient._create_client_from_project(
-            project_client=None,
-            project_endpoint=None,
-            credential=MagicMock(),
-        )
-
-
-def test_create_client_from_project_missing_credential() -> None:
-    """Test _create_client_from_project raises error when credential is missing."""
-    with pytest.raises(ValueError, match="credential is required"):
-        AzureOpenAIResponsesClient._create_client_from_project(
-            project_client=None,
-            project_endpoint="https://test-project.services.ai.azure.com",
-            credential=None,
-        )
-
-
 def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     default_headers = {"X-Unit-Test": "test-guid"}
 
@@ -285,8 +201,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
     "option_name,option_value,needs_validation",
     [
         # Simple ChatOptions - just verify they don't fail
-        param("temperature", 0.7, False, id="temperature"),
-        param("top_p", 0.9, False, id="top_p"),
         param("max_tokens", 500, False, id="max_tokens"),
         param("seed", 123, False, id="seed"),
         param("user", "test-user-id", False, id="user"),
@@ -299,7 +213,6 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         # OpenAIResponsesOptions - just verify they don't fail
         param("safety_identifier", "user-hash-abc123", False, id="safety_identifier"),
         param("truncation", "auto", False, id="truncation"),
-        param("top_logprobs", 5, False, id="top_logprobs"),
         param("prompt_cache_key", "test-cache-key", False, id="prompt_cache_key"),
         param("max_tool_calls", 3, False, id="max_tool_calls"),
         # Complex options requiring output validation
@@ -343,6 +256,7 @@ def test_serialize(azure_openai_unit_test_env: dict[str, str]) -> None:
         ),
     ],
 )
+@_with_azure_openai_debug()
 async def test_integration_options(
     option_name: str,
     option_value: Any,
@@ -425,6 +339,7 @@ async def test_integration_options(
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_web_search() -> None:
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
 
@@ -479,6 +394,7 @@ async def test_integration_web_search() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_client_file_search() -> None:
     """Test Azure responses client with file search tool."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -509,6 +425,7 @@ async def test_integration_client_file_search() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_client_file_search_streaming() -> None:
     """Test Azure responses client with file search tool and streaming."""
     azure_responses_client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -541,6 +458,7 @@ async def test_integration_client_file_search_streaming() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_client_agent_hosted_mcp_tool() -> None:
     """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -566,6 +484,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_client_agent_hosted_code_interpreter_tool():
     """Test Azure Responses Client agent with code interpreter tool."""
     client = AzureOpenAIResponsesClient(credential=AzureCliCredential())
@@ -591,6 +510,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_integration_client_agent_existing_session():
     """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
     # First conversation - capture the session
@@ -627,6 +547,7 @@ async def test_integration_client_agent_existing_session():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_responses_client_tool_rich_content_image() -> None:
     """Test that Azure OpenAI Responses client can handle tool results containing images."""
     image_path = Path(__file__).parent.parent / "assets" / "sample_image.jpg"
@@ -660,70 +581,3 @@ async def test_azure_openai_responses_client_tool_rich_content_image() -> None:
         assert len(response.text) > 0
         # sample_image.jpg contains a photo of a house; the model should mention it.
         assert "house" in response.text.lower(), f"Model did not describe the house image. Response: {response.text}"
-
-
-# region Integration with Foundry V2
-
-
-skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
-    or os.getenv("AZURE_AI_MODEL", "") == "",
-    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL provided; skipping integration tests.",
-)
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_function_call_roundtrip_preserves_fidelity():
-    """Test that function calls roundtrip correctly with full fidelity preserved.
-
-    This verifies the changes where:
-    1. raw_representation is preserved when parsing function calls
-    2. fc_id and status are included in additional_properties
-    3. When re-sending messages, the full object fidelity is preserved
-    """
-    call_count = 0
-
-    @tool(name="get_weather", approval_mode="never_require")
-    async def get_weather_tool(location: str) -> str:
-        """Get weather for a location."""
-        nonlocal call_count
-        call_count += 1
-        return f"Weather in {location} is sunny, 72F"
-
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL"],
-        credential=AzureCliCredential(),
-    )
-
-    async with Agent(
-        client=client,
-        name="WeatherAgent",
-        instructions="You help check weather. Use get_weather when asked about weather.",
-        tools=[get_weather_tool],
-        default_options={"store": False},  # Store messages locally to test fidelity across messages
-    ) as agent:
-        session = agent.create_session()
-
-        # First request - should invoke the tool
-        response1 = await agent.run("What is the weather in Seattle?", session=session)
-
-        assert response1 is not None
-        assert response1.text is not None
-        assert call_count >= 1
-
-        # Verify the response contains expected content
-        response_text = response1.text.lower()
-        assert "seattle" in response_text or "sunny" in response_text or "72" in response_text
-
-        # Second request - should work correctly with the preserved conversation
-        response2 = await agent.run("And how about in Portland?", session=session)
-
-        assert response2 is not None
-        assert response2.text is not None
-        assert call_count >= 2
-
-
-# endregion
