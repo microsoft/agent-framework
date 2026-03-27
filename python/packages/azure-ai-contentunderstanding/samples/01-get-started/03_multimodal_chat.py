@@ -93,8 +93,8 @@ async def main() -> None:
             "Give a brief summary of each file."
         )
         print("--- Turn 1: Upload PDF + audio + video (parallel analysis) ---")
+        print("  (CU analysis may take a few minutes for these audio/video files...)")
         print(f"User: {turn1_prompt}")
-        print("  (CU analysis may take 1-2 minutes for audio/video files...)")
         t0 = time.perf_counter()
         response = await agent.run(
             Message(

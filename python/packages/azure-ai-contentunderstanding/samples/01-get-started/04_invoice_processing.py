@@ -14,7 +14,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent_framework import Agent, Content, Message
+from agent_framework import Agent, AgentSession, Content, Message
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -51,6 +51,7 @@ async def main() -> None:
         endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
         credential=credential,
         analyzer_id="prebuilt-invoice",
+        max_wait=None,  # wait until CU analysis finishes
         output_sections=[
             AnalysisSection.MARKDOWN,
             AnalysisSection.FIELDS,
@@ -76,6 +77,8 @@ async def main() -> None:
             context_providers=[cu],
         )
 
+        session = AgentSession()
+
         # --- Upload an invoice PDF ---
         print("--- Upload Invoice ---")
 
@@ -96,13 +99,17 @@ async def main() -> None:
                         additional_properties={"filename": SAMPLE_PDF_PATH.name},
                     ),
                 ],
-            )
+            ),
+            session=session,
         )
         print(f"Agent: {response}\n")
 
         # --- Follow-up: ask about specific fields ---
         print("--- Follow-up ---")
-        response = await agent.run("What is the payment term? Are there any fields with low confidence?")
+        response = await agent.run(
+            "What is the payment term? Are there any fields with low confidence?",
+            session=session,
+        )
         print(f"Agent: {response}\n")
 
 
