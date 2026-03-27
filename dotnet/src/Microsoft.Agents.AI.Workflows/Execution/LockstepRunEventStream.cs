@@ -59,10 +59,6 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
         using CancellationTokenSource linkedSource = CancellationTokenSource.CreateLinkedTokenSource(this._stopCancellation.Token, cancellationToken);
 
-        // Re-emit any pending external requests that were restored from a checkpoint
-        // before this subscription was active. For non-resume starts this is a no-op.
-        await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
-
         // Re-establish session as parent so the run activity nests correctly.
         Activity.Current = this._sessionActivity;
 
@@ -77,6 +73,11 @@ internal sealed class LockstepRunEventStream : IRunEventStream
 
             // Emit WorkflowStartedEvent to the event stream for consumers
             this._eventSink.Enqueue(new WorkflowStartedEvent());
+
+            // Re-emit any pending external requests that were restored from a checkpoint
+            // before this subscription was active. For non-resume starts this is a no-op.
+            // This runs after WorkflowStartedEvent so consumers always see the started event first.
+            await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
 
             // When resuming from a checkpoint with only pending requests (no queued messages),
             // the inner processing loop won't execute, so we must drain events now.

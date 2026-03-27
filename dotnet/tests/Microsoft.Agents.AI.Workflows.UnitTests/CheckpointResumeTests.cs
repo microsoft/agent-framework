@@ -38,30 +38,28 @@ public class CheckpointResumeTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // Act 1: Run workflow, collect pending requests and a checkpoint.
-        await using StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
-                                                     .RunStreamingAsync(workflow, "Hello");
-
         List<ExternalRequest> originalRequests = [];
         CheckpointInfo? checkpoint = null;
 
-        await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "Hello"))
         {
-            if (evt is RequestInfoEvent requestInfo)
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
             {
-                originalRequests.Add(requestInfo.Request);
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    originalRequests.Add(requestInfo.Request);
+                }
+
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
             }
 
-            if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
-            {
-                checkpoint = cp;
-            }
+            originalRequests.Should().NotBeEmpty("the workflow should have created at least one external request");
+            checkpoint.Should().NotBeNull("a checkpoint should have been created");
         }
-
-        originalRequests.Should().NotBeEmpty("the workflow should have created at least one external request");
-        checkpoint.Should().NotBeNull("a checkpoint should have been created");
-
-        // Dispose the first run to release ownership before resuming.
-        await firstRun.DisposeAsync();
 
         // Act 2: Resume from the checkpoint.
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
@@ -107,20 +105,21 @@ public class CheckpointResumeTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint with pending requests.
-        await using StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
-                                                     .RunStreamingAsync(workflow, "Hello");
-
         CheckpointInfo? checkpoint = null;
-        await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
-        {
-            if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
-            {
-                checkpoint = cp;
-            }
-        }
 
-        checkpoint.Should().NotBeNull();
-        await firstRun.DisposeAsync();
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "Hello"))
+        {
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
+            }
+
+            checkpoint.Should().NotBeNull();
+        }
 
         // Act: Resume from the checkpoint and consume events so the run loop processes.
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
@@ -159,28 +158,28 @@ public class CheckpointResumeTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect checkpoint + pending request.
-        await using StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
-                                                     .RunStreamingAsync(workflow, "Hello");
-
         ExternalRequest? pendingRequest = null;
         CheckpointInfo? checkpoint = null;
 
-        await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "Hello"))
         {
-            if (evt is RequestInfoEvent requestInfo)
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
             {
-                pendingRequest = requestInfo.Request;
+                if (evt is RequestInfoEvent requestInfo)
+                {
+                    pendingRequest = requestInfo.Request;
+                }
+
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
             }
 
-            if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
-            {
-                checkpoint = cp;
-            }
+            pendingRequest.Should().NotBeNull();
+            checkpoint.Should().NotBeNull();
         }
-
-        pendingRequest.Should().NotBeNull();
-        checkpoint.Should().NotBeNull();
-        await firstRun.DisposeAsync();
 
         // Act: Resume and respond to the restored request.
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
@@ -293,11 +292,14 @@ public class CheckpointResumeTests
         CheckpointManager checkpointManager = CheckpointManager.CreateInMemory();
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
-        await using StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
-                                                     .RunStreamingAsync(workflow, "Hello");
+        ExternalRequest pendingRequest;
+        CheckpointInfo checkpoint;
 
-        (ExternalRequest pendingRequest, CheckpointInfo checkpoint) = await CapturePendingRequestAndCheckpointAsync(firstRun);
-        await firstRun.DisposeAsync();
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "Hello"))
+        {
+            (pendingRequest, checkpoint) = await CapturePendingRequestAndCheckpointAsync(firstRun);
+        }
 
         // Act
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
@@ -346,20 +348,21 @@ public class CheckpointResumeTests
         InProcessExecutionEnvironment env = environment.ToWorkflowExecutionEnvironment();
 
         // First run: collect a checkpoint with pending requests.
-        await using StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
-                                                     .RunStreamingAsync(workflow, "Hello");
-
         CheckpointInfo? checkpoint = null;
-        await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
-        {
-            if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
-            {
-                checkpoint = cp;
-            }
-        }
 
-        checkpoint.Should().NotBeNull();
-        await firstRun.DisposeAsync();
+        await using (StreamingRun firstRun = await env.WithCheckpointing(checkpointManager)
+                                                      .RunStreamingAsync(workflow, "Hello"))
+        {
+            await foreach (WorkflowEvent evt in firstRun.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                if (evt is SuperStepCompletedEvent step && step.CompletionInfo?.Checkpoint is { } cp)
+                {
+                    checkpoint = cp;
+                }
+            }
+
+            checkpoint.Should().NotBeNull();
+        }
 
         // Act: Resume with republishPendingEvents: false via the internal API.
         await using StreamingRun resumed = await env.WithCheckpointing(checkpointManager)
