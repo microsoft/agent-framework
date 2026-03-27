@@ -4,8 +4,9 @@
 // The Memory Search Tool enables agents to recall information from previous conversations,
 // supporting user profile persistence and chat summaries across sessions.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
@@ -36,7 +37,7 @@ AIProjectClient aiProjectClient = new(new Uri(endpoint), credential);
 await EnsureMemoryStoreAsync();
 
 // Create the Memory Search tool configuration
-MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelay = 0 };
+MemorySearchPreviewTool memorySearchTool = new(memoryStoreName, userScope) { UpdateDelayInSecs = 0 };
 
 // Create agent using Option 1 (MEAI) or Option 2 (Native SDK)
 AIAgent agent = await CreateAgentWithMEAI();
@@ -128,8 +129,8 @@ async Task EnsureMemoryStoreAsync()
 
     MemoryUpdateResult updateResult = await aiProjectClient.MemoryStores.WaitForMemoriesUpdateAsync(
         memoryStoreName: memoryStoreName,
-        options: memoryOptions,
-        pollingInterval: 500);
+        pollingInterval: 500,
+        options: memoryOptions);
 
     if (updateResult.Status == MemoryStoreUpdateStatus.Failed)
     {

@@ -6,23 +6,19 @@ import tempfile
 from pathlib import Path
 
 import anyio
-from agent_framework import Content
+from agent_framework import Agent, Content
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
-
 """OpenAI Responses Client Streaming Image Generation Example
-
 Demonstrates streaming partial image generation using OpenAI's image generation tool.
 Shows progressive image rendering with partial images for improved user experience.
-
 Note: The number of partial images received depends on generation speed:
 - High quality/complex images: More partials (generation takes longer)
 - Low quality/simple images: Fewer partials (generation completes quickly)
 - You may receive fewer partial images than requested if generation is fast
-
 Important: The final partial image IS the complete, full-quality image. Each partial
 represents a progressive refinement, with the last one being the finished result.
 """
@@ -35,7 +31,6 @@ async def save_image_from_data_uri(data_uri: str, filename: str) -> None:
             # Extract base64 data
             base64_data = data_uri.split(",", 1)[1]
             image_bytes = base64.b64decode(base64_data)
-
             # Save to file
             await anyio.Path(filename).write_bytes(image_bytes)
             print(f"    Saved: {filename} ({len(image_bytes) / 1024:.1f} KB)")
@@ -46,10 +41,10 @@ async def save_image_from_data_uri(data_uri: str, filename: str) -> None:
 async def main():
     """Demonstrate streaming image generation with partial images."""
     print("=== OpenAI Streaming Image Generation Example ===\n")
-
     # Create agent with streaming image generation enabled
     client = OpenAIResponsesClient()
-    agent = client.as_agent(
+    agent = Agent(
+        client=client,
         instructions="You are a helpful agent that can generate images.",
         tools=[
             client.get_image_generation_tool(
@@ -59,18 +54,14 @@ async def main():
             )
         ],
     )
-
     query = "Draw a beautiful sunset over a calm ocean with sailboats"
     print(f" User: {query}")
     print()
-
     # Track partial images
     image_count = 0
-
     # Use temp directory for output
     output_dir = Path(tempfile.gettempdir()) / "generated_images"
     output_dir.mkdir(exist_ok=True)
-
     print(" Streaming response:")
     async for update in agent.run(query, stream=True):
         for content in update.contents:
@@ -81,18 +72,14 @@ async def main():
                 image_output: Content = content.outputs
                 if image_output.type == "data" and image_output.additional_properties.get("is_partial_image"):
                     print(f"     Image {image_count} received")
-
                     # Extract file extension from media_type (e.g., "image/png" -> "png")
                     extension = "png"  # Default fallback
                     if image_output.media_type and "/" in image_output.media_type:
                         extension = image_output.media_type.split("/")[-1]
-
                     # Save images with correct extension
                     filename = output_dir / f"image{image_count}.{extension}"
                     await save_image_from_data_uri(image_output.uri, str(filename))
-
                     image_count += 1
-
     # Summary
     print("\n Summary:")
     print(f"    Images received: {image_count}")

@@ -25,8 +25,9 @@ var stateStore = new Dictionary<string, JsonElement?>();
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
+     .GetResponsesClient()
      .AsAIAgent(
+        model: deploymentName,
         name: "SpaceNovelWriter",
         instructions: "You are a space novel writer. Always research relevant facts and generate character profiles for the main characters before writing novels." +
                       "Write complete chapters without asking for approval or feedback. Do not ask the user about tone, style, pace, or format preferences - just write the novel based on the request.",

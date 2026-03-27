@@ -53,6 +53,9 @@ internal sealed class AsyncRunHandle : ICheckpointingHandle, IAsyncDisposable
     public ValueTask<RunStatus> GetStatusAsync(CancellationToken cancellationToken = default)
         => this._eventStream.GetStatusAsync(cancellationToken);
 
+    internal bool TryGetResponsePortExecutorId(string portId, out string? executorId)
+        => this._stepRunner.TryGetResponsePortExecutorId(portId, out executorId);
+
     public async IAsyncEnumerable<WorkflowEvent> TakeEventStreamAsync(bool blockOnPendingRequest, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         //Debug.Assert(breakOnHalt);

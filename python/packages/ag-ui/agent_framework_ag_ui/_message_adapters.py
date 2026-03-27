@@ -242,8 +242,16 @@ def _deduplicate_messages(messages: list[Message]) -> list[Message]:
             unique_messages.append(msg)
 
         else:
-            content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
-            key = (role_value, hash(content_str))
+            # Use message_id for deduplication when available — two messages with the
+            # same id are definitively the same message (e.g. upstream replays), while
+            # different messages that happen to share identical content (e.g. repeated
+            # "yes" confirmations) will have distinct ids and be preserved.
+            # Fall back to content-hash when message_id is absent or empty.
+            if msg.message_id:
+                key = ("id", msg.message_id)
+            else:
+                content_str = str([str(c) for c in msg.contents]) if msg.contents else ""
+                key = ("content", role_value, hash(content_str))
 
             if key in seen_keys:
                 logger.info(f"Skipping duplicate message at index {idx}: role={role_value}")
@@ -596,6 +604,10 @@ def agui_messages_to_agent_framework(messages: list[dict[str, Any]]) -> list[Mes
         # Handle standard tool result messages early (role="tool") to preserve provider invariants
         # This path maps AG‑UI tool messages to function_result content with the correct tool_call_id
         role_str = normalize_agui_role(msg.get("role", "user"))
+        if role_str == "reasoning":
+            # Reasoning messages are UI-only state carried in MESSAGES_SNAPSHOT.
+            # They should not be forwarded to the LLM provider.
+            continue
         if role_str == "tool":
             # Prefer explicit tool_call_id fields; fall back to backend fields only if necessary
             tool_call_id = msg.get("tool_call_id") or msg.get("toolCallId")
@@ -1011,6 +1023,11 @@ def agui_messages_to_snapshot_format(messages: list[dict[str, Any]]) -> list[dic
                 del normalized_msg["tool_call_id"]
             elif "toolCallId" not in normalized_msg:
                 normalized_msg["toolCallId"] = ""
+
+        # Normalize encrypted_value to encryptedValue for reasoning messages
+        if normalized_msg.get("role") == "reasoning" and "encrypted_value" in normalized_msg:
+            normalized_msg["encryptedValue"] = normalized_msg["encrypted_value"]
+            del normalized_msg["encrypted_value"]
 
         result.append(normalized_msg)
 

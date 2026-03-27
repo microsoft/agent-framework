@@ -7,7 +7,7 @@ from textwrap import dedent
 from typing import Any
 
 from agent_framework import Agent, Skill, SkillResource, SkillsProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -75,7 +75,9 @@ unit_converter_skill = Skill(
 # ---------------------------------------------------------------------------
 # 2. Dynamic Resources — callable function via @skill.resource
 # ---------------------------------------------------------------------------
-@unit_converter_skill.resource(name="conversion-policy", description="Current conversion formatting and rounding policy")
+@unit_converter_skill.resource(
+    name="conversion-policy", description="Current conversion formatting and rounding policy"
+)
 def conversion_policy(**kwargs: Any) -> Any:
     """Return the current conversion policy.
 
@@ -126,12 +128,12 @@ def convert_units(value: float, factor: float, **kwargs: Any) -> str:
 
 async def main() -> None:
     """Run the code-defined skills demo."""
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
 
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model=deployment,
         credential=AzureCliCredential(),
     )
 
@@ -148,8 +150,7 @@ async def main() -> None:
         print("Converting units")
         print("-" * 60)
         response = await agent.run(
-            "How many kilometers is a marathon (26.2 miles)? "
-            "And how many pounds is 75 kilograms?",
+            "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
             precision=2,
         )
         print(f"Agent: {response}\n")

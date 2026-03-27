@@ -176,10 +176,12 @@ public class ChatClientAgent_ChatOptionsMergingTests
     }
 
     /// <summary>
-    /// Verify that ChatOptions merging returns null when both agent and request have no ChatOptions.
+    /// Verify that ChatOptions merging returns a non-null ChatOptions instance with null ConversationId
+    /// when both agent and request have no ChatOptions. The sentinel conversation ID is set for
+    /// per-service-call persistence and stripped before reaching the inner client.
     /// </summary>
     [Fact]
-    public async Task ChatOptionsMergingReturnsNullWhenBothAgentAndRequestHaveNoneAsync()
+    public async Task ChatOptionsMergingReturnsChatOptionsWithNullConversationIdWhenBothAgentAndRequestHaveNoneAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -189,7 +191,7 @@ public class ChatClientAgent_ChatOptionsMergingTests
                 It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((msgs, opts, ct) =>
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, opts, ct) =>
                 capturedChatOptions = opts)
             .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
@@ -199,8 +201,9 @@ public class ChatClientAgent_ChatOptionsMergingTests
         // Act
         await agent.RunAsync(messages);
 
-        // Assert
-        Assert.Null(capturedChatOptions);
+        // Assert — ChatOptions is non-null because the sentinel was set, but ConversationId is null (stripped)
+        Assert.NotNull(capturedChatOptions);
+        Assert.Null(capturedChatOptions!.ConversationId);
     }
 
     /// <summary>

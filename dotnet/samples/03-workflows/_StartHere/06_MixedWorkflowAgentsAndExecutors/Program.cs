@@ -205,6 +205,8 @@ internal sealed class TextInverterExecutor(string id) : Executor<string, string>
 /// 1. Sending ChatMessage(s)
 /// 2. Sending a TurnToken to trigger processing
 /// </summary>
+[SendsMessage(typeof(ChatMessage))]
+[SendsMessage(typeof(TurnToken))]
 internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(id)
 {
     public override async ValueTask HandleAsync(string message, IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -234,6 +236,8 @@ internal sealed class StringToChatMessageExecutor(string id) : Executor<string>(
 /// The AIAgentHostExecutor sends response.Messages which has runtime type List&lt;ChatMessage&gt;.
 /// The message router uses exact type matching via message.GetType().
 /// </remarks>
+[SendsMessage(typeof(ChatMessage))]
+[SendsMessage(typeof(TurnToken))]
 internal sealed class JailbreakSyncExecutor() : Executor<List<ChatMessage>>("JailbreakSync")
 {
     public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)

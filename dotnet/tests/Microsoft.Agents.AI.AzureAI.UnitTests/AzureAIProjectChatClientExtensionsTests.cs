@@ -12,8 +12,9 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Moq;
 using OpenAI.Responses;
@@ -369,7 +370,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task GetAIAgentAsync_ByName_WithNonExistentAgent_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var mockAgentOperations = new Mock<AIProjectAgentsOperations>();
+        var mockAgentOperations = new Mock<AgentsClient>();
         mockAgentOperations
             .Setup(c => c.GetAgentAsync(It.IsAny<string>(), It.IsAny<RequestOptions>()))
             .ReturnsAsync(ClientResult.FromOptionalValue((AgentRecord)null!, new MockPipelineResponse(200, BinaryData.FromString("null"))));
@@ -889,12 +890,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolParameters([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolParameters(new BrowserAutomationToolConnectionParameters("id"))));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
         definition.Tools.Add(AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
         definition.Tools.Add((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
         definition.Tools.Add((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenAPIFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
         definition.Tools.Add((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions));
         definition.Tools.Add((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs));
         definition.Tools.Add((ResponseTool)AgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
@@ -3020,7 +3021,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         {
             // Handle backward compatibility with bool parameter
             var effectiveVersionMode = useEmptyVersion ? VersionMode.Empty : versionMode;
-            this.Agents = new FakeAIProjectAgentsOperations(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
+            this.Agents = new FakeAgentsClient(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
         }
 
         public override ClientConnection GetConnection(string connectionId)
@@ -3028,9 +3029,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             return new ClientConnection("fake-connection-id", "http://localhost", ClientPipeline.Create(), CredentialKind.None);
         }
 
-        public override AIProjectAgentsOperations Agents { get; }
+        public override AgentsClient Agents { get; }
 
-        private sealed class FakeAIProjectAgentsOperations : AIProjectAgentsOperations
+        private sealed class FakeAgentsClient : AgentsClient
         {
             private readonly string? _agentName;
             private readonly string? _instructions;
@@ -3038,7 +3039,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             private readonly AgentDefinition? _agentDefinition;
             private readonly VersionMode _versionMode;
 
-            public FakeAIProjectAgentsOperations(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
+            public FakeAgentsClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
             {
                 this._agentName = agentName;
                 this._instructions = instructions;

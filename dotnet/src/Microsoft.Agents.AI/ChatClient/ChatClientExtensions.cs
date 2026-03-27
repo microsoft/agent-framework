@@ -63,6 +63,15 @@ public static class ChatClientExtensions
             });
         }
 
+        // ChatHistoryPersistingChatClient is registered after FunctionInvokingChatClient so that it sits
+        // between FIC and the leaf client. ChatClientBuilder.Build applies factories in reverse order,
+        // making the first Use() call outermost. By adding our decorator second, the resulting pipeline is:
+        //   FunctionInvokingChatClient → ChatHistoryPersistingChatClient → leaf IChatClient
+        // This allows the decorator to persist messages after each individual service call within
+        // FIC's function invocation loop, or to mark them for later persistence at the end of the run.
+        bool markOnly = options?.PersistChatHistoryAtEndOfRun is true;
+        chatBuilder.Use(innerClient => new ChatHistoryPersistingChatClient(innerClient, markOnly));
+
         var agentChatClient = chatBuilder.Build(services);
 
         if (options?.ChatOptions?.Tools is { Count: > 0 })

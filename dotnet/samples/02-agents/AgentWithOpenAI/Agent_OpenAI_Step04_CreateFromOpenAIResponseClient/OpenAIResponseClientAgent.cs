@@ -20,19 +20,21 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// <param name="instructions">Optional instructions for the agent.</param>
     /// <param name="name">Optional name for the agent.</param>
     /// <param name="description">Optional description for the agent.</param>
+    /// <param name="model">Optional default model ID to use for requests. Required when using a plain <see cref="ResponsesClient"/> (not via Azure OpenAI).</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
         ResponsesClient client,
         string? instructions = null,
         string? name = null,
         string? description = null,
+        string? model = null,
         ILoggerFactory? loggerFactory = null) :
         this(client, new()
         {
             Name = name,
             Description = description,
             ChatOptions = new ChatOptions() { Instructions = instructions },
-        }, loggerFactory)
+        }, model, loggerFactory)
     {
     }
 
@@ -41,10 +43,11 @@ public class OpenAIResponseClientAgent : DelegatingAIAgent
     /// </summary>
     /// <param name="client">Instance of <see cref="ResponsesClient"/></param>
     /// <param name="options">Options to create the agent.</param>
+    /// <param name="model">Optional default model ID to use for requests. Required when using a plain <see cref="ResponsesClient"/> (not via Azure OpenAI).</param>
     /// <param name="loggerFactory">Optional instance of <see cref="ILoggerFactory"/></param>
     public OpenAIResponseClientAgent(
-        ResponsesClient client, ChatClientAgentOptions options, ILoggerFactory? loggerFactory = null) :
-        base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(), options, loggerFactory))
+        ResponsesClient client, ChatClientAgentOptions options, string? model = null, ILoggerFactory? loggerFactory = null) :
+        base(new ChatClientAgent((client ?? throw new ArgumentNullException(nameof(client))).AsIChatClient(model), options, loggerFactory))
     {
     }
 

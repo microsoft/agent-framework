@@ -2,16 +2,20 @@
 
 """Unit tests for DurableAgentState and related classes."""
 
+import json
 from datetime import datetime
 
 import pytest
-from agent_framework import UsageDetails
+from agent_framework import Content, Message, UsageDetails
 
 from agent_framework_durabletask._durable_agent_state import (
     DurableAgentState,
+    DurableAgentStateContent,
+    DurableAgentStateFunctionCallContent,
     DurableAgentStateMessage,
     DurableAgentStateRequest,
     DurableAgentStateTextContent,
+    DurableAgentStateUnknownContent,
     DurableAgentStateUsage,
 )
 from agent_framework_durabletask._models import RunRequest
@@ -214,6 +218,38 @@ class TestDurableAgentState:
         assert len(restored.data.conversation_history) == len(state.data.conversation_history)
         assert restored.data.conversation_history[0].correlation_id == "test-456"
 
+    def test_function_call_round_trip_preserves_string_arguments(self) -> None:
+        """Function call arguments should remain strings across durable state replay."""
+        original = Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call-123",
+                    name="get_weather",
+                    arguments='{"location":"Chicago"}',
+                )
+            ],
+        )
+
+        durable_message = DurableAgentStateMessage.from_chat_message(original)
+        restored = durable_message.to_chat_message()
+
+        assert restored.contents[0].type == "function_call"
+        assert restored.contents[0].arguments == '{"location": "Chicago"}'
+
+    def test_function_call_content_supports_legacy_mapping_arguments(self) -> None:
+        """Existing persisted mapping arguments should still restore successfully."""
+        content = DurableAgentStateFunctionCallContent(
+            call_id="call-123",
+            name="get_weather",
+            arguments={"location": "Chicago"},
+        )
+
+        restored = content.to_ai_content()
+
+        assert restored.type == "function_call"
+        assert restored.arguments == '{"location": "Chicago"}'
+
 
 class TestDurableAgentStateUsage:
     """Test suite for DurableAgentStateUsage."""
@@ -371,6 +407,118 @@ class TestDurableAgentStateUsage:
         assert restored.get("input_token_count") == original.get("input_token_count")
         assert restored.get("output_token_count") == original.get("output_token_count")
         assert restored.get("total_token_count") == original.get("total_token_count")
+
+
+class TestDurableAgentStateUnknownContent:
+    """Test suite for DurableAgentStateUnknownContent serialization."""
+
+    def test_unknown_content_from_content_object_produces_serializable_dict(self) -> None:
+        """Test that from_unknown_content serializes Content objects to dicts."""
+        content = Content.from_mcp_server_tool_call(
+            call_id="call-1",
+            tool_name="search",
+            server_name="learn-mcp",
+            arguments={"query": "azure functions"},
+        )
+
+        unknown = DurableAgentStateUnknownContent.from_unknown_content(content)
+        result = unknown.to_dict()
+
+        # The content field should be a dict, not a Content object
+        assert isinstance(result["content"], dict)
+        assert result["content"]["type"] == "mcp_server_tool_call"
+
+    def test_unknown_content_to_dict_is_json_serializable(self) -> None:
+        """Test that to_dict output can be passed to json.dumps without error."""
+        content = Content.from_mcp_server_tool_result(
+            call_id="call-1",
+            output="Azure Functions documentation...",
+        )
+
+        unknown = DurableAgentStateUnknownContent.from_unknown_content(content)
+        result = unknown.to_dict()
+
+        # This must not raise TypeError
+        serialized = json.dumps(result)
+        assert serialized is not None
+
+    def test_unknown_content_round_trip_preserves_content(self) -> None:
+        """Test that Content objects survive serialization and deserialization."""
+        original = Content.from_mcp_server_tool_call(
+            call_id="call-1",
+            tool_name="fetch",
+            server_name="learn-mcp",
+            arguments={"url": "https://example.com"},
+        )
+
+        unknown = DurableAgentStateUnknownContent.from_unknown_content(original)
+        restored = unknown.to_ai_content()
+
+        assert restored.type == "mcp_server_tool_call"
+        assert restored.tool_name == "fetch"
+        assert restored.server_name == "learn-mcp"
+
+    def test_unknown_content_from_plain_dict_unchanged(self) -> None:
+        """Test that non-Content values are stored as-is."""
+        plain = {"some": "data"}
+
+        unknown = DurableAgentStateUnknownContent.from_unknown_content(plain)
+
+        assert unknown.content == {"some": "data"}
+
+    def test_unknown_content_to_ai_content_fallback_on_invalid_type_dict(self) -> None:
+        """Test that to_ai_content falls back when dict has 'type' but is not valid Content."""
+        invalid = {"type": "bogus_not_a_real_content_type", "extra": "stuff"}
+        unknown = DurableAgentStateUnknownContent(content=invalid)
+
+        result = unknown.to_ai_content()
+
+        assert result.type == "unknown"
+        assert result.additional_properties == {"content": invalid}
+
+    def test_from_ai_content_unknown_type_produces_serializable_state(self) -> None:
+        """Test that unknown content types in message conversion produce JSON-serializable state."""
+        content = Content.from_mcp_server_tool_call(
+            call_id="call-1",
+            tool_name="search",
+            server_name="learn-mcp",
+            arguments={"query": "create function app"},
+        )
+
+        durable_content = DurableAgentStateContent.from_ai_content(content)
+        data = durable_content.to_dict()
+
+        # Must be fully JSON-serializable
+        serialized = json.dumps(data)
+        assert serialized is not None
+
+    def test_state_with_mcp_content_is_json_serializable(self) -> None:
+        """Test that full DurableAgentState with MCP content can be serialized to JSON.
+
+        This reproduces the scenario from issue #4719 where agent state containing
+        MCP tool content could not be serialized by Azure Durable Functions.
+        """
+        state = DurableAgentState()
+        mcp_content = Content.from_mcp_server_tool_call(
+            call_id="call-1",
+            tool_name="search",
+            server_name="learn-mcp",
+            arguments={"query": "azure functions"},
+        )
+        message = DurableAgentStateMessage.from_chat_message(Message(role="assistant", contents=[mcp_content]))
+        state.data.conversation_history.append(
+            DurableAgentStateRequest(
+                correlation_id="test-mcp",
+                created_at=datetime.now(),
+                messages=[message],
+            )
+        )
+
+        state_dict = state.to_dict()
+
+        # This simulates what Azure Durable Functions does with entity state
+        serialized = json.dumps(state_dict)
+        assert serialized is not None
 
 
 if __name__ == "__main__":

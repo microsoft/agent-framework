@@ -7,6 +7,7 @@ from random import randint
 from typing import Annotated
 
 from agent_framework import (
+    Agent,
     AgentContext,
     AgentResponse,
     AgentResponseUpdate,
@@ -188,9 +189,10 @@ async def main() -> None:
 
     # For authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
-    agent = OpenAIResponsesClient(
-        middleware=[validate_weather_middleware, weather_override_middleware],
-    ).as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(
+            middleware=[validate_weather_middleware, weather_override_middleware],
+        ),
         name="WeatherAgent",
         instructions="You are a helpful weather assistant. Use the weather tool to get current conditions.",
         tools=get_weather,

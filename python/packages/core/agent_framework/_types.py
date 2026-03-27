@@ -480,6 +480,7 @@ class Content:
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         result: Any = None,
+        items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
         file_id: str | None = None,
         vector_store_id: str | None = None,
@@ -539,6 +540,7 @@ class Content:
         self.arguments = arguments
         self.exception = exception
         self.result = result
+        self.items = items
         self.file_id = file_id
         self.vector_store_id = vector_store_id
         self.inputs = inputs
@@ -813,11 +815,48 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function result content."""
+        """Create function result content.
+
+        All tool output is represented uniformly as Content items in the
+        ``items`` field.  The ``result`` field is populated with the concatenated
+        text from text items for backwards compatibility.
+
+        Args:
+            call_id: The ID of the function call this result corresponds to.
+
+        Keyword Args:
+            result: The tool output.  Accepts a ``list[Content]`` (the canonical
+                form produced by :meth:`~FunctionTool.parse_result`), a plain
+                ``str``, or any other value (which is stringified).
+            exception: The exception message if the function call failed.
+            annotations: Optional annotations for the content.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+        """
+        if isinstance(result, list):
+            if all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
+                items_list: list[Content] = list(result)  # type: ignore[reportUnknownArgumentType]
+            else:
+                items_list = [Content.from_text(str(result))]  # type: ignore[reportUnknownArgumentType]
+        elif isinstance(result, str):
+            items_list = [Content.from_text(result)]
+        elif result is not None:
+            try:
+                text = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                text = str(result)
+            items_list = [Content.from_text(text)]
+        else:
+            items_list = [Content.from_text("")]
+
+        text_parts = [c.text for c in items_list if c.type == "text" and c.text]
+        text_result = "\n".join(text_parts) if text_parts else ""
+
         return cls(
             "function_result",
             call_id=call_id,
-            result=result,
+            result=text_result,
+            items=items_list,
             exception=exception,
             annotations=annotations,
             additional_properties=additional_properties,
@@ -1218,6 +1257,7 @@ class Content:
             "arguments",
             "exception",
             "result",
+            "items",
             "file_id",
             "vector_store_id",
             "inputs",
@@ -1299,6 +1339,8 @@ class Content:
             remaining["inputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in input_items]  # type: ignore[reportUnknownVariableType]
         if (output_items := remaining.get("outputs")) and isinstance(output_items, list):
             remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
+        if (content_items := remaining.get("items")) and isinstance(content_items, list):
+            remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
 
         return cls(
             type=content_type,
@@ -1953,6 +1995,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -1969,8 +2012,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             messages: A single Message or sequence of Message objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
+            model: Optional model used in the creation of the chat response.
+            model_id: Deprecated alias for ``model``.
+            created_at: Optional timestamp for when the response was created.
             finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
@@ -1980,6 +2024,8 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
+        if model_id is not None and model is None:
+            model = model_id
         if messages is None:
             self.messages: list[Message] = []
         elif isinstance(messages, Message):
@@ -1997,7 +2043,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
@@ -2009,6 +2055,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @overload
     @classmethod
@@ -2207,6 +2262,7 @@ class ChatResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -2223,7 +2279,8 @@ class ChatResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
-            model_id: Optional model ID associated with this response update.
+            model: Optional model associated with this response update.
+            model_id: Deprecated alias for ``model``.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
             continuation_token: Optional token for resuming a long-running background operation.
@@ -2233,6 +2290,8 @@ class ChatResponseUpdate(SerializationMixin):
                 from an underlying implementation.
 
         """
+        if model_id is not None and model is None:
+            model = model_id
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -2252,7 +2311,7 @@ class ChatResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
@@ -2261,6 +2320,15 @@ class ChatResponseUpdate(SerializationMixin):
             allow_none=True,
         )
         self.raw_representation = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def text(self) -> str:
@@ -2656,7 +2724,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream: AsyncIterable[UpdateT] | Awaitable[AsyncIterable[UpdateT]],
         *,
         finalizer: Callable[[Sequence[UpdateT]], FinalT | Awaitable[FinalT]] | None = None,
-        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] | None = None,
+        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
         cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
         result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
     ) -> None:
@@ -2680,7 +2748,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._consumed: bool = False
         self._finalized: bool = False
         self._final_result: FinalT | None = None
-        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] = (
+        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = (
             transform_hooks if transform_hooks is not None else []
         )
         self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = (
@@ -2953,7 +3021,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
 
     def with_transform_hook(
         self,
-        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None],
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
     ) -> ResponseStream[UpdateT, FinalT]:
         """Register a transform hook executed for each update during iteration."""
         self._transform_hooks.append(hook)
@@ -3376,7 +3444,7 @@ class Embedding(Generic[EmbeddingT]):
 
     Args:
         vector: The embedding vector data.
-        model_id: The model used to generate this embedding.
+        model: The model used to generate this embedding.
         dimensions: Explicit dimension count (computed from vector length if omitted).
         created_at: Timestamp of when the embedding was generated.
         additional_properties: Additional metadata.
@@ -3388,7 +3456,7 @@ class Embedding(Generic[EmbeddingT]):
 
             embedding = Embedding(
                 vector=[0.1, 0.2, 0.3],
-                model_id="text-embedding-3-small",
+                model="text-embedding-3-small",
             )
             assert embedding.dimensions == 3
     """
@@ -3397,18 +3465,30 @@ class Embedding(Generic[EmbeddingT]):
         self,
         vector: EmbeddingT,
         *,
+        model: str | None = None,
         model_id: str | None = None,
         dimensions: int | None = None,
         created_at: datetime | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
+        if model_id is not None and model is None:
+            model = model_id
         self.vector = vector
         self._dimensions = dimensions
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def dimensions(self) -> int | None:
