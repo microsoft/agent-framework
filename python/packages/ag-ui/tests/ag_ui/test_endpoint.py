@@ -9,6 +9,7 @@ import pytest
 from ag_ui.core import RunStartedEvent
 from agent_framework import (
     Agent,
+    AgentResponseUpdate,
     ChatResponseUpdate,
     Content,
     WorkflowBuilder,
@@ -603,3 +604,36 @@ async def test_endpoint_double_encoding_failure_terminates():
 
     # Should still get 200 (SSE stream), just with no events
     assert response.status_code == 200
+
+
+async def test_endpoint_skips_non_base_event_objects():
+    """Non-BaseEvent objects (e.g. AgentResponseUpdate) are skipped gracefully.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/4929
+    """
+
+    class MixedEventWorkflow(AgentFrameworkWorkflow):
+        async def run(self, input_data: dict[str, Any]):
+            del input_data
+            yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
+            # Yield a non-BaseEvent object — this should be skipped, not crash
+            yield AgentResponseUpdate(  # type: ignore[misc]
+                contents=[Content.from_text(text="leaked update")],
+                role="assistant",
+            )
+
+    app = FastAPI()
+    add_agent_framework_fastapi_endpoint(app, MixedEventWorkflow(), path="/mixed-events")
+    client = TestClient(app)
+
+    response = client.post("/mixed-events", json={"messages": [{"role": "user", "content": "Hello"}]})
+
+    assert response.status_code == 200
+    content = response.content.decode("utf-8")
+    lines = [line for line in content.split("\n") if line.startswith("data: ")]
+    event_types = [json.loads(line[6:]).get("type") for line in lines]
+
+    # RUN_STARTED should be present; the AgentResponseUpdate should have been
+    # silently skipped — no RUN_ERROR or crash.
+    assert "RUN_STARTED" in event_types
+    assert "RUN_ERROR" not in event_types

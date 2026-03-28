@@ -9,7 +9,7 @@ import logging
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
-from ag_ui.core import RunErrorEvent
+from ag_ui.core import BaseEvent, RunErrorEvent
 from ag_ui.encoder import EventEncoder
 from agent_framework import SupportsAgentRun, Workflow
 from fastapi import FastAPI, HTTPException
@@ -93,6 +93,19 @@ def add_agent_framework_fastapi_endpoint(
                 event_count = 0
                 try:
                     async for event in protocol_runner.run(input_data):
+                        # Guard: only BaseEvent instances can be SSE-encoded.
+                        # Non-BaseEvent objects (e.g. AgentResponseUpdate) lack
+                        # model_dump_json() and would cause an AttributeError
+                        # in EventEncoder.encode(). Skip them with a warning.
+                        if not isinstance(event, BaseEvent):
+                            logger.warning(
+                                "[%s] Skipping non-BaseEvent object of type %s; "
+                                "only ag_ui.core.BaseEvent instances can be SSE-encoded.",
+                                path,
+                                type(event).__name__,
+                            )
+                            continue
+
                         event_count += 1
                         event_type_name = getattr(event, "type", type(event).__name__)
                         # Log important events at INFO level
