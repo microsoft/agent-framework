@@ -1751,6 +1751,9 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
     assert isinstance(result, types.ErrorData)
     assert result.code == types.INTERNAL_ERROR
     assert "Failed to get right content types from the response." in result.message
+    mock_chat_client.get_response.assert_awaited_once()
+    _, kwargs = mock_chat_client.get_response.await_args
+    assert kwargs["options"] == {"max_tokens": None}
 
 
 async def test_mcp_tool_sampling_callback_no_response_and_successful_message_creation():
@@ -3704,14 +3707,19 @@ async def test_mcp_tool_filters_framework_kwargs():
 
         # Invoke the tool with framework kwargs that should be filtered out
         await func.invoke(
-            param="test_value",
-            response_format=MockResponseFormat,  # Should be filtered
-            chat_options={"some": "option"},  # Should be filtered
-            tools=[Mock()],  # Should be filtered
-            tool_choice="auto",  # Should be filtered
-            session=Mock(),  # Should be filtered
-            conversation_id="conv-123",  # Should be filtered
-            options={"metadata": "value"},  # Should be filtered
+            context=FunctionInvocationContext(
+                function=func,
+                arguments={"param": "test_value"},
+                kwargs={
+                    "response_format": MockResponseFormat,  # Should be filtered
+                    "chat_options": {"some": "option"},  # Should be filtered
+                    "tools": [Mock()],  # Should be filtered
+                    "tool_choice": "auto",  # Should be filtered
+                    "session": Mock(),  # Should be filtered
+                    "conversation_id": "conv-123",  # Should be filtered
+                    "options": {"metadata": "value"},  # Should be filtered
+                },
+            ),
         )
 
         # Verify call_tool was called with only the valid argument

@@ -309,7 +309,7 @@ async def test_full_pipeline_workflow_events_are_json_serializable():
         name="Serialization Test Agent",
         description="Agent for testing serialization",
         client=mock_client,
-        system_message="You are a test assistant.",
+        instructions="You are a test assistant.",
     )
 
     agent_executor = AgentExecutor(id="agent_node", agent=agent)

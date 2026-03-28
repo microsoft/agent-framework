@@ -27,6 +27,7 @@ from agent_framework import (
     RawAgent,
     load_settings,
 )
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -125,9 +126,13 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | None = None,
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
+        instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize a raw Foundry Agent client.
 
@@ -141,9 +146,13 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
             credential: Azure credential for authentication.
             project_client: An existing AIProjectClient to use.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
-            kwargs: Additional keyword arguments.
+            instruction_role: The role to use for 'instruction' messages.
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
         """
         settings = load_settings(
             FoundryAgentSettings,
@@ -189,7 +198,14 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         # Get OpenAI client from project
         async_client = self.project_client.get_openai_client()
 
-        super().__init__(async_client=async_client, **kwargs)
+        super().__init__(
+            async_client=async_client,
+            default_headers=default_headers,
+            instruction_role=instruction_role,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+        )
 
     def _get_agent_reference(self) -> dict[str, str]:
         """Build the agent reference dict for the Responses API."""
@@ -210,7 +226,10 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        **kwargs: Any,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: Mapping[str, Any] | None = None,
     ) -> Agent[FoundryAgentOptionsT]:
         """Create a FoundryAgent that reuses this client's Foundry configuration."""
         function_tools = cast(
@@ -233,7 +252,10 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
                 description=description,
                 instructions=instructions,
                 default_options=default_options,
-                **kwargs,
+                function_invocation_configuration=function_invocation_configuration,
+                compaction_strategy=compaction_strategy,
+                tokenizer=tokenizer,
+                additional_properties=additional_properties,
             ),
         )
 
@@ -365,11 +387,15 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
         credential: AzureCredentialTypes | None = None,
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
+        instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a Foundry Agent client with full middleware support.
 
@@ -380,11 +406,15 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             credential: Azure credential for authentication.
             project_client: An existing AIProjectClient to use.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
+            instruction_role: The role to use for 'instruction' messages.
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
-            kwargs: Additional keyword arguments.
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -393,11 +423,15 @@ class _FoundryAgentChatClient(  # type: ignore[misc]
             credential=credential,
             project_client=project_client,
             allow_preview=allow_preview,
+            default_headers=default_headers,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
+            instruction_role=instruction_role,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
 
 
@@ -435,10 +469,19 @@ class RawFoundryAgent(  # type: ignore[misc]
         allow_preview: bool | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a Foundry Agent.
 
@@ -454,11 +497,20 @@ class RawFoundryAgent(  # type: ignore[misc]
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
             tools: Function tools to provide to the agent. Only ``FunctionTool`` objects are accepted.
             context_providers: Optional context providers for injecting dynamic context.
+            middleware: Optional agent-level middleware.
             client_type: Custom client class to use (must be a subclass of ``RawFoundryAgentChatClient``).
                 Defaults to ``_FoundryAgentChatClient`` (full client middleware).
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
-            kwargs: Additional keyword arguments passed to the Agent base class.
+            id: Optional local agent identifier.
+            name: Optional display name for the local agent wrapper.
+            description: Optional local description for the local agent wrapper.
+            instructions: Optional instructions for the local agent wrapper.
+            default_options: Default chat options for the local agent wrapper.
+            function_invocation_configuration: Optional function invocation configuration override.
+            compaction_strategy: Optional agent-level in-run compaction override.
+            tokenizer: Optional agent-level tokenizer override.
+            additional_properties: Additional properties stored on the local agent wrapper.
         """
         # Create the client
         actual_client_type = client_type or _FoundryAgentChatClient
@@ -467,22 +519,38 @@ class RawFoundryAgent(  # type: ignore[misc]
                 f"client_type must be a subclass of RawFoundryAgentChatClient, got {actual_client_type.__name__}"
             )
 
-        client = actual_client_type(
-            project_endpoint=project_endpoint,
-            agent_name=agent_name,
-            agent_version=agent_version,
-            credential=credential,
-            project_client=project_client,
-            allow_preview=allow_preview,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
+        client_kwargs: dict[str, Any] = {
+            "project_endpoint": project_endpoint,
+            "agent_name": agent_name,
+            "agent_version": agent_version,
+            "credential": credential,
+            "project_client": project_client,
+            "allow_preview": allow_preview,
+            "env_file_path": env_file_path,
+            "env_file_encoding": env_file_encoding,
+        }
+        if function_invocation_configuration is not None:
+            if not issubclass(actual_client_type, FunctionInvocationLayer):
+                raise TypeError(
+                    "function_invocation_configuration requires a FunctionInvocationLayer-based client_type."
+                )
+            client_kwargs["function_invocation_configuration"] = function_invocation_configuration
+
+        client = actual_client_type(**client_kwargs)
 
         super().__init__(
             client=client,  # type: ignore[arg-type]
+            instructions=instructions,
+            id=id,
+            name=name,
+            description=description,
             tools=tools,  # type: ignore[arg-type]
+            default_options=cast(FoundryAgentOptionsT | None, default_options),
             context_providers=context_providers,
-            **kwargs,
+            middleware=middleware,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=dict(additional_properties) if additional_properties is not None else None,
         )
 
     async def configure_azure_monitor(
@@ -598,7 +666,15 @@ class FoundryAgent(  # type: ignore[misc]
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
+        id: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        instructions: str | None = None,
+        default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: Mapping[str, Any] | None = None,
     ) -> None:
         """Initialize a Foundry Agent with full middleware and telemetry.
 
@@ -615,7 +691,15 @@ class FoundryAgent(  # type: ignore[misc]
             client_type: Custom client class (must subclass ``RawFoundryAgentChatClient``).
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
-            kwargs: Additional keyword arguments.
+            id: Optional local agent identifier.
+            name: Optional display name for the local agent wrapper.
+            description: Optional local description for the local agent wrapper.
+            instructions: Optional instructions for the local agent wrapper.
+            default_options: Default chat options for the local agent wrapper.
+            function_invocation_configuration: Optional function invocation configuration override.
+            compaction_strategy: Optional agent-level in-run compaction override.
+            tokenizer: Optional agent-level tokenizer override.
+            additional_properties: Additional properties stored on the local agent wrapper.
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -630,5 +714,13 @@ class FoundryAgent(  # type: ignore[misc]
             client_type=client_type,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
+            id=id,
+            name=name,
+            description=description,
+            instructions=instructions,
+            default_options=default_options,
+            function_invocation_configuration=function_invocation_configuration,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
         )

@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 
-import inspect
 from typing import Any
 from unittest.mock import patch
 
@@ -15,11 +14,6 @@ from agent_framework import (
     Message,
     SlidingWindowStrategy,
     SupportsChatGetResponse,
-    SupportsCodeInterpreterTool,
-    SupportsFileSearchTool,
-    SupportsImageGenerationTool,
-    SupportsMCPTool,
-    SupportsWebSearchTool,
     TruncationStrategy,
 )
 
@@ -53,38 +47,15 @@ def test_base_client(chat_client_base: SupportsChatGetResponse):
     assert isinstance(chat_client_base, SupportsChatGetResponse)
 
 
-def test_base_client_warns_for_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
-    with pytest.warns(DeprecationWarning, match="additional_properties"):
-        client = type(chat_client_base)(legacy_key="legacy-value")
-
-    assert client.additional_properties["legacy_key"] == "legacy-value"
+def test_base_client_rejects_direct_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
+    with pytest.raises(TypeError):
+        type(chat_client_base)(legacy_key="legacy-value")
 
 
 def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_base: SupportsChatGetResponse) -> None:
     agent = chat_client_base.as_agent(additional_properties={"team": "core"})
 
     assert agent.additional_properties == {"team": "core"}
-
-
-def test_openai_chat_completion_client_get_response_docstring_surfaces_layered_runtime_docs() -> None:
-    from agent_framework.openai import OpenAIChatCompletionClient
-
-    docstring = inspect.getdoc(OpenAIChatCompletionClient.get_response)
-
-    assert docstring is not None
-    assert "Get a response from a chat client." in docstring
-    assert "function_invocation_kwargs" in docstring
-    assert "middleware: Optional per-call chat and function middleware." in docstring
-    assert "function_middleware: Optional per-call function middleware." not in docstring
-
-
-def test_openai_chat_completion_client_get_response_is_defined_on_openai_class() -> None:
-    from agent_framework.openai import OpenAIChatCompletionClient
-
-    signature = inspect.signature(OpenAIChatCompletionClient.get_response)
-
-    assert OpenAIChatCompletionClient.get_response.__qualname__ == "OpenAIChatCompletionClient.get_response"
-    assert "middleware" in signature.parameters
 
 
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:
@@ -333,66 +304,3 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         assert appended_messages[0].text == "You are a helpful assistant."
         assert appended_messages[1].role == "user"
         assert appended_messages[1].text == "hello"
-
-
-# region Tool Support Protocol Tests
-
-
-def test_openai_responses_client_supports_all_tool_protocols():
-    """Test that OpenAIResponsesClient supports all hosted tool protocols."""
-    from agent_framework.openai import OpenAIResponsesClient
-
-    assert isinstance(OpenAIResponsesClient, SupportsCodeInterpreterTool)
-    assert isinstance(OpenAIResponsesClient, SupportsWebSearchTool)
-    assert isinstance(OpenAIResponsesClient, SupportsImageGenerationTool)
-    assert isinstance(OpenAIResponsesClient, SupportsMCPTool)
-    assert isinstance(OpenAIResponsesClient, SupportsFileSearchTool)
-
-
-def test_openai_chat_completion_client_supports_web_search_only():
-    """Test that OpenAIChatClient only supports web search tool."""
-    from agent_framework.openai import OpenAIChatCompletionClient
-
-    assert not isinstance(OpenAIChatCompletionClient, SupportsCodeInterpreterTool)
-    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)
-    assert not isinstance(OpenAIChatCompletionClient, SupportsImageGenerationTool)
-    assert not isinstance(OpenAIChatCompletionClient, SupportsMCPTool)
-    assert not isinstance(OpenAIChatCompletionClient, SupportsFileSearchTool)
-
-
-def test_openai_assistants_client_supports_code_interpreter_and_file_search():
-    """Test that OpenAIAssistantsClient supports code interpreter and file search."""
-    from agent_framework.openai import OpenAIAssistantsClient
-
-    assert isinstance(OpenAIAssistantsClient, SupportsCodeInterpreterTool)
-    assert not isinstance(OpenAIAssistantsClient, SupportsWebSearchTool)
-    assert not isinstance(OpenAIAssistantsClient, SupportsImageGenerationTool)
-    assert not isinstance(OpenAIAssistantsClient, SupportsMCPTool)
-    assert isinstance(OpenAIAssistantsClient, SupportsFileSearchTool)
-
-
-def test_protocol_isinstance_with_client_instance():
-    """Test that protocol isinstance works with client instances."""
-    from agent_framework.openai import OpenAIResponsesClient
-
-    # Create mock client instance (won't connect to API)
-    client = OpenAIResponsesClient.__new__(OpenAIResponsesClient)
-
-    assert isinstance(client, SupportsCodeInterpreterTool)
-    assert isinstance(client, SupportsWebSearchTool)
-
-
-def test_protocol_tool_methods_return_dict():
-    """Test that static tool methods return dict[str, Any]."""
-    from agent_framework.openai import OpenAIResponsesClient
-
-    code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
-    assert isinstance(code_tool, dict)
-    assert code_tool.get("type") == "code_interpreter"
-
-    web_tool = OpenAIResponsesClient.get_web_search_tool()
-    assert isinstance(web_tool, dict)
-    assert web_tool.get("type") == "web_search"
-
-
-# endregion

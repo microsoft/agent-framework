@@ -604,11 +604,6 @@ class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[Azure
         return transformed
 
     @override
-    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID from chat options or kwargs."""
-        return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
-
-    @override
     def _parse_response_from_openai(
         self,
         response: Any,

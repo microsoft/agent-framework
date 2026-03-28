@@ -465,7 +465,7 @@ async def test_integration_client_agent_existing_session() -> None:
             first_response = await first_agent.run(
                 "My hobby is photography. Remember this.",
                 session=session,
-                store=True,
+                options={"store": True},
             )
 
             assert isinstance(first_response, AgentResponse)
@@ -476,7 +476,9 @@ async def test_integration_client_agent_existing_session() -> None:
                 client=OpenAIChatClient(credential=credential),
                 instructions="You are a helpful assistant with good memory.",
             ) as second_agent:
-                second_response = await second_agent.run("What is my hobby?", session=preserved_session)
+                second_response = await second_agent.run(
+                    "What is my hobby?", session=preserved_session, options={"store": True}
+                )
 
                 assert isinstance(second_response, AgentResponse)
                 assert second_response.text is not None

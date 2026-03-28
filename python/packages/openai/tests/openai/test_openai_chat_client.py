@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import base64
+import inspect
 import json
 import os
 from datetime import datetime, timezone
@@ -18,6 +19,11 @@ from agent_framework import (
     FunctionTool,
     Message,
     SupportsChatGetResponse,
+    SupportsCodeInterpreterTool,
+    SupportsFileSearchTool,
+    SupportsImageGenerationTool,
+    SupportsMCPTool,
+    SupportsWebSearchTool,
     tool,
 )
 from agent_framework._sessions import (
@@ -48,7 +54,7 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient
+from agent_framework_openai import OpenAIChatClient, OpenAIResponsesClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -108,6 +114,40 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
     assert openai_responses_client.model == openai_unit_test_env["OPENAI_MODEL"]
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
+
+
+def test_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(OpenAIChatClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_deprecated_responses_client_supports_all_tool_protocols() -> None:
+    assert isinstance(OpenAIResponsesClient, SupportsCodeInterpreterTool)
+    assert isinstance(OpenAIResponsesClient, SupportsWebSearchTool)
+    assert isinstance(OpenAIResponsesClient, SupportsImageGenerationTool)
+    assert isinstance(OpenAIResponsesClient, SupportsMCPTool)
+    assert isinstance(OpenAIResponsesClient, SupportsFileSearchTool)
+
+
+def test_protocol_isinstance_with_responses_client_instance() -> None:
+    client = object.__new__(OpenAIResponsesClient)
+
+    assert isinstance(client, SupportsCodeInterpreterTool)
+    assert isinstance(client, SupportsWebSearchTool)
+
+
+def test_deprecated_responses_client_tool_methods_return_dict() -> None:
+    code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+    assert isinstance(code_tool, dict)
+    assert code_tool.get("type") == "code_interpreter"
+
+    web_tool = OpenAIResponsesClient.get_web_search_tool()
+    assert isinstance(web_tool, dict)
+    assert web_tool.get("type") == "web_search"
 
 
 def test_init_prefers_openai_responses_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
@@ -1713,6 +1753,71 @@ def test_response_format_json_schema_missing_schema() -> None:
         client._prepare_response_and_text_format(response_format=response_format, text_config=None)
 
 
+def test_response_format_raw_json_schema_with_properties() -> None:
+    """Test raw JSON schema with properties is wrapped in json_schema envelope."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}, "title": "MyOutput"}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    fmt = text_config["format"]
+    assert fmt["type"] == "json_schema"
+    assert fmt["name"] == "MyOutput"
+    assert fmt["strict"] is True
+    assert fmt["schema"]["additionalProperties"] is False
+    assert "title" not in fmt["schema"]
+
+
+def test_response_format_raw_json_schema_no_title() -> None:
+    """Test raw JSON schema without title defaults name to 'response'."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["name"] == "response"
+
+
+def test_response_format_raw_json_schema_preserves_additional_properties() -> None:
+    """Test raw JSON schema preserves existing additionalProperties."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "object", "properties": {"x": {"type": "string"}}, "additionalProperties": True}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["schema"]["additionalProperties"] is True
+
+
+def test_response_format_raw_json_schema_non_object_type() -> None:
+    """Test raw JSON schema with non-object type does not inject additionalProperties."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"type": "array", "items": {"type": "string"}}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert "additionalProperties" not in text_config["format"]["schema"]
+
+
+def test_response_format_raw_json_schema_with_anyof() -> None:
+    """Test raw JSON schema with anyOf keyword is detected."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    response_format = {"anyOf": [{"type": "string"}, {"type": "number"}]}
+
+    _, text_config = client._prepare_response_and_text_format(response_format=response_format, text_config=None)
+
+    assert text_config is not None
+    assert text_config["format"]["type"] == "json_schema"
+
+
 def test_response_format_unsupported_type() -> None:
     """Test unsupported response_format type raises error."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -2966,20 +3071,6 @@ async def test_prepare_options_store_parameter_handling() -> None:
     options = await client._prepare_options(messages, chat_options)  # type: ignore
     assert "store" not in options
     assert "previous_response_id" not in options
-
-
-async def test_conversation_id_precedence_kwargs_over_options() -> None:
-    """When both kwargs and options contain conversation_id, kwargs wins."""
-    client = OpenAIChatClient(model="test-model", api_key="test-key")
-    messages = [Message(role="user", text="Hello")]
-
-    # options has a stale response id, kwargs carries the freshest one
-    opts = {"conversation_id": "resp_old_123"}
-    run_opts = await client._prepare_options(messages, opts, conversation_id="resp_new_456")  # type: ignore
-
-    # Verify kwargs takes precedence and maps to previous_response_id for resp_* IDs
-    assert run_opts.get("previous_response_id") == "resp_new_456"
-    assert "conversation" not in run_opts
 
 
 def _create_mock_responses_text_response(*, response_id: str) -> MagicMock:
