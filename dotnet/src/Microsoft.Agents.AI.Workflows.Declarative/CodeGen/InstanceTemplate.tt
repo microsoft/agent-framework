@@ -1,3 +1,0 @@
-﻿<#@ template language="C#" inherits="CodeTemplate" visibility="internal" linePragmas="false" #>
-<#@ assembly name="System.Core" #>
-<#= this.ExecutorType #>Executor <#= this.InstanceVariable #> = new(<#= this.RootVariable #>.Session<#= this.HasProvider ? ", options.AgentProvider" : "" #>);
