@@ -91,51 +91,51 @@ async def main() -> None:
                 instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
             )
 
-        # Build a sequential workflow and wrap it as an agent
-        workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
-        agent = workflow.as_agent(name="FoundryCheckpointedAgent")
+            # Build a sequential workflow and wrap it as an agent
+            workflow = SequentialBuilder(participants=[assistant, reviewer]).build()
+            agent = workflow.as_agent(name="FoundryCheckpointedAgent")
 
-        # --- First run: execute with Cosmos DB checkpointing ---
-        print("=== First Run ===\n")
+            # --- First run: execute with Cosmos DB checkpointing ---
+            print("=== First Run ===\n")
 
-        session = agent.create_session()
-        query = "What are the benefits of renewable energy?"
-        print(f"User: {query}")
+            session = agent.create_session()
+            query = "What are the benefits of renewable energy?"
+            print(f"User: {query}")
 
-        response = await agent.run(query, session=session, checkpoint_storage=checkpoint_storage)
+            response = await agent.run(query, session=session, checkpoint_storage=checkpoint_storage)
 
-        for msg in response.messages:
-            speaker = msg.author_name or msg.role
-            print(f"[{speaker}]: {msg.text}")
+            for msg in response.messages:
+                speaker = msg.author_name or msg.role
+                print(f"[{speaker}]: {msg.text}")
 
-        # Show checkpoints persisted in Cosmos DB
-        checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
-        print(f"\nCheckpoints in Cosmos DB: {len(checkpoints)}")
-        for i, cp in enumerate(checkpoints[:5], 1):
-            print(f"  {i}. {cp.checkpoint_id} (iteration={cp.iteration_count})")
+            # Show checkpoints persisted in Cosmos DB
+            checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
+            print(f"\nCheckpoints in Cosmos DB: {len(checkpoints)}")
+            for i, cp in enumerate(checkpoints[:5], 1):
+                print(f"  {i}. {cp.checkpoint_id} (iteration={cp.iteration_count})")
 
-        # --- Second run: continue conversation with checkpoint history ---
-        print("\n=== Second Run (continuing conversation) ===\n")
+            # --- Second run: continue conversation with checkpoint history ---
+            print("\n=== Second Run (continuing conversation) ===\n")
 
-        query2 = "Can you elaborate on the economic benefits?"
-        print(f"User: {query2}")
+            query2 = "Can you elaborate on the economic benefits?"
+            print(f"User: {query2}")
 
-        response2 = await agent.run(query2, session=session, checkpoint_storage=checkpoint_storage)
+            response2 = await agent.run(query2, session=session, checkpoint_storage=checkpoint_storage)
 
-        for msg in response2.messages:
-            speaker = msg.author_name or msg.role
-            print(f"[{speaker}]: {msg.text}")
+            for msg in response2.messages:
+                speaker = msg.author_name or msg.role
+                print(f"[{speaker}]: {msg.text}")
 
-        # Show total checkpoints
-        all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
-        print(f"\nTotal checkpoints after two runs: {len(all_checkpoints)}")
+            # Show total checkpoints
+            all_checkpoints = await checkpoint_storage.list_checkpoints(workflow_name=workflow.name)
+            print(f"\nTotal checkpoints after two runs: {len(all_checkpoints)}")
 
-        # Get latest checkpoint
-        latest = await checkpoint_storage.get_latest(workflow_name=workflow.name)
-        if latest:
-            print(f"Latest checkpoint: {latest.checkpoint_id}")
-            print(f"  iteration_count: {latest.iteration_count}")
-            print(f"  timestamp: {latest.timestamp}")
+            # Get latest checkpoint
+            latest = await checkpoint_storage.get_latest(workflow_name=workflow.name)
+            if latest:
+                print(f"Latest checkpoint: {latest.checkpoint_id}")
+                print(f"  iteration_count: {latest.iteration_count}")
+                print(f"  timestamp: {latest.timestamp}")
 
 
 if __name__ == "__main__":

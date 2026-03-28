@@ -66,7 +66,7 @@ def _checkpoint_to_cosmos_document(checkpoint: WorkflowCheckpoint) -> dict[str, 
     """Simulate what a Cosmos DB document looks like after save."""
     encoded = encode_checkpoint_value(checkpoint.to_dict())
     doc: dict[str, Any] = {
-        "id": checkpoint.checkpoint_id,
+        "id": f"{checkpoint.workflow_name}_{checkpoint.checkpoint_id}",
         "workflow_name": checkpoint.workflow_name,
         **encoded,
         # Cosmos system properties
@@ -285,6 +285,20 @@ async def test_list_checkpoints_empty_returns_empty(mock_container: MagicMock) -
     assert results == []
 
 
+async def test_list_checkpoints_skips_malformed_documents(mock_container: MagicMock) -> None:
+    valid_cp = _make_checkpoint(checkpoint_id="cp-valid")
+    mock_container.query_items.return_value = _to_async_iter([
+        {"id": "bad_doc", "workflow_name": "test-workflow", "not_a_checkpoint": True},
+        _checkpoint_to_cosmos_document(valid_cp),
+    ])
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    results = await storage.list_checkpoints(workflow_name="test-workflow")
+
+    assert len(results) == 1
+    assert results[0].checkpoint_id == "cp-valid"
+
+
 # --- Tests for delete ---
 
 
@@ -444,6 +458,17 @@ async def test_context_manager_preserves_original_exception(mock_container: Magi
     ):
         async with storage:
             raise ValueError("inner error")
+
+
+async def test_context_manager_reraises_close_error(mock_container: MagicMock) -> None:
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with (
+        patch.object(storage, "close", AsyncMock(side_effect=RuntimeError("close failed"))),
+        pytest.raises(RuntimeError, match="close failed"),
+    ):
+        async with storage:
+            pass  # no inner exception — close error should propagate
 
 
 # --- Tests for save/load round-trip ---
