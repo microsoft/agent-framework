@@ -607,7 +607,7 @@ async def test_endpoint_double_encoding_failure_terminates():
 
 
 async def test_endpoint_skips_non_base_event_objects():
-    """Non-BaseEvent objects (e.g. AgentResponseUpdate) are skipped gracefully.
+    """Non-BaseEvent objects (e.g. AgentResponseUpdate) are skipped with a warning.
 
     Regression test for https://github.com/microsoft/agent-framework/issues/4929
     """
@@ -616,7 +616,7 @@ async def test_endpoint_skips_non_base_event_objects():
         async def run(self, input_data: dict[str, Any]):
             del input_data
             yield RunStartedEvent(run_id="run-1", thread_id="thread-1")
-            # Yield a non-BaseEvent object — this should be skipped, not crash
+            # Yield a non-BaseEvent object — this should be skipped with a warning, not crash
             yield AgentResponseUpdate(  # type: ignore[misc]
                 contents=[Content.from_text(text="leaked update")],
                 role="assistant",
@@ -634,6 +634,6 @@ async def test_endpoint_skips_non_base_event_objects():
     event_types = [json.loads(line[6:]).get("type") for line in lines]
 
     # RUN_STARTED should be present; the AgentResponseUpdate should have been
-    # silently skipped — no RUN_ERROR or crash.
+    # skipped with a warning — no RUN_ERROR or crash.
     assert "RUN_STARTED" in event_types
     assert "RUN_ERROR" not in event_types
