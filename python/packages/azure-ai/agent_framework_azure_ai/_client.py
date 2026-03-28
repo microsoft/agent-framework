@@ -30,16 +30,14 @@ from agent_framework import (
 )
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework.openai import OpenAIResponsesOptions
-from agent_framework.openai._responses_client import RawOpenAIResponsesClient
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
-    CodeInterpreterContainerAuto,
+    AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
-    FoundryFeaturesOptInKeys,
     ImageGenTool,
     MCPTool,
     PromptAgentDefinition,
@@ -51,12 +49,14 @@ from azure.ai.projects.models import (
 from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.core.exceptions import ResourceNotFoundError
 
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, resolve_file_ids
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore # pragma: no cover
 else:
@@ -66,11 +66,10 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self, TypedDict  # type: ignore # pragma: no cover
 
-
 logger = logging.getLogger("agent_framework.azure")
 
 
-class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
+class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):  # type: ignore[misc, call-arg]
     """Azure AI Project Agent options."""
 
     rai_config: RaiConfig
@@ -78,9 +77,6 @@ class AzureAIProjectAgentOptions(OpenAIResponsesOptions, total=False):
 
     reasoning: Reasoning  # type: ignore[misc]
     """Configuration for enabling reasoning capabilities (requires azure.ai.projects.models.Reasoning)."""
-
-    foundry_features: FoundryFeaturesOptInKeys | str
-    """Optional Foundry preview feature opt-in for agent version creation."""
 
 
 AzureAIClientOptionsT = TypeVar(
@@ -93,8 +89,13 @@ AzureAIClientOptionsT = TypeVar(
 _DOC_INDEX_PATTERN = re.compile(r"doc_(\d+)")
 
 
-class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
-    """Raw Azure AI client without middleware, telemetry, or function invocation layers.
+@deprecated(
+    "RawAzureAIClient is deprecated. "
+    "Use RawFoundryAgentChatClient for low-level Foundry agent client customization, "
+    "or FoundryAgent for the recommended production API."
+)
+class RawAzureAIClient(RawOpenAIChatClient[AzureAIClientOptionsT], Generic[AzureAIClientOptionsT]):
+    """Deprecated raw Azure AI client without middleware, telemetry, or function invocation layers.
 
     Warning:
         **This class should not normally be used directly.** It does not include middleware,
@@ -102,11 +103,12 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         you should consider which additional layers to apply. There is a defined ordering that
         you should follow:
 
-        1. **ChatMiddlewareLayer** - Should be applied first as it also prepares function middleware
-        2. **FunctionInvocationLayer** - Handles tool/function calling loop
-        3. **ChatTelemetryLayer** - Must be inside the function calling loop for correct per-call telemetry
+        1. **FunctionInvocationLayer** - Owns the tool/function calling loop and routes function middleware
+        2. **ChatMiddlewareLayer** - Applies chat middleware per model call and stays outside telemetry
+        3. **ChatTelemetryLayer** - Must stay inside chat middleware for correct per-call telemetry
 
-        Use ``AzureAIClient`` instead for a fully-featured client with all layers applied.
+        Use ``RawFoundryAgentChatClient`` for low-level Foundry agent customization, or
+        ``FoundryAgent`` for the recommended production API.
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai"  # type: ignore[reportIncompatibleVariableOverride, misc]
@@ -123,9 +125,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
+        allow_preview: bool | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a bare Azure AI client.
 
@@ -148,9 +151,10 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 AsyncTokenCredential, or a callable token provider.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -208,16 +212,21 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             # Use provided credential
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             should_close_client = True
 
-        # Initialize parent
-        super().__init__(
-            **kwargs,
+        # Initialize parent with OpenAI client from project
+        super().__init__(  # type: ignore
+            async_client=project_client.get_openai_client(),
+            model=azure_ai_settings.get("model"),  # type: ignore[arg-type]
+            additional_properties=additional_properties,
         )
 
         # Initialize instance variables
@@ -413,8 +422,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
                 "definition": PromptAgentDefinition(**args),
                 "description": self.agent_description,
             }
-            if foundry_features := run_options.get("foundry_features"):
-                create_version_kwargs["foundry_features"] = foundry_features
 
             created_agent = await self.project_client.agents.create_version(**create_version_kwargs)
 
@@ -513,7 +520,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             "temperature": ("temperature",),
             "top_p": ("top_p",),
             "reasoning": ("reasoning",),
-            "foundry_features": ("foundry_features",),
+            "allow_preview": ("allow_preview",),
         }
 
         for run_keys in agent_level_option_to_run_keys.values():
@@ -597,11 +604,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         return transformed
 
     @override
-    def _get_current_conversation_id(self, options: Mapping[str, Any], **kwargs: Any) -> str | None:
-        """Get the current conversation ID from chat options or kwargs."""
-        return options.get("conversation_id") or kwargs.get("conversation_id") or self.conversation_id
-
-    @override
     def _parse_response_from_openai(
         self,
         response: Any,
@@ -681,10 +683,6 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
             instructions = "".join(instructions_list)
 
         return result, instructions
-
-    async def _initialize_client(self) -> None:
-        """Initialize OpenAI client."""
-        self.client = self.project_client.get_openai_client()  # type: ignore
 
     def _update_agent_name_and_description(self, agent_name: str | None, description: str | None = None) -> None:
         """Update the agent name in the chat client.
@@ -844,7 +842,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if not stream:
 
             async def _enrich_response() -> ChatResponse:
-                response = await super(RawAzureAIClient, self)._inner_get_response(
+                response = await super(RawAzureAIClient, self)._inner_get_response(  # pyright: ignore[reportDeprecated]
                     messages=messages, options=options, stream=False, **kwargs
                 )
                 get_urls = self._extract_azure_search_urls(response.raw_representation.output)  # type: ignore[union-attr]
@@ -939,7 +937,7 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         if file_ids is None and isinstance(container, dict):
             file_ids = container.get("file_ids")
         resolved = resolve_file_ids(file_ids)
-        tool_container = CodeInterpreterContainerAuto(file_ids=resolved)
+        tool_container = AutoCodeInterpreterToolParam(file_ids=resolved)
         return CodeInterpreterTool(container=tool_container, **kwargs)
 
     @staticmethod
@@ -1184,8 +1182,8 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         It does NOT create an agent on the Azure AI service - the actual agent
         will be created on the server during the first invocation (run).
 
-        For creating and managing persistent agents on the server, use
-        :class:`~agent_framework_azure_ai.AzureAIProjectAgentProvider` instead.
+        For working with pre-configured persistent agents on the server, use
+        :class:`~agent_framework_azure_ai.FoundryAgent` instead.
 
         Keyword Args:
             id: The unique identifier for the agent. Will be created automatically if not provided.
@@ -1215,21 +1213,23 @@ class RawAzureAIClient(RawOpenAIResponsesClient[AzureAIClientOptionsT], Generic[
         )
 
 
+@deprecated("AzureAIClient is deprecated. Use FoundryAgent instead.")
 class AzureAIClient(
-    ChatMiddlewareLayer[AzureAIClientOptionsT],
     FunctionInvocationLayer[AzureAIClientOptionsT],
+    ChatMiddlewareLayer[AzureAIClientOptionsT],
     ChatTelemetryLayer[AzureAIClientOptionsT],
-    RawAzureAIClient[AzureAIClientOptionsT],
+    RawAzureAIClient[AzureAIClientOptionsT],  # pyright: ignore[reportDeprecated]
     Generic[AzureAIClientOptionsT],
 ):
-    """Azure AI client with middleware, telemetry, and function invocation support.
+    """Deprecated Azure AI client with middleware, telemetry, and function invocation support.
 
-    This is the recommended client for most use cases. It includes:
+    This class is deprecated. Use ``FoundryAgent`` instead for connecting to
+    pre-configured agents in Foundry. It includes:
     - Chat middleware support for request/response interception
     - OpenTelemetry-based telemetry for observability
     - Automatic function/tool invocation handling
 
-    For a minimal implementation without these features, use :class:`RawAzureAIClient`.
+    For a minimal implementation without these features, use :class:`RawFoundryAgentChatClient`.
     """
 
     def __init__(
@@ -1244,11 +1244,12 @@ class AzureAIClient(
         model_deployment_name: str | None = None,
         credential: AzureCredentialTypes | None = None,
         use_latest_version: bool | None = None,
+        allow_preview: bool | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize an Azure AI client with full layer support.
 
@@ -1268,11 +1269,12 @@ class AzureAIClient(
                 or AsyncTokenCredential.
             use_latest_version: Boolean flag that indicates whether to use latest agent version
                 if it exists in the service.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of chat middlewares to include.
             function_invocation_configuration: Optional function invocation configuration.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
-            kwargs: Additional keyword arguments passed to the parent class.
 
         Examples:
             .. code-block:: python
@@ -1318,9 +1320,10 @@ class AzureAIClient(
             model_deployment_name=model_deployment_name,
             credential=credential,
             use_latest_version=use_latest_version,
+            allow_preview=allow_preview,
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
-            **kwargs,
         )

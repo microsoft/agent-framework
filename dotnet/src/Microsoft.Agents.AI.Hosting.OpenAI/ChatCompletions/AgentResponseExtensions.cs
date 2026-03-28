@@ -34,9 +34,7 @@ internal static class AgentResponseExtensions
         var chatCompletionChoices = new List<ChatCompletionChoice>();
         var index = 0;
 
-        var finishReason = (agentResponse.RawRepresentation is ChatResponse { FinishReason: not null } chatResponse)
-            ? chatResponse.FinishReason.ToString()
-            : "stop"; // "stop" is a natural stop point; returning this by-default
+        var finishReason = agentResponse.FinishReason?.ToString() ?? ChatFinishReason.Stop.Value; // "stop" is a natural stop point; returning this by-default
 
         foreach (var message in agentResponse.Messages)
         {

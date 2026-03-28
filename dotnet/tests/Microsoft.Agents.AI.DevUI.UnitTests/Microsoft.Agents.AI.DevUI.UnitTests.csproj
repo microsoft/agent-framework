@@ -8,7 +8,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
-    <PackageReference Include="OpenAI" />
   </ItemGroup>
 
   <ItemGroup>

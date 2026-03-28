@@ -15,7 +15,8 @@ of MCP-related actions.
 import asyncio
 
 from agent_framework.github import GitHubCopilotAgent
-from copilot.types import MCPServerConfig, PermissionRequest, PermissionRequestResult
+from copilot.generated.session_events import PermissionRequest
+from copilot.types import MCPServerConfig, PermissionRequestResult
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -24,8 +25,7 @@ load_dotenv()
 
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
     """Permission handler that prompts the user for approval."""
-    kind = request.get("kind", "unknown")
-    print(f"\n[Permission Request: {kind}]")
+    print(f"\n[Permission Request: {request.kind}]")
 
     response = input("Approve? (y/n): ").strip().lower()
     if response in ("y", "yes"):
@@ -69,9 +69,10 @@ async def main() -> None:
         print(f"Agent: {result1}\n")
 
         # Query that exercises the remote Microsoft Learn MCP server
+        # Remote MCP calls may take longer, so increase the timeout
         query2 = "Search Microsoft Learn for 'Azure Functions Python' and summarize the top result"
         print(f"User: {query2}")
-        result2 = await agent.run(query2)
+        result2 = await agent.run(query2, options={"timeout": 120})
         print(f"Agent: {result2}\n")
 
 

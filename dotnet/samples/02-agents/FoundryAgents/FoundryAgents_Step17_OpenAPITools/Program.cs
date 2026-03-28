@@ -3,7 +3,7 @@
 // This sample shows how to use OpenAPI Tools with AI Agents.
 
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using OpenAI.Responses;
@@ -72,7 +72,7 @@ const string CountriesOpenApiSpec = """
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create the OpenAPI function definition
-var openApiFunction = new OpenAPIFunctionDefinition(
+var openApiFunction = new OpenApiFunctionDefinition(
     "get_countries",
     BinaryData.FromString(CountriesOpenApiSpec),
     new OpenAPIAnonymousAuthenticationDetails())

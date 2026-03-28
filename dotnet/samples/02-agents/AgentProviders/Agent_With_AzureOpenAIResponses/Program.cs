@@ -17,8 +17,8 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 AIAgent agent = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
-     .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
+     .GetResponsesClient()
+     .AsAIAgent(model: deploymentName, instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
@@ -29,8 +29,8 @@ Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 AIAgent agentStoreFalse = new AzureOpenAIClient(
     new Uri(endpoint),
     new DefaultAzureCredential())
-     .GetResponsesClient(deploymentName)
-     .AsIChatClientWithStoredOutputDisabled()
+     .GetResponsesClient()
+     .AsIChatClientWithStoredOutputDisabled(model: deploymentName)
      .AsAIAgent(instructions: "You are good at telling jokes.", name: "Joker");
 
 // Invoke the agent and output the text result.

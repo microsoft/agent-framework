@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -18,7 +18,6 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     AgentVersionDetails,
@@ -29,13 +28,15 @@ from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
 
-from ._client import AzureAIClient, AzureAIProjectAgentOptions
+from ._client import AzureAIClient, AzureAIProjectAgentOptions  # pyright: ignore[reportDeprecated]
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
@@ -55,11 +56,12 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated("AzureAIProjectAgentProvider is deprecated. Use FoundryAgent instead.")
 class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
-    """Provider for Azure AI Agent Service (Responses API).
+    """Deprecated provider for Azure AI Agent Service (Responses API).
 
-    This provider allows you to create, retrieve, and manage Azure AI agents
-    using the AIProjectClient from the Azure AI Projects SDK.
+    This provider is deprecated. Use ``FoundryAgent`` instead to connect to
+    pre-configured agents in Foundry.
 
     Examples:
         Using with explicit AIProjectClient:
@@ -102,6 +104,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         project_endpoint: str | None = None,
         model: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -117,6 +120,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -146,11 +150,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
 
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             self._should_close_client = True
 
         self._project_client = project_client
@@ -195,11 +202,10 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             )
 
         # Extract options from default_options if present
-        opts = dict(default_options) if default_options else {}
+        opts: dict[str, Any] = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
-        foundry_features = opts.get("foundry_features")
 
         args: dict[str, Any] = {"model": resolved_model}
 
@@ -246,8 +252,6 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             "definition": PromptAgentDefinition(**args),
             "description": description,
         }
-        if foundry_features:
-            create_version_kwargs["foundry_features"] = foundry_features
 
         created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 
@@ -382,7 +386,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a Agent.")
 
-        client = AzureAIClient(
+        client = AzureAIClient(  # pyright: ignore[reportDeprecated]
             project_client=self._project_client,
             agent_name=details.name,
             agent_version=details.version,
@@ -394,6 +398,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         # from_azure_ai_tools converts hosted tools (MCP, code interpreter, file search, web search)
         # but function tools need the actual implementations from provided_tools
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", details.definition.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -401,9 +407,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             name=details.name,
             description=details.description,
             instructions=details.definition.instructions,
-            model_id=details.definition.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

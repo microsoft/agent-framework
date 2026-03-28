@@ -61,6 +61,12 @@ public static class Program
             {
                 Console.WriteLine($"{outputEvent}");
             }
+
+            if (evt is WorkflowErrorEvent errorEvent)
+            {
+                Console.WriteLine($"Workflow error: {errorEvent.Exception?.Message}");
+                Console.WriteLine($"Details: {errorEvent.Exception}");
+            }
         }
     }
 }
@@ -175,7 +181,9 @@ internal sealed class FeedbackEvent(FeedbackResult feedbackResult) : WorkflowEve
 /// <summary>
 /// A custom executor that uses an AI agent to provide feedback on a slogan.
 /// </summary>
-internal sealed class FeedbackExecutor : Executor<SloganResult>
+[SendsMessage(typeof(FeedbackResult))]
+[YieldsOutput(typeof(string))]
+internal sealed partial class FeedbackExecutor : Executor<SloganResult>
 {
     private readonly AIAgent _agent;
     private AgentSession? _session;

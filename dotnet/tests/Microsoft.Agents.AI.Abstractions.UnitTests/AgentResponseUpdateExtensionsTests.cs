@@ -334,6 +334,7 @@ public class AgentResponseUpdateExtensionsTests
         {
             ResponseId = "test-response-id",
             CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.ContentFilter,
             Usage = new UsageDetails { TotalTokenCount = 50 },
             AdditionalProperties = new() { ["key"] = "value" },
             ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
@@ -346,6 +347,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.NotNull(result);
         Assert.Equal("test-response-id", result.ResponseId);
         Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Equal(ChatFinishReason.ContentFilter, result.FinishReason);
         Assert.Same(agentResponse.Messages, result.Messages);
         Assert.Same(agentResponse, result.RawRepresentation);
         Assert.Same(agentResponse.Usage, result.Usage);
@@ -392,6 +394,7 @@ public class AgentResponseUpdateExtensionsTests
             ResponseId = "update-id",
             MessageId = "message-id",
             CreatedAt = new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero),
+            FinishReason = ChatFinishReason.ToolCalls,
             AdditionalProperties = new() { ["key"] = "value" },
             ContinuationToken = ResponseContinuationToken.FromBytes(new byte[] { 1, 2, 3 }),
         };
@@ -405,6 +408,7 @@ public class AgentResponseUpdateExtensionsTests
         Assert.Equal("update-id", result.ResponseId);
         Assert.Equal("message-id", result.MessageId);
         Assert.Equal(new DateTimeOffset(2024, 1, 1, 12, 0, 0, TimeSpan.Zero), result.CreatedAt);
+        Assert.Equal(ChatFinishReason.ToolCalls, result.FinishReason);
         Assert.Equal(ChatRole.Assistant, result.Role);
         Assert.Same(agentResponseUpdate.Contents, result.Contents);
         Assert.Same(agentResponseUpdate, result.RawRepresentation);

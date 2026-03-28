@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
-from agent_framework import FunctionInvocationContext, function_middleware, tool
-from agent_framework.openai import OpenAIChatClient
+from agent_framework import Agent, FunctionInvocationContext, function_middleware, tool
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 from pydantic import Field
 
@@ -149,10 +149,11 @@ async def pattern_1_single_agent_with_closure() -> None:
     print("Use case: Single agent with multiple tools sharing runtime context")
     print()
 
-    client = OpenAIChatClient(model_id="gpt-4o-mini")
+    client = FoundryChatClient(model="gpt-4o-mini")
 
     # Create agent with both tools and shared context via middleware
-    communication_agent = client.as_agent(
+    communication_agent = Agent(
+        client=client,
         name="communication_agent",
         instructions=(
             "You are a communication assistant that can send emails and notifications. "
@@ -294,17 +295,19 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
         print(f"[SMSAgent] Received runtime context: {list(context.kwargs.keys())}")
         await call_next()
 
-    client = OpenAIChatClient(model_id="gpt-4o-mini")
+    client = FoundryChatClient(model="gpt-4o-mini")
 
     # Create specialized sub-agents
-    email_agent = client.as_agent(
+    email_agent = Agent(
+        client=client,
         name="email_agent",
         instructions="You send emails using the send_email_v2 tool.",
         tools=[send_email_v2],
         middleware=[email_kwargs_tracker],
     )
 
-    sms_agent = client.as_agent(
+    sms_agent = Agent(
+        client=client,
         name="sms_agent",
         instructions="You send SMS messages using the send_sms tool.",
         tools=[send_sms],
@@ -312,7 +315,8 @@ async def pattern_2_hierarchical_with_kwargs_propagation() -> None:
     )
 
     # Create coordinator that delegates to sub-agents
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions=(
             "You coordinate communication tasks. "
@@ -396,10 +400,11 @@ async def pattern_3_hierarchical_with_middleware() -> None:
 
     auth_middleware = AuthContextMiddleware()
 
-    client = OpenAIChatClient(model_id="gpt-4o-mini")
+    client = FoundryChatClient(model="gpt-4o-mini")
 
     # Sub-agent with validation middleware
-    protected_agent = client.as_agent(
+    protected_agent = Agent(
+        client=client,
         name="protected_agent",
         instructions="You perform protected operations that require authentication.",
         tools=[protected_operation],
@@ -407,7 +412,8 @@ async def pattern_3_hierarchical_with_middleware() -> None:
     )
 
     # Coordinator delegates to protected agent
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         name="coordinator",
         instructions="You coordinate protected operations. Delegate to protected_executor.",
         tools=[

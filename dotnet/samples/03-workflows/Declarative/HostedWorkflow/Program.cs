@@ -3,8 +3,9 @@
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;

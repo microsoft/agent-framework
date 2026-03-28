@@ -148,6 +148,45 @@ public sealed class DurableAgentFunctionMetadataTransformerTests
         }
     }
 
+    [Fact]
+    public void Transform_SkipsAgents_WithoutExplicitOptions()
+    {
+        // Arrange: two agents in the dictionary, but only one has explicit FunctionsAgentOptions.
+        // This simulates a workflow-auto-registered agent (workflowAgent) alongside a standalone agent.
+        Dictionary<string, Func<IServiceProvider, AIAgent>> agents = new()
+        {
+            { "standaloneAgent", _ => new TestAgent("standaloneAgent", "Standalone agent") },
+            { "workflowAgent", _ => new TestAgent("workflowAgent", "Auto-registered by workflow") }
+        };
+
+        FunctionsAgentOptions standaloneOptions = new();
+        standaloneOptions.HttpTrigger.IsEnabled = true;
+
+        // Only standaloneAgent has explicit options; workflowAgent does not.
+        IFunctionsAgentOptionsProvider agentOptionsProvider = new FakeOptionsProvider(new Dictionary<string, FunctionsAgentOptions>
+        {
+            { "standaloneAgent", standaloneOptions }
+        });
+
+        List<IFunctionMetadata> metadataList = [];
+
+        DurableAgentFunctionMetadataTransformer transformer = new(
+            agents,
+            NullLogger<DurableAgentFunctionMetadataTransformer>.Instance,
+            new FakeServiceProvider(),
+            agentOptionsProvider);
+
+        // Act
+        transformer.Transform(metadataList);
+
+        // Assert: only standaloneAgent should have triggers (entity + http = 2).
+        // workflowAgent should be skipped entirely.
+        Assert.Equal(2, metadataList.Count);
+        Assert.Contains(metadataList, m => m.Name == "dafx-standaloneAgent");
+        Assert.Contains(metadataList, m => m.Name == "http-standaloneAgent");
+        Assert.DoesNotContain(metadataList, m => m.Name!.Contains("workflowAgent"));
+    }
+
     private static List<IFunctionMetadata> BuildFunctionMetadataList(int numberOfFunctions)
     {
         List<IFunctionMetadata> list = [];

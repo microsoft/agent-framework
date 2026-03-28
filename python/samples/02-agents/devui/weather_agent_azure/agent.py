@@ -20,7 +20,7 @@ from agent_framework import (
     function_middleware,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework_devui import register_cleanup
 from dotenv import load_dotenv
 
@@ -152,7 +152,7 @@ agent = Agent(
     and forecasts for any location. Always be helpful and provide detailed
     weather information when asked.
     """,
-    client=AzureOpenAIChatClient(
+    client=FoundryChatClient(
         api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
     ),
     tools=[get_weather, get_forecast, send_email],

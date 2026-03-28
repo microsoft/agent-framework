@@ -72,6 +72,8 @@ public static class Program
 /// <summary>
 /// Executor that starts the concurrent processing by sending messages to the agents.
 /// </summary>
+[SendsMessage(typeof(ChatMessage))]
+[SendsMessage(typeof(TurnToken))]
 internal sealed partial class ConcurrentStartExecutor() :
     Executor("ConcurrentStartExecutor")
 {
@@ -97,7 +99,8 @@ internal sealed partial class ConcurrentStartExecutor() :
 /// <summary>
 /// Executor that aggregates the results from the concurrent agents.
 /// </summary>
-internal sealed class ConcurrentAggregationExecutor() :
+[YieldsOutput(typeof(string))]
+internal sealed partial class ConcurrentAggregationExecutor() :
     Executor<List<ChatMessage>>("ConcurrentAggregationExecutor")
 {
     private readonly List<ChatMessage> _messages = [];

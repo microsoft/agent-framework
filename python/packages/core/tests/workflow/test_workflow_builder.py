@@ -13,6 +13,8 @@ from agent_framework import (
     AgentRunInputs,
     AgentSession,
     BaseAgent,
+    Case,
+    Default,
     Executor,
     Message,
     ResponseStream,
@@ -221,6 +223,29 @@ def test_add_edge_with_condition():
 
     assert "Source" in workflow.executors
     assert "Target" in workflow.executors
+
+
+def test_switch_case_with_agents():
+    """Test add_switch_case_edge_group with Case and Default edges using agents."""
+    router = DummyAgent(id="router_agent", name="router")
+    handler = DummyAgent(id="handler", name="handler")
+    fallback = DummyAgent(id="fallback_agent", name="fallback")
+
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_switch_case_edge_group(
+            router,
+            [
+                Case(condition=lambda _: True, target=handler),
+                Default(target=fallback),
+            ],
+        )
+        .build()
+    )
+
+    # All three agents should be AgentExecutor wrappers
+    agent_executors = [e for e in workflow.executors.values() if isinstance(e, AgentExecutor)]
+    assert len(agent_executors) == 3
 
 
 # region with_output_from tests

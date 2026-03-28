@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, Message
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -27,22 +27,23 @@ Demonstrates:
 - Workflow completion when idle with no pending work
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Familiarity with Workflow events (WorkflowEvent)
 """
 
 
 async def main() -> None:
-    # 1) Create three domain agents using AzureOpenAIResponsesClient
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    # 1) Create three domain agents using FoundryChatClient
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         instructions=(
             "You're an expert market and product researcher. Given a prompt, provide concise, factual insights,"
             " opportunities, and risks."
@@ -50,7 +51,8 @@ async def main() -> None:
         name="researcher",
     )
 
-    marketer = client.as_agent(
+    marketer = Agent(
+        client=client,
         instructions=(
             "You're a creative marketing strategist. Craft compelling value propositions and target messaging"
             " aligned to the prompt."
@@ -58,7 +60,8 @@ async def main() -> None:
         name="marketer",
     )
 
-    legal = client.as_agent(
+    legal = Agent(
+        client=client,
         instructions=(
             "You're a cautious legal/compliance reviewer. Highlight constraints, disclaimers, and policy concerns"
             " based on the prompt."

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, cast
 
@@ -19,9 +20,9 @@ from azure.ai.agents.models import (
 from azure.ai.projects.models import (
     CodeInterpreterTool,
     MCPTool,
-    TextResponseFormatConfigurationResponseFormatJsonObject,
-    TextResponseFormatConfigurationResponseFormatText,
+    TextResponseFormatJsonObject,
     TextResponseFormatJsonSchema,
+    TextResponseFormatText,
     Tool,
     WebSearchPreviewTool,
 )
@@ -158,6 +159,10 @@ def to_azure_ai_agent_tools(
 ) -> list[ToolDefinition | dict[str, Any]]:
     """Convert Agent Framework tools to Azure AI V1 SDK tool definitions.
 
+    .. deprecated::
+        This function is deprecated and will be removed in a future release.
+        Use :func:`to_azure_ai_tools` instead for the V2 (Projects/Responses) API.
+
     Handles FunctionTool instances and dict-based tools from static factory methods.
 
     Args:
@@ -170,6 +175,12 @@ def to_azure_ai_agent_tools(
     Raises:
         ValueError: If tool configuration is invalid.
     """
+    warnings.warn(
+        "to_azure_ai_agent_tools() is deprecated and will be removed in a future release; "
+        "use to_azure_ai_tools() instead for the V2 (Projects/Responses) API.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not tools:
         return []
 
@@ -208,12 +219,22 @@ def from_azure_ai_agent_tools(
 ) -> list[dict[str, Any]]:
     """Convert Azure AI V1 SDK tool definitions to dict-based tools.
 
+    .. deprecated::
+        This function is deprecated and will be removed in a future release.
+        Use :func:`from_azure_ai_tools` instead for the V2 (Projects/Responses) API.
+
     Args:
         tools: Sequence of Azure AI V1 SDK tool definitions.
 
     Returns:
         List of dict-based tool definitions.
     """
+    warnings.warn(
+        "from_azure_ai_agent_tools() is deprecated and will be removed in a future release; "
+        "use from_azure_ai_tools() instead for the V2 (Projects/Responses) API.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if not tools:
         return []
 
@@ -479,11 +500,7 @@ def _prepare_mcp_tool_dict_for_azure_ai(tool_dict: dict[str, Any]) -> MCPTool:
 
 def create_text_format_config(
     response_format: type[BaseModel] | Mapping[str, Any],
-) -> (
-    TextResponseFormatJsonSchema
-    | TextResponseFormatConfigurationResponseFormatJsonObject
-    | TextResponseFormatConfigurationResponseFormatText
-):
+) -> TextResponseFormatJsonSchema | TextResponseFormatJsonObject | TextResponseFormatText:
     """Convert response_format into Azure text format configuration."""
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         schema = response_format.model_json_schema()
@@ -513,9 +530,9 @@ def create_text_format_config(
                 config_kwargs["description"] = format_config["description"]
             return TextResponseFormatJsonSchema(**config_kwargs)
         if format_type == "json_object":
-            return TextResponseFormatConfigurationResponseFormatJsonObject()
+            return TextResponseFormatJsonObject()
         if format_type == "text":
-            return TextResponseFormatConfigurationResponseFormatText()
+            return TextResponseFormatText()
 
     raise IntegrationInvalidRequestException("response_format must be a Pydantic model or mapping.")
 
@@ -553,5 +570,26 @@ def _convert_response_format(response_format: Mapping[str, Any]) -> dict[str, An
 
     if format_type in {"json_object", "text"}:
         return {"type": format_type}
+
+    # Handle raw JSON schemas (e.g. {"type": "object", "properties": {...}})
+    # by wrapping them in the expected json_schema envelope.
+    # Detect by checking for JSON Schema primitive types or known schema keywords.
+    json_schema_keywords = {"properties", "anyOf", "oneOf", "allOf", "$ref", "$defs"}
+    json_schema_primitive_types = {"object", "array", "string", "number", "integer", "boolean", "null"}
+    if format_type in json_schema_primitive_types or (
+        format_type is None and any(k in response_format for k in json_schema_keywords)
+    ):
+        schema = dict(response_format)
+        if schema.get("type") == "object" and "additionalProperties" not in schema:
+            schema["additionalProperties"] = False
+        # Pop title from schema since OpenAI strict mode rejects unknown keys;
+        # use it as the schema name in the envelope instead.
+        name = str(schema.pop("title", None) or "response")
+        return {
+            "type": "json_schema",
+            "name": name,
+            "schema": schema,
+            "strict": True,
+        }
 
     raise IntegrationInvalidRequestException("Unsupported response_format provided for Azure AI client.")

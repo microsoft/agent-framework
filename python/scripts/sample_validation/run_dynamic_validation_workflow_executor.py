@@ -66,9 +66,10 @@ class RunDynamicValidationWorkflowExecutor(Executor):
                 fallback_results = [
                     RunResult(
                         sample=sample,
-                        status=RunStatus.ERROR,
+                        status=RunStatus.FAILURE,
                         output="",
                         error="Nested workflow did not return an ExecutionResult.",
+                        fix="",
                     )
                     for sample in creation.samples
                 ]

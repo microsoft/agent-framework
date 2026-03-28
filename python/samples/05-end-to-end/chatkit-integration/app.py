@@ -29,7 +29,7 @@ import uvicorn
 
 # Agent Framework imports
 from agent_framework import Agent, AgentResponseUpdate, FunctionResultContent, Message, Role, tool
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 
 # Agent Framework ChatKit integration
 from agent_framework_chatkit import ThreadItemConverter, stream_agent_response
@@ -222,7 +222,7 @@ class WeatherChatKitServer(ChatKitServer[dict[str, Any]]):
         # For authentication, run `az login` command in terminal
         try:
             self.weather_agent = Agent(
-                client=AzureOpenAIChatClient(credential=AzureCliCredential()),
+                client=FoundryChatClient(credential=AzureCliCredential()),
                 instructions=(
                     "You are a helpful weather assistant with image analysis capabilities. "
                     "You can provide weather information for any location, tell the current time, "

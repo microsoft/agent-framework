@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from create_workflow import create_and_run_workflow
 from dotenv import load_dotenv
 
@@ -33,8 +33,8 @@ This script:
 
 def create_openai_client() -> OpenAI:
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
     return project_client.get_openai_client()
 
@@ -58,7 +58,7 @@ async def run_workflow(deployment_name: str | None = None) -> dict[str, Any]:
     print("Executing multi-agent travel planning workflow...")
     print("This may take a few minutes...")
 
-    workflow_data = await create_and_run_workflow(deployment_name=deployment_name)
+    workflow_data = await create_and_run_workflow(model=deployment_name)
 
     print("Workflow execution completed")
     return workflow_data
@@ -216,7 +216,7 @@ async def main():
     print_section("Travel Planning Workflow Evaluation")
 
     print_section("Step 1: Running Workflow")
-    workflow_data = await run_workflow(deployment_name=workflow_agent_model)
+    workflow_data = await run_workflow(model=workflow_agent_model)
 
     print_section("Step 2: Response Data Summary")
     display_response_summary(workflow_data)
@@ -225,7 +225,7 @@ async def main():
     fetch_agent_responses(openai_client, workflow_data, agents_to_evaluate)
 
     print_section("Step 4: Creating Evaluation")
-    eval_object = create_evaluation(openai_client, deployment_name=eval_model)
+    eval_object = create_evaluation(openai_client, model=eval_model)
 
     print_section("Step 5: Running Evaluation")
     eval_run = run_evaluation(openai_client, eval_object, workflow_data, agents_to_evaluate)

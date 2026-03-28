@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Type or member is obsolete - testing deprecated PersistentAgentsClientExtensions
+
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -12,8 +14,11 @@ using Shared.IntegrationTests;
 
 namespace AzureAIAgentsPersistent.IntegrationTests;
 
+[Trait("Category", "Integration")]
 public class AzureAIAgentsPersistentCreateTests
 {
+    private const string SkipCodeInterpreterReason = "Azure AI Code Interpreter intermittently fails to execute uploaded files in CI";
+
     private readonly PersistentAgentsClient _persistentAgentsClient = new(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint), TestAzureCliCredentials.CreateAzureCliCredential());
 
     [Theory]
@@ -131,11 +136,11 @@ public class AzureAIAgentsPersistentCreateTests
         }
     }
 
-    [Fact]
+    [Fact(Skip = SkipCodeInterpreterReason)]
     public Task CreateAgent_CreatesAgentWithCodeInterpreter_ChatClientAgentOptionsAsync()
         => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithChatClientAgentOptionsAsync");
 
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    [Fact(Skip = SkipCodeInterpreterReason)]
     public Task CreateAgent_CreatesAgentWithCodeInterpreter_FoundryOptionsAsync()
         => this.CreateAgent_CreatesAgentWithCodeInterpreterAsync("CreateWithFoundryOptionsAsync");
 

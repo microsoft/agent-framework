@@ -14,6 +14,7 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -44,7 +45,7 @@ from ._context import CapturingRunnerContext
 from ._entities import create_agent_entity
 from ._errors import IncomingRequestError
 from ._orchestration import AgentOrchestrationContextType, AgentTask, AzureFunctionsAgentExecutor
-from ._serialization import deserialize_value, serialize_value
+from ._serialization import deserialize_value, serialize_value, strip_pickle_markers
 from ._workflow import (
     SOURCE_HITL_RESPONSE,
     SOURCE_ORCHESTRATOR,
@@ -56,6 +57,11 @@ logger = logging.getLogger("agent_framework.azurefunctions")
 
 EntityHandler = Callable[[df.DurableEntityContext], None]
 HandlerT = TypeVar("HandlerT", bound=Callable[..., Any])
+
+
+def _create_state_snapshot(state: dict[str, Any]) -> dict[str, Any]:
+    """Create a deep copy of the deserialized state for later diffing."""
+    return deepcopy(state)
 
 
 @dataclass
@@ -306,7 +312,7 @@ class AgentFunctionApp(DFAppBase):
                 deserialized_state: dict[str, Any] = {
                     str(k): deserialize_value(v) for k, v in shared_state_snapshot.items()
                 }
-                original_snapshot: dict[str, Any] = dict(deserialized_state)
+                original_snapshot = _create_state_snapshot(deserialized_state)
                 shared_state.import_state(deserialized_state)
 
                 if is_hitl_response:
@@ -339,9 +345,10 @@ class AgentFunctionApp(DFAppBase):
                 deletes: set[str] = original_keys - current_keys
 
                 # Updates = keys in current that are new or have different values
-                updates = {
-                    k: v for k, v in current_state.items() if k not in original_snapshot or original_snapshot[k] != v
-                }
+                updates: dict[str, Any] = {}
+                for key in current_keys:
+                    if key not in original_keys or current_state[key] != original_snapshot.get(key):
+                        updates[key] = current_state[key]
 
                 # Drain messages and events from runner context
                 sent_messages = await runner_context.drain_messages()
@@ -514,6 +521,10 @@ class AgentFunctionApp(DFAppBase):
                 response_data = req.get_json()
             except ValueError:
                 return self._build_error_response("Request body must be valid JSON.")
+
+            # Sanitize untrusted HTTP input before it reaches pickle.loads().
+            # See strip_pickle_markers() docstring for details on the attack vector.
+            response_data = strip_pickle_markers(response_data)
 
             # Send the response as an external event
             # The request_id is used as the event name for correlation
