@@ -1,10 +1,6 @@
-import pytest
-from pydantic import BaseModel
-
 from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
-    ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
@@ -38,7 +34,7 @@ def test_map_chat_to_agent_update_forwards_finish_reason() -> None:
         finish_reason="length",
     )
     agent_update = map_chat_to_agent_update(chat_update, agent_name="test_agent")
-    
+
     assert agent_update.finish_reason == "length"
     assert agent_update.author_name == "test_agent"
 
@@ -51,10 +47,10 @@ def test_process_update_propagates_finish_reason_to_agent_response() -> None:
         role="assistant",
         finish_reason="stop",
     )
-    
+
     # Process the update
     _process_update(response, update)
-    
+
     assert response.finish_reason == "stop"
 
 
@@ -62,17 +58,17 @@ def test_process_update_does_not_overwrite_with_none() -> None:
     """Test that _process_update does not overwrite an existing finish_reason with None."""
     response = AgentResponse(
         messages=[Message("assistant", [Content.from_text("test")])],
-        finish_reason="length"
+        finish_reason="length",
     )
     update = AgentResponseUpdate(
         contents=[Content.from_text("more text")],
         role="assistant",
         finish_reason=None,
     )
-    
+
     # Process the update
     _process_update(response, update)
-    
+
     assert response.finish_reason == "length"
 
 
@@ -83,26 +79,22 @@ def test_agent_response_serialization_includes_finish_reason() -> None:
         response_id="test_123",
         finish_reason="stop",
     )
-    
-    # Dump to JSON model to verify it works (AgentResponse is a dataclass without dump but 
-    # tested functionally or through usage_details/properties testing serialization patterns)
-    from dataclasses import asdict
-    
-    data = asdict(response)
+
+    # Serialize using the framework's API and verify finish_reason is included.
+    data = response.to_dict()
     assert "finish_reason" in data
     assert data["finish_reason"] == "stop"
 
 
 def test_agent_response_update_serialization_includes_finish_reason() -> None:
-    """Test that AgentResponseUpdate serializes correctly via asdict."""
+    """Test that AgentResponseUpdate serializes correctly, including finish_reason."""
     update = AgentResponseUpdate(
         contents=[Content.from_text("test")],
         role="assistant",
         response_id="test_456",
         finish_reason="tool_calls",
     )
-    from dataclasses import asdict
-    
-    data = asdict(update)
+
+    data = update.to_dict()
     assert "finish_reason" in data
     assert data["finish_reason"] == "tool_calls"
