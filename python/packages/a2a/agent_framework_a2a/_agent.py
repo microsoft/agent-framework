@@ -430,9 +430,12 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
         """
         status = task.status
 
-        if emit_intermediate and update_event is not None:
-            if event_updates := self._updates_from_task_update_event(update_event):
-                return event_updates
+        if (
+            emit_intermediate
+            and update_event is not None
+            and (event_updates := self._updates_from_task_update_event(update_event))
+        ):
+            return event_updates
 
         if status.state in TERMINAL_TASK_STATES:
             task_messages = self._parse_messages_from_task(task)
