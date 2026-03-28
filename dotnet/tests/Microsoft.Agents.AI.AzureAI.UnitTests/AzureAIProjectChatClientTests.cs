@@ -111,6 +111,49 @@ public class AzureAIProjectChatClientTests
     }
 
     /// <summary>
+    /// Verify that a newly created Azure AI session exposes a durable Foundry conversation ID rather than a response-chain ID after the first run.
+    /// </summary>
+    [Fact]
+    public async Task ChatClient_UsesFoundryConversationId_ForNewSessionsAsync()
+    {
+        // Arrange
+        var requestTriggered = false;
+        using var httpHandler = new HttpHandlerAssert(async (request) =>
+        {
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                requestTriggered = true;
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json") };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentResponseJson(), Encoding.UTF8, "application/json") };
+        });
+
+#pragma warning disable CA5399
+        using var httpClient = new HttpClient(httpHandler);
+#pragma warning restore CA5399
+
+        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        var agent = await client.GetAIAgentAsync(
+            new ChatClientAgentOptions
+            {
+                Name = "test-agent",
+                ChatOptions = new() { Instructions = "Test instructions" },
+            });
+
+        // Act
+        var session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
+
+        // Assert
+        Assert.True(requestTriggered);
+        var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
+        var conversationId = Assert.NotNull(chatClientSession.ConversationId);
+        Assert.StartsWith("conv_", conversationId);
+    }
+
+    /// <summary>
     /// Verify that even when the chat client has a default conversation id, the chat client will prioritize the per-request conversation id provided in HTTP requests.
     /// </summary>
     [Fact]
