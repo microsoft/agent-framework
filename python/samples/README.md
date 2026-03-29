@@ -61,6 +61,16 @@ client = OpenAIChatClient(env_file_path="path/to/custom.env")
 
 This allows different clients to use different configuration files if needed.
 
+For the generic OpenAI clients (`OpenAIChatClient` and `OpenAIChatCompletionClient`), routing
+precedence is:
+
+1. Explicit Azure inputs such as `credential`, `azure_endpoint`, or `api_version`
+2. `OPENAI_API_KEY` / explicit OpenAI API-key parameters
+3. Azure environment fallback such as `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+
+If you keep both OpenAI and Azure variables in your shell, the generic clients stay on OpenAI until
+you pass an explicit Azure input.
+
 For the getting-started samples, you'll need at minimum:
 ```bash
 AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
