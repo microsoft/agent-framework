@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import AgentResponseUpdate, WorkflowEvent
+from agent_framework import Agent, AgentResponseUpdate, WorkflowEvent
 from dotenv import load_dotenv
 
 """AutoGen Swarm pattern vs Agent Framework HandoffBuilder.
@@ -110,10 +110,10 @@ async def run_agent_framework() -> None:
     from agent_framework.openai import OpenAIChatClient
     from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 
-    client = OpenAIChatClient(model_id="gpt-4.1-mini")
+    client = OpenAIChatClient(model="gpt-4.1-mini")
 
     # Create triage agent
-    triage_agent = client.as_agent(
+    triage_agent = Agent(client=client,
         name="triage",
         instructions=(
             "You are a triage agent. Analyze the user's request and route to the appropriate specialist:\n"
@@ -124,14 +124,14 @@ async def run_agent_framework() -> None:
     )
 
     # Create billing specialist
-    billing_agent = client.as_agent(
+    billing_agent = Agent(client=client,
         name="billing_agent",
         instructions="You are a billing specialist. Help with payment and billing questions. Provide clear assistance.",
         description="Handles billing and payment questions",
     )
 
     # Create technical support specialist
-    tech_support = client.as_agent(
+    tech_support = Agent(client=client,
         name="technical_support",
         instructions="You are technical support. Help with technical issues. Provide clear assistance.",
         description="Handles technical support questions",

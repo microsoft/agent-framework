@@ -13,9 +13,12 @@ from typing import Any, ClassVar, TypedDict
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message
 from agent_framework._sessions import BaseHistoryProvider
 from agent_framework._settings import SecretString, load_settings
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
+from azure.core.credentials import TokenCredential
+from azure.core.credentials_async import AsyncTokenCredential
 from azure.cosmos import PartitionKey
 from azure.cosmos.aio import ContainerProxy, CosmosClient, DatabaseProxy
+
+AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
 logger = logging.getLogger(__name__)
 

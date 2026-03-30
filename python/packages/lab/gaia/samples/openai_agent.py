@@ -7,7 +7,7 @@ configured for GAIA benchmark tasks using the OpenAI Responses API.
 
 Required Environment Variables:
     OPENAI_API_KEY: Your OpenAI API key
-    OPENAI_RESPONSES_MODEL_ID: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
+    OPENAI_RESPONSES_MODEL: Model to use with Responses API (e.g., gpt-4o, gpt-4o-mini)
 
 Optional Environment Variables:
     OPENAI_BASE_URL: Custom API base URL if using a proxy or compatible service
@@ -19,7 +19,7 @@ Authentication:
 
 Example:
     export OPENAI_API_KEY="sk-..."
-    export OPENAI_RESPONSES_MODEL_ID="gpt-4o"
+    export OPENAI_RESPONSES_MODEL="gpt-4o"
 """
 
 from collections.abc import AsyncIterator

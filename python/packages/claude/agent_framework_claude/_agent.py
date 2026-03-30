@@ -7,7 +7,7 @@ import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -584,7 +584,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         return AgentResponse.from_updates(updates, value=structured_output)
 
     @overload
-    def run(
+    def run(  # type: ignore[override]
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -595,7 +595,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
-    def run(
+    def run(  # type: ignore[override]
         self,
         messages: AgentRunInputs | None = None,
         *,
@@ -747,3 +747,71 @@ class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[Options
                 response = await agent.run("Hello!")
                 print(response.text)
     """
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the Claude agent with telemetry enabled."""
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,
+        )
+        return super_run(
+            messages=messages,
+            stream=stream,
+            session=session,
+            middleware=middleware,
+            options=options,
+            tools=tools,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **kwargs,
+        )

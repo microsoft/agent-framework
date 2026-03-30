@@ -18,19 +18,23 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from pydantic import BaseModel
 
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
@@ -47,6 +51,11 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated(
+    "AzureAIAgentClient and the AzureAIAgentsProvider are deprecated. "
+    "They target the V1 Agents Service API and have no direct replacement; "
+    "for new Foundry projects, use FoundryAgent."
+)
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
 
@@ -426,7 +435,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
-        client = AzureAIAgentClient(
+        client = AzureAIAgentClient(  # pyright: ignore[reportDeprecated]
             agents_client=self._agents_client,
             agent_id=agent.id,
             agent_name=agent.name,
@@ -436,6 +445,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
 
         # Merge tools: convert agent's hosted tools + user-provided function tools
         merged_tools = self._merge_tools(agent.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", agent.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -443,9 +454,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             name=agent.name,
             description=agent.description,
             instructions=agent.instructions,
-            model_id=agent.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

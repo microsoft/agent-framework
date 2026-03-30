@@ -78,6 +78,7 @@ jobs:
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
       # GitHub MCP
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Observability
       ENABLE_INSTRUMENTATION: "true"
     defaults:
@@ -346,7 +347,7 @@ jobs:
 
   validate-02-agents-amazon:
     name: Validate 02-agents/providers/amazon
-    if: false  # Temporarily disabled - requires AWS credentials
+    if: false # Temporarily disabled - requires AWS credentials
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -378,7 +379,7 @@ jobs:
 
   validate-02-agents-ollama:
     name: Validate 02-agents/providers/ollama
-    if: false  # Temporarily disabled - requires local Ollama server
+    if: false # Temporarily disabled - requires local Ollama server
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -410,7 +411,7 @@ jobs:
 
   validate-02-agents-foundry-local:
     name: Validate 02-agents/providers/foundry_local
-    if: false  # Temporarily disabled - requires local Foundry setup
+    if: false # Temporarily disabled - requires local Foundry setup
     runs-on: ubuntu-latest
     environment: integration
     defaults:
@@ -440,7 +441,7 @@ jobs:
 
   validate-02-agents-copilotstudio:
     name: Validate 02-agents/providers/copilotstudio
-    if: false  # Temporarily disabled - requires Copilot Studio setup
+    if: false # Temporarily disabled - requires Copilot Studio setup
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -556,7 +557,7 @@ jobs:
 
   validate-04-hosting:
     name: Validate 04-hosting
-    if: false  # Temporarily disabled because of sample complexity
+    if: false # Temporarily disabled because of sample complexity
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -595,7 +596,7 @@ jobs:
 
   validate-05-end-to-end:
     name: Validate 05-end-to-end
-    if: false  # Temporarily disabled because of sample complexity
+    if: false # Temporarily disabled because of sample complexity
     runs-on: ubuntu-latest
     environment: integration
     env:
@@ -652,6 +653,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
     defaults:
       run:
         working-directory: python
@@ -703,6 +705,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL_ID: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}

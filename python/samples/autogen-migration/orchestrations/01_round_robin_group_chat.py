@@ -3,7 +3,7 @@
 
 import asyncio
 
-from agent_framework import Message
+from agent_framework import Agent, Message
 from dotenv import load_dotenv
 
 """AutoGen RoundRobinGroupChat vs Agent Framework GroupChatBuilder/SequentialBuilder.
@@ -68,17 +68,20 @@ async def run_agent_framework() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.as_agent(
+    editor = Agent(
+        client=client,
         name="editor",
         instructions="You are an editor. Review and finalize the content.",
     )
@@ -99,6 +102,7 @@ async def run_agent_framework() -> None:
 async def run_agent_framework_with_cycle() -> None:
     """Agent Framework's WorkflowBuilder with cyclic edges and conditional exit."""
     from agent_framework import (
+        Agent,
         AgentExecutorRequest,
         AgentExecutorResponse,
         AgentResponseUpdate,
@@ -111,17 +115,20 @@ async def run_agent_framework_with_cycle() -> None:
     client = OpenAIChatClient(model_id="gpt-4.1-mini")
 
     # Create specialized agents
-    researcher = client.as_agent(
+    researcher = Agent(
+        client=client,
         name="researcher",
         instructions="You are a researcher. Provide facts and data about the topic.",
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         name="writer",
         instructions="You are a writer. Turn research into engaging content.",
     )
 
-    editor = client.as_agent(
+    editor = Agent(
+        client=client,
         name="editor",
         instructions="You are an editor. Review and finalize the content. End with APPROVED if satisfied.",
     )

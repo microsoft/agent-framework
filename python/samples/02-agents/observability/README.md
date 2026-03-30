@@ -88,18 +88,20 @@ configure_azure_monitor(
 # This is optional if ENABLE_INSTRUMENTATION and or ENABLE_SENSITIVE_DATA are set in env vars
 enable_instrumentation(enable_sensitive_data=False)
 ```
-For Azure AI projects, use the `client.configure_azure_monitor()` method which wraps the calls to `configure_azure_monitor()` and `enable_instrumentation()`:
+For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
 
 ```python
-from agent_framework.azure import AzureAIClient
-from azure.ai.projects.aio import AIProjectClient
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
 
-async with (
-    AIProjectClient(...) as project_client,
-    AzureAIClient(project_client=project_client) as client,
-):
-    # Automatically configures Azure Monitor with connection string from project
-    await client.configure_azure_monitor(enable_live_metrics=True)
+client = FoundryChatClient(
+    project_endpoint="https://your-project.services.ai.azure.com",
+    model="gpt-4o",
+    credential=AzureCliCredential(),
+)
+
+# Automatically configures Azure Monitor with connection string from project
+await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
@@ -227,8 +229,7 @@ This folder contains different samples demonstrating how to use telemetry in var
 | [configure_otel_providers_with_parameters.py](./configure_otel_providers_with_parameters.py) | **Recommended starting point**: Shows how to create custom exporters with specific configuration and pass them to `configure_otel_providers()`. Useful for advanced scenarios. |
 | [configure_otel_providers_with_env_var.py](./configure_otel_providers_with_env_var.py) | Shows how to setup telemetry using standard OpenTelemetry environment variables (`OTEL_EXPORTER_OTLP_*`). |
 | [agent_observability.py](./agent_observability.py) | Shows telemetry collection for an agentic application with tool calls using environment variables. |
-| [agent_with_foundry_tracing.py](./agent_with_foundry_tracing.py) | Shows Azure Monitor integration with Foundry for any chat client. |
-| [azure_ai_agent_observability.py](./azure_ai_agent_observability.py) | Shows Azure Monitor integration for a AzureAIClient. |
+| [foundry_tracing.py](./foundry_tracing.py) | Shows Azure Monitor integration with Foundry for any chat client. |
 | [advanced_manual_setup_console_output.py](./advanced_manual_setup_console_output.py) | Advanced: Shows manual setup of exporters and providers with console output. Useful for understanding how observability works under the hood. |
 | [advanced_zero_code.py](./advanced_zero_code.py) | Advanced: Shows zero-code telemetry setup using the `opentelemetry-enable_instrumentation` CLI tool. |
 | [workflow_observability.py](./workflow_observability.py) | Shows telemetry collection for a workflow with multiple executors and message passing. |
@@ -347,15 +348,16 @@ setup_observability(
 
 **After (Current):**
 ```python
-# For Azure AI projects
-from agent_framework.azure import AzureAIClient
-from azure.ai.projects.aio import AIProjectClient
+# For Microsoft Foundry projects
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
 
-async with (
-    AIProjectClient(...) as project_client,
-    AzureAIClient(project_client=project_client) as client,
-):
-    await client.configure_azure_monitor(enable_live_metrics=True)
+client = FoundryChatClient(
+    project_endpoint="https://your-project.services.ai.azure.com",
+    model="gpt-4o",
+    credential=AzureCliCredential(),
+)
+await client.configure_azure_monitor(enable_live_metrics=True)
 
 # For non-Azure AI projects
 from azure.monitor.opentelemetry import configure_azure_monitor

@@ -15,7 +15,7 @@ from invoice_data import query_by_invoice_id, query_by_transaction_id, query_inv
 
 if TYPE_CHECKING:
     from agent_framework import Agent
-    from agent_framework.azure import AzureOpenAIResponsesClient
+    from agent_framework.foundry import FoundryChatClient
 
 
 # ---------------------------------------------------------------------------
@@ -54,26 +54,29 @@ Quantity: 900
 # ---------------------------------------------------------------------------
 
 
-def create_invoice_agent(client: AzureOpenAIResponsesClient) -> Agent:
+def create_invoice_agent(client: FoundryChatClient) -> Agent:
     """Create an invoice agent backed by the given client with query tools."""
-    return client.as_agent(
+    return Agent(
+        client=client,
         name="InvoiceAgent",
         instructions=INVOICE_INSTRUCTIONS,
         tools=[query_invoices, query_by_transaction_id, query_by_invoice_id],
     )
 
 
-def create_policy_agent(client: AzureOpenAIResponsesClient) -> Agent:
+def create_policy_agent(client: FoundryChatClient) -> Agent:
     """Create a policy agent backed by the given client."""
-    return client.as_agent(
+    return Agent(
+        client=client,
         name="PolicyAgent",
         instructions=POLICY_INSTRUCTIONS,
     )
 
 
-def create_logistics_agent(client: AzureOpenAIResponsesClient) -> Agent:
+def create_logistics_agent(client: FoundryChatClient) -> Agent:
     """Create a logistics agent backed by the given client."""
-    return client.as_agent(
+    return Agent(
+        client=client,
         name="LogisticsAgent",
         instructions=LOGISTICS_INSTRUCTIONS,
     )
