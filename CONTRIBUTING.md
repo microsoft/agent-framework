@@ -81,11 +81,11 @@ to automatically detect API breaking changes. This validation runs during `dotne
 (Release configuration) and `dotnet pack`, comparing the current API surface against the
 latest published NuGet baseline version.
 
-**What gets validated:** By default, packable RC packages (`IsReleaseCandidate=true` and
-`IsPackable=true`) that have a published NuGet baseline and do not override validation
-settings are automatically validated. The shared baseline version and default validation
-settings are defined in `dotnet/nuget/nuget-package.props`, but individual projects may opt
-out (for example by setting `EnablePackageValidation=false`).
+**What gets validated:** By default, packable RC packages (`IsReleaseCandidate=true`) and
+GA packages (no `VersionSuffix`) that have a published NuGet baseline and do not override
+validation settings are automatically validated. The shared baseline version and default
+validation settings are defined in `dotnet/nuget/nuget-package.props`, but individual
+projects may opt out (for example by setting `EnablePackageValidation=false`).
 
 **If the build fails with CP errors (e.g., CP0001, CP0002):**
 
