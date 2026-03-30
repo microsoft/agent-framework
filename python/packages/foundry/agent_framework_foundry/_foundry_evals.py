@@ -310,7 +310,7 @@ async def _poll_eval_run(
 def _extract_result_counts(run: RunRetrieveResponse) -> dict[str, int] | None:
     """Extract result_counts from an eval run as a plain dict."""
     counts = run.result_counts
-    if counts is None:
+    if counts is None:  # pyright: ignore[reportUnnecessaryComparison]
         return None
     return {
         "errored": counts.errored,
@@ -371,7 +371,7 @@ async def _fetch_output_items(
             response_id: str | None = None
 
             sample = oi.sample
-            if sample is not None:
+            if sample is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 err = sample.error
                 if err is not None and (err.code or err.message):  # pyright: ignore[reportUnnecessaryComparison]
                     error_code = err.code or None
