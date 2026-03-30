@@ -559,6 +559,14 @@ class AgentEvalConverter:
         .. code-block:: python
 
             {"role": "assistant", "content": [{"type": "tool_call", ...}]}
+            {"role": "user", "content": [{"type": "input_image", ...}]}
+
+        Supported content types:
+
+        * ``text`` → ``{"type": "text", "text": ...}``
+        * ``data`` / ``uri`` (images) → ``{"type": "input_image", "image_url": ...}``
+        * ``function_call`` → ``{"type": "tool_call", ...}``
+        * ``function_result`` → ``{"type": "tool_result", ...}``
 
         A single agent-framework ``Message`` with multiple ``function_result``
         contents produces multiple output messages (one per tool result).
@@ -578,6 +586,15 @@ class AgentEvalConverter:
         for c in contents:
             if c.type == "text" and c.text:
                 content_items.append({"type": "text", "text": c.text})
+            elif c.type in ("data", "uri") and c.uri:
+                # Image / media content → OpenAI input_image format
+                img: dict[str, Any] = {
+                    "type": "input_image",
+                    "image_url": c.uri,
+                }
+                if c.media_type:
+                    img["detail"] = "auto"
+                content_items.append(img)
             elif c.type == "function_call":
                 args = c.arguments
                 if isinstance(args, str):

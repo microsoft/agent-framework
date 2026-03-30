@@ -197,6 +197,55 @@ class TestConvertMessage:
         result = AgentEvalConverter.convert_message(msg)
         assert result[0] == {"role": "user", "content": [{"type": "text", "text": ""}]}
 
+    def test_user_image_from_data(self) -> None:
+        """Image created via Content.from_data() emits input_image."""
+        img = Content.from_data(data=b"\x89PNG\r\n\x1a\n", media_type="image/png")
+        msg = Message("user", [img])
+        result = AgentEvalConverter.convert_message(msg)
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        part = result[0]["content"][0]
+        assert part["type"] == "input_image"
+        assert part["image_url"].startswith("data:image/png;base64,")
+        assert part["detail"] == "auto"
+
+    def test_user_image_from_uri(self) -> None:
+        """Image created via Content.from_uri() with an external URL."""
+        img = Content.from_uri("https://example.com/photo.jpg", media_type="image/jpeg")
+        msg = Message("user", [img])
+        result = AgentEvalConverter.convert_message(msg)
+        assert len(result) == 1
+        part = result[0]["content"][0]
+        assert part["type"] == "input_image"
+        assert part["image_url"] == "https://example.com/photo.jpg"
+        assert part["detail"] == "auto"
+
+    def test_user_image_uri_without_media_type(self) -> None:
+        """URI content without media_type still emits input_image (no detail key)."""
+        img = Content("uri", uri="https://example.com/pic.png")
+        msg = Message("user", [img])
+        result = AgentEvalConverter.convert_message(msg)
+        part = result[0]["content"][0]
+        assert part["type"] == "input_image"
+        assert part["image_url"] == "https://example.com/pic.png"
+        assert "detail" not in part
+
+    def test_mixed_text_and_image(self) -> None:
+        """Message with text + image produces both content parts."""
+        msg = Message(
+            "user",
+            [
+                Content.from_text("What's in this image?"),
+                Content.from_uri("https://example.com/cat.jpg", media_type="image/jpeg"),
+            ],
+        )
+        result = AgentEvalConverter.convert_message(msg)
+        assert len(result) == 1
+        assert len(result[0]["content"]) == 2
+        assert result[0]["content"][0] == {"type": "text", "text": "What's in this image?"}
+        assert result[0]["content"][1]["type"] == "input_image"
+        assert result[0]["content"][1]["image_url"] == "https://example.com/cat.jpg"
+
 
 # ---------------------------------------------------------------------------
 # AgentEvalConverter.convert_messages
@@ -224,6 +273,29 @@ class TestConvertMessages:
         assert result[2]["content"][0]["type"] == "tool_result"
         assert result[3]["role"] == "assistant"
         assert result[3]["content"] == [{"type": "text", "text": "It's sunny in Seattle!"}]
+
+    def test_multimodal_conversation_preserves_images(self) -> None:
+        """Full conversation with image content flows through convert_messages."""
+        messages = [
+            Message(
+                "user",
+                [
+                    Content.from_text("Describe this image"),
+                    Content.from_uri("https://example.com/photo.jpg", media_type="image/jpeg"),
+                ],
+            ),
+            Message("assistant", ["This is a photo of a sunset over the ocean."]),
+        ]
+        result = AgentEvalConverter.convert_messages(messages)
+        assert len(result) == 2
+        # User message has text + image
+        user_content = result[0]["content"]
+        assert len(user_content) == 2
+        assert user_content[0] == {"type": "text", "text": "Describe this image"}
+        assert user_content[1]["type"] == "input_image"
+        assert user_content[1]["image_url"] == "https://example.com/photo.jpg"
+        # Assistant response is text
+        assert result[1]["content"] == [{"type": "text", "text": "This is a photo of a sunset over the ocean."}]
 
 
 # ---------------------------------------------------------------------------
@@ -927,6 +999,57 @@ class TestFoundryEvals:
         ds = run_call.kwargs["data_source"]
         assert ds["type"] == "jsonl"
         assert "tool_definitions" in ds["source"]["content"][0]["item"]
+
+    async def test_evaluate_image_content_in_dataset(self) -> None:
+        """Image content in conversations is preserved in the JSONL payload."""
+        mock_client = MagicMock()
+
+        mock_eval = MagicMock()
+        mock_eval.id = "eval_img"
+        mock_client.evals.create = AsyncMock(return_value=mock_eval)
+
+        mock_run = MagicMock()
+        mock_run.id = "run_img"
+        mock_client.evals.runs.create = AsyncMock(return_value=mock_run)
+
+        mock_completed = MagicMock()
+        mock_completed.status = "completed"
+        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.report_url = None
+        mock_completed.per_testing_criteria_results = None
+        mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
+
+        items = [
+            EvalItem(
+                conversation=[
+                    Message(
+                        "user",
+                        [
+                            Content.from_text("Describe this image"),
+                            Content.from_uri("https://example.com/photo.jpg", media_type="image/jpeg"),
+                        ],
+                    ),
+                    Message("assistant", ["A beautiful sunset over the ocean."]),
+                ],
+            ),
+        ]
+
+        fe = FoundryEvals(client=mock_client, model="gpt-4o")
+        await fe.evaluate(items)
+
+        run_call = mock_client.evals.runs.create.call_args
+        ds = run_call.kwargs["data_source"]
+        assert ds["type"] == "jsonl"
+        item_data = ds["source"]["content"][0]["item"]
+
+        # query_messages should contain the image
+        query_msgs = item_data["query_messages"]
+        user_msg = query_msgs[0]
+        assert user_msg["role"] == "user"
+        assert len(user_msg["content"]) == 2
+        assert user_msg["content"][0] == {"type": "text", "text": "Describe this image"}
+        assert user_msg["content"][1]["type"] == "input_image"
+        assert user_msg["content"][1]["image_url"] == "https://example.com/photo.jpg"
 
     async def test_evaluate_with_project_client(self) -> None:
         mock_oai = MagicMock(spec=AsyncOpenAI)
