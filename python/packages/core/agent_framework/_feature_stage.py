@@ -80,6 +80,10 @@ def _get_descriptor_callable(obj: Any) -> Callable[..., Any]:
     return cast(Callable[..., Any], obj.__func__)
 
 
+def _is_protocol_class(obj: Any) -> bool:
+    return isinstance(obj, type) and bool(getattr(obj, "_is_protocol", False))
+
+
 def _build_stage_warning_message(*, stage: FeatureStageName, feature_id: str, object_name: str) -> str:
     if stage == "experimental":
         return (
@@ -225,8 +229,9 @@ def _feature_stage(
         if not callable(target):
             raise TypeError(f"{stage} decorator can only be applied to classes and callables, not {obj!r}.")
 
+        is_protocol_class = _is_protocol_class(target)
         decorated: Any = target
-        if warning_category is not None:
+        if warning_category is not None and not is_protocol_class:
             decorated = _add_runtime_warning(
                 target,
                 stage=stage,
@@ -238,7 +243,10 @@ def _feature_stage(
         if updated_docstring is not None:
             decorated.__doc__ = updated_docstring
 
-        _set_feature_stage_metadata(decorated, stage=stage, feature_id=normalized_feature_id)
+        # runtime_checkable Protocol classes treat added class attributes as protocol members
+        # on older Python versions, which breaks isinstance/issubclass checks.
+        if not is_protocol_class:
+            _set_feature_stage_metadata(decorated, stage=stage, feature_id=normalized_feature_id)
         if descriptor_wrapper is not None:
             return cast(FeatureStageT, descriptor_wrapper(decorated))
 

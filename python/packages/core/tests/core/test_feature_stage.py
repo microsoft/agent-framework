@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import warnings
 from enum import Enum
+from typing import Protocol, runtime_checkable
 
 import pytest
 
@@ -139,6 +140,33 @@ def test_experimental_class_warns_on_instantiation_and_not_on_definition() -> No
     assert second_instance.value == 5
     assert ExperimentalClass.__feature_stage__ == "experimental"
     assert ExperimentalClass.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+
+
+def test_experimental_runtime_checkable_protocol_keeps_protocol_runtime_checks() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        @runtime_checkable
+        @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+        class ExampleProtocol(Protocol):
+            """A protocol used for runtime checks.
+
+            Returns:
+                Nothing.
+            """
+
+            def __call__(self, value: int) -> int: ...
+
+    assert not caught
+
+    def implementation(value: int) -> int:
+        return value
+
+    assert isinstance(implementation, ExampleProtocol)
+    assert ExampleProtocol.__doc__ is not None
+    assert ".. warning:: Experimental" in ExampleProtocol.__doc__
+    assert getattr(ExampleProtocol, "__feature_stage__", None) is None
+    assert getattr(ExampleProtocol, "__feature_id__", None) is None
 
 
 def test_experimental_warning_is_emitted_once_per_feature() -> None:

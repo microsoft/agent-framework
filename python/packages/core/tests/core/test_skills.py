@@ -802,17 +802,17 @@ class TestSkillsExperimentalStage:
         assert SkillResource.__feature_stage__ == "experimental"
         assert SkillScript.__feature_stage__ == "experimental"
         assert Skill.__feature_stage__ == "experimental"
-        assert SkillScriptRunner.__feature_stage__ == "experimental"
         assert SkillsProvider.__feature_stage__ == "experimental"
         feature_ids = [
             SkillResource.__feature_id__,
             SkillScript.__feature_id__,
             Skill.__feature_id__,
-            SkillScriptRunner.__feature_id__,
             SkillsProvider.__feature_id__,
         ]
         assert all(isinstance(feature_id, str) and feature_id for feature_id in feature_ids)
         assert len(set(feature_ids)) == 1
+        assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
+        assert getattr(SkillScriptRunner, "__feature_id__", None) is None
         assert SkillScript.parameters_schema.fget is not None
         assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")
         assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")
