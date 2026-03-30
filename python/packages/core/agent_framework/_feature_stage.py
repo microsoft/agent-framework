@@ -76,6 +76,10 @@ def _get_object_name(obj: Any) -> str:
     return str(getattr(obj, "__qualname__", getattr(obj, "__name__", type(obj).__name__)))
 
 
+def _get_descriptor_callable(obj: Any) -> Callable[..., Any]:
+    return cast(Callable[..., Any], obj.__func__)
+
+
 def _build_stage_warning_message(*, stage: FeatureStageName, feature_id: str, object_name: str) -> str:
     if stage == "experimental":
         return (
@@ -208,13 +212,23 @@ def _feature_stage(
     normalized_feature_id = _normalize_feature_id(feature_id)
 
     def decorator(obj: FeatureStageT) -> FeatureStageT:
-        if not callable(obj):
+        descriptor_wrapper: Callable[[Any], Any] | None = None
+        target: Any = obj
+
+        if isinstance(obj, staticmethod):
+            descriptor_wrapper = staticmethod
+            target = _get_descriptor_callable(obj)
+        elif isinstance(obj, classmethod):
+            descriptor_wrapper = classmethod
+            target = _get_descriptor_callable(obj)
+
+        if not callable(target):
             raise TypeError(f"{stage} decorator can only be applied to classes and callables, not {obj!r}.")
 
-        decorated: FeatureStageT = obj
+        decorated: Any = target
         if warning_category is not None:
             decorated = _add_runtime_warning(
-                obj,
+                target,
                 stage=stage,
                 feature_id=normalized_feature_id,
                 category=warning_category,
@@ -225,7 +239,10 @@ def _feature_stage(
             decorated.__doc__ = updated_docstring
 
         _set_feature_stage_metadata(decorated, stage=stage, feature_id=normalized_feature_id)
-        return decorated
+        if descriptor_wrapper is not None:
+            return cast(FeatureStageT, descriptor_wrapper(decorated))
+
+        return cast(FeatureStageT, decorated)
 
     return decorator
 

@@ -236,6 +236,70 @@ def test_experimental_property_warns_on_access_and_not_on_definition() -> None:
     assert warning_index < returns_index
 
 
+def test_experimental_staticmethod_warns_when_decorator_wraps_descriptor() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        class Example:
+            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+            @staticmethod
+            def value() -> int:
+                """Return the value.
+
+                Returns:
+                    The stored value.
+                """
+                return 1
+
+    assert not caught
+
+    with warnings.catch_warnings(record=True) as caught:
+        assert Example.value() == 1
+        assert Example.value() == 1
+
+    assert len(caught) == 1
+    assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
+    assert "Example.value" in str(caught[0].message)
+    assert Example.value.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert Example.value.__doc__ is not None
+    lines = Example.value.__doc__.splitlines()
+    warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
+    returns_index = next(i for i, line in enumerate(lines) if line == "Returns:")
+    assert warning_index < returns_index
+
+
+def test_experimental_classmethod_warns_when_decorator_wraps_descriptor() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+
+        class Example:
+            @experimental(feature_id=AlternateExperimentalFeature.EXPERIMENTAL_FEATURE)  # type: ignore[arg-type]
+            @classmethod
+            def value(cls) -> int:
+                """Return the value.
+
+                Returns:
+                    The stored value.
+                """
+                return 1
+
+    assert not caught
+
+    with warnings.catch_warnings(record=True) as caught:
+        assert Example.value() == 1
+        assert Example.value() == 1
+
+    assert len(caught) == 1
+    assert f"[{AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value}]" in str(caught[0].message)
+    assert "Example.value" in str(caught[0].message)
+    assert Example.value.__func__.__feature_id__ == AlternateExperimentalFeature.EXPERIMENTAL_FEATURE.value
+    assert Example.value.__doc__ is not None
+    lines = Example.value.__doc__.splitlines()
+    warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
+    returns_index = next(i for i, line in enumerate(lines) if line == "Returns:")
+    assert warning_index < returns_index
+
+
 def test_feature_id_allows_lowercase_values() -> None:
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
