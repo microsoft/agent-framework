@@ -78,6 +78,7 @@ from ._evaluation import (
     tool_called_check,
     tool_calls_present,
 )
+from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -314,6 +315,7 @@ __all__ = [
     "Evaluator",
     "Executor",
     "ExpectedToolCall",
+    "ExperimentalFeature",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
@@ -344,6 +346,7 @@ __all__ = [
     "OuterFinalT",
     "OuterUpdateT",
     "RawAgent",
+    "ReleaseCandidateFeature",
     "ResponseStream",
     "Role",
     "RoleLiteral",

@@ -3,6 +3,11 @@
 import asyncio
 import json
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings  # isort: skip
+# warnings.filterwarnings("ignore", message=".*SKILLS.*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
@@ -137,15 +142,11 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the skills provider with the code-defined skill
-    skills_provider = SkillsProvider(
-        skills=[unit_converter_skill],
-    )
-
+    # Create the skills provider with the code-defined skill and pass it to the agent
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
-        context_providers=[skills_provider],
+        context_providers=[SkillsProvider(skills=[unit_converter_skill])],
     ) as agent:
         print("Converting units")
         print("-" * 60)
