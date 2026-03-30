@@ -27,7 +27,7 @@ FRAMEWORK_TO_AGUI_ROLE: dict[str, str] = {
     "system": "system",
 }
 
-ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool"}
+ALLOWED_AGUI_ROLES: set[str] = {"user", "assistant", "system", "tool", "reasoning"}
 
 
 def generate_event_id() -> str:
@@ -82,7 +82,7 @@ def normalize_agui_role(raw_role: Any) -> str:
         raw_role: Raw role value from AG-UI message
 
     Returns:
-        Normalized role string (user, assistant, system, or tool)
+        Normalized role string (user, assistant, system, tool, or reasoning)
     """
     if not isinstance(raw_role, str):
         return "user"

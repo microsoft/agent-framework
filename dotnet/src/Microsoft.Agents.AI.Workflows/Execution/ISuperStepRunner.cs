@@ -19,6 +19,7 @@ internal interface ISuperStepRunner
     bool HasUnprocessedMessages { get; }
 
     ValueTask EnqueueResponseAsync(ExternalResponse response, CancellationToken cancellationToken = default);
+    bool TryGetResponsePortExecutorId(string portId, out string? executorId);
 
     ValueTask<bool> IsValidInputTypeAsync<T>(CancellationToken cancellationToken = default);
     ValueTask<bool> EnqueueMessageAsync<T>(T message, CancellationToken cancellationToken = default);

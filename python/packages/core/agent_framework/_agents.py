@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 import sys
-import warnings
 from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
@@ -24,9 +23,6 @@ from typing import (
 )
 from uuid import uuid4
 
-from mcp import types
-from mcp.server.lowlevel import Server
-from mcp.shared.exceptions import McpError
 from pydantic import BaseModel
 
 from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
@@ -71,6 +67,9 @@ else:
     from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from mcp import types
+    from mcp.server.lowlevel import Server
+
     from ._compaction import CompactionStrategy, TokenizerProtocol
     from ._types import ChatOptions
 
@@ -248,7 +247,6 @@ class SupportsAgentRun(Protocol):
         session: AgentSession | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]:
         """Get a response from the agent (non-streaming)."""
         ...
@@ -262,7 +260,6 @@ class SupportsAgentRun(Protocol):
         session: AgentSession | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a streaming response from the agent."""
         ...
@@ -275,7 +272,6 @@ class SupportsAgentRun(Protocol):
         session: AgentSession | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Get a response from the agent.
 
@@ -291,7 +287,6 @@ class SupportsAgentRun(Protocol):
             session: The conversation session associated with the message(s).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
             client_kwargs: Additional client-specific keyword arguments.
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An AgentResponse with the final result.
@@ -334,7 +329,15 @@ class BaseAgent(SerializationMixin):
 
             # Create a concrete subclass that implements the protocol
             class SimpleAgent(BaseAgent):
-                async def run(self, messages=None, *, stream=False, session=None, **kwargs):
+                async def run(
+                    self,
+                    messages=None,
+                    *,
+                    stream=False,
+                    session=None,
+                    function_invocation_kwargs=None,
+                    client_kwargs=None,
+                ):
                     if stream:
 
                         async def _stream():
@@ -373,7 +376,6 @@ class BaseAgent(SerializationMixin):
         context_providers: Sequence[BaseContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a BaseAgent instance.
 
@@ -385,15 +387,7 @@ class BaseAgent(SerializationMixin):
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware.
             additional_properties: Additional properties set on the agent.
-            kwargs: Additional keyword arguments (merged into additional_properties).
         """
-        if kwargs:
-            warnings.warn(
-                "Passing additional properties as direct keyword arguments to BaseAgent is deprecated; "
-                "pass them via additional_properties instead.",
-                DeprecationWarning,
-                stacklevel=3,
-            )
         if id is None:
             id = str(uuid4())
         self.id = id
@@ -403,10 +397,7 @@ class BaseAgent(SerializationMixin):
         self.middleware: list[MiddlewareTypes] | None = (
             cast(list[MiddlewareTypes], middleware) if middleware is not None else None
         )
-
-        # Merge kwargs into additional_properties
         self.additional_properties: dict[str, Any] = cast(dict[str, Any], additional_properties or {})
-        self.additional_properties.update(kwargs)
 
     def create_session(self, *, session_id: str | None = None) -> AgentSession:
         """Create a new lightweight session.
@@ -666,9 +657,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[BaseContextProvider] | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
         """Initialize a Agent instance.
 
@@ -695,7 +687,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 If both this and a compaction_strategy on the underlying client are set, this one is used.
             tokenizer: Optional agent-level tokenizer.
                 If both this and a tokenizer on the underlying client are set, this one is used.
-            kwargs: Any additional keyword arguments. Will be stored as ``additional_properties``.
+            additional_properties: Additional properties stored on the agent.
         """
         opts = dict(default_options) if default_options else {}
 
@@ -709,7 +701,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             name=name,
             description=description,
             context_providers=context_providers,
-            **kwargs,
+            middleware=middleware,
+            additional_properties=additional_properties,
         )
         self.client = client
         self.compaction_strategy = compaction_strategy
@@ -812,7 +805,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -828,7 +820,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -844,7 +835,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -859,7 +849,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent with the given messages and options.
 
@@ -890,21 +879,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 is used, falling back to the client default.
             function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
             client_kwargs: Additional client-specific keyword arguments for the chat client.
-            kwargs: Deprecated additional keyword arguments for the agent.
-                They are forwarded to both tool invocation and the chat client for compatibility.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse] containing the agent's response.
             When stream=True: A ResponseStream of AgentResponseUpdate items with
                 ``get_final_response()`` for the final AgentResponse.
         """
-        if kwargs:
-            warnings.warn(
-                "Passing runtime keyword arguments directly to run() is deprecated; pass tool values via "
-                "function_invocation_kwargs and client-specific values via client_kwargs instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         if not stream:
 
             async def _run_non_streaming() -> AgentResponse[Any]:
@@ -915,7 +895,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                     options=options,
                     compaction_strategy=compaction_strategy,
                     tokenizer=tokenizer,
-                    legacy_kwargs=kwargs,
                     function_invocation_kwargs=function_invocation_kwargs,
                     client_kwargs=client_kwargs,
                 )
@@ -1003,7 +982,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 options=options,
                 compaction_strategy=compaction_strategy,
                 tokenizer=tokenizer,
-                legacy_kwargs=kwargs,
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
             )
@@ -1103,7 +1081,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         options: Mapping[str, Any] | None,
         compaction_strategy: CompactionStrategy | None,
         tokenizer: TokenizerProtocol | None,
-        legacy_kwargs: Mapping[str, Any],
         function_invocation_kwargs: Mapping[str, Any] | None,
         client_kwargs: Mapping[str, Any] | None,
     ) -> _RunContext:
@@ -1176,12 +1153,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 duplicate_error_message=mcp_duplicate_message,
             )
 
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        # Legacy compatibility still fans out direct run kwargs into tool runtime kwargs.
-        effective_function_invocation_kwargs = {
-            **dict(legacy_kwargs),
-            **(dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}),
-        }
+        effective_function_invocation_kwargs = (
+            dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         # Build options dict from run() options merged with provided options
@@ -1214,12 +1188,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         # Build session_messages from session context: context messages + input messages
         session_messages: list[Message] = session_context.get_messages(include_input=True)
 
-        # TODO(Copilot): Delete once direct ``run(**kwargs)`` compatibility is removed.
-        # Legacy compatibility still fans out direct run kwargs into client kwargs.
-        effective_client_kwargs = {
-            **dict(legacy_kwargs),
-            **(dict(client_kwargs) if client_kwargs is not None else {}),
-        }
+        effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
 
@@ -1369,6 +1338,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         Returns:
             The MCP server instance.
         """
+        try:
+            from mcp import types
+            from mcp.server.lowlevel import Server
+            from mcp.shared.exceptions import McpError
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
+            ) from exc
+
         server_args: dict[str, Any] = {
             "name": server_name,
             "version": version,
@@ -1469,8 +1447,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
 
 class Agent(
-    AgentTelemetryLayer,
     AgentMiddlewareLayer,
+    AgentTelemetryLayer,
     RawAgent[OptionsCoT],
     Generic[OptionsCoT],
 ):
@@ -1490,9 +1468,29 @@ class Agent(
         *,
         stream: Literal[False] = ...,
         session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[ResponseModelBoundT]]: ...
+
+    @overload
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: OptionsCoT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[AgentResponse[Any]]: ...
 
     @overload
@@ -1502,9 +1500,13 @@ class Agent(
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
+        middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
 
     def run(
@@ -1514,10 +1516,12 @@ class Agent(
         stream: bool = False,
         session: AgentSession | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         options: OptionsCoT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
         """Run the agent."""
         super_run = cast(
@@ -1529,10 +1533,12 @@ class Agent(
             stream=stream,
             session=session,
             middleware=middleware,
+            tools=tools,
             options=options,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
-            **kwargs,
         )
 
     def __init__(
@@ -1549,7 +1555,7 @@ class Agent(
         middleware: Sequence[MiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
-        **kwargs: Any,
+        additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
         """Initialize a Agent instance."""
         super().__init__(
@@ -1564,7 +1570,7 @@ class Agent(
             middleware=middleware,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
-            **kwargs,
+            additional_properties=additional_properties,
         )
 
 

@@ -22,7 +22,7 @@ var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential(
 
 ChatMessage message = new(ChatRole.User, [
     new TextContent("What do you see in this image?"),
-    new UriContent("https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg", "image/jpeg")
+    await DataContent.LoadFromAsync("Assets/walkway.jpg"),
 ]);
 
 var session = await agent.CreateSessionAsync();

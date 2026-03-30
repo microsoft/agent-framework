@@ -21,7 +21,9 @@ from agent_framework_durabletask import (
     DurableAgentStateData,
     DurableAgentStateMessage,
     DurableAgentStateRequest,
+    DurableAgentStateResponse,
     DurableAgentStateTextContent,
+    DurableAgentStateTextReasoningContent,
     RunRequest,
 )
 from agent_framework_durabletask._entities import DurableTaskEntityStateProvider
@@ -390,6 +392,54 @@ class TestAgentEntityRunAgent:
         history = entity.state.data.conversation_history
         assert len(history) == 6
         assert entity.state.message_count == 6
+
+    async def test_run_filters_reasoning_content_from_replayed_history(self) -> None:
+        """Replayed durable history should not include reasoning-only content items."""
+        captured_messages: list[Message] = []
+
+        async def mock_run(*args, stream=False, **kwargs):
+            if stream:
+                raise TypeError("streaming not supported")
+            captured_messages.extend(kwargs["messages"])
+            return _agent_response("Response")
+
+        mock_agent = Mock()
+        mock_agent.run = mock_run
+
+        entity = _make_entity(mock_agent)
+        entity.state.data = DurableAgentStateData(
+            conversation_history=[
+                DurableAgentStateRequest(
+                    correlation_id="corr-entity-prev-request",
+                    created_at=datetime.now(),
+                    messages=[
+                        DurableAgentStateMessage(
+                            role="user",
+                            contents=[DurableAgentStateTextContent(text="Hi")],
+                        )
+                    ],
+                ),
+                DurableAgentStateResponse(
+                    correlation_id="corr-entity-prev-response",
+                    created_at=datetime.now(),
+                    messages=[
+                        DurableAgentStateMessage(
+                            role="assistant",
+                            contents=[
+                                DurableAgentStateTextReasoningContent(text="Let me think."),
+                                DurableAgentStateTextContent(text="Hello there."),
+                            ],
+                        )
+                    ],
+                ),
+            ]
+        )
+
+        await entity.run({"message": "What next?", "correlationId": "corr-entity-replay"})
+
+        assert captured_messages
+        assert all(content.type != "reasoning" for message in captured_messages for content in message.contents)
+        assert [message.text for message in captured_messages] == ["Hi", "Hello there.", "What next?"]
 
 
 class TestAgentEntityReset:

@@ -174,7 +174,7 @@ Overall Attack Success Rate: 7.2%
 - [Azure AI Evaluation SDK](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/evaluate-sdk)
 - [Risk and Safety Evaluations](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-metrics-built-in#risk-and-safety-evaluators)
 - [Azure AI Red Teaming Notebook](https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb)
-- [PyRIT - Python Risk Identification Toolkit](https://github.com/Azure/PyRIT)
+- [PyRIT - Python Risk Identification Toolkit](https://github.com/microsoft/PyRIT)
 
 ## Troubleshooting
 

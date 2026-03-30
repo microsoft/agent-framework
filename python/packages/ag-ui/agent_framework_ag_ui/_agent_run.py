@@ -684,6 +684,10 @@ def _build_messages_snapshot(
             }
         )
 
+    # Add reasoning messages so frontends that reconcile state from
+    # MESSAGES_SNAPSHOT retain reasoning content after streaming ends.
+    all_messages.extend(flow.reasoning_messages)
+
     return MessagesSnapshotEvent(messages=all_messages)  # type: ignore[arg-type]
 
 
@@ -1061,7 +1065,9 @@ async def run_agent_stream(
 
     # Emit MessagesSnapshotEvent if we have tool calls or results
     # Feature #5: Suppress intermediate snapshots for predictive tools without confirmation
-    should_emit_snapshot = flow.pending_tool_calls or flow.tool_results or flow.accumulated_text
+    should_emit_snapshot = (
+        flow.pending_tool_calls or flow.tool_results or flow.accumulated_text or flow.reasoning_messages
+    )
     if should_emit_snapshot:
         # Check if we should suppress for predictive tool
         last_tool_name = None
