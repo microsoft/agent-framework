@@ -48,7 +48,6 @@ from typing import (
     Literal,
     Protocol,
     TypedDict,
-    Union,
     cast,
     overload,
     runtime_checkable,
@@ -72,10 +71,43 @@ class EvalNotPassedError(Exception):
 # region Core types
 
 
-class ConversationSplit(str, Enum):
-    """Built-in strategies for splitting a conversation into query/response halves.
+@runtime_checkable
+class ConversationSplitter(Protocol):
+    """Strategy for splitting a conversation into (query, response) messages.
 
-    Different splits evaluate different aspects of agent behavior:
+    Any callable with this signature satisfies the protocol — including the
+    built-in ``ConversationSplit`` enum members and custom functions:
+
+    .. code-block:: python
+
+        def my_splitter(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+            '''Return (query_messages, response_messages).'''
+
+    Custom splitters let you evaluate domain-specific boundaries — for example,
+    splitting just before a memory-retrieval tool call to evaluate recall quality:
+
+    .. code-block:: python
+
+        def split_before_memory(conversation):
+            for i, msg in enumerate(conversation):
+                for c in msg.contents or []:
+                    if c.type == "function_call" and c.name == "retrieve_memory":
+                        return conversation[:i], conversation[i:]
+            # Fallback: split at last user message
+            return EvalItem._split_last_turn_static(conversation)
+
+        item.split_messages(split=split_before_memory)
+    """
+
+    def __call__(self, conversation: list[Message]) -> tuple[list[Message], list[Message]]: ...
+
+
+class ConversationSplit(str, Enum):
+    """Built-in conversation split strategies.
+
+    Each member is callable, satisfying the ``ConversationSplitter`` protocol::
+
+        query_msgs, response_msgs = ConversationSplit.LAST_TURN(conversation)
 
     - ``LAST_TURN``: Split at the last user message.  Everything up to and
       including that message is the query; everything after is the response.
@@ -86,43 +118,16 @@ class ConversationSplit(str, Enum):
       Evaluates whether the *whole conversation trajectory* served the
       original request.
 
-    For custom splits (e.g. split before a memory-retrieval tool call),
-    pass a callable instead — see ``ConversationSplitter``.
+    For custom splits, pass any callable with the ``ConversationSplitter``
+    signature.
     """
 
     LAST_TURN = "last_turn"
     FULL = "full"
 
-
-ConversationSplitter = Union[
-    ConversationSplit,
-    Callable[[list[Message]], tuple[list[Message], list[Message]]],
-]
-"""Type accepted by ``EvalItem.split_messages(split=...)``.
-
-Either a built-in ``ConversationSplit`` enum value **or** a callable with
-signature:
-
-.. code-block:: python
-
-    def my_splitter(conversation: list[Message]) -> tuple[list[Message], list[Message]]:
-        '''Return (query_messages, response_messages).'''
-
-Custom splitters let you evaluate domain-specific boundaries — for example,
-splitting just before a memory-retrieval tool call to evaluate recall quality:
-
-.. code-block:: python
-
-    def split_before_memory(conversation):
-        for i, msg in enumerate(conversation):
-            for c in msg.contents or []:
-                if c.type == "function_call" and c.name == "retrieve_memory":
-                    return conversation[:i], conversation[i:]
-        # Fallback: split at last user message
-        return EvalItem._split_last_turn_static(conversation)
-
-    item.split_messages(split=split_before_memory)
-"""
+    def __call__(self, conversation: list[Message]) -> tuple[list[Message], list[Message]]:
+        """Dispatch to the built-in splitter implementation."""
+        return _BUILT_IN_SPLITTERS[self](conversation)
 
 
 @dataclass
@@ -218,9 +223,7 @@ class EvalItem:
 
     def _split_conversation(self, split: ConversationSplitter) -> tuple[list[Message], list[Message]]:
         """Split ``self.conversation`` into (query_messages, response_messages)."""
-        if callable(split) and not isinstance(split, ConversationSplit):
-            return split(self.conversation)
-        return _BUILT_IN_SPLITTERS[split](self.conversation)
+        return split(self.conversation)
 
     def split_messages(
         self,
