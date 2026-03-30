@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
@@ -8,6 +9,8 @@ using Microsoft.Extensions.AI;
 
 namespace AzureAI.IntegrationTests;
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
+[Obsolete("Use FoundryVersionedAgentStructuredOutputRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRunTests<AIProjectClientStructuredOutputFixture<CityInfo>>(() => new AIProjectClientStructuredOutputFixture<CityInfo>())
 {
     private const string NotSupported = "AIProjectClient does not support specifying structured output type at invocation time.";
@@ -87,6 +90,7 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
 /// <summary>
 /// Represents a fixture for testing AIProjectClient with structured output of type <typeparamref name="T"/> provided at agent initialization.
 /// </summary>
+[Obsolete("Use FoundryVersionedAgentStructuredOutputFixture instead.")]
 public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
 {
     public override async ValueTask InitializeAsync()

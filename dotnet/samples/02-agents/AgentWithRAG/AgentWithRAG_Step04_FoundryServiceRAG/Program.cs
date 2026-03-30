@@ -4,11 +4,13 @@
 
 using System.ClientModel;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
+using Microsoft.Agents.AI.AzureAI;
 using OpenAI;
 using OpenAI.Files;
+using OpenAI.Responses;
 using OpenAI.VectorStores;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -37,14 +39,20 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
     FileIds = { uploadResult.Value.Id }
 });
 
-var fileSearchTool = new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreCreate.Value.Id)] };
+// Use the native OpenAI SDK FileSearchTool directly with the vector store ID.
+#pragma warning disable OPENAI001
+FileSearchTool fileSearchTool = new([vectorStoreCreate.Value.Id]);
+#pragma warning restore OPENAI001
 
-AIAgent agent = await aiProjectClient
-    .CreateAIAgentAsync(
-        model: deploymentName,
-        name: "AskContoso",
-        instructions: "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
-        tools: [fileSearchTool]);
+AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+    "AskContoso",
+    new AgentVersionCreationOptions(
+        new PromptAgentDefinition(model: deploymentName)
+        {
+            Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
+            Tools = { fileSearchTool }
+        }));
+FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 
 AgentSession session = await agent.CreateSessionAsync();
 
