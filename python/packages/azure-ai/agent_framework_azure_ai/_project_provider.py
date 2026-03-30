@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Callable, MutableMapping, Sequence
-from typing import Any, Generic
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from typing import Any, Generic, cast
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
@@ -18,25 +18,25 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
-    AgentReference,
     AgentVersionDetails,
     PromptAgentDefinition,
-    PromptAgentDefinitionText,
+    PromptAgentDefinitionTextOptions,
 )
 from azure.ai.projects.models import (
     FunctionTool as AzureFunctionTool,
 )
 
-from ._client import AzureAIClient, AzureAIProjectAgentOptions
+from ._client import AzureAIClient, AzureAIProjectAgentOptions  # pyright: ignore[reportDeprecated]
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, create_text_format_config, from_azure_ai_tools, to_azure_ai_tools
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
+    from warnings import deprecated  # type: ignore # pragma: no cover
 else:
-    from typing_extensions import TypeVar  # type: ignore # pragma: no cover
+    from typing_extensions import TypeVar, deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import Self, TypedDict  # type: ignore # pragma: no cover
 else:
@@ -56,11 +56,12 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated("AzureAIProjectAgentProvider is deprecated. Use FoundryAgent instead.")
 class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
-    """Provider for Azure AI Agent Service (Responses API).
+    """Deprecated provider for Azure AI Agent Service (Responses API).
 
-    This provider allows you to create, retrieve, and manage Azure AI agents
-    using the AIProjectClient from the Azure AI Projects SDK.
+    This provider is deprecated. Use ``FoundryAgent`` instead to connect to
+    pre-configured agents in Foundry.
 
     Examples:
         Using with explicit AIProjectClient:
@@ -103,6 +104,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         project_endpoint: str | None = None,
         model: str | None = None,
         credential: AzureCredentialTypes | None = None,
+        allow_preview: bool | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -118,6 +120,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             credential: Azure credential for authentication. Accepts a TokenCredential,
                 AsyncTokenCredential, or a callable token provider.
                 Required when project_client is not provided.
+            allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
 
@@ -147,11 +150,14 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             if not credential:
                 raise ValueError("Azure credential is required when project_client is not provided.")
 
-            project_client = AIProjectClient(
-                endpoint=resolved_endpoint,
-                credential=credential,  # type: ignore[arg-type]
-                user_agent=AGENT_FRAMEWORK_USER_AGENT,
-            )
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": resolved_endpoint,
+                "credential": credential,  # type: ignore[arg-type]
+                "user_agent": AGENT_FRAMEWORK_USER_AGENT,
+            }
+            if allow_preview is not None:
+                project_client_kwargs["allow_preview"] = allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
             self._should_close_client = True
 
         self._project_client = project_client
@@ -196,7 +202,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             )
 
         # Extract options from default_options if present
-        opts = dict(default_options) if default_options else {}
+        opts: dict[str, Any] = dict(default_options) if default_options else {}
         response_format = opts.get("response_format")
         rai_config = opts.get("rai_config")
         reasoning = opts.get("reasoning")
@@ -206,7 +212,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if instructions:
             args["instructions"] = instructions
         if response_format and isinstance(response_format, (type, dict)):
-            args["text"] = PromptAgentDefinitionText(
+            args["text"] = PromptAgentDefinitionTextOptions(
                 format=create_text_format_config(response_format)  # type: ignore[arg-type]
             )
         if rai_config:
@@ -224,7 +230,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
                 if isinstance(tool, MCPTool):
                     mcp_tools.append(tool)
                 elif isinstance(tool, (FunctionTool, MutableMapping)):
-                    non_mcp_tools.append(tool)
+                    non_mcp_tools.append(tool)  # type: ignore[reportUnknownArgumentType]
 
         # Connect MCP tools and discover their functions BEFORE creating the agent
         # This is required because Azure AI Responses API doesn't accept tools at request time
@@ -241,11 +247,13 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if all_tools_for_azure:
             args["tools"] = to_azure_ai_tools(all_tools_for_azure)
 
-        created_agent = await self._project_client.agents.create_version(
-            agent_name=name,
-            definition=PromptAgentDefinition(**args),
-            description=description,
-        )
+        create_version_kwargs: dict[str, Any] = {
+            "agent_name": name,
+            "definition": PromptAgentDefinition(**args),
+            "description": description,
+        }
+
+        created_agent = await self._project_client.agents.create_version(**create_version_kwargs)
 
         return self._to_chat_agent_from_details(
             created_agent,
@@ -259,7 +267,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         self,
         *,
         name: str | None = None,
-        reference: AgentReference | None = None,
+        reference: Mapping[str, str | None] | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
@@ -272,7 +280,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
 
         Args:
             name: The name of the agent to retrieve (fetches latest version).
-            reference: Reference containing the agent's name and optionally a specific version.
+            reference: Mapping containing the agent's ``name`` and optionally a specific ``version``.
             tools: Tools to make available to the agent. Required if the agent has function tools.
             default_options: A TypedDict containing default chat options for the agent.
                 These options are applied to every run unless overridden.
@@ -287,12 +295,15 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         """
         existing_agent: AgentVersionDetails
 
-        if reference and reference.version:
+        reference_name = str(reference.get("name")) if reference and reference.get("name") else None
+        reference_version = str(reference.get("version")) if reference and reference.get("version") else None
+
+        if reference_name and reference_version:
             # Fetch specific version
             existing_agent = await self._project_client.agents.get_version(
-                agent_name=reference.name, agent_version=reference.version
+                agent_name=reference_name, agent_version=reference_version
             )
-        elif agent_name := (reference.name if reference else name):
+        elif agent_name := (reference_name if reference_name else name):
             # Fetch latest version
             details = await self._project_client.agents.get(agent_name=agent_name)
             existing_agent = details.versions.latest
@@ -375,7 +386,7 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         if not isinstance(details.definition, PromptAgentDefinition):
             raise ValueError("Agent definition must be PromptAgentDefinition to get a Agent.")
 
-        client = AzureAIClient(
+        client = AzureAIClient(  # pyright: ignore[reportDeprecated]
             project_client=self._project_client,
             agent_name=details.name,
             agent_version=details.version,
@@ -387,6 +398,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
         # from_azure_ai_tools converts hosted tools (MCP, code interpreter, file search, web search)
         # but function tools need the actual implementations from provided_tools
         merged_tools = self._merge_tools(details.definition.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", details.definition.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -394,9 +407,8 @@ class AzureAIProjectAgentProvider(Generic[OptionsCoT]):
             name=details.name,
             description=details.description,
             instructions=details.definition.instructions,
-            model_id=details.definition.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

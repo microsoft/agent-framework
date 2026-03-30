@@ -9,6 +9,8 @@ This workflow uses three translation agents:
 
 The agents are connected sequentially, creating a translation chain that demonstrates how AI-powered components can be seamlessly integrated into workflow pipelines.
 
+> For common prerequisites and setup instructions, see the [Hosted Agent Samples README](../README.md).
+
 ## Prerequisites
 
 Before you begin, ensure you have the following prerequisites:
@@ -17,7 +19,7 @@ Before you begin, ensure you have the following prerequisites:
 - Azure OpenAI service endpoint and deployment configured
 - Azure CLI installed and authenticated (for Azure credential authentication)
 
-**Note**: This demo uses Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
+**Note**: This demo uses `DefaultAzureCredential` for authentication, which probes multiple sources automatically. For local development, make sure you're logged in with `az login` and have access to the Azure OpenAI resource. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
 Set the following environment variables:
 

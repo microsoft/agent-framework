@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -33,7 +33,7 @@ async def main():
     client.function_invocation_configuration["max_iterations"] = 40
     print(f"Function invocation configured as: \n{client.function_invocation_configuration}")
 
-    agent = client.as_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
+    agent = Agent(client=client, name="ToolAgent", instructions="Use the provided tools.", tools=add)
 
     print("=" * 60)
     print("Call add(239847293, 29834)")

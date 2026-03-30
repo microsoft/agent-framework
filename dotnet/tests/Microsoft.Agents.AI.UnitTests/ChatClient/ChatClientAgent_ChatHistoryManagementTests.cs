@@ -185,7 +185,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
-        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null);
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -240,7 +241,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<ChatOptions>(),
                 It.IsAny<CancellationToken>())).Throws(new InvalidOperationException("Test Error"));
 
-        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null);
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
         mockChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -429,7 +431,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
                 It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
 
         // Arrange a chat history provider to override the factory provided one.
-        Mock<ChatHistoryProvider> mockOverrideChatHistoryProvider = new(null, null);
+        Mock<ChatHistoryProvider> mockOverrideChatHistoryProvider = new(null, null, null);
+        mockOverrideChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
         mockOverrideChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -442,7 +445,8 @@ public class ChatClientAgent_ChatHistoryManagementTests
 
         // Arrange a chat history provider to provide to the agent at construction time.
         // This one shouldn't be used since it is being overridden.
-        Mock<ChatHistoryProvider> mockAgentOptionsChatHistoryProvider = new(null, null);
+        Mock<ChatHistoryProvider> mockAgentOptionsChatHistoryProvider = new(null, null, null);
+        mockAgentOptionsChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
         mockAgentOptionsChatHistoryProvider
             .Protected()
             .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
@@ -493,6 +497,160 @@ public class ChatClientAgent_ChatHistoryManagementTests
             .Verify<ValueTask>("InvokedCoreAsync", Times.Never(),
                 ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(),
                 ItExpr.IsAny<CancellationToken>());
+    }
+
+    #endregion
+
+    #region End-to-End Chat History Persistence Tests
+
+    /// <summary>
+    /// Verifies that with per-service-call persistence (default), a simple request/response
+    /// results in the correct chat history being persisted: [user, assistant].
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PerServiceCallPersistence_SimpleResponse_PersistsCorrectHistoryAsync()
+    {
+        // Arrange & Act & Assert
+        await ChatClientAgentTestHelper.RunAsync(
+            inputMessages: [new(ChatRole.User, "Hello")],
+            serviceCallExpectations:
+            [
+                new(new ChatResponse([new(ChatRole.Assistant, "Hi there")])),
+            ],
+            agentOptions: new()
+            {
+                ChatOptions = new() { Instructions = "Be helpful" },
+                PersistChatHistoryAtEndOfRun = false,
+            },
+            expectedServiceCallCount: 1,
+            expectedHistory:
+            [
+                new(ChatRole.User, TextContains: "Hello"),
+                new(ChatRole.Assistant, TextContains: "Hi there"),
+            ]);
+    }
+
+    /// <summary>
+    /// Verifies that with per-service-call persistence and a function calling loop,
+    /// the full conversation is persisted: [user, assistant(FCC), tool(FRC), assistant(final)].
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_PerServiceCallPersistence_FunctionCallingLoop_PersistsCorrectHistoryAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "Sunny, 22°C", "GetWeather", "Gets the weather");
+
+        // Act & Assert
+        await ChatClientAgentTestHelper.RunAsync(
+            inputMessages: [new(ChatRole.User, "What's the weather?")],
+            serviceCallExpectations:
+            [
+                // First call: model requests a function call
+                new(new ChatResponse([new(ChatRole.Assistant,
+                    [new FunctionCallContent("call1", "GetWeather", new Dictionary<string, object?> { ["city"] = "Amsterdam" })])])),
+                // Second call: model returns final response after seeing function result
+                new(new ChatResponse([new(ChatRole.Assistant, "The weather in Amsterdam is sunny and 22°C.")])),
+            ],
+            agentOptions: new()
+            {
+                ChatOptions = new() { Tools = [tool] },
+                PersistChatHistoryAtEndOfRun = false,
+            },
+            expectedServiceCallCount: 2,
+            expectedHistory:
+            [
+                new(ChatRole.User, TextContains: "What's the weather?"),
+                new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
+                new(ChatRole.Tool, ContentTypes: [typeof(FunctionResultContent)]),
+                new(ChatRole.Assistant, TextContains: "sunny and 22°C"),
+            ]);
+    }
+
+    /// <summary>
+    /// Verifies that with end-of-run persistence, a simple request/response
+    /// results in the correct chat history being persisted: [user, assistant].
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EndOfRunPersistence_SimpleResponse_PersistsCorrectHistoryAsync()
+    {
+        // Arrange & Act & Assert
+        await ChatClientAgentTestHelper.RunAsync(
+            inputMessages: [new(ChatRole.User, "Hello")],
+            serviceCallExpectations:
+            [
+                new(new ChatResponse([new(ChatRole.Assistant, "Hi there")])),
+            ],
+            agentOptions: new()
+            {
+                ChatOptions = new() { Instructions = "Be helpful" },
+                PersistChatHistoryAtEndOfRun = true,
+            },
+            expectedServiceCallCount: 1,
+            expectedHistory:
+            [
+                new(ChatRole.User, TextContains: "Hello"),
+                new(ChatRole.Assistant, TextContains: "Hi there"),
+            ]);
+    }
+
+    /// <summary>
+    /// Verifies that with end-of-run persistence and a function calling loop,
+    /// the full conversation is persisted: [user, assistant(FCC), tool(FRC), assistant(final)].
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_EndOfRunPersistence_FunctionCallingLoop_PersistsCorrectHistoryAsync()
+    {
+        // Arrange
+        var tool = AIFunctionFactory.Create(() => "Sunny, 22°C", "GetWeather", "Gets the weather");
+
+        // Act & Assert
+        await ChatClientAgentTestHelper.RunAsync(
+            inputMessages: [new(ChatRole.User, "What's the weather?")],
+            serviceCallExpectations:
+            [
+                new(new ChatResponse([new(ChatRole.Assistant,
+                    [new FunctionCallContent("call1", "GetWeather", new Dictionary<string, object?> { ["city"] = "Amsterdam" })])])),
+                new(new ChatResponse([new(ChatRole.Assistant, "The weather in Amsterdam is sunny and 22°C.")])),
+            ],
+            agentOptions: new()
+            {
+                ChatOptions = new() { Tools = [tool] },
+                PersistChatHistoryAtEndOfRun = true,
+            },
+            expectedServiceCallCount: 2,
+            expectedHistory:
+            [
+                new(ChatRole.User, TextContains: "What's the weather?"),
+                new(ChatRole.Assistant, ContentTypes: [typeof(FunctionCallContent)]),
+                new(ChatRole.Tool, ContentTypes: [typeof(FunctionResultContent)]),
+                new(ChatRole.Assistant, TextContains: "sunny and 22°C"),
+            ]);
+    }
+
+    /// <summary>
+    /// Verifies that when the service returns a ConversationId (service-stored history),
+    /// the session gets the ConversationId and no errors occur during the run.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_ServiceStoredHistory_SetsConversationIdAndCompletesWithoutErrorAsync()
+    {
+        // Arrange & Act
+        var result = await ChatClientAgentTestHelper.RunAsync(
+            inputMessages: [new(ChatRole.User, "Hello")],
+            serviceCallExpectations:
+            [
+                new(new ChatResponse([new(ChatRole.Assistant, "Hi there")]) { ConversationId = "thread-123" }),
+            ],
+            agentOptions: new()
+            {
+                ChatOptions = new() { Instructions = "Be helpful" },
+                PersistChatHistoryAtEndOfRun = false,
+            },
+            expectedServiceCallCount: 1);
+
+        // Assert — session should have the conversation id from the service
+        Assert.Equal("thread-123", result.Session.ConversationId);
+        Assert.Contains(result.Response.Messages, m => m.Text == "Hi there");
     }
 
     #endregion

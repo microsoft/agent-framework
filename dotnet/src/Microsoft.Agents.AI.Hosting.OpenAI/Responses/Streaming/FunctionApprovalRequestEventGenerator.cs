@@ -12,33 +12,37 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Streaming;
 /// A generator for streaming events from function approval request content.
 /// This is a non-standard DevUI extension for human-in-the-loop scenarios.
 /// </summary>
-internal sealed class FunctionApprovalRequestEventGenerator(
+internal sealed class ToolApprovalRequestEventGenerator(
         IdGenerator idGenerator,
         SequenceNumber seq,
         int outputIndex,
         JsonSerializerOptions jsonSerializerOptions) : StreamingEventGenerator
 {
-    public override bool IsSupported(AIContent content) => content is FunctionApprovalRequestContent;
+    public override bool IsSupported(AIContent content) => content is ToolApprovalRequestContent;
 
     public override IEnumerable<StreamingResponseEvent> ProcessContent(AIContent content)
     {
-        if (content is not FunctionApprovalRequestContent approvalRequest)
+        if (content is not ToolApprovalRequestContent approvalRequest)
         {
-            throw new InvalidOperationException("FunctionApprovalRequestEventGenerator only supports FunctionApprovalRequestContent.");
+            throw new InvalidOperationException("ToolApprovalRequestEventGenerator only supports ToolApprovalRequestContent.");
         }
 
+        if (approvalRequest.ToolCall is not FunctionCallContent functionCall)
+        {
+            yield break;
+        }
         yield return new StreamingFunctionApprovalRequested
         {
             SequenceNumber = seq.Increment(),
             OutputIndex = outputIndex,
-            RequestId = approvalRequest.Id,
+            RequestId = approvalRequest.RequestId,
             ItemId = idGenerator.GenerateMessageId(),
             FunctionCall = new FunctionCallInfo
             {
-                Id = approvalRequest.FunctionCall.CallId,
-                Name = approvalRequest.FunctionCall.Name,
+                Id = functionCall.CallId,
+                Name = functionCall.Name,
                 Arguments = JsonSerializer.SerializeToElement(
-                    approvalRequest.FunctionCall.Arguments,
+                    functionCall.Arguments,
                     jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object>)))
             }
         };

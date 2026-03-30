@@ -39,17 +39,18 @@ public sealed class TextSearchProviderTests
     }
 
     [Fact]
-    public void StateKey_ReturnsDefaultKey_WhenNoOptionsProvided()
+    public void StateKeys_ReturnsDefaultKey_WhenNoOptionsProvided()
     {
         // Arrange & Act
         var provider = new TextSearchProvider((_, _) => Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>([]));
 
         // Assert
-        Assert.Equal("TextSearchProvider", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("TextSearchProvider", provider.StateKeys);
     }
 
     [Fact]
-    public void StateKey_ReturnsCustomKey_WhenSetViaOptions()
+    public void StateKeys_ReturnsCustomKey_WhenSetViaOptions()
     {
         // Arrange & Act
         var provider = new TextSearchProvider(
@@ -57,7 +58,8 @@ public sealed class TextSearchProviderTests
             new TextSearchProviderOptions { StateKey = "custom-key" });
 
         // Assert
-        Assert.Equal("custom-key", provider.StateKey);
+        Assert.Single(provider.StateKeys);
+        Assert.Contains("custom-key", provider.StateKeys);
     }
 
     [Theory]
@@ -83,7 +85,8 @@ public sealed class TextSearchProviderTests
         {
             SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
             ContextPrompt = overrideContextPrompt,
-            CitationsPrompt = overrideCitationsPrompt
+            CitationsPrompt = overrideCitationsPrompt,
+            EnableSensitiveTelemetryData = true
         };
         var provider = new TextSearchProvider(SearchDelegateAsync, options, withLogging ? this._loggerFactoryMock.Object : null);
 
@@ -159,6 +162,65 @@ public sealed class TextSearchProviderTests
                     It.IsAny<Exception?>(),
                     It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
                 Times.AtLeastOnce);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InvokingAsync_RedactsLogDataBasedOnOptionsAsync(bool enableSensitiveTelemetryData, bool useCustomRedactor)
+    {
+        // Arrange
+        List<TextSearchProvider.TextSearchResult> results =
+        [
+            new() { SourceName = "Doc1", SourceLink = "http://example.com/doc1", Text = "Content of Doc1" }
+        ];
+
+        Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)
+        {
+            return Task.FromResult<IEnumerable<TextSearchProvider.TextSearchResult>>(results);
+        }
+
+        var options = new TextSearchProviderOptions
+        {
+            SearchTime = TextSearchProviderOptions.TextSearchBehavior.BeforeAIInvoke,
+            EnableSensitiveTelemetryData = enableSensitiveTelemetryData,
+            Redactor = useCustomRedactor ? new ReplacingRedactor("***") : null
+        };
+        var provider = new TextSearchProvider(SearchDelegateAsync, options, this._loggerFactoryMock.Object);
+
+        var invokingContext = new AIContextProvider.InvokingContext(
+            s_mockAgent,
+            new TestAgentSession(),
+            new AIContext { Messages = new List<ChatMessage> { new(ChatRole.User, "Sample user question?") } });
+
+        // Act
+        await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — EnableSensitiveTelemetryData takes precedence over Redactor
+        var traceInvocation = this._loggerMock.Invocations
+            .Where(i => i.Method.Name == nameof(ILogger.Log))
+            .FirstOrDefault(i => (LogLevel)i.Arguments[0]! == LogLevel.Trace);
+        Assert.NotNull(traceInvocation);
+
+        var state = Assert.IsType<IReadOnlyList<KeyValuePair<string, object?>>>(traceInvocation.Arguments[2], exactMatch: false);
+        var inputValue = state.First(kvp => kvp.Key == "Input").Value;
+        var messageTextValue = state.First(kvp => kvp.Key == "MessageText").Value;
+
+        if (enableSensitiveTelemetryData)
+        {
+            // EnableSensitiveTelemetryData=true: raw data passes through regardless of Redactor
+            Assert.Equal("Sample user question?", inputValue);
+            Assert.Contains("Content of Doc1", messageTextValue?.ToString()!);
+        }
+        else
+        {
+            // EnableSensitiveTelemetryData=false: custom redactor or default placeholder
+            string expectedRedaction = useCustomRedactor ? "***" : "<redacted>";
+            Assert.Equal(expectedRedaction, inputValue);
+            Assert.Equal(expectedRedaction, messageTextValue);
         }
     }
 
@@ -467,7 +529,7 @@ public sealed class TextSearchProviderTests
         {
             RecentMessageMemoryLimit = 10,
             RecentMessageRolesIncluded = [ChatRole.User, ChatRole.System],
-            StorageInputMessageFilter = messages => messages // No filtering - store everything
+            StorageInputRequestMessageFilter = messages => messages // No filtering - store everything
         };
         string? capturedInput = null;
         Task<IEnumerable<TextSearchProvider.TextSearchResult>> SearchDelegateAsync(string input, CancellationToken ct)

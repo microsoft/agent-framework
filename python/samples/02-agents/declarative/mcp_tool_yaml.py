@@ -132,9 +132,9 @@ async def run_azure_ai_example():
     print("Example 2: Azure AI with Foundry Connection Reference")
     print("=" * 60)
 
-    from azure.identity import DefaultAzureCredential
+    from azure.identity import AzureCliCredential
 
-    factory = AgentFactory(client_kwargs={"credential": DefaultAzureCredential()})
+    factory = AgentFactory(client_kwargs={"credential": AzureCliCredential()})
 
     print("\nCreating agent from YAML definition...")
     # Use async method for provider-based agent creation

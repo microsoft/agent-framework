@@ -17,12 +17,15 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     Sequence,
+    Sized,
 )
 from copy import deepcopy
 from datetime import datetime
+from inspect import isawaitable
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, NewType, cast, overload
 
 from pydantic import BaseModel
+from typing_extensions import TypedDict
 
 from ._serialization import SerializationMixin
 from ._tools import ToolTypes
@@ -33,10 +36,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # type: ignore # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # type: ignore # pragma: no cover
 
 logger = logging.getLogger("agent_framework")
 
@@ -194,7 +193,7 @@ def _get_data_bytes_as_str(content: Content) -> str | None:
     return data  # type: ignore[return-value, no-any-return]
 
 
-def _get_data_bytes(content: Content) -> bytes | None:
+def _get_data_bytes(content: Content) -> bytes | None:  # pyright: ignore[reportUnusedFunction]
     """Extract and decode binary data from data URI.
 
     Args:
@@ -270,12 +269,23 @@ def _serialize_value(value: Any, exclude_none: bool) -> Any:
     if isinstance(value, Content):
         return value.to_dict(exclude_none=exclude_none)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_serialize_value(item, exclude_none) for item in value]
+        return [_serialize_value(item, exclude_none) for item in cast(Iterable[Any], value)]
     if isinstance(value, Mapping):
-        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}
+        return {k: _serialize_value(v, exclude_none) for k, v in value.items()}  # type: ignore[reportUnknownVariableType]
     if hasattr(value, "to_dict"):
         return value.to_dict()  # type: ignore[call-arg]
     return value
+
+
+def _restore_compaction_annotation_in_additional_properties(
+    additional_properties: MutableMapping[str, Any] | None,
+    *,
+    allow_none: bool = False,
+) -> dict[str, Any] | None:
+    if additional_properties is None:
+        return None if allow_none else {}
+
+    return dict(additional_properties)
 
 
 # endregion
@@ -340,8 +350,12 @@ ContentType = Literal[
     "image_generation_tool_result",
     "mcp_server_tool_call",
     "mcp_server_tool_result",
+    "shell_tool_call",
+    "shell_tool_result",
+    "shell_command_output",
     "function_approval_request",
     "function_approval_response",
+    "oauth_consent_request",
 ]
 
 
@@ -372,7 +386,7 @@ ContentT = TypeVar("ContentT", bound="Content")
 # endregion
 
 
-class UsageDetails(TypedDict, total=False):
+class UsageDetails(TypedDict, total=False, extra_items=int):  # type: ignore[call-arg]
     """A dictionary representing usage details.
 
     This is a non-closed dictionary, so any specific provider fields can be added as needed.
@@ -392,6 +406,9 @@ class UsageDetails(TypedDict, total=False):
 
 def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) -> UsageDetails:
     """Add two UsageDetails dictionaries by summing all numeric values.
+
+    If any of the two usage details contains a key with a non-int value, it will be skipped,
+    even if the other contains a int-value on that key.
 
     Args:
         usage1: First usage details dictionary.
@@ -416,22 +433,15 @@ def add_usage_details(usage1: UsageDetails | None, usage2: UsageDetails | None) 
         return usage1
 
     result = UsageDetails()
-
     # Combine all keys from both dictionaries
     all_keys = set(usage1.keys()) | set(usage2.keys())
-
     for key in all_keys:
-        val1 = usage1.get(key)
-        val2 = usage2.get(key)
-
-        # Sum if both present, otherwise use the non-None value
-        if val1 is not None and val2 is not None:
-            result[key] = val1 + val2  # type: ignore[literal-required, operator]
-        elif val1 is not None:
-            result[key] = val1  # type: ignore[literal-required]
-        elif val2 is not None:
-            result[key] = val2  # type: ignore[literal-required]
-
+        if not isinstance((val1 := usage1.get(key, 0)), (int | None)) or not isinstance(
+            (val2 := usage2.get(key, 0)), (int | None)
+        ):
+            logger.warning("Non `int` value found in usage details, skipping.")
+            continue
+        result[key] = (val1 or 0) + (val2 or 0)  # type: ignore[literal-required]
     return result
 
 
@@ -445,6 +455,8 @@ class Content:
     Use the class methods like `Content.from_text()`, `Content.from_data()`,
     `Content.from_uri()`, etc. to create instances.
     """
+
+    _SHALLOW_COPY_FIELDS: ClassVar[set[str]] = {"raw_representation"}
 
     def __init__(
         self,
@@ -461,13 +473,14 @@ class Content:
         error_code: str | None = None,
         error_details: str | None = None,
         # Usage content fields
-        usage_details: dict[str, Any] | UsageDetails | None = None,
+        usage_details: UsageDetails | None = None,
         # Function call/result fields
         call_id: str | None = None,
         name: str | None = None,
         arguments: str | Mapping[str, Any] | None = None,
         exception: str | None = None,
         result: Any = None,
+        items: Sequence[Content] | None = None,
         # Hosted file/vector store fields
         file_id: str | None = None,
         vector_store_id: str | None = None,
@@ -476,6 +489,16 @@ class Content:
         outputs: list[Content] | Any | None = None,
         # Image generation tool fields
         image_id: str | None = None,
+        # Shell tool fields
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        # Shell command output fields
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
         # MCP server tool fields
         tool_name: str | None = None,
         server_name: str | None = None,
@@ -485,6 +508,8 @@ class Content:
         function_call: Content | None = None,
         user_input_request: bool | None = None,
         approved: bool | None = None,
+        # OAuth consent fields
+        consent_link: str | None = None,
         # Common fields
         annotations: Sequence[Annotation] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -496,7 +521,9 @@ class Content:
         """
         self.type = type
         self.annotations = annotations
-        self.additional_properties: dict[str, Any] = additional_properties or {}  # type: ignore[assignment]
+        self.additional_properties: dict[str, Any] = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
         # Set all content-specific attributes
@@ -513,11 +540,20 @@ class Content:
         self.arguments = arguments
         self.exception = exception
         self.result = result
+        self.items = items
         self.file_id = file_id
         self.vector_store_id = vector_store_id
         self.inputs = inputs
         self.outputs = outputs
         self.image_id = image_id
+        self.commands = commands
+        self.timeout_ms = timeout_ms
+        self.max_output_length = max_output_length
+        self.status = status
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exit_code = exit_code
+        self.timed_out = timed_out
         self.tool_name = tool_name
         self.server_name = server_name
         self.output = output
@@ -525,6 +561,24 @@ class Content:
         self.function_call = function_call
         self.user_input_request = user_input_request
         self.approved = approved
+        self.consent_link = consent_link
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> Content:
+        """Create a deep copy, preserving ``_SHALLOW_COPY_FIELDS`` by reference.
+
+        Fields listed in ``_SHALLOW_COPY_FIELDS`` may contain LLM SDK objects
+        (e.g., proto/gRPC responses) that are not safe to deep-copy.
+        """
+        cls = type(self)
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        shallow = cls._SHALLOW_COPY_FIELDS
+        for k, v in self.__dict__.items():
+            if k in shallow:
+                object.__setattr__(result, k, v)
+            else:
+                object.__setattr__(result, k, deepcopy(v, memo))
+        return result
 
     @classmethod
     def from_text(
@@ -761,11 +815,48 @@ class Content:
         additional_properties: MutableMapping[str, Any] | None = None,
         raw_representation: Any = None,
     ) -> ContentT:
-        """Create function result content."""
+        """Create function result content.
+
+        All tool output is represented uniformly as Content items in the
+        ``items`` field.  The ``result`` field is populated with the concatenated
+        text from text items for backwards compatibility.
+
+        Args:
+            call_id: The ID of the function call this result corresponds to.
+
+        Keyword Args:
+            result: The tool output.  Accepts a ``list[Content]`` (the canonical
+                form produced by :meth:`~FunctionTool.parse_result`), a plain
+                ``str``, or any other value (which is stringified).
+            exception: The exception message if the function call failed.
+            annotations: Optional annotations for the content.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+        """
+        if isinstance(result, list):
+            if all(isinstance(c, Content) for c in result):  # type: ignore[reportUnknownVariableType]
+                items_list: list[Content] = list(result)  # type: ignore[reportUnknownArgumentType]
+            else:
+                items_list = [Content.from_text(str(result))]  # type: ignore[reportUnknownArgumentType]
+        elif isinstance(result, str):
+            items_list = [Content.from_text(result)]
+        elif result is not None:
+            try:
+                text = json.dumps(result, default=str)
+            except (TypeError, ValueError):
+                text = str(result)
+            items_list = [Content.from_text(text)]
+        else:
+            items_list = [Content.from_text("")]
+
+        text_parts = [c.text for c in items_list if c.type == "text" and c.text]
+        text_result = "\n".join(text_parts) if text_parts else ""
+
         return cls(
             "function_result",
             call_id=call_id,
-            result=result,
+            result=text_result,
+            items=items_list,
             exception=exception,
             annotations=annotations,
             additional_properties=additional_properties,
@@ -909,6 +1000,112 @@ class Content:
         )
 
     @classmethod
+    def from_shell_tool_call(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        commands: list[str] | None = None,
+        timeout_ms: int | None = None,
+        max_output_length: int | None = None,
+        status: str | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool call content.
+
+        This content represents the model's request to run one or more shell
+        commands. It is request metadata, not command output.
+
+        Keyword Args:
+            call_id: The unique identifier for this tool call.
+            commands: The list of commands to execute.
+            timeout_ms: The timeout in milliseconds for the shell command execution.
+            max_output_length: The maximum output length in characters.
+            status: The status of the shell call (e.g., "in_progress", "completed", "incomplete").
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_call",
+            call_id=call_id,
+            commands=commands,
+            timeout_ms=timeout_ms,
+            max_output_length=max_output_length,
+            status=status,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_tool_result(
+        cls: type[ContentT],
+        *,
+        call_id: str | None = None,
+        outputs: Sequence[Content] | None = None,
+        max_output_length: int | None = None,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell tool result content.
+
+        This content represents the aggregate result for a shell tool call.
+        Use :meth:`from_shell_command_output` to build each per-command output
+        item and pass those objects via ``outputs``.
+
+        Keyword Args:
+            call_id: The function call ID for which this is the result.
+            outputs: The list of shell command output Content objects.
+            max_output_length: The maximum output length in characters.
+            annotations: Optional annotations for this content.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_tool_result",
+            call_id=call_id,
+            outputs=list(outputs) if outputs is not None else None,
+            max_output_length=max_output_length,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
+    def from_shell_command_output(
+        cls: type[ContentT],
+        *,
+        stdout: str | None = None,
+        stderr: str | None = None,
+        exit_code: int | None = None,
+        timed_out: bool | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create shell command output content for one command execution.
+
+        Keyword Args:
+            stdout: The standard output of the command.
+            stderr: The standard error output of the command.
+            exit_code: The exit code of the command, or None if the command timed out.
+            timed_out: Whether the command execution timed out.
+            additional_properties: Optional additional properties.
+            raw_representation: The raw provider-specific representation.
+        """
+        return cls(
+            "shell_command_output",
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
+    @classmethod
     def from_mcp_server_tool_call(
         cls: type[ContentT],
         call_id: str,
@@ -995,6 +1192,37 @@ class Content:
             raw_representation=raw_representation,
         )
 
+    @classmethod
+    def from_oauth_consent_request(
+        cls: type[ContentT],
+        consent_link: str,
+        *,
+        annotations: Sequence[Annotation] | None = None,
+        additional_properties: MutableMapping[str, Any] | None = None,
+        raw_representation: Any = None,
+    ) -> ContentT:
+        """Create OAuth consent request content.
+
+        Args:
+            consent_link: The URL the user must visit to complete OAuth consent.
+
+        Keyword Args:
+            annotations: Optional annotations.
+            additional_properties: Optional additional properties.
+            raw_representation: Optional raw representation from the provider.
+
+        Returns:
+            A new Content instance with type ``oauth_consent_request``.
+        """
+        return cls(
+            "oauth_consent_request",
+            consent_link=consent_link,
+            user_input_request=True,
+            annotations=annotations,
+            additional_properties=additional_properties,
+            raw_representation=raw_representation,
+        )
+
     def to_function_approval_response(
         self,
         approved: bool,
@@ -1029,11 +1257,20 @@ class Content:
             "arguments",
             "exception",
             "result",
+            "items",
             "file_id",
             "vector_store_id",
             "inputs",
             "outputs",
             "image_id",
+            "commands",
+            "timeout_ms",
+            "max_output_length",
+            "status",
+            "stdout",
+            "stderr",
+            "exit_code",
+            "timed_out",
             "tool_name",
             "server_name",
             "output",
@@ -1041,6 +1278,7 @@ class Content:
             "user_input_request",
             "approved",
             "id",
+            "consent_link",
             "additional_properties",
         )
 
@@ -1093,19 +1331,16 @@ class Content:
             return cls.from_data(remaining["data"], remaining["media_type"])
 
         # Handle nested Content objects (e.g., function_call in function_approval_request)
-        if "function_call" in remaining and isinstance(remaining["function_call"], dict):
-            remaining["function_call"] = cls.from_dict(remaining["function_call"])
+        if (function_call := remaining.get("function_call")) and isinstance(function_call, dict):
+            remaining["function_call"] = cls.from_dict(function_call)  # type: ignore[reportUnknownArgumentType]
 
         # Handle list of Content objects (e.g., inputs in code_interpreter_tool_call)
-        if "inputs" in remaining and isinstance(remaining["inputs"], list):
-            remaining["inputs"] = [
-                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["inputs"]
-            ]
-
-        if "outputs" in remaining and isinstance(remaining["outputs"], list):
-            remaining["outputs"] = [
-                cls.from_dict(item) if isinstance(item, dict) else item for item in remaining["outputs"]
-            ]
+        if (input_items := remaining.get("inputs")) and isinstance(input_items, list):
+            remaining["inputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in input_items]  # type: ignore[reportUnknownVariableType]
+        if (output_items := remaining.get("outputs")) and isinstance(output_items, list):
+            remaining["outputs"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in output_items]  # type: ignore[reportUnknownVariableType]
+        if (content_items := remaining.get("items")) and isinstance(content_items, list):
+            remaining["items"] = [cls.from_dict(item) if isinstance(item, dict) else item for item in content_items]  # type: ignore[reportUnknownVariableType]
 
         return cls(
             type=content_type,
@@ -1135,55 +1370,16 @@ class Content:
 
     def _add_text_content(self, other: Content) -> Content:
         """Add two TextContent instances."""
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations  # type: ignore[operator]
-
         return Content(
             "text",
             text=self.text + other.text,  # type: ignore[attr-defined, operator]
-            annotations=annotations,
-            additional_properties={
-                **(other.additional_properties or {}),
-                **(self.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            annotations=_combine_annotations(self.annotations, other.annotations),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
-        # Merge annotations
-        if self.annotations is None:
-            annotations = other.annotations
-        elif other.annotations is None:
-            annotations = self.annotations
-        else:
-            annotations = self.annotations + other.annotations  # type: ignore[operator]
-
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
         other_text = other.text or ""  # type: ignore[attr-defined]
@@ -1196,12 +1392,9 @@ class Content:
             "text_reasoning",
             text=combined_text,
             protected_data=protected_data,
-            annotations=annotations,
-            additional_properties={
-                **(other.additional_properties or {}),
-                **(self.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            annotations=_combine_annotations(self.annotations, other.annotations),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
     def _add_function_call_content(self, other: Content) -> Content:
@@ -1225,64 +1418,23 @@ class Content:
         else:
             raise TypeError("Incompatible argument types")
 
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation: Any = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
         return Content(
             "function_call",
             call_id=self_call_id,
             name=getattr(self, "name", getattr(other, "name", None)),
             arguments=arguments,
             exception=getattr(self, "exception", None) or getattr(other, "exception", None),
-            additional_properties={
-                **(self.additional_properties or {}),
-                **(other.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
     def _add_usage_content(self, other: Content) -> Content:
         """Add two UsageContent instances by combining their usage details."""
-        self_details = getattr(self, "usage_details", {})
-        other_details = getattr(other, "usage_details", {})
-
-        # Combine token counts
-        combined_details: dict[str, Any] = {}
-        for key in set(list(self_details.keys()) + list(other_details.keys())):
-            self_val = self_details.get(key)
-            other_val = other_details.get(key)
-            if isinstance(self_val, int) and isinstance(other_val, int):
-                combined_details[key] = self_val + other_val
-            elif self_val is not None:
-                combined_details[key] = self_val
-            elif other_val is not None:
-                combined_details[key] = other_val
-
-        # Merge raw representations
-        if self.raw_representation is None:
-            raw_representation = other.raw_representation
-        elif other.raw_representation is None:
-            raw_representation = self.raw_representation
-        else:
-            raw_representation = (
-                self.raw_representation if isinstance(self.raw_representation, list) else [self.raw_representation]
-            ) + (other.raw_representation if isinstance(other.raw_representation, list) else [other.raw_representation])
-
         return Content(
             "usage",
-            usage_details=combined_details,
-            additional_properties={
-                **(self.additional_properties or {}),
-                **(other.additional_properties or {}),
-            },
-            raw_representation=raw_representation,
+            usage_details=add_usage_details(self.usage_details, other.usage_details),
+            additional_properties=_combine_additional_props(self.additional_properties, other.additional_properties),
+            raw_representation=_combine_raw_representations(self.raw_representation, other.raw_representation),
         )
 
     def has_top_level_media_type(self, top_level_media_type: Literal["application", "audio", "image", "text"]) -> bool:
@@ -1357,6 +1509,42 @@ class Content:
             except (json.JSONDecodeError, TypeError):
                 return {"raw": self.arguments}
         return self.arguments  # type: ignore[return-value]
+
+
+def _combine_additional_props(
+    self_additional_properties: dict[str, Any], other_additional_properties: dict[str, Any]
+) -> dict[str, Any]:
+    """Combine additional properties for addition operations."""
+    return {
+        **other_additional_properties,
+        **self_additional_properties,
+    }
+
+
+def _combine_raw_representations(
+    self_repr: Any,
+    other_repr: Any,
+) -> Any:
+    """Combine raw representations for addition operations."""
+    if self_repr is None:
+        return other_repr
+    if other_repr is None:
+        return self_repr
+    self_list = self_repr if isinstance(self_repr, list) else [self_repr]  # type: ignore[reportUnknownVariableType]
+    other_list = other_repr if isinstance(other_repr, list) else [other_repr]  # type: ignore[reportUnknownVariableType]
+    return self_list + other_list  # type: ignore[reportUnknownVariableType]
+
+
+def _combine_annotations(
+    self_annotations: Sequence[Annotation] | None,
+    other_annotations: Sequence[Annotation] | None,
+) -> Sequence[Annotation] | None:
+    """Combine annotations for addition operations."""
+    if self_annotations is None:
+        return other_annotations
+    if other_annotations is None:
+        return self_annotations
+    return [*self_annotations, *other_annotations]
 
 
 # endregion
@@ -1494,10 +1682,6 @@ class Message(SerializationMixin):
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
-        # Handle role conversion from legacy dict format
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-
         # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
 
@@ -1509,7 +1693,9 @@ class Message(SerializationMixin):
         self.contents = parsed_contents
         self.author_name = author_name
         self.message_id = message_id
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.raw_representation = raw_representation
 
     @property
@@ -1665,14 +1851,14 @@ def _process_update(response: ChatResponse | AgentResponse, update: ChatResponse
     if update.created_at is not None:
         response.created_at = update.created_at
     if update.additional_properties is not None:
-        if response.additional_properties is None:
-            response.additional_properties = {}
         response.additional_properties.update(update.additional_properties)
     if response.raw_representation is None:
         response.raw_representation = []
     if not isinstance(response.raw_representation, list):
         response.raw_representation = [response.raw_representation]
-    response.raw_representation.append(update.raw_representation)
+    raw_representation_value = cast(Any, getattr(response, "raw_representation", None))
+    raw_representation_list = cast(list[Any], raw_representation_value)
+    raw_representation_list.append(update.raw_representation)
     if isinstance(response, ChatResponse) and isinstance(update, ChatResponseUpdate):
         if update.conversation_id is not None:
             response.conversation_id = update.conversation_id
@@ -1809,6 +1995,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -1825,8 +2012,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             messages: A single Message or sequence of Message objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
+            model: Optional model used in the creation of the chat response.
+            model_id: Deprecated alias for ``model``.
+            created_at: Optional timestamp for when the response was created.
             finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
@@ -1836,6 +2024,8 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
+        if model_id is not None and model is None:
+            model = model_id
         if messages is None:
             self.messages: list[Message] = []
         elif isinstance(messages, Message):
@@ -1853,19 +2043,27 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
-        # Handle legacy dict format for finish_reason
-        if isinstance(finish_reason, dict) and "value" in finish_reason:
-            finish_reason = finish_reason["value"]
         self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @overload
     @classmethod
@@ -2064,6 +2262,7 @@ class ChatResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -2080,7 +2279,8 @@ class ChatResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
-            model_id: Optional model ID associated with this response update.
+            model: Optional model associated with this response update.
+            model_id: Deprecated alias for ``model``.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
             continuation_token: Optional token for resuming a long-running background operation.
@@ -2090,6 +2290,8 @@ class ChatResponseUpdate(SerializationMixin):
                 from an underlying implementation.
 
         """
+        if model_id is not None and model is None:
+            model = model_id
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -2109,12 +2311,24 @@ class ChatResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def text(self) -> str:
@@ -2226,7 +2440,9 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self._value: ResponseModelT | None = value
         self._response_format: type[BaseModel] | None = response_format
         self._value_parsed: bool = value is not None
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
         self.continuation_token = continuation_token
         self.raw_representation = raw_representation
 
@@ -2449,10 +2665,6 @@ class AgentResponseUpdate(SerializationMixin):
                     processed_contents.append(c)
             self.contents = processed_contents
 
-        # Handle legacy dict format for role
-        if isinstance(role, dict) and "value" in role:
-            role = role["value"]
-
         self.role: str | None = role
         self.author_name = author_name
         self.agent_id = agent_id
@@ -2460,7 +2672,10 @@ class AgentResponseUpdate(SerializationMixin):
         self.message_id = message_id
         self.created_at = created_at
         self.continuation_token = continuation_token
-        self.additional_properties = additional_properties
+        self.additional_properties = _restore_compaction_annotation_in_additional_properties(
+            additional_properties,
+            allow_none=True,
+        )
         self.raw_representation: Any | list[Any] | None = raw_representation
 
     @property
@@ -2509,7 +2724,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         stream: AsyncIterable[UpdateT] | Awaitable[AsyncIterable[UpdateT]],
         *,
         finalizer: Callable[[Sequence[UpdateT]], FinalT | Awaitable[FinalT]] | None = None,
-        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] | None = None,
+        transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] | None = None,
         cleanup_hooks: list[Callable[[], Awaitable[None] | None]] | None = None,
         result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] | None = None,
     ) -> None:
@@ -2533,7 +2748,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._consumed: bool = False
         self._finalized: bool = False
         self._final_result: FinalT | None = None
-        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None]] = (
+        self._transform_hooks: list[Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None]] = (
             transform_hooks if transform_hooks is not None else []
         )
         self._result_hooks: list[Callable[[FinalT], FinalT | Awaitable[FinalT | None] | None]] = (
@@ -2546,7 +2761,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._inner_stream: ResponseStream[Any, Any] | None = None
         self._inner_stream_source: ResponseStream[Any, Any] | Awaitable[ResponseStream[Any, Any]] | None = None
         self._wrap_inner: bool = False
-        self._map_update: Callable[[Any], Any | Awaitable[Any]] | None = None
+        self._map_update: Callable[[Any], UpdateT | Awaitable[UpdateT]] | None = None
 
     def map(
         self,
@@ -2586,11 +2801,11 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             ...     AgentResponse.from_updates,
             ... )
         """
-        stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
+        stream: ResponseStream[OuterUpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
         stream._inner_stream_source = self
         stream._wrap_inner = True
         stream._map_update = transform
-        return stream  # type: ignore[return-value]
+        return stream
 
     def with_finalizer(
         self,
@@ -2614,10 +2829,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         Example:
             >>> stream.with_finalizer(AgentResponse.from_updates)
         """
-        stream: ResponseStream[Any, Any] = ResponseStream(self, finalizer=finalizer)
+        stream: ResponseStream[UpdateT, OuterFinalT] = ResponseStream(self, finalizer=finalizer)
         stream._inner_stream_source = self
         stream._wrap_inner = True
-        return stream  # type: ignore[return-value]
+        return stream
 
     @classmethod
     def from_awaitable(
@@ -2642,10 +2857,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             >>> async def get_stream() -> ResponseStream[Update, Response]: ...
             >>> stream = ResponseStream.from_awaitable(get_stream())
         """
-        stream: ResponseStream[Any, Any] = cls(awaitable)  # type: ignore[arg-type]
-        stream._inner_stream_source = awaitable  # type: ignore[assignment]
+        stream: ResponseStream[UpdateT, FinalT] = cls(cast(Awaitable[AsyncIterable[UpdateT]], awaitable))
+        stream._inner_stream_source = awaitable
         stream._wrap_inner = True
-        return stream  # type: ignore[return-value]
+        return stream
 
     async def _get_stream(self) -> AsyncIterable[UpdateT]:
         if self._stream is None:
@@ -2655,10 +2870,10 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 if not iscoroutine(self._stream_source):
                     self._stream = self._stream_source  # type: ignore[assignment]
                 else:
-                    self._stream = await self._stream_source  # type: ignore[assignment]
+                    self._stream = await self._stream_source
             if isinstance(self._stream, ResponseStream) and self._wrap_inner:
-                self._inner_stream = self._stream
-                return self._stream
+                self._inner_stream = self._stream  # type: ignore[assignment]
+                return self._inner_stream
         return self._stream  # type: ignore[return-value]
 
     def __aiter__(self) -> ResponseStream[UpdateT, FinalT]:
@@ -2669,27 +2884,26 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
             stream = await self._get_stream()
             self._iterator = stream.__aiter__()
         try:
-            update = await self._iterator.__anext__()
+            update: UpdateT = await self._iterator.__anext__()
         except StopAsyncIteration:
             self._consumed = True
             await self._run_cleanup_hooks()
+            await self.get_final_response()
             raise
         except Exception:
             await self._run_cleanup_hooks()
             raise
         if self._map_update is not None:
-            mapped = self._map_update(update)
-            if isinstance(mapped, Awaitable):
-                update = await mapped
-            else:
-                update = mapped  # type: ignore[assignment]
+            update = self._map_update(update)  # type: ignore[assignment]
+            if isawaitable(update):
+                update = await update
         self._updates.append(update)
         for hook in self._transform_hooks:
             hooked = hook(update)
-            if isinstance(hooked, Awaitable):
-                update = await hooked
-            elif hooked is not None:
-                update = hooked  # type: ignore[assignment]
+            if isawaitable(hooked):
+                hooked = await hooked
+            if hooked is not None:
+                update = hooked
         return update
 
     def __await__(self) -> Any:
@@ -2724,73 +2938,90 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
                 await self._get_stream()
             if self._inner_stream is None:
                 raise RuntimeError("Inner stream not available")
-            if not self._finalized:
+            if not self._finalized and not self._consumed:
                 # Consume outer stream (which delegates to inner) if not already consumed
-                if not self._consumed:
-                    async for _ in self:
-                        pass
+                async for _ in self:
+                    pass
 
-                # First, finalize the inner stream and run its result hooks
+            # Re-check: __anext__ auto-finalization may have already finalized this stream
+            if not self._finalized:
                 # This ensures inner post-processing (e.g., context provider notifications) runs
-                if self._inner_stream._finalizer is not None:
-                    inner_result: Any = self._inner_stream._finalizer(self._inner_stream._updates)
-                    if isinstance(inner_result, Awaitable):
-                        inner_result = await inner_result
+                # Skip if inner stream was already finalized (e.g., via auto-finalization on iteration)
+                if not self._inner_stream._finalized:
+                    inner_stream = self._inner_stream
+                    inner_result: Any
+                    if inner_stream._finalizer is not None:
+                        inner_finalizer = inner_stream._finalizer
+                        inner_result = inner_finalizer(inner_stream._updates)
+                        if isawaitable(inner_result):
+                            inner_result = await inner_result
+                    else:
+                        inner_result = list(inner_stream._updates)
+
+                    # Run inner stream's result hooks
+                    inner_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], inner_stream._result_hooks)
+                    for hook in inner_hooks:
+                        hooked_result = hook(inner_result)
+                        if isawaitable(hooked_result):
+                            hooked_result = await hooked_result
+                        if hooked_result is not None:
+                            inner_result = hooked_result
+                    inner_stream._final_result = inner_result
+                    inner_stream._finalized = True
                 else:
-                    inner_result = self._inner_stream._updates
-                # Run inner stream's result hooks
-                for hook in self._inner_stream._result_hooks:
-                    hooked = hook(inner_result)
-                    if isinstance(hooked, Awaitable):
-                        hooked = await hooked
-                    if hooked is not None:
-                        inner_result = hooked
-                self._inner_stream._final_result = inner_result
-                self._inner_stream._finalized = True
+                    inner_result = self._inner_stream._final_result
 
                 # Now finalize the outer stream with its own finalizer
                 # If outer has no finalizer, use inner's result (preserves from_awaitable behavior)
+                outer_result: Any
                 if self._finalizer is not None:
-                    result: Any = self._finalizer(self._updates)
-                    if isinstance(result, Awaitable):
-                        result = await result
+                    outer_result = self._finalizer(self._updates)
+                    if isawaitable(outer_result):
+                        outer_result = await outer_result
                 else:
                     # No outer finalizer - use inner's finalized result
-                    result = inner_result
+                    outer_result = inner_result
+
                 # Apply outer's result_hooks
-                for hook in self._result_hooks:
-                    hooked = hook(result)
-                    if isinstance(hooked, Awaitable):
-                        hooked = await hooked
-                    if hooked is not None:
-                        result = hooked
-                self._final_result = result
+                outer_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
+                for hook in outer_hooks:
+                    outer_hook_result = hook(outer_result)
+                    if isawaitable(outer_hook_result):
+                        outer_hook_result = await outer_hook_result
+                    if outer_hook_result is not None:
+                        outer_result = outer_hook_result
+                self._final_result = outer_result
                 self._finalized = True
             return self._final_result  # type: ignore[return-value]
+
+        if not self._finalized and not self._consumed:
+            async for _ in self:
+                pass
+
+        # Re-check: __anext__ auto-finalization may have already finalized this stream
         if not self._finalized:
-            if not self._consumed:
-                async for _ in self:
-                    pass
-            # Use finalizer if configured, otherwise return collected updates
+            result: Any
             if self._finalizer is not None:
                 result = self._finalizer(self._updates)
-                if isinstance(result, Awaitable):
+                if isawaitable(result):
                     result = await result
             else:
-                result = self._updates
-            for hook in self._result_hooks:
-                hooked = hook(result)
-                if isinstance(hooked, Awaitable):
-                    hooked = await hooked
-                if hooked is not None:
-                    result = hooked
+                result = list(self._updates)
+
+            final_hooks = cast(list[Callable[[Any], Any | Awaitable[Any] | None]], self._result_hooks)
+            for hook in final_hooks:
+                final_hook_result = hook(result)
+                if isawaitable(final_hook_result):
+                    final_hook_result = await final_hook_result
+                if final_hook_result is not None:
+                    result = final_hook_result
             self._final_result = result
             self._finalized = True
         return self._final_result  # type: ignore[return-value]
 
     def with_transform_hook(
         self,
-        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT] | None],
+        hook: Callable[[UpdateT], UpdateT | Awaitable[UpdateT | None] | None],
     ) -> ResponseStream[UpdateT, FinalT]:
         """Register a transform hook executed for each update during iteration."""
         self._transform_hooks.append(hook)
@@ -2820,7 +3051,7 @@ class ResponseStream(AsyncIterable[UpdateT], Generic[UpdateT, FinalT]):
         self._cleanup_run = True
         for hook in self._cleanup_hooks:
             result = hook()
-            if isinstance(result, Awaitable):
+            if isawaitable(result):
                 await result
 
     @property
@@ -3131,9 +3362,9 @@ def merge_chat_options(
     # Copy base values (shallow copy for simple values, dict copy for dicts)
     for key, value in base.items():
         if isinstance(value, dict):
-            result[key] = dict(value)
+            result[key] = dict(value)  # type: ignore[reportUnknownArgumentType]
         elif isinstance(value, list):
-            result[key] = list(value)
+            result[key] = list(value)  # type: ignore[reportUnknownArgumentType]
         else:
             result[key] = value
 
@@ -3155,19 +3386,19 @@ def merge_chat_options(
             if base_tools and value:
                 # Add tools that aren't already present
                 merged_tools = list(base_tools)
-                for tool in value if isinstance(value, list) else [value]:
+                for tool in value if isinstance(value, Iterable) else [value]:  # type: ignore[reportUnknownVariableType]
                     if tool not in merged_tools:
                         merged_tools.append(tool)
                 result["tools"] = merged_tools
             elif value:
-                result["tools"] = list(value) if isinstance(value, list) else [value]
+                result["tools"] = value if isinstance(value, list) else [value]
         elif key in ("logit_bias", "metadata", "additional_properties"):
             # Merge dicts
             base_dict = result.get(key)
-            if base_dict and isinstance(value, dict):
+            if base_dict and isinstance(base_dict, dict) and isinstance(value, dict):
                 result[key] = {**base_dict, **value}
             elif value:
-                result[key] = dict(value) if isinstance(value, dict) else value
+                result[key] = dict(cast(Mapping[Any, Any], value)) if isinstance(value, dict) else value
         elif key == "tool_choice":
             # tool_choice from override takes precedence
             result["tool_choice"] = value if value else result.get("tool_choice")
@@ -3213,7 +3444,7 @@ class Embedding(Generic[EmbeddingT]):
 
     Args:
         vector: The embedding vector data.
-        model_id: The model used to generate this embedding.
+        model: The model used to generate this embedding.
         dimensions: Explicit dimension count (computed from vector length if omitted).
         created_at: Timestamp of when the embedding was generated.
         additional_properties: Additional metadata.
@@ -3225,7 +3456,7 @@ class Embedding(Generic[EmbeddingT]):
 
             embedding = Embedding(
                 vector=[0.1, 0.2, 0.3],
-                model_id="text-embedding-3-small",
+                model="text-embedding-3-small",
             )
             assert embedding.dimensions == 3
     """
@@ -3234,16 +3465,30 @@ class Embedding(Generic[EmbeddingT]):
         self,
         vector: EmbeddingT,
         *,
+        model: str | None = None,
         model_id: str | None = None,
         dimensions: int | None = None,
         created_at: datetime | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
+        if model_id is not None and model is None:
+            model = model_id
         self.vector = vector
         self._dimensions = dimensions
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def dimensions(self) -> int | None:
@@ -3253,8 +3498,8 @@ class Embedding(Generic[EmbeddingT]):
         """
         if self._dimensions is not None:
             return self._dimensions
-        if isinstance(self.vector, (list, tuple, bytes)):
-            return len(self.vector)
+        if isinstance(self.vector, Sized) and not isinstance(self.vector, str):
+            return len(cast(Sized, self.vector))
         return None
 
 
@@ -3301,7 +3546,9 @@ class GeneratedEmbeddings(list[Embedding[EmbeddingT]], Generic[EmbeddingT, Embed
         super().__init__(embeddings or [])
         self.options = options
         self.usage = usage
-        self.additional_properties = additional_properties or {}
+        self.additional_properties = (
+            _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
+        )
 
 
 # endregion

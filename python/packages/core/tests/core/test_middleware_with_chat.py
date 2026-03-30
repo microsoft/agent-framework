@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
 from agent_framework import (
     Agent,
@@ -274,7 +275,10 @@ class TestChatMiddleware:
 
         # First call with run-level middleware
         messages = [Message(role="user", text="first message")]
-        response1 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        response1 = await chat_client_base.get_response(
+            messages,
+            client_kwargs={"middleware": [counting_middleware]},
+        )
         assert response1 is not None
         assert execution_count["count"] == 1
 
@@ -286,54 +290,159 @@ class TestChatMiddleware:
 
         # Third call with run-level middleware again - should execute
         messages = [Message(role="user", text="third message")]
-        response3 = await chat_client_base.get_response(messages, middleware=[counting_middleware])
+        response3 = await chat_client_base.get_response(
+            messages,
+            client_kwargs={"middleware": [counting_middleware]},
+        )
         assert response3 is not None
         assert execution_count["count"] == 2  # Should be 2 now
 
-    async def test_chat_client_middleware_can_access_and_override_custom_kwargs(
+    async def test_run_level_middleware_is_not_forwarded_to_inner_client(
         self, chat_client_base: "MockBaseChatClient"
     ) -> None:
-        """Test that chat client middleware can access and override custom parameters like temperature."""
-        captured_kwargs: dict[str, Any] = {}
-        modified_kwargs: dict[str, Any] = {}
+        """Test that run-level middleware stays in the middleware pipeline only."""
+        observed_context_kwargs: dict[str, Any] = {}
+
+        @chat_middleware
+        async def inspecting_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            observed_context_kwargs.update(context.kwargs)
+            await call_next()
+
+        async def fake_inner_get_response(**kwargs: Any) -> ChatResponse:
+            assert "middleware" not in kwargs
+            return ChatResponse(messages=[Message(role="assistant", text="ok")])
+
+        with patch.object(
+            chat_client_base,
+            "_inner_get_response",
+            side_effect=fake_inner_get_response,
+        ) as mock_inner_get_response:
+            response = await chat_client_base.get_response(
+                [Message(role="user", text="hello")],
+                client_kwargs={"middleware": [inspecting_middleware], "trace_id": "trace-123"},
+            )
+
+        assert response.messages[0].text == "ok"
+        assert observed_context_kwargs == {"trace_id": "trace-123"}
+        mock_inner_get_response.assert_called_once()
+
+    async def test_chat_client_middleware_can_access_and_override_options(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that chat client middleware can access and override runtime options."""
+        captured_options: dict[str, Any] = {}
+        modified_options: dict[str, Any] = {}
 
         @chat_middleware
         async def kwargs_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            # Capture the original kwargs
-            captured_kwargs.update(context.kwargs)
+            assert isinstance(context.options, dict)
+            captured_options.update(context.options)
 
-            # Modify some kwargs
-            context.kwargs["temperature"] = 0.9
-            context.kwargs["max_tokens"] = 500
-            context.kwargs["new_param"] = "added_by_middleware"
+            context.options["temperature"] = 0.9
+            context.options["max_tokens"] = 500
+            context.options["new_param"] = "added_by_middleware"
 
-            # Store modified kwargs for verification
-            modified_kwargs.update(context.kwargs)
+            modified_options.update(context.options)
 
             await call_next()
 
         # Add middleware to chat client
         chat_client_base.chat_middleware = [kwargs_middleware]
 
-        # Execute chat client with custom parameters
+        # Execute chat client with runtime options
         messages = [Message(role="user", text="test message")]
         response = await chat_client_base.get_response(
-            messages, temperature=0.7, max_tokens=100, custom_param="test_value"
+            messages,
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
         )
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
 
-        assert captured_kwargs["temperature"] == 0.7
-        assert captured_kwargs["max_tokens"] == 100
-        assert captured_kwargs["custom_param"] == "test_value"
+        assert captured_options["temperature"] == 0.7
+        assert captured_options["max_tokens"] == 100
+        assert captured_options["custom_param"] == "test_value"
 
-        # Verify middleware could modify the kwargs
-        assert modified_kwargs["temperature"] == 0.9
-        assert modified_kwargs["max_tokens"] == 500
-        assert modified_kwargs["new_param"] == "added_by_middleware"
-        assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+        assert modified_options["temperature"] == 0.9
+        assert modified_options["max_tokens"] == 500
+        assert modified_options["new_param"] == "added_by_middleware"
+        assert modified_options["custom_param"] == "test_value"
+
+    def test_chat_middleware_pipeline_cache_reuses_matching_middleware(
+        self,
+        chat_client_base: "MockBaseChatClient",
+    ) -> None:
+        """Test that identical chat middleware sets reuse the cached pipeline."""
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        first_pipeline = chat_client_base._get_chat_middleware_pipeline([first_middleware])
+        second_pipeline = chat_client_base._get_chat_middleware_pipeline([first_middleware])
+        third_pipeline = chat_client_base._get_chat_middleware_pipeline([second_middleware])
+
+        assert first_pipeline is second_pipeline
+        assert third_pipeline is not first_pipeline
+
+    def test_chat_middleware_pipeline_cache_includes_base_middleware(
+        self,
+        chat_client_base: "MockBaseChatClient",
+    ) -> None:
+        """Test that chat middleware cache key includes base middleware to prevent incorrect reuse."""
+
+        @chat_middleware
+        async def base_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def runtime_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        # Without base middleware
+        pipeline_no_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
+
+        # With base middleware
+        chat_client_base.chat_middleware = [base_middleware]
+        pipeline_with_base = chat_client_base._get_chat_middleware_pipeline([runtime_middleware])
+
+        assert pipeline_with_base is not pipeline_no_base
+
+    def test_function_middleware_pipeline_cache_reuses_matching_middleware(
+        self,
+        chat_client_base: "MockBaseChatClient",
+    ) -> None:
+        """Test that identical function middleware sets reuse the cached pipeline."""
+
+        @function_middleware
+        async def base_middleware(context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @function_middleware
+        async def first_runtime_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            await call_next()
+
+        @function_middleware
+        async def second_runtime_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            await call_next()
+
+        chat_client_base.function_middleware = [base_middleware]
+
+        first_pipeline = chat_client_base._get_function_middleware_pipeline([first_runtime_middleware])
+        second_pipeline = chat_client_base._get_function_middleware_pipeline([first_runtime_middleware])
+        third_pipeline = chat_client_base._get_function_middleware_pipeline([second_runtime_middleware])
+
+        assert first_pipeline is second_pipeline
+        assert third_pipeline is not first_pipeline
 
     async def test_function_middleware_registration_on_chat_client(
         self, chat_client_base: "MockBaseChatClient"
@@ -450,7 +559,9 @@ class TestChatMiddleware:
         # Execute the chat client directly with run-level middleware and tools
         messages = [Message(role="user", text="What's the weather in New York?")]
         response = await client.get_response(
-            messages, options={"tools": [sample_tool_wrapped]}, middleware=[run_level_function_middleware]
+            messages,
+            options={"tools": [sample_tool_wrapped]},
+            client_kwargs={"middleware": [run_level_function_middleware]},
         )
 
         # Verify response
@@ -462,4 +573,157 @@ class TestChatMiddleware:
         assert execution_order == [
             "run_level_function_middleware_before",
             "run_level_function_middleware_after",
+        ]
+
+    async def test_run_level_chat_and_function_middleware_split_per_function_loop_round(self) -> None:
+        """Test mixed run-level middleware is split so chat middleware runs per model call."""
+        execution_order: list[str] = []
+        chat_round = 0
+
+        @chat_middleware
+        async def run_level_chat_middleware(
+            context: ChatContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal chat_round
+            chat_round += 1
+            execution_order.append(f"chat_middleware_before_{chat_round}")
+            await call_next()
+            execution_order.append(f"chat_middleware_after_{chat_round}")
+
+        @function_middleware
+        async def run_level_function_middleware(
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await call_next()
+            execution_order.append("function_middleware_after")
+
+        def sample_tool(location: str) -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: sunny"
+
+        sample_tool_wrapped = FunctionTool(
+            func=sample_tool,
+            name="sample_tool",
+            description="Get weather for a location",
+            approval_mode="never_require",
+        )
+
+        client = MockBaseChatClient()
+        client.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_3",
+                                name="sample_tool",
+                                arguments={"location": "Seattle"},
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Based on the weather data, it's sunny!")]),
+        ]
+
+        response = await client.get_response(
+            [Message(role="user", text="What's the weather in Seattle?")],
+            options={"tools": [sample_tool_wrapped]},
+            client_kwargs={"middleware": [run_level_chat_middleware, run_level_function_middleware]},
+        )
+
+        assert response is not None
+        assert client.call_count == 2
+        assert response.messages[-1].text == "Based on the weather data, it's sunny!"
+        assert execution_order == [
+            "chat_middleware_before_1",
+            "chat_middleware_after_1",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before_2",
+            "chat_middleware_after_2",
+        ]
+
+    async def test_run_level_chat_and_function_middleware_split_per_function_loop_round_streaming(self) -> None:
+        """Test mixed run-level middleware is split so chat middleware runs per model call in streaming mode."""
+        execution_order: list[str] = []
+        chat_round = 0
+
+        @chat_middleware
+        async def run_level_chat_middleware(
+            context: ChatContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            nonlocal chat_round
+            chat_round += 1
+            execution_order.append(f"chat_middleware_before_{chat_round}")
+            await call_next()
+            execution_order.append(f"chat_middleware_after_{chat_round}")
+
+        @function_middleware
+        async def run_level_function_middleware(
+            context: FunctionInvocationContext,
+            call_next: Callable[[], Awaitable[None]],
+        ) -> None:
+            execution_order.append("function_middleware_before")
+            await call_next()
+            execution_order.append("function_middleware_after")
+
+        def sample_tool(location: str) -> str:
+            """Get weather for a location."""
+            return f"Weather in {location}: sunny"
+
+        sample_tool_wrapped = FunctionTool(
+            func=sample_tool,
+            name="sample_tool",
+            description="Get weather for a location",
+            approval_mode="never_require",
+        )
+
+        client = MockBaseChatClient()
+        client.streaming_responses = [
+            [
+                ChatResponseUpdate(
+                    contents=[
+                        Content.from_function_call(
+                            call_id="call_3",
+                            name="sample_tool",
+                            arguments='{"location": "Seattle"}',
+                        )
+                    ],
+                    role="assistant",
+                    finish_reason="tool_calls",
+                ),
+            ],
+            [
+                ChatResponseUpdate(
+                    contents=[Content.from_text("Based on the weather data, it's sunny!")],
+                    role="assistant",
+                    finish_reason="stop",
+                ),
+            ],
+        ]
+
+        updates: list[ChatResponseUpdate] = []
+        async for update in client.get_response(
+            [Message(role="user", text="What's the weather in Seattle?")],
+            options={"tools": [sample_tool_wrapped]},
+            client_kwargs={"middleware": [run_level_chat_middleware, run_level_function_middleware]},
+            stream=True,
+        ):
+            updates.append(update)
+
+        assert client.call_count == 2
+        assert len(updates) > 0
+        assert execution_order == [
+            "chat_middleware_before_1",
+            "chat_middleware_after_1",
+            "function_middleware_before",
+            "function_middleware_after",
+            "chat_middleware_before_2",
+            "chat_middleware_after_2",
         ]

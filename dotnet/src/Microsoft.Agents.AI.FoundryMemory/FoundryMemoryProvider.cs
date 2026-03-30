@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -32,11 +33,12 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
     private readonly string _memoryStoreName;
     private readonly int _maxMemories;
     private readonly int _updateDelay;
-    private readonly bool _enableSensitiveTelemetryData;
+    private readonly Redactor _redactor;
 
     private readonly AIProjectClient _client;
     private readonly ILogger<FoundryMemoryProvider>? _logger;
@@ -59,7 +61,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         Func<AgentSession?, State> stateInitializer,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         Throw.IfNull(client);
         Throw.IfNullOrWhitespace(memoryStoreName);
@@ -78,11 +80,11 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         this._memoryStoreName = memoryStoreName;
         this._maxMemories = effectiveOptions.MaxMemories;
         this._updateDelay = effectiveOptions.UpdateDelay;
-        this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
+        this._redactor = effectiveOptions.EnableSensitiveTelemetryData ? NullRedactor.Instance : (effectiveOptions.Redactor ?? new ReplacingRedactor("<redacted>"));
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
         session =>
@@ -415,7 +417,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private static bool IsAllowedRole(ChatRole role) =>
         role == ChatRole.User || role == ChatRole.Assistant || role == ChatRole.System;
 
-    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
 
     /// <summary>
     /// Represents the state of a <see cref="FoundryMemoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.

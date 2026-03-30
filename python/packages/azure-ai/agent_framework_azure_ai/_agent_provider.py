@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from collections.abc import Callable, Sequence
 from typing import Any, Generic, cast
 
@@ -17,19 +18,23 @@ from agent_framework import (
 from agent_framework._mcp import MCPTool
 from agent_framework._settings import load_settings
 from agent_framework._tools import ToolTypes
-from agent_framework.azure._entra_id_authentication import AzureCredentialTypes
 from azure.ai.agents.aio import AgentsClient
 from azure.ai.agents.models import Agent as AzureAgent
 from azure.ai.agents.models import ResponseFormatJsonSchema, ResponseFormatJsonSchemaType
 from pydantic import BaseModel
 
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
+from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions  # pyright: ignore[reportDeprecated]
+from ._entra_id_authentication import AzureCredentialTypes
 from ._shared import AzureAISettings, to_azure_ai_agent_tools
 
 if sys.version_info >= (3, 13):
     from typing import Self, TypeVar  # type: ignore # pragma: no cover
 else:
     from typing_extensions import Self, TypeVar  # type: ignore # pragma: no cover
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
 else:
@@ -46,8 +51,17 @@ OptionsCoT = TypeVar(
 )
 
 
+@deprecated(
+    "AzureAIAgentClient and the AzureAIAgentsProvider are deprecated. "
+    "They target the V1 Agents Service API and have no direct replacement; "
+    "for new Foundry projects, use FoundryAgent."
+)
 class AzureAIAgentsProvider(Generic[OptionsCoT]):
     """Provider for Azure AI Agent Service V1 (Persistent Agents API).
+
+    .. deprecated::
+        AzureAIAgentsProvider is deprecated and will be removed in a future release.
+        Use :class:`AzureAIProjectAgentProvider` instead for the V2 (Projects/Responses) API.
 
     This provider enables creating, retrieving, and wrapping Azure AI agents as Agent
     instances. It manages the underlying AgentsClient lifecycle and provides a high-level
@@ -114,6 +128,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         Raises:
             ValueError: If required parameters are missing or invalid.
         """
+        warnings.warn(
+            "AzureAIAgentsProvider is deprecated and will be removed in a future release; "
+            "use AzureAIProjectAgentProvider instead for the V2 (Projects/Responses) API.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._settings = load_settings(
             AzureAISettings,
             env_prefix="AZURE_AI_",
@@ -177,6 +197,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
     ) -> Agent[OptionsCoT]:
         """Create a new agent on the Azure AI service and return a Agent.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIProjectAgentProvider.create_agent` instead.
+
         This method creates a persistent agent on the Azure AI service with the specified
         configuration and returns a local Agent instance for interaction.
 
@@ -209,6 +233,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
                     tools=get_weather,
                 )
         """
+        warnings.warn(
+            "AzureAIAgentsProvider.create_agent() is deprecated and will be removed in a future release; "
+            "use AzureAIProjectAgentProvider.create_agent() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         resolved_model = model or self._settings.get("model_deployment_name")
         if not resolved_model:
             raise ValueError(
@@ -271,6 +301,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
     ) -> Agent[OptionsCoT]:
         """Retrieve an existing agent from the service and return a Agent.
 
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIProjectAgentProvider.get_agent` instead.
+
         This method fetches an agent by ID from the Azure AI service
         and returns a local Agent instance for interaction.
 
@@ -299,6 +333,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
                 # With function tools
                 agent = await provider.get_agent("agent-123", tools=my_function)
         """
+        warnings.warn(
+            "AzureAIAgentsProvider.get_agent() is deprecated and will be removed in a future release; "
+            "use AzureAIProjectAgentProvider.get_agent() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         agent = await self._agents_client.get_agent(id)
 
         # Validate function tools
@@ -322,6 +362,10 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
         context_providers: Sequence[BaseContextProvider] | None = None,
     ) -> Agent[OptionsCoT]:
         """Wrap an existing Agent SDK object as a Agent without making HTTP calls.
+
+        .. deprecated::
+            This method is deprecated and will be removed in a future release.
+            Use :meth:`AzureAIProjectAgentProvider.as_agent` instead.
 
         Use this method when you already have an Agent object from a previous
         SDK operation and want to use it with the Agent Framework.
@@ -354,6 +398,12 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
                 # Wrap as Agent
                 chat_agent = provider.as_agent(sdk_agent)
         """
+        warnings.warn(
+            "AzureAIAgentsProvider.as_agent() is deprecated and will be removed in a future release; "
+            "use AzureAIProjectAgentProvider.as_agent() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Validate function tools
         normalized_tools = normalize_tools(tools)
         self._validate_function_tools(agent.tools, normalized_tools)
@@ -385,7 +435,7 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             context_providers: Context providers to include during agent invocation.
         """
         # Create the underlying client
-        client = AzureAIAgentClient(
+        client = AzureAIAgentClient(  # pyright: ignore[reportDeprecated]
             agents_client=self._agents_client,
             agent_id=agent.id,
             agent_name=agent.name,
@@ -395,6 +445,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
 
         # Merge tools: convert agent's hosted tools + user-provided function tools
         merged_tools = self._merge_tools(agent.tools, provided_tools)
+        merged_default_options: dict[str, Any] = dict(default_options) if default_options is not None else {}
+        merged_default_options.setdefault("model_id", agent.model)
 
         return Agent(  # type: ignore[return-value]
             client=client,
@@ -402,9 +454,8 @@ class AzureAIAgentsProvider(Generic[OptionsCoT]):
             name=agent.name,
             description=agent.description,
             instructions=agent.instructions,
-            model_id=agent.model,
             tools=merged_tools,
-            default_options=default_options,  # type: ignore[arg-type]
+            default_options=cast(Any, merged_default_options),
             middleware=middleware,
             context_providers=context_providers,
         )

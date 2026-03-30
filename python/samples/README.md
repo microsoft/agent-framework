@@ -18,7 +18,7 @@ Start with `01-get-started/` and work through the numbered files:
 
 1. **[01_hello_agent.py](./01-get-started/01_hello_agent.py)** — Create and run your first agent
 2. **[02_add_tools.py](./01-get-started/02_add_tools.py)** — Add function tools with `@tool`
-3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentThread`
+3. **[03_multi_turn.py](./01-get-started/03_multi_turn.py)** — Multi-turn conversations with `AgentSession`
 4. **[04_memory.py](./01-get-started/04_memory.py)** — Agent memory with `ContextProvider`
 5. **[05_first_workflow.py](./01-get-started/05_first_workflow.py)** — Build a workflow with executors and edges
 6. **[06_host_your_agent.py](./01-get-started/06_host_your_agent.py)** — Host your agent via Azure Functions
@@ -60,6 +60,16 @@ client = OpenAIChatClient(env_file_path="path/to/custom.env")
 ```
 
 This allows different clients to use different configuration files if needed.
+
+For the generic OpenAI clients (`OpenAIChatClient` and `OpenAIChatCompletionClient`), routing
+precedence is:
+
+1. Explicit Azure inputs such as `credential`, `azure_endpoint`, or `api_version`
+2. `OPENAI_API_KEY` / explicit OpenAI API-key parameters
+3. Azure environment fallback such as `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+
+If you keep both OpenAI and Azure variables in your shell, the generic clients stay on OpenAI until
+you pass an explicit Azure input.
 
 For the getting-started samples, you'll need at minimum:
 ```bash

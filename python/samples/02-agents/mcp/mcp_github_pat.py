@@ -21,7 +21,7 @@ Prerequisites:
 2. Environment variables:
    - GITHUB_PAT: Your GitHub Personal Access Token (required)
    - OPENAI_API_KEY: Your OpenAI API key (required)
-   - OPENAI_RESPONSES_MODEL_ID: Your OpenAI model ID (required)
+   - OPENAI_MODEL: Your OpenAI model ID (required)
 """
 
 

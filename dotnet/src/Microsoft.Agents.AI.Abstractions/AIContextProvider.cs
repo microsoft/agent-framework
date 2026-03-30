@@ -2,10 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -28,23 +30,38 @@ namespace Microsoft.Agents.AI;
 /// <see cref="InvokingAsync"/> to provide context, and optionally called at the end of invocation via
 /// <see cref="InvokedAsync"/> to process results.
 /// </para>
+/// <para>
+/// <strong>Security considerations:</strong> Context providers may inject messages with any role, including <c>system</c>, which
+/// has the highest trust level and directly shapes LLM behavior. Developers must ensure that all providers attached to an agent
+/// are trusted. Agent Framework does not validate or filter the data returned by providers — it is accepted as-is and merged into
+/// the request context. If a provider retrieves data from an external source (e.g., a vector database or memory service), be aware
+/// that a compromised data source could introduce adversarial content designed to manipulate LLM behavior via indirect prompt injection.
+/// Implementers should validate and sanitize data retrieved from external sources before returning it.
+/// </para>
 /// </remarks>
 public abstract class AIContextProvider
 {
     private static IEnumerable<ChatMessage> DefaultExternalOnlyFilter(IEnumerable<ChatMessage> messages)
         => messages.Where(m => m.GetAgentRequestMessageSourceType() == AgentRequestMessageSourceType.External);
+    private static IEnumerable<ChatMessage> DefaultNoopFilter(IEnumerable<ChatMessage> messages)
+        => messages;
+
+    private IReadOnlyList<string>? _stateKeys;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AIContextProvider"/> class.
     /// </summary>
     /// <param name="provideInputMessageFilter">An optional filter function to apply to input messages before providing context via <see cref="ProvideAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
-    /// <param name="storeInputMessageFilter">An optional filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
+    /// <param name="storeInputRequestMessageFilter">An optional filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages.</param>
+    /// <param name="storeInputResponseMessageFilter">An optional filter function to apply to response messages before storing context via <see cref="StoreAIContextAsync"/>. If not set, defaults to a no-op filter that includes all response messages.</param>
     protected AIContextProvider(
         Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? provideInputMessageFilter = null,
-        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputMessageFilter = null)
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputRequestMessageFilter = null,
+        Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>>? storeInputResponseMessageFilter = null)
     {
         this.ProvideInputMessageFilter = provideInputMessageFilter ?? DefaultExternalOnlyFilter;
-        this.StoreInputMessageFilter = storeInputMessageFilter ?? DefaultExternalOnlyFilter;
+        this.StoreInputRequestMessageFilter = storeInputRequestMessageFilter ?? DefaultExternalOnlyFilter;
+        this.StoreInputResponseMessageFilter = storeInputResponseMessageFilter ?? DefaultNoopFilter;
     }
 
     /// <summary>
@@ -55,17 +72,23 @@ public abstract class AIContextProvider
     /// <summary>
     /// Gets the filter function to apply to request messages before storing context via <see cref="StoreAIContextAsync"/>.
     /// </summary>
-    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputMessageFilter { get; }
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputRequestMessageFilter { get; }
 
     /// <summary>
-    /// Gets the key used to store the provider state in the <see cref="AgentSession.StateBag"/>.
+    /// Gets the filter function to apply to response messages before storing context via <see cref="StoreAIContextAsync"/>.
+    /// </summary>
+    protected Func<IEnumerable<ChatMessage>, IEnumerable<ChatMessage>> StoreInputResponseMessageFilter { get; }
+
+    /// <summary>
+    /// Gets the set of keys used to store the provider state in the <see cref="AgentSession.StateBag"/>.
     /// </summary>
     /// <remarks>
-    /// The default value is the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
-    /// Implementations may override this to provide a custom key, for example when multiple
-    /// instances of the same provider type are used in the same session.
+    /// The default value is a single-element set containing the name of the concrete type (e.g. <c>"TextSearchProvider"</c>).
+    /// Implementations may override this to provide custom keys, for example when multiple
+    /// instances of the same provider type are used in the same session, or when a provider
+    /// stores state under more than one key.
     /// </remarks>
-    public virtual string StateKey => this.GetType().Name;
+    public virtual IReadOnlyList<string> StateKeys => this._stateKeys ??= [this.GetType().Name];
 
     /// <summary>
     /// Called at the start of agent invocation to provide additional context.
@@ -82,6 +105,11 @@ public abstract class AIContextProvider
     /// <item><description>Providing function tools for the current invocation</description></item>
     /// <item><description>Injecting contextual messages from conversation history</description></item>
     /// </list>
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Data retrieved from external sources (e.g., vector databases, memory services, or
+    /// knowledge bases) may contain adversarial content designed to influence LLM behavior via indirect prompt injection.
+    /// Implementers should validate data integrity and consider the trustworthiness of the data source.
     /// </para>
     /// </remarks>
     public ValueTask<AIContext> InvokingAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -121,6 +149,7 @@ public abstract class AIContextProvider
 
         // Create a filtered context for ProvideAIContextAsync, filtering input messages
         // to exclude non-external messages (e.g. chat history, other AI context provider messages).
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         var filteredContext = new InvokingContext(
             context.Agent,
             context.Session,
@@ -130,6 +159,7 @@ public abstract class AIContextProvider
                 Messages = inputContext.Messages is not null ? this.ProvideInputMessageFilter(inputContext.Messages) : null,
                 Tools = inputContext.Tools
             });
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 
         var provided = await this.ProvideAIContextAsync(filteredContext, cancellationToken).ConfigureAwait(false);
 
@@ -181,6 +211,11 @@ public abstract class AIContextProvider
     /// <para>
     /// In contrast with <see cref="InvokingCoreAsync"/>, this method only returns additional context to be merged with the input,
     /// while <see cref="InvokingCoreAsync"/> is responsible for returning the full merged <see cref="AIContext"/> for the invocation.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Any messages, tools, or instructions returned by this method will be merged into the
+    /// AI request context. If data is retrieved from external or untrusted sources, implementers should validate and sanitize it
+    /// to prevent indirect prompt injection attacks.
     /// </para>
     /// </remarks>
     /// <param name="context">Contains the request context including the caller provided messages that will be used by the agent for this invocation.</param>
@@ -245,8 +280,10 @@ public abstract class AIContextProvider
     /// </para>
     /// <para>
     /// The default implementation of this method skips execution for any invocation failures,
-    /// filters the request messages using the configured store-input message filter
+    /// filters the request messages using the configured store-input request message filter
     /// (which defaults to including only <see cref="AgentRequestMessageSourceType.External"/> messages),
+    /// filters the response messages using the configured store-input response message filter
+    /// (which defaults to a no-op, so all response messages are processed),
     /// and calls <see cref="StoreAIContextAsync"/> to process the invocation results.
     /// For most scenarios, overriding <see cref="StoreAIContextAsync"/> is sufficient to process invocation results,
     /// while still benefiting from the default error handling and filtering behavior.
@@ -261,7 +298,9 @@ public abstract class AIContextProvider
             return default;
         }
 
-        var subContext = new InvokedContext(context.Agent, context.Session, this.StoreInputMessageFilter(context.RequestMessages), context.ResponseMessages!);
+#pragma warning disable MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        var subContext = new InvokedContext(context.Agent, context.Session, this.StoreInputRequestMessageFilter(context.RequestMessages), this.StoreInputResponseMessageFilter(context.ResponseMessages!));
+#pragma warning restore MAAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
         return this.StoreAIContextAsync(subContext, cancellationToken);
     }
 
@@ -283,6 +322,10 @@ public abstract class AIContextProvider
     /// </para>
     /// <para>
     /// The default implementation of <see cref="InvokedCoreAsync"/> only calls this method if the invocation succeeded.
+    /// </para>
+    /// <para>
+    /// <strong>Security consideration:</strong> Messages being processed/stored may contain PII and sensitive conversation content.
+    /// Implementers should ensure appropriate encryption at rest and access controls for the storage backend.
     /// </para>
     /// </remarks>
     protected virtual ValueTask StoreAIContextAsync(InvokedContext context, CancellationToken cancellationToken = default) =>
@@ -335,6 +378,7 @@ public abstract class AIContextProvider
         /// <param name="session">The session associated with the agent invocation.</param>
         /// <param name="aiContext">The AI context to be used by the agent for this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/> or <paramref name="aiContext"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokingContext(
             AIAgent agent,
             AgentSession? session,
@@ -394,6 +438,7 @@ public abstract class AIContextProvider
         /// that were used by the agent for this invocation.</param>
         /// <param name="responseMessages">The response messages generated during this invocation.</param>
         /// <exception cref="ArgumentNullException"><paramref name="agent"/>, <paramref name="requestMessages"/>, or <paramref name="responseMessages"/> is <see langword="null"/>.</exception>
+        [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
         public InvokedContext(
             AIAgent agent,
             AgentSession? session,

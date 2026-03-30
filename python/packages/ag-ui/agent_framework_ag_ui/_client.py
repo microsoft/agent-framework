@@ -111,8 +111,8 @@ def _apply_server_function_call_unwrap(client: BaseChatClientT) -> BaseChatClien
 
 @_apply_server_function_call_unwrap
 class AGUIChatClient(
-    ChatMiddlewareLayer[AGUIChatOptionsT],
     FunctionInvocationLayer[AGUIChatOptionsT],
+    ChatMiddlewareLayer[AGUIChatOptionsT],
     ChatTelemetryLayer[AGUIChatOptionsT],
     BaseChatClient[AGUIChatOptionsT],
     Generic[AGUIChatOptionsT],
@@ -220,7 +220,6 @@ class AGUIChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize the AG-UI chat client.
 
@@ -231,13 +230,11 @@ class AGUIChatClient(
             additional_properties: Additional properties to store
             middleware: Optional middleware to apply to the client.
             function_invocation_configuration: Optional function invocation configuration override.
-            **kwargs: Additional arguments passed to BaseChatClient
         """
         super().__init__(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )
         self._http_service = AGUIHttpService(
             endpoint=endpoint,

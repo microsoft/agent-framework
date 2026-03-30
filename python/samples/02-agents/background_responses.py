@@ -29,7 +29,7 @@ Prerequisites:
 agent = Agent(
     name="researcher",
     instructions="You are a helpful research assistant. Be concise.",
-    client=OpenAIResponsesClient(model_id="o3"),
+    client=OpenAIResponsesClient(model="o3"),
 )
 
 

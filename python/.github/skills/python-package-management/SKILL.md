@@ -33,12 +33,43 @@ Uses [uv](https://github.com/astral-sh/uv) for dependency management and
 # Full setup (venv + install + prek hooks)
 uv run poe setup
 
-# Install/update all dependencies
+# Install dependencies from lockfile (frozen resolution with prerelease policy)
 uv run poe install
 
 # Create venv with specific Python version
 uv run poe venv --python 3.12
+
+# Intentionally upgrade a specific dependency to reduce lockfile conflicts
+uv lock --upgrade-package <dependency-name> && uv run poe install
+
+# Refresh all dev dependency pins, lockfile, and validation in one run
+uv run poe upgrade-dev-dependencies
+
+# First, run workspace-wide lower/upper compatibility gates
+uv run poe validate-dependency-bounds-test
+# Defaults to --package "*"; pass a package to scope test mode
+uv run poe validate-dependency-bounds-test --package core
+
+# Then expand bounds for one dependency in the target package
+uv run poe validate-dependency-bounds-project --mode both --package core --dependency "<dependency-name>"
+
+# Repo-wide automation can reuse the same task
+uv run poe validate-dependency-bounds-project --mode upper --package "*"
+
+# Add a dependency to one project and run both validators for that project/dependency
+uv run poe add-dependency-and-validate-bounds --package core --dependency "<dependency-spec>"
 ```
+
+### Dependency Bound Notes
+
+- Stable dependencies (`>=1.0`) should typically be bounded as `>=<known-good>,<next-major>`.
+- Prerelease (`dev`/`a`/`b`/`rc`) and `<1.0` dependencies should use hard bounds with an explicit upper cap (avoid open-ended ranges).
+- For `<1.0` dependencies, prefer the broadest validated range the package can really support. That may be a patch line, a minor line, or multiple minor lines when checks/tests show the broader lane is compatible.
+- Prefer supporting multiple majors when practical; if APIs diverge across supported majors, use version-conditional imports/paths.
+- For dependency changes, run workspace-wide bound gates first, then `validate-dependency-bounds-project --mode both` for the target package/dependency to keep minimum and maximum constraints current. The same task can also drive repo-wide upper-bound automation by using `--package "*"` and omitting `--dependency`.
+- Prefer targeted lock updates with `uv lock --upgrade-package <dependency-name>` to reduce `uv.lock` merge conflicts.
+- Use `add-dependency-and-validate-bounds` for package-scoped dependency additions plus bound validation in one command.
+- Use `upgrade-dev-dependencies` for repo-wide dev tooling refreshes; it repins dev dependencies, refreshes `uv.lock`, and reruns `check`, `typing`, and `test`.
 
 ## Lazy Loading Pattern
 
@@ -73,6 +104,17 @@ def __getattr__(name: str) -> Any:
 3. Include samples inside the package (e.g., `packages/my-connector/samples/`)
 4. Do **NOT** add to `[all]` extra in `packages/core/pyproject.toml`
 5. Do **NOT** create lazy loading in core yet
+
+Recommended dependency workflow during connector implementation:
+
+1. Add the dependency to the target package:
+   `uv run poe add-dependency-to-project --package core --dependency "<dependency-spec>"`
+2. Implement connector code and tests.
+3. Validate dependency bounds for that package/dependency:
+   `uv run poe validate-dependency-bounds-project --mode both --package core --dependency "<dependency-name>"`
+4. If the package has meaningful tests/checks that validate dependency compatibility, you can use the add + validation flow in one command:
+   `uv run poe add-dependency-and-validate-bounds --package core --dependency "<dependency-spec>"`
+   If compatibility checks are not in place yet, add the dependency first, then implement tests before running bound validation.
 
 ### Promotion to Stable
 
