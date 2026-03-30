@@ -173,7 +173,9 @@ async def main() -> None:
         ),
         name="writer_agent",
         instructions=("You are a marketing writer."),
-        tool_choice="required",
+        default_options={
+            "tool_choice": "required",
+        },
     )
 
     final_editor_agent = Agent(
