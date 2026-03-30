@@ -132,8 +132,8 @@ internal sealed class RequestInfoExecutor : Executor
 
         if (this._allowWrapped && this._wrappedRequests.TryGetValue(message.RequestId, out ExternalRequest? originalRequest))
         {
-            this._wrappedRequests.Remove(message.RequestId);
             await context.SendMessageAsync(originalRequest.RewrapResponse(message), cancellationToken: cancellationToken).ConfigureAwait(false);
+            this._wrappedRequests.Remove(message.RequestId);
         }
         else
         {
