@@ -13,7 +13,7 @@ in one call.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
@@ -48,7 +48,7 @@ async def main() -> None:
     # 1. Set up the chat client
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
         credential=AzureCliCredential(),
     )
 
@@ -84,9 +84,9 @@ async def main() -> None:
         for check_name, counts in r.per_evaluator.items():
             print(f"  {check_name}: {counts['passed']} passed, {counts['failed']} failed")
         if r.all_passed:
-            print("✓ All local checks passed!")
+            print("[PASS] All local checks passed!")
         else:
-            print(f"✗ Failures: {r.error}")
+            print(f"[FAIL] Failures: {r.error}")
 
     # =========================================================================
     # Pattern 2: Foundry evaluation only (cloud-based quality assessment)
@@ -109,9 +109,9 @@ async def main() -> None:
         print(f"Results: {r.passed}/{r.total} passed")
         print(f"Portal: {r.report_url}")
         if r.all_passed:
-            print("✓ All passed")
+            print("[PASS] All passed")
         else:
-            print(f"✗ {r.failed} failed")
+            print(f"[FAIL] {r.failed} failed")
 
     # =========================================================================
     # Pattern 3: Mixed — local + Foundry in one call
@@ -141,7 +141,7 @@ async def main() -> None:
     )
 
     for r in results:
-        status = "✓" if r.all_passed else "✗"
+        status = "PASS" if r.all_passed else "FAIL"
         print(f"  {status} {r.provider}: {r.passed}/{r.total} passed")
         for check_name, counts in r.per_evaluator.items():
             print(f"      {check_name}: {counts['passed']}/{counts['passed'] + counts['failed']}")
@@ -149,10 +149,10 @@ async def main() -> None:
             print(f"      Portal: {r.report_url}")
 
     if all(r.all_passed for r in results):
-        print("✓ All checks passed (local + Foundry)!")
+        print("[PASS] All checks passed (local + Foundry)!")
     else:
         failed = [r.provider for r in results if not r.all_passed]
-        print(f"✗ Failed providers: {', '.join(failed)}")
+        print(f"[FAIL] Failed providers: {', '.join(failed)}")
 
 
 if __name__ == "__main__":

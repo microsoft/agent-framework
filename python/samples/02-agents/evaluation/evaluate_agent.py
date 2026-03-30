@@ -39,7 +39,7 @@ def is_helpful(response: str) -> bool:
 async def main() -> None:
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
         credential=AzureCliCredential(),
     )
 
@@ -71,7 +71,7 @@ async def main() -> None:
         for item in r.items:
             print(f"  [{item.status}] Q: {item.input_text[:50]}  A: {item.output_text[:50]}...")
             for score in item.scores:
-                print(f"    {score.name}: {'✓' if score.passed else '✗'}")
+                print(f"    {'PASS' if score.passed else 'FAIL'} {score.name}")
 
     # Use in CI: will raise EvalNotPassedError if any check fails
     # results[0].raise_for_status()

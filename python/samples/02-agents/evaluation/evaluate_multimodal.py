@@ -114,7 +114,7 @@ async def main() -> None:
     for item in results.items:
         print(f"\n  [{item.status}] Q: {item.input_text[:60]}...")
         for score in item.scores:
-            symbol = "✓" if score.passed else "✗"
+            symbol = "PASS" if score.passed else "FAIL"
             print(f"    {symbol} {score.name}: {score.score}")
 
 

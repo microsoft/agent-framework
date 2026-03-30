@@ -66,7 +66,7 @@ async def main() -> None:
     for r in results:
         print(f"{r.provider}: {r.passed}/{r.total} passed")
         for item in r.items:
-            print(f"  [{item.status}] {item.input_text} → {item.output_text[:80]}")
+            print(f"  [{item.status}] {item.input_text} -> {item.output_text[:80]}")
 
 
 if __name__ == "__main__":

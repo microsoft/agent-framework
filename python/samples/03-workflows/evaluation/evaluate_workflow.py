@@ -36,7 +36,7 @@ def is_nonempty(response: str) -> bool:
 
 
 async def main() -> None:
-    # Build a simple planner → executor workflow
+    # Build a simple planner -> executor workflow
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),

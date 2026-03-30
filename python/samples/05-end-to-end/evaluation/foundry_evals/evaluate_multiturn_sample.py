@@ -11,7 +11,7 @@ a different aspect of agent behavior:
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
@@ -27,7 +27,7 @@ load_dotenv()
 # A multi-turn conversation with tool calls that we'll evaluate three ways.
 # Uses framework Message/Content types for type-safe conversation construction.
 CONVERSATION: list[Message] = [
-    # Turn 1: user asks about weather → agent calls tool → responds
+    # Turn 1: user asks about weather -> agent calls tool -> responds
     Message("user", ["What's the weather in Seattle?"]),
     Message(
         "assistant",
@@ -42,7 +42,7 @@ CONVERSATION: list[Message] = [
         ],
     ),
     Message("assistant", ["Seattle is 62°F, cloudy with a chance of rain."]),
-    # Turn 2: user asks about Paris → agent calls tool → responds
+    # Turn 2: user asks about Paris -> agent calls tool -> responds
     Message("user", ["And Paris?"]),
     Message(
         "assistant",
@@ -57,7 +57,7 @@ CONVERSATION: list[Message] = [
         ],
     ),
     Message("assistant", ["Paris is 68°F, partly sunny."]),
-    # Turn 3: user asks for comparison → agent synthesizes without tool
+    # Turn 3: user asks for comparison -> agent synthesizes without tool
     Message("user", ["Can you compare them?"]),
     Message(
         "assistant",
@@ -94,7 +94,7 @@ def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAS
 async def main() -> None:
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
         credential=AzureCliCredential(),
     )
 
@@ -121,7 +121,7 @@ async def main() -> None:
     print(f"  Portal: {results.report_url}")
     for ir in results.items:
         for s in ir.scores:
-            print(f"    {'✓' if s.passed else '✗'} {s.name}: {s.score}")
+            print(f"    {'PASS' if s.passed else 'FAIL'} {s.name}: {s.score}")
     print()
 
     # =========================================================================
@@ -144,7 +144,7 @@ async def main() -> None:
     print(f"  Portal: {results.report_url}")
     for ir in results.items:
         for s in ir.scores:
-            print(f"    {'✓' if s.passed else '✗'} {s.name}: {s.score}")
+            print(f"    {'PASS' if s.passed else 'FAIL'} {s.name}: {s.score}")
     print()
 
     # =========================================================================
@@ -170,7 +170,7 @@ async def main() -> None:
     print(f"  Portal: {results.report_url}")
     for ir in results.items:
         for s in ir.scores:
-            print(f"    {'✓' if s.passed else '✗'} {s.name}: {s.score}")
+            print(f"    {'PASS' if s.passed else 'FAIL'} {s.name}: {s.score}")
     print()
 
     print("=" * 70)

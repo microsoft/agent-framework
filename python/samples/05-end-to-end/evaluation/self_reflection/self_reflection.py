@@ -53,8 +53,8 @@ Usage as CLI with extra options:
 SUMMARY
 ============================================================
 Total prompts processed: 31
-  ✓ Successful: 30
-  ✗ Failed: 1
+  [PASS] Successful: 30
+  [FAIL] Failed: 1
 
 Groundedness Scores:
   Average best score: 4.77/5
@@ -71,7 +71,7 @@ Iteration Statistics:
   Best on first try: 25/30 (83.3%)
 ============================================================
 
-✓ Processing complete!
+[PASS] Processing complete!
 
 """
 
@@ -172,15 +172,15 @@ async def execute_query_with_self_reflection(
         # Update best response if improved
         if score > best_score:
             if best_score > 0:
-                print(f"  ✓ Score improved from {best_score} to {score}/{max_score}")
+                print(f"  [PASS] Score improved from {best_score} to {score}/{max_score}")
             best_score = score
             best_response = agent_response
             best_iteration = i + 1
             if score == max_score:
-                print("  ✓ Perfect groundedness score achieved!")
+                print("  [PASS] Perfect groundedness score achieved!")
                 break
         else:
-            print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
+            print(f"  -> No improvement (score: {score}/{max_score}). Trying again...")
 
         # Add to conversation history
         messages.append(Message("assistant", [agent_response]))
@@ -323,13 +323,13 @@ async def run_self_reflection_batch(
             results.append(result_data)
 
             print(
-                f"  ✓ Completed with score: {result['best_response_score']}/5 "
+                f"  [PASS] Completed with score: {result['best_response_score']}/5 "
                 f"(best at iteration {result['best_iteration']}/{result['num_retries']}, "
                 f"time: {result['total_end_to_end_time']:.1f}s)\n"
             )
 
         except Exception as e:
-            print(f"  ✗ Error: {str(e)}\n")
+            print(f"  [FAIL] Error: {str(e)}\n")
 
             # Save error information
             error_data = {
@@ -364,8 +364,8 @@ async def run_self_reflection_batch(
     print("SUMMARY")
     print("=" * 60)
     print(f"Total prompts processed: {len(results_df)}")
-    print(f"  ✓ Successful: {len(successful_runs)}")
-    print(f"  ✗ Failed: {len(failed_runs)}")
+    print(f"  [PASS] Successful: {len(successful_runs)}")
+    print(f"  [FAIL] Failed: {len(failed_runs)}")
 
     if len(successful_runs) > 0:
         # Extract scores and iteration data from nested agent_response dict
@@ -457,10 +457,10 @@ async def main():
             env_file=args.env_file,
             limit=args.limit,
         )
-        print("\n✓ Processing complete!")
+        print("\n[PASS] Processing complete!")
 
     except Exception as e:
-        print(f"\n✗ Error: {str(e)}")
+        print(f"\n[FAIL] Error: {str(e)}")
         return 1
     return 0
 

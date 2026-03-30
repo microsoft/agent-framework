@@ -10,7 +10,7 @@ See ``evaluate_tool_calls_sample.py`` for tool-call accuracy evaluation.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
 """
 
 import asyncio
@@ -44,7 +44,7 @@ async def main() -> None:
     # 1. Set up the FoundryChatClient
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
+        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
         credential=AzureCliCredential(),
     )
 
@@ -88,9 +88,9 @@ async def main() -> None:
         print(f"Results: {r.passed}/{r.total} passed")
         print(f"Portal: {r.report_url}")
         if r.all_passed:
-            print("✓ All passed")
+            print("[PASS] All passed")
         else:
-            print(f"✗ {r.failed} failed")
+            print(f"[FAIL] {r.failed} failed")
 
     # =========================================================================
     # Pattern 2a: evaluate_agent() — batch test queries
@@ -116,9 +116,9 @@ async def main() -> None:
         print(f"Results: {r.passed}/{r.total} passed")
         print(f"Portal: {r.report_url}")
         if r.all_passed:
-            print("✓ All passed")
+            print("[PASS] All passed")
         else:
-            print(f"✗ {r.failed} failed")
+            print(f"[FAIL] {r.failed} failed")
 
     # =========================================================================
     # Pattern 2b: evaluate_agent() — with conversation split override
@@ -145,9 +145,9 @@ async def main() -> None:
         print(f"Results: {r.passed}/{r.total} passed")
         print(f"Portal: {r.report_url}")
         if r.all_passed:
-            print("✓ All passed")
+            print("[PASS] All passed")
         else:
-            print(f"✗ {r.failed} failed")
+            print(f"[FAIL] {r.failed} failed")
 
 
 if __name__ == "__main__":
