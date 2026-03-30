@@ -33,8 +33,8 @@ def mock_project_client() -> MagicMock:
     mock_client.telemetry = MagicMock()
     mock_client.telemetry.get_application_insights_connection_string = AsyncMock()
 
-    # Mock get_openai_client method
-    mock_client.get_openai_client = MagicMock()
+    # AIProjectClient.get_openai_client() is a sync accessor, even on the aio client.
+    mock_client.get_openai_client = MagicMock(return_value=MagicMock())
 
     # Mock close method
     mock_client.close = AsyncMock()

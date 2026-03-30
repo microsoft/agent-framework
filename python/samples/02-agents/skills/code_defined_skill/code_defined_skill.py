@@ -94,7 +94,7 @@ def conversion_policy(**kwargs: Any) -> Any:
 
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
-            For example, ``agent.run(..., precision=2)``
+            For example, ``agent.run(..., function_invocation_kwargs={"precision": 2})``
             makes ``kwargs["precision"]`` available here.
     """
     precision = kwargs.get("precision", 4)
