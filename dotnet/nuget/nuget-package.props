@@ -14,7 +14,7 @@
     <!-- Package validation. Baseline Version should be the latest version available on NuGet. -->
     <PackageValidationBaselineVersion>1.0.0-rc4</PackageValidationBaselineVersion>
     <!-- Enable validation for RC packages and GA packages -->
-    <EnablePackageValidation Condition="'$(IsReleaseCandidate)' == 'true' OR '$(IsGeneralAvailable)' == 'true'">true</EnablePackageValidation>
+    <EnablePackageValidation Condition="'$(IsReleaseCandidate)' == 'true' OR '$(IsGenerallyAvailable)' == 'true'">true</EnablePackageValidation>
     <!-- Validate assembly attributes only for Publish builds -->
     <NoWarn Condition="'$(Configuration)' != 'Publish'">$(NoWarn);CP0003</NoWarn>
     <!-- Do not validate reference assemblies -->
