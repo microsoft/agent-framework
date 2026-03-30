@@ -993,6 +993,7 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
+                func.__dict__["_forward_runtime_kwargs"] = True
                 self._functions.append(func)
                 existing_names.add(local_name)
 
