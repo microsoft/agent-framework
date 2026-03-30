@@ -5,9 +5,9 @@ This sample demonstrates how to define **Agent Skills entirely in code** using `
 ## What it demonstrates
 
 - Creating skills programmatically with `AgentInlineSkill` — no SKILL.md files needed
-- **Static resources** via `AgentInlineSkillResource` with inline content
-- **Dynamic resources** via `AgentInlineSkillResource` with a factory delegate (computed at runtime)
-- **Code scripts** via `AgentInlineSkillScript` with a delegate handler
+- **Static resources** via `AddResource` with inline content
+- **Dynamic resources** via `AddResource` with a factory delegate (computed at runtime)
+- **Code scripts** via `AddScript` with a delegate handler
 - Using the `AgentSkillsProvider` constructor with inline skills
 
 ## Skills Included

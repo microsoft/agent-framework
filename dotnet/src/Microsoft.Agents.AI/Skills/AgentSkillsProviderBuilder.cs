@@ -19,7 +19,7 @@ namespace Microsoft.Agents.AI;
 /// <code>
 /// var provider = new AgentSkillsProviderBuilder()
 ///     .UseFileSkills("/path/to/skills")
-///     .UseInlineSkills(myInlineSkill1, myInlineSkill2)
+///     .UseSkills(myInlineSkill1, myInlineSkill2)
 ///     .Build();
 /// </code>
 /// </remarks>
@@ -70,21 +70,21 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Adds a single inline (code-defined) skill.
+    /// Adds a single skill.
     /// </summary>
-    /// <param name="skill">The inline skill to add.</param>
+    /// <param name="skill">The skill to add.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseInlineSkill(AgentInlineSkill skill)
+    public AgentSkillsProviderBuilder UseSkill(AgentSkill skill)
     {
-        return this.UseInlineSkills(skill);
+        return this.UseSkills(skill);
     }
 
     /// <summary>
-    /// Adds inline (code-defined) skills.
+    /// Adds one or more skills.
     /// </summary>
-    /// <param name="skills">The inline skills to add.</param>
+    /// <param name="skills">The skills to add.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseInlineSkills(params AgentInlineSkill[] skills)
+    public AgentSkillsProviderBuilder UseSkills(params AgentSkill[] skills)
     {
         var source = new AgentInMemorySkillsSource(skills);
         this._sourceFactories.Add((_, _) => source);
@@ -92,11 +92,11 @@ public sealed class AgentSkillsProviderBuilder
     }
 
     /// <summary>
-    /// Adds inline (code-defined) skills.
+    /// Adds skills from the specified collection.
     /// </summary>
-    /// <param name="skills">The inline skills to add.</param>
+    /// <param name="skills">The skills to add.</param>
     /// <returns>This builder instance for chaining.</returns>
-    public AgentSkillsProviderBuilder UseInlineSkills(IEnumerable<AgentInlineSkill> skills)
+    public AgentSkillsProviderBuilder UseSkills(IEnumerable<AgentSkill> skills)
     {
         var source = new AgentInMemorySkillsSource(skills);
         this._sourceFactories.Add((_, _) => source);

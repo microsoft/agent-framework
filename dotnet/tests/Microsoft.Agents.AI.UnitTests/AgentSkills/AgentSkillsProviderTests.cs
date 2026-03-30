@@ -576,7 +576,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         var provider = new AgentSkillsProviderBuilder()
             .UseFileSkill(dir1)
-            .UseInlineSkills(inlineSkill)
+            .UseSkills(inlineSkill)
             .UseFileSkill(dir2)
             .UseFileScriptRunner(s_noOpExecutor)
             .UseOptions(o => o.DisableCaching = true)
@@ -605,7 +605,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
     [Fact]
     public async Task Build_MixedSources_AllSkillsDiscoveredAsync()
     {
-        // Arrange — use UseSource, UseInlineSkill, and UseFileSkill in mixed order
+        // Arrange — use UseSource, UseSkill, and UseFileSkill in mixed order
         string dir = Path.Combine(this._testRoot, "mixed-dir");
         CreateSkillIn(dir, "file-skill", "File skill", "Body file.");
 
@@ -617,7 +617,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(customSource)
-            .UseInlineSkills(inlineSkill)
+            .UseSkills(inlineSkill)
             .UseFileSkill(dir)
             .UseFileScriptRunner(s_noOpExecutor)
             .UseOptions(o => o.DisableCaching = true)

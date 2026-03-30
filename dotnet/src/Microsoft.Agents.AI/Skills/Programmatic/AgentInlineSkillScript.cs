@@ -15,7 +15,7 @@ namespace Microsoft.Agents.AI;
 /// A skill script backed by a delegate.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class AgentInlineSkillScript : AgentSkillScript
+internal sealed class AgentInlineSkillScript : AgentSkillScript
 {
     private readonly AIFunction _function;
 

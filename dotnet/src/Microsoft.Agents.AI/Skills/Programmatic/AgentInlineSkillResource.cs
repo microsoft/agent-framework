@@ -14,7 +14,7 @@ namespace Microsoft.Agents.AI;
 /// A skill resource defined in code, backed by either a static value or a delegate.
 /// </summary>
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
-public sealed class AgentInlineSkillResource : AgentSkillResource
+internal sealed class AgentInlineSkillResource : AgentSkillResource
 {
     private readonly object? _value;
     private readonly AIFunction? _function;

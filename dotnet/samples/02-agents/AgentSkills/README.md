@@ -14,8 +14,8 @@ Samples demonstrating Agent Skills capabilities. Each sample shows a different w
 | Aspect | File-Based | Code-Defined |
 |--------|-----------|--------------|
 | Definition | `SKILL.md` files on disk | `AgentInlineSkill` instances in C# |
-| Resources | All files in skill directory (filtered by extension) | `AgentInlineSkillResource` (static value or delegate-backed) |
-| Scripts | Supported via script executor delegate | `AgentInlineSkillScript` delegates |
+| Resources | All files in skill directory (filtered by extension) | `AddResource` (static value or delegate-backed) |
+| Scripts | Supported via script executor delegate | `AddScript` delegates |
 | Discovery | Automatic from directory path | Explicit via constructor |
 | Dynamic content | No (static files only) | Yes (factory delegates) |
 | Reusability | Copy skill directory | Inline or shared instances |
