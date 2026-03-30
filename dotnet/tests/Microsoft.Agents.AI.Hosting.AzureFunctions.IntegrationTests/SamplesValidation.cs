@@ -15,6 +15,8 @@ namespace Microsoft.Agents.AI.Hosting.AzureFunctions.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLifetime
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     private const string AzureFunctionsPort = "7071";
     private const string AzuritePort = "10000";
     private const string DtsPort = "8080";
@@ -272,7 +274,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -402,7 +404,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");
