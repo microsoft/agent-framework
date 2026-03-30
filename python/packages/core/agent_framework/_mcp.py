@@ -148,16 +148,14 @@ def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextM
         from mcp.client.streamable_http import streamable_http_client as _streamable_http_client
     except ModuleNotFoundError as ex:
         missing_name = ex.name or str(ex)
-        if missing_name == "mcp" or missing_name.startswith("mcp."):
-            raise ModuleNotFoundError("`MCPStreamableHTTPTool` requires `mcp`. Please install `mcp`.") from ex
-        if "mcp" in missing_name:
+        if missing_name == "mcp" or missing_name.startswith("mcp.") or "mcp" in missing_name:
             raise ModuleNotFoundError("`MCPStreamableHTTPTool` requires `mcp`. Please install `mcp`.") from ex
         raise ModuleNotFoundError(
             f"`MCPStreamableHTTPTool` requires streamable HTTP transport support. "
             f"The optional dependency `{missing_name}` is not installed. Please update your dependencies."
         ) from ex
 
-    return cast(_AsyncGeneratorContextManager[Any, None], _streamable_http_client(*args, **kwargs))
+    return _streamable_http_client(*args, **kwargs)  # type: ignore[return-value]
 
 
 # region: MCP Plugin
