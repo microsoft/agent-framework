@@ -75,7 +75,7 @@ async def example_with_session_persistence_in_memory() -> None:
     # First conversation
     query1 = "What's the weather like in Tokyo?"
     print(f"User: {query1}")
-    result1 = await agent.run(query1, session=session, options={"store": True})
+    result1 = await agent.run(query1, session=session, options={"store": False})
     print(f"Agent: {result1.text}")
 
     # Second conversation using the same session - maintains context

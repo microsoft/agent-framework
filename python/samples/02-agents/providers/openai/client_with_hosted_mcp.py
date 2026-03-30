@@ -65,7 +65,7 @@ async def handle_approvals_with_session(query: str, agent: "SupportsAgentRun", s
                     contents=[user_input_needed.to_function_approval_response(user_approval.lower() == "y")],
                 )
             )
-        result = await agent.run(new_input, session=session, store=True)
+        result = await agent.run(new_input, session=session, options={"store": True})
     return result
 
 

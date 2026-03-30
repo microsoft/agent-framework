@@ -89,10 +89,7 @@ class OpenAIReasoningChatOptions(OpenAIChatOptions, total=False):
     Examples:
         .. code-block:: python
 
-            from agent_framework.openai import OpenAIReasoningChatOptions
-
             options: OpenAIReasoningChatOptions = {
-                "model": "o3",
                 "reasoning": {"effort": "high"},
                 "max_tokens": 4096,
             }
