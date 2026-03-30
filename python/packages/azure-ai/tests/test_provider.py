@@ -34,7 +34,7 @@ def mock_project_client() -> MagicMock:
     mock_client.telemetry.get_application_insights_connection_string = AsyncMock()
 
     # Mock get_openai_client method
-    mock_client.get_openai_client = AsyncMock()
+    mock_client.get_openai_client = MagicMock()
 
     # Mock close method
     mock_client.close = AsyncMock()
