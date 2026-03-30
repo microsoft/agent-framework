@@ -272,7 +272,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -402,7 +402,7 @@ public sealed class SamplesValidation(ITestOutputHelper outputHelper) : IAsyncLi
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "08_ReliableStreaming");

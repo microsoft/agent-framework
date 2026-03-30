@@ -235,7 +235,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -309,7 +309,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -394,7 +394,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");

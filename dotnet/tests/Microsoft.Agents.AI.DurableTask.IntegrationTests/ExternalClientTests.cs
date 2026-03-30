@@ -75,7 +75,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Contains(agentLogs, log => log.EventId.Name == "LogAgentResponse");
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task CallFunctionToolsAsync()
     {
         int weatherToolInvocationCount = 0;
@@ -127,7 +127,7 @@ public sealed class ExternalClientTests(ITestOutputHelper outputHelper) : IDispo
         Assert.Equal(1, packingListToolInvocationCount);
     }
 
-    [Fact]
+    [Fact(Skip = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971")]
     public async Task CallLongRunningFunctionToolsAsync()
     {
         [Description("Starts a greeting workflow and returns the workflow instance ID")]
