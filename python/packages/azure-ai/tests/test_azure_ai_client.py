@@ -931,7 +931,7 @@ async def test_use_latest_version_no_spurious_warning_for_empty_tools(
     # Patch logger.warning across BOTH calls — neither should warn
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": []},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -967,7 +967,7 @@ async def test_use_latest_version_warns_for_non_empty_tools(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": non_empty_tools},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
