@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from mcp.shared.session import RequestResponder
 
     from ._clients import SupportsChatGetResponse
+    from ._middleware import FunctionInvocationContext
 
 
 logger = logging.getLogger(__name__)
@@ -975,11 +976,14 @@ class MCPTool:
                     input_schema["properties"] = {}
 
                 async def _call_tool_with_runtime_kwargs(
+                    ctx: FunctionInvocationContext,
                     *,
                     _remote_tool_name: str = tool.name,
                     **kwargs: Any,
                 ) -> str | list[Content]:
-                    return await self.call_tool(_remote_tool_name, **kwargs)
+                    call_kwargs = dict(ctx.kwargs)
+                    call_kwargs.update(kwargs)
+                    return await self.call_tool(_remote_tool_name, **call_kwargs)
 
                 # Create FunctionTools out of each tool
                 func: FunctionTool = FunctionTool(
@@ -993,7 +997,6 @@ class MCPTool:
                         _MCP_NORMALIZED_NAME_KEY: normalized_name,
                     },
                 )
-                func.__dict__["_forward_runtime_kwargs"] = True
                 self._functions.append(func)
                 existing_names.add(local_name)
 
