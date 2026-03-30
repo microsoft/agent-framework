@@ -61,6 +61,8 @@ class MCPSpecificApproval(TypedDict, total=False):
 _MCP_REMOTE_NAME_KEY = "_mcp_remote_name"
 _MCP_NORMALIZED_NAME_KEY = "_mcp_normalized_name"
 _mcp_call_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("_mcp_call_headers")
+MCP_DEFAULT_TIMEOUT = 30
+MCP_DEFAULT_SSE_READ_TIMEOUT = 60 * 5
 
 # region: Helpers
 
@@ -137,6 +139,13 @@ def _inject_otel_into_mcp_meta(meta: dict[str, Any] | None = None) -> dict[str, 
             meta[key] = value
 
     return meta
+
+
+def streamable_http_client(*args: Any, **kwargs: Any) -> _AsyncGeneratorContextManager[Any, None]:
+    """Lazily import the MCP streamable HTTP transport."""
+    from mcp.client.streamable_http import streamable_http_client as _streamable_http_client
+
+    return cast(_AsyncGeneratorContextManager[Any, None], _streamable_http_client(*args, **kwargs))
 
 
 # region: MCP Plugin
@@ -1469,21 +1478,20 @@ class MCPStreamableHTTPTool(MCPTool):
         Returns:
             An async context manager for the streamable HTTP client transport.
         """
-        from httpx import AsyncClient
-        from mcp.client.streamable_http import streamable_http_client
+        from httpx import AsyncClient, Request, Timeout
 
         http_client = self._httpx_client
         if self._header_provider is not None:
             if http_client is None:
                 http_client = AsyncClient(
                     follow_redirects=True,
-                    timeout=httpx.Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
+                    timeout=Timeout(MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT),
                 )
                 self._httpx_client = http_client
 
             if not hasattr(self, "_inject_headers_hook"):
 
-                async def _inject_headers(request: httpx.Request) -> None:  # noqa: RUF029
+                async def _inject_headers(request: Request) -> None:  # noqa: RUF029
                     headers = _mcp_call_headers.get({})
                     for key, value in headers.items():
                         request.headers[key] = value
