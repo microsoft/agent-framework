@@ -205,10 +205,9 @@ class QuarantinedLLMInput(BaseModel):
     additional_properties={
         "confidentiality": "private",
         "accepts_untrusted": True,
-        # quarantined_llm is a pure transformation - it inherits labels from inputs
-        # No source_integrity means it uses default (UNTRUSTED), but the result
-        # label is computed from the input labels anyway in this tool's logic
-        "source_integrity": "trusted",  # Tool itself is trusted (internal LLM call)
+        # No source_integrity declared: middleware falls back to Tier 3
+        # (join of input argument labels), so output inherits trust from
+        # inputs — matching the tool's internal combine_labels() logic.
     }
 )
 async def quarantined_llm(
@@ -519,9 +518,9 @@ class InspectVariableInput(BaseModel):
     additional_properties={
         "confidentiality": "private",
         "requires_approval": True,
-        # inspect_variable inherits the label of the inspected content
-        # It's a retrieval tool, so source_integrity is trusted (data comes from variable store)
-        "source_integrity": "trusted",
+        # No source_integrity declared: output inherits the label of the
+        # inspected content via Tier 3. The variable store is just a
+        # container — the data inside it is untrusted external content.
     }
 )
 async def inspect_variable(
