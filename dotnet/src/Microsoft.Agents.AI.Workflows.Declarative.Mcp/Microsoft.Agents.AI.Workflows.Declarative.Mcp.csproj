@@ -16,7 +16,6 @@
   <!-- Package not yet published to NuGet — disable baseline validation until first release -->
   <PropertyGroup>
     <EnablePackageValidation>false</EnablePackageValidation>
-    <PackageValidationBaselineVersion></PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <PropertyGroup>
