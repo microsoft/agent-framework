@@ -3,7 +3,7 @@
 """
 Sample: Request Info with ConcurrentBuilder
 
-This sample demonstrates using the `.with_request_info()` method to pause a
+This sample demonstrates using the `.with_human_in_the_loop()` method to pause a
 ConcurrentBuilder workflow for specific agents, allowing human review and
 modification of individual agent outputs before aggregation.
 
@@ -12,7 +12,7 @@ Show how to use the request info API that pauses for selected concurrent agents,
 allowing review and steering of their results.
 
 Demonstrate:
-- Configuring request info with `.with_request_info()` for specific agents
+- Configuring request info with `.with_human_in_the_loop()` for specific agents
 - Reviewing output from individual agents during concurrent execution
 - Injecting human guidance for specific agents before aggregation
 
@@ -191,7 +191,7 @@ async def main() -> None:
         ConcurrentBuilder(participants=[technical_analyst, business_analyst, user_experience_analyst])
         .with_aggregator(aggregate_with_synthesis)
         # Only enable request info for the technical analyst agent
-        .with_request_info(agents=["technical_analyst"])
+        .with_human_in_the_loop(agents=["technical_analyst"])
         .build()
     )
 

@@ -37,7 +37,7 @@ from agent_framework.orchestrations import (
 | Concurrent Orchestration (Custom Agent Executors) | [concurrent_custom_agent_executors.py](./concurrent_custom_agent_executors.py) | Child executors own Agents; concurrent fan-out/fan-in via ConcurrentBuilder                               |
 | Concurrent Orchestration as Agent                 | [concurrent_workflow_as_agent.py](../agents/concurrent_workflow_as_agent.py)           | Build a ConcurrentBuilder workflow and expose it as an agent via `workflow.as_agent(...)`                 |
 | Tool Approval with ConcurrentBuilder              | [concurrent_builder_tool_approval.py](../tool-approval/concurrent_builder_tool_approval.py)   | Require human approval for sensitive tools across concurrent participants                                  |
-| ConcurrentBuilder Request Info                    | [concurrent_request_info.py](../human-in-the-loop/concurrent_request_info.py)                     | Review concurrent agent outputs before aggregation using `.with_request_info()`                            |
+| ConcurrentBuilder Request Info                    | [concurrent_request_info.py](../human-in-the-loop/concurrent_request_info.py)                     | Review concurrent agent outputs before aggregation using `.with_human_in_the_loop()`                            |
 
 ### sequential
 
@@ -47,7 +47,7 @@ from agent_framework.orchestrations import (
 | Sequential Orchestration (Custom Executor) | [sequential_custom_executors.py](./sequential_custom_executors.py)             | Mix agents with a summarizer that appends a compact summary                                 |
 | Sequential Orchestration as Agent          | [sequential_workflow_as_agent.py](../agents/sequential_workflow_as_agent.py)           | Build a SequentialBuilder workflow and expose it as an agent via `workflow.as_agent(...)`   |
 | Tool Approval with SequentialBuilder       | [sequential_builder_tool_approval.py](../tool-approval/sequential_builder_tool_approval.py)   | Require human approval for sensitive tools in SequentialBuilder workflows                    |
-| SequentialBuilder Request Info             | [sequential_request_info.py](../human-in-the-loop/sequential_request_info.py)                     | Request info for agent responses mid-orchestration using `.with_request_info()`             |
+| SequentialBuilder Request Info             | [sequential_request_info.py](../human-in-the-loop/sequential_request_info.py)                     | Request info for agent responses mid-orchestration using `.with_human_in_the_loop()`             |
 
 ### group-chat
 
@@ -58,7 +58,7 @@ from agent_framework.orchestrations import (
 | Group Chat with Simple Selector      | [group_chat_simple_selector.py](./group_chat_simple_selector.py)                       | Group chat with a simple function selector for next speaker                                          |
 | Group Chat Orchestration as Agent    | [group_chat_workflow_as_agent.py](../agents/group_chat_workflow_as_agent.py)                   | Build a GroupChatBuilder workflow and wrap it as an agent for composition                            |
 | Tool Approval with GroupChatBuilder  | [group_chat_builder_tool_approval.py](../tool-approval/group_chat_builder_tool_approval.py)           | Require human approval for sensitive tools in group chat orchestration                               |
-| GroupChatBuilder Request Info        | [group_chat_request_info.py](../human-in-the-loop/group_chat_request_info.py)                           | Steer group discussions with periodic guidance using `.with_request_info()`                          |
+| GroupChatBuilder Request Info        | [group_chat_request_info.py](../human-in-the-loop/group_chat_request_info.py)                           | Steer group discussions with periodic guidance using `.with_human_in_the_loop()`                          |
 
 ### handoff
 

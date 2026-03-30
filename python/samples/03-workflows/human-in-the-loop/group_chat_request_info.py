@@ -3,7 +3,7 @@
 """
 Sample: Request Info with GroupChatBuilder
 
-This sample demonstrates using the `.with_request_info()` method to pause a
+This sample demonstrates using the `.with_human_in_the_loop()` method to pause a
 GroupChatBuilder workflow BEFORE specific participants speak. By using the
 `agents=` filter parameter, you can target only certain participants rather
 than pausing before every turn.
@@ -13,7 +13,7 @@ Show how to use the request info API with selective filtering to pause before
 specific participants speak, allowing human input to steer their response.
 
 Demonstrate:
-- Configuring request info with `.with_request_info(agents=[...])`
+- Configuring request info with `.with_human_in_the_loop(agents=[...])`
 - Using agent filtering to reduce interruptions
 - Steering agent behavior with pre-agent human input
 
@@ -158,7 +158,7 @@ async def main() -> None:
             max_rounds=6,
             orchestrator_agent=orchestrator,
         )
-        .with_request_info(agents=[pragmatist])  # Only pause before pragmatist speaks
+        .with_human_in_the_loop(agents=[pragmatist])  # Only pause before pragmatist speaks
         .build()
     )
 
