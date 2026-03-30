@@ -820,16 +820,18 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         // Assert
         Assert.IsType<RunStartedEvent>(outputEvents[0]);
         var reasoningStart = Assert.IsType<ReasoningStartEvent>(outputEvents[1]);
-        Assert.Equal("reason1", reasoningStart.MessageId);
+        var reasoningId = reasoningStart.MessageId;
+        Assert.NotEqual("reason1", reasoningId);
         var reasoningMessageStart = Assert.IsType<ReasoningMessageStartEvent>(outputEvents[2]);
-        Assert.Equal("reason1", reasoningMessageStart.MessageId);
+        var reasoningMessageId = reasoningMessageStart.MessageId;
+        Assert.NotEqual(reasoningId, reasoningMessageId);
         var reasoningContent = Assert.IsType<ReasoningMessageContentEvent>(outputEvents[3]);
-        Assert.Equal("reason1", reasoningContent.MessageId);
+        Assert.Equal(reasoningMessageId, reasoningContent.MessageId);
         Assert.Equal("I need to think about this", reasoningContent.Delta);
         var reasoningMessageEnd = Assert.IsType<ReasoningMessageEndEvent>(outputEvents[4]);
-        Assert.Equal("reason1", reasoningMessageEnd.MessageId);
+        Assert.Equal(reasoningMessageId, reasoningMessageEnd.MessageId);
         var reasoningEnd = Assert.IsType<ReasoningEndEvent>(outputEvents[5]);
-        Assert.Equal("reason1", reasoningEnd.MessageId);
+        Assert.Equal(reasoningId, reasoningEnd.MessageId);
         Assert.IsType<RunFinishedEvent>(outputEvents[6]);
     }
 
@@ -880,8 +882,10 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         }
 
         // Assert
+        var reasoningMessageId = outputEvents.OfType<ReasoningMessageStartEvent>().Single().MessageId;
+        Assert.NotEqual("reason1", reasoningMessageId);
         var encryptedEvent = outputEvents.OfType<ReasoningEncryptedValueEvent>().Single();
-        Assert.Equal("reason1", encryptedEvent.EntityId);
+        Assert.Equal(reasoningMessageId, encryptedEvent.EntityId);
         Assert.Equal("encrypted-abc", encryptedEvent.EncryptedValue);
     }
 
@@ -909,6 +913,37 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
         Assert.Contains(outputEvents, e => e is TextMessageStartEvent);
         Assert.Contains(outputEvents, e => e is TextMessageContentEvent);
         Assert.Contains(outputEvents, e => e is TextMessageEndEvent);
+    }
+
+    [Fact]
+    public async Task AsAGUIEventStreamAsync_WithReasoningAndTextSharingSameMessageId_EmitsDistinctEventIdsAsync()
+    {
+        // Arrange
+        List<ChatResponseUpdate> updates =
+        [
+            new(ChatRole.Assistant, [new TextReasoningContent("thinking")]) { MessageId = "shared1" },
+            new(ChatRole.Assistant, [new TextContent("Hello")]) { MessageId = "shared1" }
+        ];
+
+        // Act
+        List<BaseEvent> outputEvents = [];
+        await foreach (BaseEvent evt in updates.ToAsyncEnumerableAsync().AsAGUIEventStreamAsync("thread1", "run1", AGUIJsonSerializerContext.Default.Options))
+        {
+            outputEvents.Add(evt);
+        }
+
+        // Assert
+        var reasoningId = outputEvents.OfType<ReasoningStartEvent>().Single().MessageId;
+        var reasoningMessageId = outputEvents.OfType<ReasoningMessageStartEvent>().Single().MessageId;
+        var textMessageId = outputEvents.OfType<TextMessageStartEvent>().Single().MessageId;
+        Assert.NotEqual(reasoningId, reasoningMessageId);
+        Assert.NotEqual(reasoningId, textMessageId);
+        Assert.NotEqual(reasoningMessageId, textMessageId);
+        Assert.Equal("shared1", textMessageId);
+        Assert.All(outputEvents.OfType<ReasoningMessageContentEvent>(), e => Assert.Equal(reasoningMessageId, e.MessageId));
+        Assert.Equal(reasoningMessageId, outputEvents.OfType<ReasoningMessageEndEvent>().Single().MessageId);
+        Assert.Equal(reasoningId, outputEvents.OfType<ReasoningEndEvent>().Single().MessageId);
+        Assert.All(outputEvents.OfType<TextMessageContentEvent>(), e => Assert.Equal("shared1", e.MessageId));
     }
 
     [Fact]
@@ -1089,12 +1124,14 @@ public sealed class ChatResponseUpdateAGUIExtensionsTests
             outputEvents.Add(evt);
         }
 
-        // Assert — encrypted value should not be silently dropped
+        // Assert
         Assert.Contains(outputEvents, e => e is ReasoningStartEvent);
         Assert.Contains(outputEvents, e => e is ReasoningMessageStartEvent);
         Assert.DoesNotContain(outputEvents, e => e is ReasoningMessageContentEvent);
+        var reasoningMessageId = outputEvents.OfType<ReasoningMessageStartEvent>().Single().MessageId;
+        Assert.NotEqual("reason1", reasoningMessageId);
         var encryptedEvent = outputEvents.OfType<ReasoningEncryptedValueEvent>().Single();
-        Assert.Equal("reason1", encryptedEvent.EntityId);
+        Assert.Equal(reasoningMessageId, encryptedEvent.EntityId);
         Assert.Equal("encrypted-only", encryptedEvent.EncryptedValue);
         Assert.Contains(outputEvents, e => e is ReasoningMessageEndEvent);
         Assert.Contains(outputEvents, e => e is ReasoningEndEvent);
