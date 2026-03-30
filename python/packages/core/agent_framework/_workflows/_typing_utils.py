@@ -11,7 +11,7 @@ from .._agents import Agent
 # Pre-compute the TypeVar types for runtime-safe detection.
 # isinstance(x, TypeVar) can fail if TypeVar is a factory/callable
 # on some Python versions, so we compare against the actual runtime type.
-_TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))
+_TYPEVAR_TYPES: tuple[type, ...] = (type(typing.TypeVar("_T")), type(typing_extensions.TypeVar("_T")))  # pyright: ignore[reportUnknownVariableType]
 
 
 def is_typevar(x: Any) -> bool:
