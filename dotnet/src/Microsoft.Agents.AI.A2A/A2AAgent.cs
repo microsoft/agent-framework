@@ -155,7 +155,7 @@ public sealed class A2AAgent : AIAgent
 
         if (GetContinuationToken(messages, options) is { } token)
         {
-            streamEvents = this._a2aClient.SubscribeToTaskAsync(new SubscribeToTaskRequest { Id = token.TaskId }, cancellationToken).ConfigureAwait(false);
+            streamEvents = this.SubscribeToTaskWithFallbackAsync(token.TaskId, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -246,6 +246,67 @@ public sealed class A2AAgent : AIAgent
         }
 
         return typedSession;
+    }
+
+    /// <summary>
+    /// Subscribes to task updates, falling back to <see cref="A2AClient.GetTaskAsync"/>
+    /// when the task has already reached a terminal state and the server responds with
+    /// <see cref="A2AErrorCode.UnsupportedOperation"/>.
+    /// </summary>
+    /// <remarks>
+    /// Per A2A spec §3.1.6, subscribing to a task in a terminal state (completed, failed,
+    /// canceled, or rejected) results in an <c>UnsupportedOperationError</c>.
+    /// See: <see href="https://a2a-protocol.org/latest/specification/#332-error-handling"/>.
+    /// </remarks>
+    private async IAsyncEnumerable<StreamResponse> SubscribeToTaskWithFallbackAsync(
+        string taskId,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var subscribeStream = this._a2aClient.SubscribeToTaskAsync(new SubscribeToTaskRequest { Id = taskId }, cancellationToken);
+
+        var enumerator = subscribeStream.GetAsyncEnumerator(cancellationToken);
+
+        // yield return cannot appear inside a try block that has catch clauses,
+        // so we manually advance the enumerator within try/catch and yield outside it.
+        // The outer try/finally (no catch) is allowed to contain yield return in C#.
+        StreamResponse? fallbackResponse = null;
+
+        try
+        {
+            while (true)
+            {
+                bool hasNext;
+                try
+                {
+                    hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (A2AException ex) when (ex.ErrorCode == A2AErrorCode.UnsupportedOperation)
+                {
+                    this._logger.LogA2ASubscribeToTaskFallback(this.Id, this.Name, taskId, ex.Message);
+
+                    AgentTask agentTask = await this._a2aClient.GetTaskAsync(new GetTaskRequest { Id = taskId }, cancellationToken).ConfigureAwait(false);
+
+                    fallbackResponse = new StreamResponse { Task = agentTask };
+                    break;
+                }
+
+                if (!hasNext)
+                {
+                    break;
+                }
+
+                yield return enumerator.Current;
+            }
+
+            if (fallbackResponse is not null)
+            {
+                yield return fallbackResponse;
+            }
+        }
+        finally
+        {
+            await enumerator.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private static void UpdateSession(A2AAgentSession? session, string? contextId, string? taskId = null)
