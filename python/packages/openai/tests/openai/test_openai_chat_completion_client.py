@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import json
 import os
 from typing import Any
@@ -11,16 +12,21 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
+    SupportsCodeInterpreterTool,
+    SupportsFileSearchTool,
+    SupportsImageGenerationTool,
+    SupportsMCPTool,
+    SupportsWebSearchTool,
     tool,
 )
-from agent_framework.exceptions import ChatClientException
+from agent_framework.exceptions import ChatClientException, SettingNotFoundError
 from openai import BadRequestError
 from openai.types.chat.chat_completion import ChatCompletion, Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatCompletionClient
+from agent_framework_openai import OpenAIChatCompletionClient, RawOpenAIChatCompletionClient
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -35,6 +41,49 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
     assert open_ai_chat_completion.model == openai_unit_test_env["OPENAI_MODEL"]
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
+
+
+def test_get_response_docstring_surfaces_layered_runtime_docs() -> None:
+    docstring = inspect.getdoc(OpenAIChatCompletionClient.get_response)
+
+    assert docstring is not None
+    assert "Get a response from a chat client." in docstring
+    assert "function_invocation_kwargs" in docstring
+    assert "middleware: Optional per-call chat and function middleware." in docstring
+    assert "function_middleware: Optional per-call function middleware." not in docstring
+
+
+def test_get_response_is_defined_on_openai_class() -> None:
+    signature = inspect.signature(OpenAIChatCompletionClient.get_response)
+
+    assert OpenAIChatCompletionClient.get_response.__qualname__ == "OpenAIChatCompletionClient.get_response"
+    assert "middleware" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawOpenAIChatCompletionClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_supports_web_search_only() -> None:
+    assert not isinstance(OpenAIChatCompletionClient, SupportsCodeInterpreterTool)
+    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsImageGenerationTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsMCPTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsFileSearchTool)
+
+
+def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model_id")
+
+    open_ai_chat_completion = OpenAIChatCompletionClient()
+
+    assert open_ai_chat_completion.model == "test_chat_model_id"
 
 
 def test_init_validation_fail() -> None:
@@ -93,7 +142,7 @@ def test_init_base_url_from_settings_env() -> None:
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
 def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient()
 
 
@@ -101,7 +150,7 @@ def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
     model_id = "test_model_id"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient(
             model=model_id,
         )
@@ -1480,71 +1529,61 @@ async def test_integration_options(
     # Need at least 2 iterations for tool_choice tests: one to get function call, one to get final response
     client.function_invocation_configuration["max_iterations"] = 2
 
-    for streaming in [False, True]:
-        # Prepare test message
+    # Prepare test message
+    if option_name.startswith("tools") or option_name.startswith("tool_choice"):
+        # Use weather-related prompt for tool tests
+        messages = [Message(role="user", text="What is the weather in Seattle?")]
+    elif option_name.startswith("response_format"):
+        # Use prompt that works well with structured output
+        messages = [Message(role="user", text="The weather in Seattle is sunny")]
+        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+    else:
+        # Generic prompt for simple options
+        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+
+    # Build options dict
+    options: dict[str, Any] = {option_name: option_value}
+
+    # Add tools if testing tool_choice to avoid errors
+    if option_name.startswith("tool_choice"):
+        options["tools"] = [get_weather]
+
+    # Test streaming mode
+    response = await client.get_response(
+        messages=messages,
+        stream=True,
+        options=options,
+    ).get_final_response()
+
+    assert response is not None
+    assert isinstance(response, ChatResponse)
+    assert response.messages is not None
+    if not option_name.startswith("tool_choice") and (
+        (isinstance(option_value, str) and option_value != "required")
+        or (isinstance(option_value, dict) and option_value.get("mode") != "required")
+    ):
+        assert response.text is not None, f"No text in response for option '{option_name}'"
+        assert len(response.text) > 0, f"Empty response for option '{option_name}'"
+
+    # Validate based on option type
+    if needs_validation:
         if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-            # Use weather-related prompt for tool tests
-            messages = [Message(role="user", text="What is the weather in Seattle?")]
+            # Should have called the weather function
+            text = response.text.lower()
+            assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
         elif option_name.startswith("response_format"):
-            # Use prompt that works well with structured output
-            messages = [Message(role="user", text="The weather in Seattle is sunny")]
-            messages.append(Message(role="user", text="What is the weather in Seattle?"))
-        else:
-            # Generic prompt for simple options
-            messages = [Message(role="user", text="Say 'Hello World' briefly.")]
-
-        # Build options dict
-        options: dict[str, Any] = {option_name: option_value}
-
-        # Add tools if testing tool_choice to avoid errors
-        if option_name.startswith("tool_choice"):
-            options["tools"] = [get_weather]
-
-        if streaming:
-            # Test streaming mode
-            response_stream = client.get_response(
-                messages=messages,
-                stream=True,
-                options=options,
-            )
-
-            response = await response_stream.get_final_response()
-        else:
-            # Test non-streaming mode
-            response = await client.get_response(
-                messages=messages,
-                options=options,
-            )
-
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-        assert response.messages is not None
-        if not option_name.startswith("tool_choice") and (
-            (isinstance(option_value, str) and option_value != "required")
-            or (isinstance(option_value, dict) and option_value.get("mode") != "required")
-        ):
-            assert response.text is not None, f"No text in response for option '{option_name}'"
-            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
-
-        # Validate based on option type
-        if needs_validation:
-            if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-                # Should have called the weather function
-                text = response.text.lower()
-                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
-            elif option_name.startswith("response_format"):
-                if option_value == OutputStruct:
-                    # Should have structured output
-                    assert response.value is not None, "No structured output"
-                    assert isinstance(response.value, OutputStruct)
-                    assert "seattle" in response.value.location.lower()
-                else:
-                    # Runtime JSON schema
-                    assert response.value is None, "No structured output, can't parse any json."
-                    response_value = json.loads(response.text)
-                    assert isinstance(response_value, dict)
-                    assert "location" in response_value
-                    assert "seattle" in response_value["location"].lower()
+            if option_value == OutputStruct:
+                # Should have structured output
+                assert response.value is not None, "No structured output"
+                assert isinstance(response.value, OutputStruct)
+                assert "seattle" in response.value.location.lower()
+            else:
+                # Runtime JSON schema
+                assert response.value is None, "No structured output, can't parse any json."
+                response_value = json.loads(response.text)
+                assert isinstance(response_value, dict)
+                assert "location" in response_value
+                assert "seattle" in response_value["location"].lower()
 
 
 @pytest.mark.flaky

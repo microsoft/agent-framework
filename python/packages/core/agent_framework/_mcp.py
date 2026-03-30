@@ -768,7 +768,8 @@ class MCPTool:
             options["stop"] = params.stopSequences
 
         try:
-            response = await self.client.get_response(
+            chat_client: Any = self.client
+            response: Any = await chat_client.get_response(
                 messages,
                 options=options or None,
             )

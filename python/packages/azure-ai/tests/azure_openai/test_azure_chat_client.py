@@ -2,6 +2,8 @@
 
 import json
 import os
+from functools import wraps
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -33,12 +35,40 @@ from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
 from openai.types.chat.chat_completion_chunk import ChoiceDelta as ChunkChoiceDelta
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
+pytestmark = pytest.mark.filterwarnings("ignore:AzureOpenAIChatClient is deprecated\\..*:DeprecationWarning")
+
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.com"),
     reason="No real AZURE_OPENAI_ENDPOINT provided; skipping integration tests.",
 )
+
+
+def _with_azure_openai_debug() -> Any:
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as exc:
+                model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") or os.getenv(
+                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
+                )
+                api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
+                debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
+                if hasattr(exc, "add_note"):
+                    exc.add_note(debug_message)
+                elif exc.args:
+                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
+                else:
+                    exc.args = (debug_message,)
+                raise
+
+        return wrapper
+
+    return decorator
 
 
 def test_init(azure_openai_unit_test_env: dict[str, str]) -> None:
@@ -820,6 +850,7 @@ def get_weather(location: str) -> str:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_response() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -851,6 +882,7 @@ async def test_azure_openai_chat_client_response() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_response_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -873,6 +905,7 @@ async def test_azure_openai_chat_client_response_tools() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_streaming() -> None:
     """Test Azure OpenAI chat completion responses."""
     azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -909,6 +942,7 @@ async def test_azure_openai_chat_client_streaming() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_streaming_tools() -> None:
     """Test AzureOpenAI chat completion responses."""
     azure_chat_client = AzureOpenAIChatClient(credential=AzureCliCredential())
@@ -937,6 +971,7 @@ async def test_azure_openai_chat_client_streaming_tools() -> None:
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_agent_basic_run():
     """Test Azure OpenAI chat client agent basic run functionality with AzureOpenAIChatClient."""
     async with Agent(
@@ -954,6 +989,7 @@ async def test_azure_openai_chat_client_agent_basic_run():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_agent_basic_run_streaming():
     """Test Azure OpenAI chat client agent basic streaming functionality with AzureOpenAIChatClient."""
     async with Agent(
@@ -976,6 +1012,7 @@ async def test_azure_openai_chat_client_agent_basic_run_streaming():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_agent_session_persistence():
     """Test Azure OpenAI chat client agent session persistence across runs with AzureOpenAIChatClient."""
     async with Agent(
@@ -1002,6 +1039,7 @@ async def test_azure_openai_chat_client_agent_session_persistence():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_openai_chat_client_agent_existing_session():
     """Test Azure OpenAI chat client agent with existing session to continue conversations across agent instances."""
     # First conversation - capture the session
@@ -1038,6 +1076,7 @@ async def test_azure_openai_chat_client_agent_existing_session():
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_azure_integration_tests_disabled
+@_with_azure_openai_debug()
 async def test_azure_chat_client_agent_level_tool_persistence():
     """Test that agent-level tools persist across multiple runs with Azure Chat Client."""
 

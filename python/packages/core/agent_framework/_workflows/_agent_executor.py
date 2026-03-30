@@ -12,7 +12,7 @@ from agent_framework import Content
 
 from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
-from .._types import AgentResponse, AgentResponseUpdate, Message
+from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
 from ._const import WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
@@ -352,7 +352,8 @@ class AgentExecutor(Executor):
         """
         run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}))
 
-        response = await self._agent.run(
+        run_agent = cast(Callable[..., Awaitable[AgentResponse[Any]]], self._agent.run)
+        response = await run_agent(
             self._cache,
             stream=False,
             session=self._session,
@@ -383,7 +384,8 @@ class AgentExecutor(Executor):
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
-        stream = self._agent.run(
+        run_agent_stream = cast(Callable[..., ResponseStream[AgentResponseUpdate, AgentResponse[Any]]], self._agent.run)
+        stream = run_agent_stream(
             self._cache,
             stream=True,
             session=self._session,
