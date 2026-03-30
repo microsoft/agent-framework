@@ -17,7 +17,7 @@ else:
 from ._assistant_provider import OpenAIAssistantProvider
 from ._assistants_client import (
     AssistantToolResources,
-    OpenAIAssistantsClient,
+    OpenAIAssistantsClient,  # type: ignore[reportDeprecated]
     OpenAIAssistantsOptions,
 )
 from ._chat_client import (

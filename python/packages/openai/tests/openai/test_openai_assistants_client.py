@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import json
 import logging
 from typing import Annotated, Any
@@ -11,6 +12,11 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
+    SupportsCodeInterpreterTool,
+    SupportsFileSearchTool,
+    SupportsImageGenerationTool,
+    SupportsMCPTool,
+    SupportsWebSearchTool,
     tool,
 )
 from openai.types.beta.threads import (
@@ -29,6 +35,8 @@ from openai.types.beta.threads.runs import RunStep
 from pydantic import Field
 
 from agent_framework_openai import OpenAIAssistantsClient
+
+pytestmark = pytest.mark.filterwarnings("ignore:OpenAIAssistantsClient is deprecated\\..*:DeprecationWarning")
 
 
 def create_test_openai_assistants_client(
@@ -102,6 +110,25 @@ def mock_async_openai() -> MagicMock:
     mock_client.beta.threads.messages.list = AsyncMock(return_value=MagicMock(data=[]))
 
     return mock_client
+
+
+def test_openai_assistants_client_is_deprecated(mock_async_openai: MagicMock) -> None:
+    with pytest.warns(DeprecationWarning, match="OpenAIAssistantsClient is deprecated. Use OpenAIChatClient instead."):
+        OpenAIAssistantsClient(model="gpt-4", api_key="test-api-key", async_client=mock_async_openai)
+
+
+def test_openai_assistants_client_init_keeps_var_keyword() -> None:
+    signature = inspect.signature(OpenAIAssistantsClient.__init__)
+
+    assert any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_openai_assistants_client_supports_code_interpreter_and_file_search() -> None:
+    assert isinstance(OpenAIAssistantsClient, SupportsCodeInterpreterTool)
+    assert not isinstance(OpenAIAssistantsClient, SupportsWebSearchTool)
+    assert not isinstance(OpenAIAssistantsClient, SupportsImageGenerationTool)
+    assert not isinstance(OpenAIAssistantsClient, SupportsMCPTool)
+    assert isinstance(OpenAIAssistantsClient, SupportsFileSearchTool)
 
 
 def test_init_with_client(mock_async_openai: MagicMock) -> None:

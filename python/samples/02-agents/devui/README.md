@@ -85,7 +85,7 @@ Alternatively, set environment variables globally:
 
 ```bash
 export OPENAI_API_KEY="your-key-here"
-export OPENAI_CHAT_MODEL_ID="gpt-4o"
+export OPENAI_CHAT_MODEL="gpt-4o"
 ```
 
 ## Using DevUI with Your Own Agents

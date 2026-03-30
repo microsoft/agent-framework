@@ -794,7 +794,7 @@ public class WorkflowHostSmokeTests : AIAgentHostingExecutorTestsBase
     {
         // Arrange
         TestReplayAgent agent = new(TestMessages, TestAgentId, TestAgentName);
-        Workflow handoffWorkflow = new HandoffsWorkflowBuilder(agent).Build();
+        Workflow handoffWorkflow = new HandoffWorkflowBuilder(agent).Build();
         return this.Run_AsAgent_OutgoingMessagesInHistoryAsync(handoffWorkflow, runAsync);
     }
 }

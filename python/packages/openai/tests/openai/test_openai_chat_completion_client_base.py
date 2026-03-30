@@ -138,7 +138,7 @@ async def test_cmc_structured_output_no_fcc(
     openai_chat_completion = OpenAIChatCompletionClient()
     await openai_chat_completion.get_response(
         messages=chat_history,
-        response_format=Test,
+        options={"response_format": Test},
     )
     mock_create.assert_awaited_once()
 
@@ -322,7 +322,7 @@ async def test_get_streaming_structured_output_no_fcc(
     async for msg in openai_chat_completion.get_response(
         stream=True,
         messages=chat_history,
-        response_format=Test,
+        options={"response_format": Test},
     ):
         assert isinstance(msg, ChatResponseUpdate)
     mock_create.assert_awaited_once()
