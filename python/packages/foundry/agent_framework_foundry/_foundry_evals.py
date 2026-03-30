@@ -283,10 +283,7 @@ async def _poll_eval_run(
             if run.status == "failed":
                 err = run.error
                 if err is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                    if isinstance(err, str):
-                        error_msg = err
-                    else:
-                        error_msg = err.message or str(err)
+                    error_msg = err if isinstance(err, str) else err.message or str(err)
 
             items: list[EvalItemResult] = []
             if fetch_output_items and run.status == "completed":
@@ -376,10 +373,9 @@ async def _fetch_output_items(
             sample = oi.sample
             if sample is not None:
                 err = sample.error
-                if err is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                    if err.code or err.message:
-                        error_code = err.code or None
-                        error_message = err.message or None
+                if err is not None and (err.code or err.message):  # pyright: ignore[reportUnnecessaryComparison]
+                    error_code = err.code or None
+                    error_message = err.message or None
 
                 usage = sample.usage
                 if usage is not None and usage.total_tokens:  # pyright: ignore[reportUnnecessaryComparison]
