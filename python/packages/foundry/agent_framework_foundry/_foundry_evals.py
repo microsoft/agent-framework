@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from agent_framework._evaluation import (
     AgentEvalConverter,
@@ -129,9 +129,15 @@ def _resolve_evaluator(name: str) -> str:
         ValueError: If the name is not recognized.
     """
     if name.startswith("builtin."):
-        # Already fully-qualified — pass through as-is.
-        # We don't validate the specific name because Foundry may add
-        # new evaluators that aren't in our local mapping.
+        # Already fully-qualified — pass through, but warn if not in our
+        # known list (may indicate a typo or a newly-added evaluator).
+        short = name.removeprefix("builtin.")
+        if short not in _BUILTIN_EVALUATORS:
+            logger.warning(
+                "Evaluator '%s' is not in the known built-in list. "
+                "If this is a new evaluator, consider updating _BUILTIN_EVALUATORS.",
+                name,
+            )
         return name
     resolved = _BUILTIN_EVALUATORS.get(name)
     if resolved is None:
@@ -275,10 +281,12 @@ async def _poll_eval_run(
         if run.status in ("completed", "failed", "canceled"):
             error_msg = None
             if run.status == "failed":
-                # run.error is an EvalAPIError object (code + message)
                 err = run.error
                 if err is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                    error_msg = getattr(err, "message", None) or str(err)
+                    if isinstance(err, str):
+                        error_msg = err
+                    else:
+                        error_msg = err.message or str(err)
 
             items: list[EvalItemResult] = []
             if fetch_output_items and run.status == "completed":
@@ -304,33 +312,24 @@ async def _poll_eval_run(
 
 def _extract_result_counts(run: RunRetrieveResponse) -> dict[str, int] | None:
     """Extract result_counts from an eval run as a plain dict."""
-    counts = getattr(run, "result_counts", None)
+    counts = run.result_counts
     if counts is None:
         return None
-    if isinstance(counts, dict):
-        return cast(dict[str, int], counts)
-    # ResultCounts is a Pydantic model with errored/failed/passed/total fields
-    result: dict[str, int] = {}
-    for attr in ("errored", "failed", "passed", "total"):
-        val = getattr(counts, attr, None)
-        if isinstance(val, int):
-            result[attr] = val
-    return result or None
+    return {
+        "errored": counts.errored,
+        "failed": counts.failed,
+        "passed": counts.passed,
+        "total": counts.total,
+    }
 
 
 def _extract_per_evaluator(run: RunRetrieveResponse) -> dict[str, dict[str, int]]:
     """Extract per-evaluator result breakdowns from an eval run."""
     per_eval: dict[str, dict[str, int]] = {}
-    per_testing_criteria = getattr(run, "per_testing_criteria_results", None)
-    if per_testing_criteria is None:
-        return per_eval
-    # PerTestingCriteriaResult has testing_criteria (str), passed (int), failed (int)
-    for item in per_testing_criteria:
-        name = str(getattr(item, "testing_criteria", None) or getattr(item, "name", "unknown"))
-        passed = getattr(item, "passed", None)
-        failed = getattr(item, "failed", None)
-        if name and isinstance(passed, int) and isinstance(failed, int):
-            per_eval[name] = {"passed": passed, "failed": failed}
+    for item in run.per_testing_criteria_results or []:
+        name = item.testing_criteria
+        if name:
+            per_eval[name] = {"passed": item.passed, "failed": item.failed}
     return per_eval
 
 
@@ -354,18 +353,15 @@ async def _fetch_output_items(
         )
 
         async for oi in output_items_page:
-            item_id = getattr(oi, "id", "") or ""
-            status = getattr(oi, "status", "unknown") or "unknown"
-
             # Extract per-evaluator scores
             scores: list[EvalScoreResult] = []
-            for r in getattr(oi, "results", []) or []:
+            for r in oi.results or []:
                 scores.append(
                     EvalScoreResult(
-                        name=getattr(r, "name", "unknown"),
-                        score=getattr(r, "score", 0.0),
-                        passed=getattr(r, "passed", None),
-                        sample=getattr(r, "sample", None),
+                        name=r.name,
+                        score=r.score,
+                        passed=r.passed,
+                        sample=r.sample,
                     )
                 )
 
@@ -377,55 +373,44 @@ async def _fetch_output_items(
             output_text: str | None = None
             response_id: str | None = None
 
-            sample = getattr(oi, "sample", None)
+            sample = oi.sample
             if sample is not None:
-                error = getattr(sample, "error", None)
-                if error is not None:
-                    code = getattr(error, "code", None)
-                    msg = getattr(error, "message", None)
-                    if code or msg:
-                        error_code = code or None
-                        error_message = msg or None
+                err = sample.error
+                if err is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                    if err.code or err.message:
+                        error_code = err.code or None
+                        error_message = err.message or None
 
-                usage = getattr(sample, "usage", None)
-                if usage is not None:
-                    total = getattr(usage, "total_tokens", 0)
-                    if total:
-                        token_usage = {
-                            "prompt_tokens": getattr(usage, "prompt_tokens", 0),
-                            "completion_tokens": getattr(usage, "completion_tokens", 0),
-                            "total_tokens": total,
-                            "cached_tokens": getattr(usage, "cached_tokens", 0),
-                        }
+                usage = sample.usage
+                if usage is not None and usage.total_tokens:  # pyright: ignore[reportUnnecessaryComparison]
+                    token_usage = {
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                        "total_tokens": usage.total_tokens,
+                        "cached_tokens": usage.cached_tokens,
+                    }
 
                 # Extract input/output text
-                sample_input = getattr(sample, "input", None)
-                if sample_input:
-                    parts = [getattr(si, "content", "") for si in sample_input if getattr(si, "role", "") == "user"]
+                if sample.input:
+                    parts = [si.content for si in sample.input if si.role == "user"]
                     if parts:
                         input_text = " ".join(parts)
 
-                sample_output = getattr(sample, "output", None)
-                if sample_output:
-                    parts = [
-                        getattr(so, "content", "") or ""
-                        for so in sample_output
-                        if getattr(so, "role", "") == "assistant"
-                    ]
+                if sample.output:
+                    parts = [so.content or "" for so in sample.output if so.role == "assistant"]
                     if parts:
                         output_text = " ".join(parts)
 
             # Extract response_id from datasource_item
-            ds_item = getattr(oi, "datasource_item", None)
-            if ds_item and isinstance(ds_item, dict):
-                ds_dict = cast(dict[str, Any], ds_item)
-                resp_id_val = ds_dict.get("resp_id") or ds_dict.get("response_id")
+            ds_item = oi.datasource_item
+            if ds_item:
+                resp_id_val = ds_item.get("resp_id") or ds_item.get("response_id")
                 response_id = str(resp_id_val) if resp_id_val else None
 
             items.append(
                 EvalItemResult(
-                    item_id=item_id,
-                    status=status,
+                    item_id=oi.id,
+                    status=oi.status,
                     scores=scores,
                     error_code=error_code,
                     error_message=error_message,
@@ -551,14 +536,20 @@ class FoundryEvals:
     Automatically adds ``tool_call_accuracy`` when items contain tool
     definitions. Override with ``evaluators=``.
 
+    .. note::
+
+        The ``builtin.*`` evaluators are accessed through the OpenAI Evals
+        API (``client.evals.create`` / ``client.evals.runs.create``).  Any
+        ``AsyncOpenAI`` client pointing at a Foundry endpoint can run them.
+
     Args:
         client: A ``FoundryChatClient`` instance.  The ``builtin.*``
             evaluators are a Foundry feature and require a Foundry endpoint.
             When omitted (and *project_client* is also omitted), a
             ``FoundryChatClient`` is auto-created from ``FOUNDRY_PROJECT_ENDPOINT``
             and ``FOUNDRY_MODEL`` environment variables.
-        project_client: An ``AIProjectClient`` instance (sync or async).
-            Provide this or *client*.
+        project_client: An async ``AIProjectClient`` instance
+            (from ``azure.ai.projects.aio``).  Provide this or *client*.
         model: Model deployment name for the evaluator LLM judge.
             Resolved from ``client.model`` when omitted.
         evaluators: Evaluator names (e.g. ``["relevance", "tool_call_accuracy"]``).
@@ -569,6 +560,9 @@ class FoundryEvals:
             ``ConversationSplitter``.
         poll_interval: Seconds between status polls (default 5.0).
         timeout: Maximum seconds to wait for completion (default 180.0).
+        eval_name: Display name for the eval definition created in Foundry.
+            Defaults to ``"agent-framework-eval"``.  The name is visible in
+            the Foundry portal; it does not affect evaluation behavior.
     """
 
     # ---------------------------------------------------------------------------

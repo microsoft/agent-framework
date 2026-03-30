@@ -11,7 +11,7 @@ a different aspect of agent behavior:
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio
@@ -19,8 +19,7 @@ import os
 
 from agent_framework import Content, ConversationSplit, EvalItem, FunctionTool, Message
 from agent_framework.foundry import FoundryChatClient, FoundryEvals
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -93,13 +92,11 @@ def print_split(item: EvalItem, split: ConversationSplit = ConversationSplit.LAS
 
 
 async def main() -> None:
-    project_client = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
-    deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-
-    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # =========================================================================
     # Strategy 1: LAST_TURN (default)
@@ -116,7 +113,6 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         # conversation_split defaults to LAST_TURN
     ).evaluate([item], eval_name="Split Strategy: LAST_TURN")
@@ -140,7 +136,6 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
         conversation_split=ConversationSplit.FULL,
     ).evaluate([item], eval_name="Split Strategy: FULL")
@@ -168,7 +163,6 @@ async def main() -> None:
 
     results = await FoundryEvals(
         client=chat_client,
-        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.COHERENCE],
     ).evaluate(items, eval_name="Split Strategy: Per-Turn")
 

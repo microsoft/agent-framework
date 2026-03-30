@@ -7,7 +7,7 @@ by using ``FoundryEvals.evaluate()`` with ``TOOL_CALL_ACCURACY``.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio
@@ -15,8 +15,7 @@ import os
 
 from agent_framework import Agent, AgentEvalConverter
 from agent_framework.foundry import FoundryChatClient, FoundryEvals
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,13 +37,11 @@ def get_flight_price(origin: str, destination: str) -> str:
 
 
 async def main() -> None:
-    project_client = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
-
-    deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # Create an agent with tools
     agent = Agent(
@@ -79,7 +76,6 @@ async def main() -> None:
     # Submit to Foundry with tool_call_accuracy evaluator
     evals = FoundryEvals(
         client=chat_client,
-        model=deployment,
         evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TOOL_CALL_ACCURACY],
     )
     results = await evals.evaluate(items, eval_name="Tool Call Accuracy Eval")

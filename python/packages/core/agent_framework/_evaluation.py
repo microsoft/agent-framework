@@ -1179,26 +1179,29 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
         return CheckResult(passed=passed, reason=f"score={value:.3f}", check_name=check_name)
 
     if isinstance(value, dict):
-        d = cast(dict[str, Any], value)
-        if "score" in d:
+        if "score" in value:
             try:
-                score = float(d["score"])
+                score = float(value["score"])
             except (TypeError, ValueError) as exc:
                 raise TypeError(
-                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value: {d['score']!r}"
+                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value: {value['score']!r}"
                 ) from exc
-            passed = score >= float(d.get("threshold", 0.5))
-            reason = str(d.get("reason", f"score={score:.3f}"))
+            # Honour an explicit 'passed' override; otherwise threshold-based.
+            if "passed" in value:
+                passed = bool(value["passed"])
+            else:
+                passed = score >= float(value.get("threshold", 0.5))
+            reason = str(value.get("reason", f"score={score:.3f}"))
             return CheckResult(passed=passed, reason=reason, check_name=check_name)
-        if "passed" in d:
-            passed_val = d["passed"]
+        if "passed" in value:
+            passed_val = value["passed"]
             if not isinstance(passed_val, (bool, int)):
                 raise TypeError(
                     f"Function evaluator '{check_name}' returned dict with non-boolean 'passed' value: {passed_val!r}"
                 )
             return CheckResult(
                 passed=bool(passed_val),
-                reason=str(d.get("reason", "passed" if passed_val else "failed")),
+                reason=str(value.get("reason", "passed" if passed_val else "failed")),
                 check_name=check_name,
             )
 

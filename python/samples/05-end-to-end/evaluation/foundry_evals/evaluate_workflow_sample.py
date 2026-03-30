@@ -11,7 +11,7 @@ breakdown in sub_results so you can identify which agent is underperforming.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio
@@ -20,8 +20,7 @@ import os
 from agent_framework import Agent, evaluate_workflow
 from agent_framework.foundry import FoundryChatClient, FoundryEvals
 from agent_framework_orchestrations import SequentialBuilder
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,15 +43,12 @@ def get_flight_price(origin: str, destination: str) -> str:
 
 
 async def main() -> None:
-    # 1. Set up the Azure AI project client
-    project_client = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    # 1. Set up the chat client
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
-
-    deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-
-    client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # 2. Create agents for a sequential workflow
     # Use store=False so agents don't chain conversation state via previous_response_id.
@@ -82,7 +78,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[researcher, planner]).build()
 
     # 4. Create the evaluator — provider config goes here, once
-    evals = FoundryEvals(client=client, model=deployment)
+    evals = FoundryEvals(client=client)
 
     # =========================================================================
     # Pattern 1: Post-hoc — evaluate a workflow run you already did
@@ -131,7 +127,6 @@ async def main() -> None:
         ],
         evaluators=FoundryEvals(
             client=client,
-            model=deployment,
             evaluators=[FoundryEvals.RELEVANCE, FoundryEvals.TASK_ADHERENCE],
         ),
     )

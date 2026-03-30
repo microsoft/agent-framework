@@ -64,6 +64,21 @@ def _make_tool(name: str) -> MagicMock:
     return t
 
 
+@dataclass
+class _MockResultCounts:
+    """Mock matching the OpenAI SDK ResultCounts Pydantic model shape."""
+
+    passed: int = 0
+    failed: int = 0
+    errored: int = 0
+    total: int = 0
+
+
+def _rc(passed: int = 0, failed: int = 0, errored: int = 0) -> _MockResultCounts:
+    """Shorthand to create a ResultCounts-compatible mock."""
+    return _MockResultCounts(passed=passed, failed=failed, errored=errored, total=passed + failed + errored)
+
+
 # ---------------------------------------------------------------------------
 # _resolve_evaluator
 # ---------------------------------------------------------------------------
@@ -844,7 +859,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.result_counts = _rc(passed=2)
         mock_completed.report_url = "https://portal.azure.com/eval/run_456"
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -912,7 +927,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -942,7 +957,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -976,7 +991,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1014,7 +1029,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1066,7 +1081,7 @@ class TestFoundryEvals:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1332,7 +1347,7 @@ class TestEvaluateAgentWithResponses:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = "https://portal.azure.com/eval"
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1371,7 +1386,7 @@ class TestEvaluateAgentWithResponses:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1414,7 +1429,7 @@ class TestEvaluateAgentWithResponses:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.result_counts = _rc(passed=2)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1467,7 +1482,7 @@ class TestEvaluateAgentWithResponses:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -1727,7 +1742,7 @@ class TestEvaluateWorkflow:
         mock_oai.evals.runs.create = AsyncMock(return_value=mock_run)
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = "https://portal.azure.com/eval"
         mock_completed.per_testing_criteria_results = None
         mock_oai.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -2276,7 +2291,7 @@ class TestEvaluateTraces:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = "https://portal.azure.com/eval/run_tr"
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -2324,7 +2339,7 @@ class TestEvaluateTraces:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 1, "failed": 0}
+        mock_completed.result_counts = _rc(passed=1)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -2364,7 +2379,7 @@ class TestEvaluateFoundryTarget:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.result_counts = _rc(passed=2)
         mock_completed.report_url = "https://portal.azure.com/eval/run_tgt"
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)
@@ -2397,34 +2412,12 @@ class TestEvaluateFoundryTarget:
 class TestExtractResultCounts:
     """Tests for all _extract_result_counts code paths."""
 
-    def test_dict_passthrough(self):
-        """Path 1: result_counts is already a dict."""
+    def test_typed_counts(self) -> None:
+        """ResultCounts-like object with all fields."""
         run = MagicMock()
-        run.result_counts = {"passed": 3, "failed": 1}
-        assert _extract_result_counts(run) == {"passed": 3, "failed": 1}
-
-    def test_vars_extraction(self):
-        """Path 2: result_counts is an object with vars()."""
-
-        class Counts:
-            def __init__(self):
-                self.passed = 5
-                self.failed = 2
-                self.label = "info"  # non-int, should be filtered
-
-        run = MagicMock()
-        run.result_counts = Counts()
+        run.result_counts = _rc(passed=3, failed=1)
         result = _extract_result_counts(run)
-        assert result is not None
-        assert result["passed"] == 5
-        assert result["failed"] == 2
-        assert "label" not in result
-
-    def test_type_error_fallback(self):
-        """Path 3: result_counts has no __dict__ (e.g. an int) → None."""
-        run = MagicMock()
-        run.result_counts = 42  # can't call vars() on an int
-        assert _extract_result_counts(run) is None
+        assert result == {"errored": 0, "failed": 1, "passed": 3, "total": 4}
 
     def test_none_result_counts(self):
         run = MagicMock()
@@ -2542,7 +2535,7 @@ class TestEvaluateTracesAgentId:
 
         mock_completed = MagicMock()
         mock_completed.status = "completed"
-        mock_completed.result_counts = {"passed": 2, "failed": 0}
+        mock_completed.result_counts = _rc(passed=2)
         mock_completed.report_url = None
         mock_completed.per_testing_criteria_results = None
         mock_client.evals.runs.retrieve = AsyncMock(return_value=mock_completed)

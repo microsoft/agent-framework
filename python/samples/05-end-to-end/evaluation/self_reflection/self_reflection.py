@@ -234,7 +234,12 @@ async def run_self_reflection_batch(
         limit: Optional limit to process only the first N prompts
     """
     # Load environment variables
-    load_dotenv(env_file, override=True) if env_file else load_dotenv(override=True)
+    if env_file:
+        if not os.path.isfile(env_file):
+            raise FileNotFoundError(f"Env file not found: {env_file}")
+        load_dotenv(env_file, override=True)
+    else:
+        load_dotenv(override=True)
 
     from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
 

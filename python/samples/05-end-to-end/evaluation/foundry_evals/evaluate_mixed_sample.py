@@ -13,7 +13,7 @@ in one call.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio
@@ -27,8 +27,7 @@ from agent_framework import (
     tool_called_check,
 )
 from agent_framework.foundry import FoundryChatClient, FoundryEvals
-from azure.ai.projects.aio import AIProjectClient
-from azure.identity.aio import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -46,15 +45,12 @@ def get_weather(location: str) -> str:
 
 
 async def main() -> None:
-    # 1. Set up the Azure AI project client
-    project_client = AIProjectClient(
-        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    # 1. Set up the chat client
+    chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
-
-    deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
-
-    chat_client = FoundryChatClient(project_client=project_client, model=deployment)
 
     # 2. Create an agent with a tool
     agent = Agent(
@@ -100,7 +96,7 @@ async def main() -> None:
     print("Pattern 2: Foundry evaluation only")
     print("=" * 60)
 
-    foundry = FoundryEvals(client=chat_client, model=deployment)
+    foundry = FoundryEvals(client=chat_client)
 
     results = await evaluate_agent(
         agent=agent,
@@ -132,7 +128,7 @@ async def main() -> None:
     )
 
     # Foundry: deep quality assessment
-    foundry = FoundryEvals(client=chat_client, model=deployment)
+    foundry = FoundryEvals(client=chat_client)
 
     # Pass both as a list — returns one EvalResults per provider
     results = await evaluate_agent(
