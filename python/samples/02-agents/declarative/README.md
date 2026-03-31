@@ -28,7 +28,7 @@ Demonstrates how to create an agent with custom function tools using the declara
 
 - Uses Azure OpenAI Responses client
 - Shows how to bind Python functions to the agent using the `bindings` parameter
-- Loads agent configuration from `agent-samples/chatclient/GetWeather.yaml`
+- Loads agent configuration from `declarative-agents/agent-samples/chatclient/GetWeather.yaml`
 - Implements a simple weather lookup function tool
 
 **Key concepts**: Function binding, Azure OpenAI integration, tool usage
@@ -39,7 +39,7 @@ Shows how to create an agent that can search and retrieve information from Micro
 
 - Uses Azure AI Foundry client with MCP server integration
 - Demonstrates async context managers for proper resource cleanup
-- Loads agent configuration from `agent-samples/foundry/MicrosoftLearnAgent.yaml`
+- Loads agent configuration from `declarative-agents/agent-samples/foundry/MicrosoftLearnAgent.yaml`
 - Uses Azure CLI credentials for authentication
 - Leverages MCP to access Microsoft documentation tools
 
@@ -63,7 +63,7 @@ Illustrates a basic agent using Azure OpenAI with structured responses.
 
 - Uses Azure OpenAI Responses client
 - Shows how to pass credentials via `client_kwargs`
-- Loads agent configuration from `agent-samples/azure/AzureOpenAIResponses.yaml`
+- Loads agent configuration from `declarative-agents/agent-samples/azure/AzureOpenAIResponses.yaml`
 - Demonstrates accessing structured response data
 
 **Key concepts**: Azure OpenAI integration, credential management, structured outputs
@@ -74,18 +74,18 @@ Demonstrates the simplest possible agent using OpenAI directly.
 
 - Uses OpenAI API (requires `OPENAI_API_KEY` environment variable)
 - Shows minimal configuration needed for basic agent creation
-- Loads agent configuration from `agent-samples/openai/OpenAIResponses.yaml`
+- Loads agent configuration from `declarative-agents/agent-samples/openai/OpenAIResponses.yaml`
 
 **Key concepts**: OpenAI integration, minimal setup, environment-based configuration
 
 ## Agent Samples Repository
 
-All the YAML configuration files referenced in these samples are located in the [`agent-samples`](../../../../agent-samples/) folder at the repository root. This folder contains declarative agent specifications organized by provider:
+All the YAML configuration files referenced in these samples are located in the [`declarative-agents/agent-samples`](../../../../declarative-agents/agent-samples/) folder at the repository root. This folder contains declarative agent specifications organized by provider:
 
-- **`agent-samples/azure/`** - Azure OpenAI agent configurations
-- **`agent-samples/chatclient/`** - Chat client agent configurations with tools
-- **`agent-samples/foundry/`** - Azure AI Foundry agent configurations
-- **`agent-samples/openai/`** - OpenAI agent configurations
+- **`declarative-agents/agent-samples/azure/`** - Azure OpenAI agent configurations
+- **`declarative-agents/agent-samples/chatclient/`** - Chat client agent configurations with tools
+- **`declarative-agents/agent-samples/foundry/`** - Azure AI Foundry agent configurations
+- **`declarative-agents/agent-samples/openai/`** - OpenAI agent configurations
 
 **Important**: These YAML files are **platform-agnostic** and work with both Python and .NET implementations of the Agent Framework. You can use the exact same YAML definition to create agents in either language, making it easy to share agent configurations across different technology stacks.
 
@@ -261,12 +261,12 @@ python openai_responses_agent.py
 ## Learn More
 
 - [Agent Framework Declarative Package](../../../packages/declarative/) - Main declarative package documentation
-- [Agent Samples](../../../../agent-samples/) - Additional declarative agent YAML specifications
+- [Agent Samples](../../../../declarative-agents/agent-samples/) - Additional declarative agent YAML specifications
 - [Agent Framework Core](../../../packages/core/) - Core agent framework documentation
 
 ## Next Steps
 
-1. Explore the YAML files in the `agent-samples` folder to understand the configuration format
+1. Explore the YAML files in the `declarative-agents/agent-samples` folder to understand the configuration format
 2. Try modifying the samples to use different models or instructions
 3. Create your own declarative agent configurations
 4. Build custom function tools and bind them to your agents

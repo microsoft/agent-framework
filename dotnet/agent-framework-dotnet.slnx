@@ -212,12 +212,12 @@
     <Project Path="samples/03-workflows/Declarative/ToolApproval/ToolApproval.csproj" />
   </Folder>
   <Folder Name="/Samples/03-workflows/Declarative/Examples/">
-    <File Path="../workflow-samples/CustomerSupport.yaml" />
-    <File Path="../workflow-samples/DeepResearch.yaml" />
-    <File Path="../workflow-samples/Marketing.yaml" />
-    <File Path="../workflow-samples/MathChat.yaml" />
-    <File Path="../workflow-samples/README.md" />
-    <File Path="../workflow-samples/wttr.json" />
+    <File Path="../declarative-agents/workflow-samples/CustomerSupport.yaml" />
+    <File Path="../declarative-agents/workflow-samples/DeepResearch.yaml" />
+    <File Path="../declarative-agents/workflow-samples/Marketing.yaml" />
+    <File Path="../declarative-agents/workflow-samples/MathChat.yaml" />
+    <File Path="../declarative-agents/workflow-samples/README.md" />
+    <File Path="../declarative-agents/workflow-samples/wttr.json" />
   </Folder>
   <Folder Name="/Samples/03-workflows/SharedStates/">
     <Project Path="samples/03-workflows/SharedStates/SharedStates.csproj" />
