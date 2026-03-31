@@ -2,8 +2,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.Logging;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Extensions.AI;
@@ -82,4 +84,34 @@ public static class ChatClientBuilderExtensions
             options: options,
             loggerFactory: loggerFactory,
             services: services);
+
+    /// <summary>
+    /// Adds a <see cref="ServiceStoredSimulatingChatClient"/> to the chat client pipeline.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This decorator should be positioned between the <see cref="FunctionInvokingChatClient"/> and the leaf
+    /// <see cref="IChatClient"/> in the pipeline. It simulates service-stored chat history behavior by
+    /// loading history before each service call, persisting after each call, and returning a sentinel
+    /// <see cref="ChatOptions.ConversationId"/> on the response.
+    /// </para>
+    /// <para>
+    /// This extension method is intended for use with custom chat client stacks when
+    /// <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="true"/>.
+    /// When <see cref="ChatClientAgentOptions.UseProvidedChatClientAsIs"/> is <see langword="false"/> (the default),
+    /// the <see cref="ChatClientAgent"/> automatically injects this decorator when
+    /// <see cref="ChatClientAgentOptions.SimulateServiceStoredChatHistory"/> is <see langword="true"/>.
+    /// </para>
+    /// <para>
+    /// This decorator only works within the context of a running <see cref="ChatClientAgent"/> and will throw an
+    /// exception if used in any other stack.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The <see cref="ChatClientBuilder"/> to add the decorator to.</param>
+    /// <returns>The <paramref name="builder"/> for chaining.</returns>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public static ChatClientBuilder UseServiceStoredChatHistorySimulation(this ChatClientBuilder builder)
+    {
+        return builder.Use(innerClient => new ServiceStoredSimulatingChatClient(innerClient));
+    }
 }

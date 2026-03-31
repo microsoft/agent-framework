@@ -17,10 +17,10 @@ var bingConnectionId = Environment.GetEnvironmentVariable("AZURE_AI_BING_CONNECT
 PersistentAgentsAdministrationClientOptions persistentAgentsClientOptions = new();
 persistentAgentsClientOptions.Retry.NetworkTimeout = TimeSpan.FromMinutes(20);
 
-// Get a client to create/retrieve server side agents with.
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+// Get a client to create/retrieve server side agents with.
 PersistentAgentsClient persistentAgentsClient = new(endpoint, new DefaultAzureCredential(), persistentAgentsClientOptions);
 
 // Define and configure the Deep Research tool.

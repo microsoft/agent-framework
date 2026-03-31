@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -11,8 +12,6 @@ from uuid import uuid4
 
 import pytest
 from agent_framework import (
-    Agent,
-    AgentResponse,
     Annotation,
     ChatOptions,
     ChatResponse,
@@ -24,7 +23,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._settings import load_settings
-from agent_framework.openai._responses_client import RawOpenAIResponsesClient
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
 from azure.ai.projects.models import (
     ApproximateLocation,
@@ -41,16 +40,23 @@ from azure.identity.aio import AzureCliCredential
 from openai.types.responses.parsed_response import ParsedResponse
 from openai.types.responses.response import Response as OpenAIResponse
 from pydantic import BaseModel, ConfigDict, Field
-from pytest import fixture, param
+from pytest import fixture
 
-from agent_framework_azure_ai import AzureAIClient, AzureAISettings
-from agent_framework_azure_ai._shared import from_azure_ai_tools
+from agent_framework_azure_ai import AzureAIClient, AzureAISettings  # noqa: E402
+from agent_framework_azure_ai._shared import from_azure_ai_tools  # noqa: E402
 
-skip_if_azure_ai_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("AZURE_AI_PROJECT_ENDPOINT", "") in ("", "https://test-project.cognitiveservices.azure.com/")
-    or os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "") == "",
-    reason="No real AZURE_AI_PROJECT_ENDPOINT or AZURE_AI_MODEL_DEPLOYMENT_NAME provided; skipping integration tests.",
+warnings.filterwarnings(
+    "ignore",
+    message=r"RawAzureAIClient is deprecated\..*",
+    category=DeprecationWarning,
 )
+warnings.filterwarnings(
+    "ignore",
+    message=r"AzureAIClient is deprecated\..*",
+    category=DeprecationWarning,
+)
+
+pytestmark = pytest.mark.filterwarnings("ignore:AzureAIClient is deprecated\\..*:DeprecationWarning")
 
 
 @pytest.fixture
@@ -415,7 +421,7 @@ async def test_prepare_options_basic(mock_project_client: MagicMock) -> None:
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -452,7 +458,7 @@ async def test_prepare_options_with_application_endpoint(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -494,7 +500,7 @@ async def test_prepare_options_with_application_project_client(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch.object(
@@ -510,19 +516,6 @@ async def test_prepare_options_with_application_project_client(
         assert run_options["extra_body"]["agent_reference"]["name"] == "test-agent"
     else:
         assert "extra_body" not in run_options
-
-
-async def test_initialize_client(mock_project_client: MagicMock) -> None:
-    """Test _initialize_client method."""
-    client = create_test_azure_ai_client(mock_project_client)
-
-    mock_openai_client = MagicMock()
-    mock_project_client.get_openai_client = MagicMock(return_value=mock_openai_client)
-
-    await client._initialize_client()
-
-    assert client.client is mock_openai_client
-    mock_project_client.get_openai_client.assert_called_once()
 
 
 def test_update_agent_name_and_description(mock_project_client: MagicMock) -> None:
@@ -827,14 +820,14 @@ async def test_runtime_tools_override_logs_warning(
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with patch(
-        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
         return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
     ):
         await client._prepare_options(messages, {})
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_two"}]},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -853,7 +846,7 @@ async def test_prepare_options_logs_warning_for_tools_with_existing_agent_versio
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -875,7 +868,7 @@ async def test_prepare_options_logs_warning_for_tools_on_application_endpoint(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model", "tools": [{"type": "function", "name": "tool_one"}]},
         ),
         patch.object(client, "_get_agent_reference_or_create", new_callable=AsyncMock) as mock_get_agent_reference,
@@ -1101,14 +1094,14 @@ async def test_runtime_structured_output_override_logs_warning(
     messages = [Message(role="user", contents=[Content.from_text(text="Hello")])]
 
     with patch(
-        "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+        "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
         return_value={"model": "test-model"},
     ):
         await client._prepare_options(messages, {"response_format": ResponseFormatModel})
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={"model": "test-model"},
         ),
         patch("agent_framework_azure_ai._client.logger.warning") as mock_warning,
@@ -1129,7 +1122,7 @@ async def test_prepare_options_excludes_response_format(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "response_format": ResponseFormatModel,
@@ -1164,7 +1157,7 @@ async def test_prepare_options_keeps_values_for_unsupported_option_keys(
 
     with (
         patch(
-            "agent_framework.openai._responses_client.RawOpenAIResponsesClient._prepare_options",
+            "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
             return_value={
                 "model": "test-model",
                 "tools": [{"type": "function", "name": "weather"}],
@@ -1363,352 +1356,6 @@ async def client() -> AsyncGenerator[AzureAIClient, None]:
             yield client
         finally:
             await project_client.agents.delete(agent_name=agent_name)
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-@pytest.mark.parametrize(
-    "option_name,option_value,needs_validation",
-    [
-        # Simple ChatOptions - just verify they don't fail
-        param("top_p", 0.9, False, id="top_p"),
-        param("max_tokens", 500, False, id="max_tokens"),
-        param("seed", 123, False, id="seed"),
-        param("user", "test-user-id", False, id="user"),
-        param("metadata", {"test_key": "test_value"}, False, id="metadata"),
-        param("frequency_penalty", 0.5, False, id="frequency_penalty"),
-        param("presence_penalty", 0.3, False, id="presence_penalty"),
-        param("stop", ["END"], False, id="stop"),
-        param("allow_multiple_tool_calls", True, False, id="allow_multiple_tool_calls"),
-        param("tool_choice", "none", True, id="tool_choice_none"),
-        param("tool_choice", "auto", True, id="tool_choice_auto"),
-        param("tool_choice", "required", True, id="tool_choice_required_any"),
-        param(
-            "tool_choice",
-            {"mode": "required", "required_function_name": "get_weather"},
-            True,
-            id="tool_choice_required",
-        ),
-        # OpenAIResponsesOptions - just verify they don't fail
-        param("safety_identifier", "user-hash-abc123", False, id="safety_identifier"),
-        param("truncation", "auto", False, id="truncation"),
-        param("top_logprobs", 5, False, id="top_logprobs"),
-        param("prompt_cache_key", "test-cache-key", False, id="prompt_cache_key"),
-        param("max_tool_calls", 3, False, id="max_tool_calls"),
-    ],
-)
-async def test_integration_options(
-    option_name: str,
-    option_value: Any,
-    needs_validation: bool,
-    client: AzureAIClient,
-) -> None:
-    """Parametrized test covering options that can be set at runtime for a Foundry Agent.
-
-    Tests both streaming and non-streaming modes for each option to ensure
-    they don't cause failures. Options marked with needs_validation also
-    check that the feature actually works correctly.
-
-    This test reuses a single agent.
-    """
-    # Prepare test message
-    if option_name.startswith("tool_choice"):
-        # Use weather-related prompt for tool tests
-        messages = [Message(role="user", text="What is the weather in Seattle?")]
-    else:
-        # Generic prompt for simple options
-        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
-
-    # Build options dict
-    options: dict[str, Any] = {option_name: option_value, "tools": [get_weather]}
-
-    for streaming in [False, True]:
-        if streaming:
-            # Test streaming mode
-            response_stream = client.get_response(
-                messages=messages,
-                stream=True,
-                options=options,
-            )
-
-            response = await response_stream.get_final_response()
-        else:
-            # Test non-streaming mode
-            response = await client.get_response(
-                messages=messages,
-                options=options,
-            )
-
-        assert response is not None
-        assert isinstance(response, ChatResponse)
-
-        # For tool_choice="required", we return after tool execution without a model text response
-        is_required_tool_choice = option_name == "tool_choice" and (
-            option_value == "required" or (isinstance(option_value, dict) and option_value.get("mode") == "required")
-        )
-
-        if is_required_tool_choice:
-            # Response should have function call and function result, but no text from model
-            assert len(response.messages) >= 2, f"Expected function call + result for {option_name}"
-            has_function_call = any(c.type == "function_call" for msg in response.messages for c in msg.contents)
-            has_function_result = any(c.type == "function_result" for msg in response.messages for c in msg.contents)
-            assert has_function_call, f"No function call in response for {option_name}"
-            assert has_function_result, f"No function result in response for {option_name}"
-        else:
-            assert response.text is not None, f"No text in response for option '{option_name}'"
-            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
-
-        # Validate based on option type
-        if needs_validation:
-            if option_name.startswith("tool_choice") and not is_required_tool_choice:
-                # Should have called the weather function
-                text = response.text.lower()
-                assert "sunny" in text or "seattle" in text, f"Tool not invoked for {option_name}"
-            elif option_name == "response_format":
-                if option_value == OutputStruct:
-                    # Should have structured output
-                    assert response.value is not None, "No structured output"
-                    assert isinstance(response.value, OutputStruct)
-                    assert "seattle" in response.value.location.lower()
-                else:
-                    # Runtime JSON schema
-                    assert response.value is None, "No structured output, can't parse any json."
-                    response_value = json.loads(response.text)
-                    assert isinstance(response_value, dict)
-                    assert "location" in response_value
-                    assert "seattle" in response_value["location"].lower()
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-@pytest.mark.parametrize(
-    "option_name,option_value,needs_validation",
-    [
-        param("temperature", 0.7, False, id="temperature"),
-        # Complex options requiring output validation
-        param("response_format", OutputStruct, True, id="response_format_pydantic"),
-        param(
-            "response_format",
-            {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "WeatherDigest",
-                    "strict": True,
-                    "schema": {
-                        "title": "WeatherDigest",
-                        "type": "object",
-                        "properties": {
-                            "location": {"type": "string"},
-                            "conditions": {"type": "string"},
-                            "temperature_c": {"type": "number"},
-                            "advisory": {"type": "string"},
-                        },
-                        "required": ["location", "conditions", "temperature_c", "advisory"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            True,
-            id="response_format_runtime_json_schema",
-        ),
-    ],
-)
-async def test_integration_agent_options(
-    option_name: str,
-    option_value: Any,
-    needs_validation: bool,
-) -> None:
-    """Test Foundry agent level options in both streaming and non-streaming modes.
-
-    Tests both streaming and non-streaming modes for each option to ensure
-    they don't cause failures. Options marked with needs_validation also
-    check that the feature actually works correctly.
-
-    This test create a new client and uses it for both streaming and non-streaming tests.
-    """
-    async with temporary_chat_client(agent_name=f"test-agent-{option_name.replace('_', '-')}-{uuid4()}") as client:
-        for streaming in [False, True]:
-            # Prepare test message
-            if option_name.startswith("response_format"):
-                # Use prompt that works well with structured output
-                messages = [Message(role="user", text="The weather in Seattle is sunny")]
-                messages.append(Message(role="user", text="What is the weather in Seattle?"))
-            else:
-                # Generic prompt for simple options
-                messages = [Message(role="user", text="Say 'Hello World' briefly.")]
-
-            # Build options dict
-            options = {option_name: option_value}
-
-            if streaming:
-                # Test streaming mode
-                response_stream = client.get_response(
-                    messages=messages,
-                    stream=True,
-                    options=options,
-                )
-
-                response = await response_stream.get_final_response()
-            else:
-                # Test non-streaming mode
-                response = await client.get_response(
-                    messages=messages,
-                    options=options,
-                )
-
-            assert response is not None
-            assert isinstance(response, ChatResponse)
-            assert response.text is not None, f"No text in response for option '{option_name}'"
-            assert len(response.text) > 0, f"Empty response for option '{option_name}'"
-
-            # Validate based on option type
-            if needs_validation and option_name.startswith("response_format"):
-                if option_value == OutputStruct:
-                    # Should have structured output
-                    assert response.value is not None, "No structured output"
-                    assert isinstance(response.value, OutputStruct)
-                    assert "seattle" in response.value.location.lower()
-                else:
-                    # Runtime JSON schema
-                    assert response.value is None, "No structured output, can't parse any json."
-                    response_value = json.loads(response.text)
-                    assert isinstance(response_value, dict)
-                    assert "location" in response_value
-                    assert "seattle" in response_value["location"].lower()
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_web_search() -> None:
-    async with temporary_chat_client(agent_name="af-int-test-web-search") as client:
-        for streaming in [False, True]:
-            content = {
-                "messages": [
-                    Message(
-                        role="user",
-                        text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
-                    )
-                ],
-                "options": {
-                    "tool_choice": "auto",
-                    "tools": [client.get_web_search_tool()],
-                },
-            }
-            if streaming:
-                response = await client.get_response(stream=True, **content).get_final_response()
-            else:
-                response = await client.get_response(**content)
-
-            assert response is not None
-            assert isinstance(response, ChatResponse)
-            assert "Rumi" in response.text
-            assert "Mira" in response.text
-            assert "Zoey" in response.text
-
-            # Test that the client will use the web search tool with location
-            content = {
-                "messages": [
-                    Message(role="user", text="What is the current weather? Do not ask for my current location.")
-                ],
-                "options": {
-                    "tool_choice": "auto",
-                    "tools": [client.get_web_search_tool(user_location={"country": "US", "city": "Seattle"})],
-                },
-            }
-            if streaming:
-                response = await client.get_response(stream=True, **content).get_final_response()
-            else:
-                response = await client.get_response(**content)
-            assert response.text is not None
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_agent_hosted_mcp_tool() -> None:
-    """Integration test for MCP tool with Azure Response Agent using Microsoft Learn MCP."""
-    async with temporary_chat_client(agent_name="af-int-test-mcp") as client:
-        response = await client.get_response(
-            messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
-            options={
-                # this needs to be high enough to handle the full MCP tool response.
-                "max_tokens": 5000,
-                "tools": client.get_mcp_tool(
-                    name="Microsoft Learn MCP",
-                    url="https://learn.microsoft.com/api/mcp",
-                    description="A Microsoft Learn MCP server for documentation questions",
-                    approval_mode="never_require",
-                ),
-            },
-        )
-        assert isinstance(response, ChatResponse)
-        assert response.text
-        # Should contain Azure-related content since it's asking about Azure CLI
-        assert any(term in response.text.lower() for term in ["azure", "storage", "account", "cli"])
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_agent_hosted_code_interpreter_tool():
-    """Test Azure Responses Client agent with code interpreter tool through AzureAIClient."""
-    async with temporary_chat_client(agent_name="af-int-test-code-interpreter") as client:
-        response = await client.get_response(
-            messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
-            options={
-                "tools": [client.get_code_interpreter_tool()],
-            },
-        )
-        # Should contain calculation result (sum of 1-10 = 55) or code execution content
-        contains_relevant_content = any(
-            term in response.text.lower() for term in ["55", "sum", "code", "python", "calculate", "10"]
-        )
-        assert contains_relevant_content or len(response.text.strip()) > 10
-
-
-@pytest.mark.flaky
-@pytest.mark.integration
-@skip_if_azure_ai_integration_tests_disabled
-async def test_integration_agent_existing_session():
-    """Test Azure Responses Client agent with existing session to continue conversations across agent instances."""
-    # First conversation - capture the session
-    preserved_session = None
-
-    async with (
-        temporary_chat_client(agent_name="af-int-test-existing-session") as client,
-        Agent(
-            client=client,
-            instructions="You are a helpful assistant with good memory.",
-        ) as first_agent,
-    ):
-        # Start a conversation and capture the session
-        session = first_agent.create_session()
-        first_response = await first_agent.run("My hobby is photography. Remember this.", session=session, store=True)
-
-        assert isinstance(first_response, AgentResponse)
-        assert first_response.text is not None
-
-        # Preserve the session for reuse
-        preserved_session = session
-
-    # Second conversation - reuse the session in a new agent instance
-    if preserved_session:
-        async with (
-            temporary_chat_client(agent_name="af-int-test-existing-session-2") as client,
-            Agent(
-                client=client,
-                instructions="You are a helpful assistant with good memory.",
-            ) as second_agent,
-        ):
-            # Reuse the preserved session
-            second_response = await second_agent.run("What is my hobby?", session=preserved_session)
-
-            assert isinstance(second_response, AgentResponse)
-            assert second_response.text is not None
-            assert "photography" in second_response.text.lower()
 
 
 # region Factory Method Tests
@@ -2031,7 +1678,7 @@ async def test_inner_get_response_enriches_non_streaming(mock_project_client: Ma
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
@@ -2054,7 +1701,7 @@ async def test_inner_get_response_no_search_output_non_streaming(mock_project_cl
     async def _fake_awaitable() -> ChatResponse:
         return base_response
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=_fake_awaitable()):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=_fake_awaitable()):
         result_awaitable = client._inner_get_response(messages=[], options={}, stream=False)
         result = await result_awaitable  # type: ignore[misc]
 
@@ -2075,7 +1722,7 @@ def test_inner_get_response_streaming_registers_hook(mock_project_client: MagicM
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         result = client._inner_get_response(messages=[], options={}, stream=True)
 
     assert result is mock_stream
@@ -2088,7 +1735,7 @@ def test_streaming_hook_captures_search_urls(mock_project_client: MagicMock) -> 
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]
@@ -2116,7 +1763,7 @@ def test_streaming_hook_enriches_url_citation(mock_project_client: MagicMock) ->
 
     mock_stream = _create_mock_stream()
 
-    with patch.object(RawOpenAIResponsesClient, "_inner_get_response", return_value=mock_stream):
+    with patch.object(RawOpenAIChatClient, "_inner_get_response", return_value=mock_stream):
         client._inner_get_response(messages=[], options={}, stream=True)
 
     hook = mock_stream._transform_hooks[0]

@@ -3,7 +3,7 @@
 import asyncio
 
 from agent_framework import Message
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -23,10 +23,10 @@ async def main() -> None:
     Creates a task for the chat request, waits briefly, then cancels it to show proper cleanup.
 
     Configuration:
-    - OpenAI model ID: Use "model_id" parameter or "OPENAI_CHAT_MODEL_ID" environment variable
+    - OpenAI model ID: Use "model_id" parameter or "OPENAI_MODEL" environment variable
     - OpenAI API key: Use "api_key" parameter or "OPENAI_API_KEY" environment variable
     """
-    client = OpenAIChatClient()
+    client = FoundryChatClient()
 
     try:
         task = asyncio.create_task(

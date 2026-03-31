@@ -7,6 +7,9 @@ namespace Microsoft.Agents.AI;
 
 internal static class RequestOptionsExtensions
 {
+    /// <summary>Gets the singleton <see cref="PipelinePolicy"/> that adds a MEAI user-agent header.</summary>
+    internal static PipelinePolicy UserAgentPolicy => MeaiUserAgentPolicy.Instance;
+
     /// <summary>Creates a <see cref="RequestOptions"/> configured for use with Foundry Agents.</summary>
     public static RequestOptions ToRequestOptions(this CancellationToken cancellationToken, bool streaming)
     {

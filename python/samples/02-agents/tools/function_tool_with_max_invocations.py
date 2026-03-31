@@ -3,7 +3,7 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.openai import OpenAIResponsesClient
 from dotenv import load_dotenv
 
@@ -24,7 +24,8 @@ def unicorn_function(times: Annotated[int, "The number of unicorns to return."])
 
 async def main():
     # tools = Tools()
-    agent = OpenAIResponsesClient().as_agent(
+    agent = Agent(
+        client=OpenAIResponsesClient(),
         name="ToolAgent",
         instructions="Use the provided tools.",
         tools=[unicorn_function],

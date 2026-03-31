@@ -1,7 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 
 namespace Microsoft.Agents.AI;
 
@@ -90,6 +92,48 @@ public sealed class ChatClientAgentOptions
     public bool ThrowOnChatHistoryProviderConflict { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the <see cref="ChatClientAgent"/> should simulate
+    /// service-stored chat history behavior using its configured <see cref="ChatHistoryProvider"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set to <see langword="true"/>, a <see cref="ServiceStoredSimulatingChatClient"/> decorator is
+    /// injected between the <see cref="FunctionInvokingChatClient"/> and the leaf <see cref="IChatClient"/>
+    /// in the chat client pipeline. This decorator takes full ownership of the chat history lifecycle:
+    /// it loads history from the <see cref="ChatHistoryProvider"/> before each service call and persists
+    /// new messages after each service call. It also returns a sentinel <see cref="ChatOptions.ConversationId"/>
+    /// on the response, causing the <see cref="FunctionInvokingChatClient"/> to treat the conversation
+    /// as service-managed — clearing accumulated history and not injecting duplicate
+    /// <see cref="FunctionCallContent"/> during approval-response processing.
+    /// </para>
+    /// <para>
+    /// This mode aligns the behavior of framework-managed chat history with service-stored chat history,
+    /// ensuring consistency in how messages are stored and loaded, including during function calling loops
+    /// and tool-call termination scenarios.
+    /// </para>
+    /// <para>
+    /// When set to <see langword="false"/> (the default), the <see cref="ChatClientAgent"/> handles
+    /// chat history persistence at the end of the full agent run via the <see cref="ChatHistoryProvider"/>
+    /// pipeline.
+    /// </para>
+    /// <para>
+    /// When setting the <see cref="UseProvidedChatClientAsIs"/> setting to <see langword="true"/> and
+    /// <see cref="SimulateServiceStoredChatHistory"/> to <see langword="true"/>, ensure that your custom chat client stack includes a
+    /// <see cref="ServiceStoredSimulatingChatClient"/> to enable per-service-call persistence.
+    /// If no <see cref="ServiceStoredSimulatingChatClient"/> is provided, and you are not storing chat history via other means,
+    /// no chat history may be stored.
+    /// When using a custom chat client stack, you can add a <see cref="ServiceStoredSimulatingChatClient"/>
+    /// manually via the <see cref="ChatClientBuilderExtensions.UseServiceStoredChatHistorySimulation"/>
+    /// extension method.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool SimulateServiceStoredChatHistory { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -105,5 +149,6 @@ public sealed class ChatClientAgentOptions
             ClearOnChatHistoryProviderConflict = this.ClearOnChatHistoryProviderConflict,
             WarnOnChatHistoryProviderConflict = this.WarnOnChatHistoryProviderConflict,
             ThrowOnChatHistoryProviderConflict = this.ThrowOnChatHistoryProviderConflict,
+            SimulateServiceStoredChatHistory = this.SimulateServiceStoredChatHistory,
         };
 }

@@ -24,14 +24,14 @@ If you only need specific integrations, you can install at a more granular level
 # also includes workflows and orchestrations
 pip install agent-framework-core --pre
 
-# Core + Azure AI integration
-pip install agent-framework-azure-ai --pre
+# Core + Azure AI Foundry integration
+pip install agent-framework-foundry --pre
 
 # Core + Microsoft Copilot Studio integration
 pip install agent-framework-copilotstudio --pre
 
-# Core + both Microsoft Copilot Studio and Azure AI integration
-pip install agent-framework-microsoft agent-framework-azure-ai --pre
+# Core + both Microsoft Copilot Studio and Azure AI Foundry integration
+pip install agent-framework-microsoft agent-framework-foundry --pre
 ```
 
 This selective approach is useful when you know which integrations you need, and it is the recommended way to set up lightweight environments.
@@ -47,25 +47,35 @@ Set as environment variables, or create a .env file at your project root:
 
 ```bash
 OPENAI_API_KEY=sk-...
-OPENAI_CHAT_MODEL_ID=...
+OPENAI_MODEL=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
 AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
 ...
-AZURE_AI_PROJECT_ENDPOINT=...
-AZURE_AI_MODEL_DEPLOYMENT_NAME=...
+FOUNDRY_PROJECT_ENDPOINT=...
+FOUNDRY_MODEL=...
 ```
+
+For the generic OpenAI clients (`OpenAIChatClient` and `OpenAIChatCompletionClient`), configuration
+resolves in this order:
+
+1. Explicit Azure inputs such as `credential` or `azure_endpoint`
+2. `OPENAI_API_KEY` / explicit OpenAI API-key parameters
+3. Azure environment fallback such as `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+
+This means mixed shells default to OpenAI when `OPENAI_API_KEY` is present. To force Azure routing,
+pass an explicit Azure input such as `credential=AzureCliCredential()`.
 
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
 
 ```python
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
-client = AzureOpenAIChatClient(
+client = OpenAIChatClient(
     api_key='',
-    endpoint='',
-    deployment_name='',
+    azure_endpoint='',
+    model='',
     api_version='',
 )
 ```

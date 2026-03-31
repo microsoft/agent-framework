@@ -15,7 +15,7 @@ from agent_framework import (
     WorkflowEvent,
     WorkflowRunState,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import MagenticBuilder, MagenticPlanReviewRequest
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -39,8 +39,8 @@ Concepts highlighted here:
    `responses` mapping so we can inject the stored human reply during restoration.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- Azure OpenAI configured for FoundryChatClient with required environment variables.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
@@ -64,9 +64,9 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="ResearcherAgent",
         description="Collects background facts and references for the project.",
         instructions=("You are the research lead. Gather crisp bullet points the team should know."),
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
@@ -75,9 +75,9 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="WriterAgent",
         description="Synthesizes the final brief for stakeholders.",
         instructions=("You convert the research notes into a structured brief with milestones and risks."),
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )
@@ -87,9 +87,9 @@ def build_workflow(checkpoint_storage: FileCheckpointStorage):
         name="MagenticManager",
         description="Orchestrator that coordinates the research and writing workflow",
         instructions="You coordinate a team to complete complex tasks efficiently.",
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
             credential=AzureCliCredential(),
         ),
     )

@@ -1,67 +1,63 @@
-# OpenAI Agent Framework Examples
+# OpenAI Provider Samples
 
-This folder contains examples demonstrating different ways to create and use agents with the OpenAI clients from the `agent_framework.openai` package.
+This folder contains OpenAI provider samples for the generic clients in
+`agent_framework.openai`.
 
-## Examples
+## Chat Completions API samples (`OpenAIChatCompletionClient`)
 
 | File | Description |
 |------|-------------|
-| [`openai_assistants_basic.py`](openai_assistants_basic.py) | Basic usage of `OpenAIAssistantProvider` with streaming and non-streaming responses. |
-| [`openai_assistants_provider_methods.py`](openai_assistants_provider_methods.py) | Demonstrates all `OpenAIAssistantProvider` methods: `create_agent()`, `get_agent()`, and `as_agent()`. |
-| [`openai_assistants_with_code_interpreter.py`](openai_assistants_with_code_interpreter.py) | Using `OpenAIAssistantsClient.get_code_interpreter_tool()` with `OpenAIAssistantProvider` to execute Python code. |
-| [`openai_assistants_with_existing_assistant.py`](openai_assistants_with_existing_assistant.py) | Working with pre-existing assistants using `get_agent()` and `as_agent()` methods. |
-| [`openai_assistants_with_explicit_settings.py`](openai_assistants_with_explicit_settings.py) | Configuring `OpenAIAssistantProvider` with explicit settings including API key and model ID. |
-| [`openai_assistants_with_file_search.py`](openai_assistants_with_file_search.py) | Using `OpenAIAssistantsClient.get_file_search_tool()` with `OpenAIAssistantProvider` for file search capabilities. |
-| [`openai_assistants_with_function_tools.py`](openai_assistants_with_function_tools.py) | Function tools with `OpenAIAssistantProvider` at both agent-level and query-level. |
-| [`openai_assistants_with_response_format.py`](openai_assistants_with_response_format.py) | Structured outputs with `OpenAIAssistantProvider` using Pydantic models. |
-| [`openai_assistants_with_session.py`](openai_assistants_with_session.py) | Session management with `OpenAIAssistantProvider` for conversation context persistence. |
-| [`openai_chat_client_basic.py`](openai_chat_client_basic.py) | The simplest way to create an agent using `Agent` with `OpenAIChatClient`. Shows both streaming and non-streaming responses for chat-based interactions with OpenAI models. |
-| [`openai_chat_client_with_explicit_settings.py`](openai_chat_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific chat client, configuring settings explicitly including API key and model ID. |
-| [`openai_chat_client_with_function_tools.py`](openai_chat_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and query-level tools (provided with specific queries). |
-| [`openai_chat_client_with_local_mcp.py`](openai_chat_client_with_local_mcp.py) | Shows how to integrate OpenAI agents with local Model Context Protocol (MCP) servers for enhanced functionality and tool integration. |
-| [`openai_chat_client_with_session.py`](openai_chat_client_with_session.py) | Demonstrates session management with OpenAI agents, including automatic session creation for stateless conversations and explicit session management for maintaining conversation context across multiple interactions. |
-| [`openai_chat_client_with_web_search.py`](openai_chat_client_with_web_search.py) | Shows how to use `OpenAIChatClient.get_web_search_tool()` for web search capabilities with OpenAI agents. |
-| [`openai_chat_client_with_runtime_json_schema.py`](openai_chat_client_with_runtime_json_schema.py) | Shows how to supply a runtime JSON Schema via `additional_chat_options` for structured output without defining a Pydantic model. |
-| [`openai_responses_client_basic.py`](openai_responses_client_basic.py) | The simplest way to create an agent using `Agent` with `OpenAIResponsesClient`. Shows both streaming and non-streaming responses for structured response generation with OpenAI models. |
-| [`openai_responses_client_image_analysis.py`](openai_responses_client_image_analysis.py) | Demonstrates how to use vision capabilities with agents to analyze images. |
-| [`openai_responses_client_image_generation.py`](openai_responses_client_image_generation.py) | Demonstrates how to use `OpenAIResponsesClient.get_image_generation_tool()` to create images based on text descriptions. |
-| [`openai_responses_client_reasoning.py`](openai_responses_client_reasoning.py) | Demonstrates how to use reasoning capabilities with OpenAI agents, showing how the agent can provide detailed reasoning for its responses. |
-| [`openai_responses_client_streaming_image_generation.py`](openai_responses_client_streaming_image_generation.py) | Demonstrates streaming image generation with partial images for real-time image creation feedback and improved user experience. |
-| [`openai_responses_client_with_agent_as_tool.py`](openai_responses_client_with_agent_as_tool.py) | Shows how to use the agent-as-tool pattern with OpenAI Responses Client, where one agent delegates work to specialized sub-agents wrapped as tools using `as_tool()`. Demonstrates hierarchical agent architectures. |
-| [`openai_responses_client_with_code_interpreter.py`](openai_responses_client_with_code_interpreter.py) | Shows how to use `OpenAIResponsesClient.get_code_interpreter_tool()` to write and execute Python code. |
-| [`openai_responses_client_with_code_interpreter_files.py`](openai_responses_client_with_code_interpreter_files.py) | Shows how to use code interpreter with uploaded files for data analysis. |
-| [`openai_responses_client_with_explicit_settings.py`](openai_responses_client_with_explicit_settings.py) | Shows how to initialize an agent with a specific responses client, configuring settings explicitly including API key and model ID. |
-| [`openai_responses_client_with_file_search.py`](openai_responses_client_with_file_search.py) | Demonstrates how to use `OpenAIResponsesClient.get_file_search_tool()` for searching through uploaded files. |
-| [`openai_responses_client_with_function_tools.py`](openai_responses_client_with_function_tools.py) | Demonstrates how to use function tools with agents. Shows both agent-level tools (defined when creating the agent) and run-level tools (provided with specific queries). |
-| [`openai_responses_client_with_hosted_mcp.py`](openai_responses_client_with_hosted_mcp.py) | Shows how to use `OpenAIResponsesClient.get_mcp_tool()` for hosted MCP servers, including approval workflows. |
-| [`openai_responses_client_with_local_mcp.py`](openai_responses_client_with_local_mcp.py) | Shows how to integrate OpenAI agents with local Model Context Protocol (MCP) servers for enhanced functionality and tool integration. |
-| [`openai_responses_client_with_runtime_json_schema.py`](openai_responses_client_with_runtime_json_schema.py) | Shows how to supply a runtime JSON Schema via `additional_chat_options` for structured output without defining a Pydantic model. |
-| [`openai_responses_client_with_structured_output.py`](openai_responses_client_with_structured_output.py) | Demonstrates how to use structured outputs with OpenAI agents to get structured data responses in predefined formats. |
-| [`openai_responses_client_with_session.py`](openai_responses_client_with_session.py) | Demonstrates session management with OpenAI agents, including automatic session creation for stateless conversations and explicit session management for maintaining conversation context across multiple interactions. |
-| [`openai_responses_client_with_web_search.py`](openai_responses_client_with_web_search.py) | Shows how to use `OpenAIResponsesClient.get_web_search_tool()` for web search capabilities. |
+| [`chat_completion_client_basic.py`](chat_completion_client_basic.py) | Basic non-streaming and streaming chat completion sample with an explicit `gpt-5.4-nano` model and API key. |
+| [`chat_completion_client_with_explicit_settings.py`](chat_completion_client_with_explicit_settings.py) | Chat completion sample with explicit model and API key settings. |
+| [`chat_completion_client_with_function_tools.py`](chat_completion_client_with_function_tools.py) | Function tools with agent-level and run-level patterns. |
+| [`chat_completion_client_with_local_mcp.py`](chat_completion_client_with_local_mcp.py) | Local MCP integration with the chat completions client. |
+| [`chat_completion_client_with_runtime_json_schema.py`](chat_completion_client_with_runtime_json_schema.py) | Runtime JSON schema output with the chat completions client. |
+| [`chat_completion_client_with_session.py`](chat_completion_client_with_session.py) | Session management with the chat completions client. |
+| [`chat_completion_client_with_web_search.py`](chat_completion_client_with_web_search.py) | Web search with the chat completions client. |
+
+## Responses API samples (`OpenAIChatClient`)
+
+| File | Description |
+|------|-------------|
+| [`client_basic.py`](client_basic.py) | Basic non-streaming and streaming responses sample with an explicit `gpt-5.4-nano` model and API key. |
+| [`client_image_analysis.py`](client_image_analysis.py) | Analyze images with the responses client. |
+| [`client_image_generation.py`](client_image_generation.py) | Generate images from text prompts. |
+| [`client_reasoning.py`](client_reasoning.py) | Reasoning-focused sample for models such as `gpt-5`. |
+| [`client_streaming_image_generation.py`](client_streaming_image_generation.py) | Streaming image generation sample. |
+| [`client_with_agent_as_tool.py`](client_with_agent_as_tool.py) | Agent-as-tool orchestration pattern. |
+| [`client_with_code_interpreter.py`](client_with_code_interpreter.py) | Code interpreter sample. |
+| [`client_with_code_interpreter_files.py`](client_with_code_interpreter_files.py) | Code interpreter sample with uploaded files. |
+| [`client_with_explicit_settings.py`](client_with_explicit_settings.py) | Responses client with explicit model and API key settings. |
+| [`client_with_file_search.py`](client_with_file_search.py) | Hosted file search sample. |
+| [`client_with_function_tools.py`](client_with_function_tools.py) | Function tools with agent-level and run-level patterns. |
+| [`client_with_hosted_mcp.py`](client_with_hosted_mcp.py) | Hosted MCP tools and approval workflows. |
+| [`client_with_local_mcp.py`](client_with_local_mcp.py) | Local MCP integration with the responses client. |
+| [`client_with_local_shell.py`](client_with_local_shell.py) | Local shell tool sample. |
+| [`client_with_runtime_json_schema.py`](client_with_runtime_json_schema.py) | Runtime JSON schema output with the responses client. |
+| [`client_with_session.py`](client_with_session.py) | Session management with the responses client. |
+| [`client_with_shell.py`](client_with_shell.py) | Hosted shell tool sample. |
+| [`client_with_structured_output.py`](client_with_structured_output.py) | Structured output with Pydantic models. |
+| [`client_with_web_search.py`](client_with_web_search.py) | Web search with the responses client. |
 
 ## Environment Variables
 
-Make sure to set the following environment variables before running the examples:
+Set these before running the OpenAI provider samples:
 
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_CHAT_MODEL_ID`: The OpenAI model to use (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
-- `OPENAI_RESPONSES_MODEL_ID`: The OpenAI model to use (e.g., `gpt-4o`, `gpt-4o-mini`, `gpt-3.5-turbo`)
-- For image processing examples, use a vision-capable model like `gpt-4o` or `gpt-4o-mini`
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
 
-Optionally, you can set:
-- `OPENAI_ORG_ID`: Your OpenAI organization ID (if applicable)
-- `OPENAI_API_BASE_URL`: Your OpenAI base URL (if using a different base URL)
+Optionally, you can also set:
+
+- `OPENAI_ORG_ID`
+- `OPENAI_BASE_URL`
+
+If your shell also contains `AZURE_OPENAI_*` variables, these samples still stay on OpenAI as long as
+`OPENAI_API_KEY` is present. To force Azure routing with the generic clients, pass an explicit Azure
+input such as `credential`, `azure_endpoint`, or `api_version`, or use the Azure provider samples.
 
 ## Optional Dependencies
 
-Some examples require additional dependencies:
+Some samples need extra packages:
 
-- **Image Generation Example**: The `openai_responses_client_image_generation.py` example requires PIL (Pillow) for image display. Install with:
-  ```bash
-  # Using uv
-  uv add pillow
-
-  # Or using pip
-  pip install pillow
-  ```
+- `client_image_generation.py` and `client_streaming_image_generation.py` use Pillow for image display.
+- MCP samples require the relevant MCP server/tooling you configure locally.

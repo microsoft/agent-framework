@@ -12,7 +12,7 @@ from agent_framework import (
     WorkflowAgent,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -29,9 +29,9 @@ A handoff workflow defines a pattern that assembles agents in a mesh topology, a
 them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-    - AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
     - `az login` (Azure CLI authentication)
-    - Environment variables configured for AzureOpenAIResponsesClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
+    - Environment variables configured for FoundryChatClient (AZURE_AI_MODEL_DEPLOYMENT_NAME)
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -63,17 +63,18 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Agent, Agent]:
+def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        client: The AzureOpenAIResponsesClient to use for creating agents.
+        client: The FoundryChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = client.as_agent(
+    triage_agent = Agent(
+        client=client,
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -82,7 +83,8 @@ def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Age
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = client.as_agent(
+    refund_agent = Agent(
+        client=client,
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -90,7 +92,8 @@ def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Age
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = client.as_agent(
+    order_agent = Agent(
+        client=client,
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -98,7 +101,8 @@ def create_agents(client: AzureOpenAIResponsesClient) -> tuple[Agent, Agent, Age
     )
 
     # Return specialist: Handles return requests
-    return_agent = client.as_agent(
+    return_agent = Agent(
+        client=client,
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -153,9 +157,9 @@ async def main() -> None:
     replace the scripted_responses with actual user input collection.
     """
     # Initialize the Azure OpenAI chat client
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
         credential=AzureCliCredential(),
     )
 
@@ -170,20 +174,21 @@ async def main() -> None:
     #   Without this, the default behavior continues requesting user input until max_turns
     #   is reached. Here we use a custom condition that checks if the conversation has ended
     #   naturally (when one of the agents says something like "you're welcome").
-    agent = (
-        HandoffBuilder(
-            name="customer_support_handoff",
-            participants=[triage, refund, order, support],
-            # Custom termination: Check if one of the agents has provided a closing message.
-            # This looks for the last message containing "welcome", which indicates the
-            # conversation has concluded naturally.
-            termination_condition=lambda conversation: (
-                len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
-            ),
-        )
-        .with_start_agent(triage)
-        .build()
-        .as_agent()  # Convert workflow to agent interface
+    agent = Agent(
+        client=(
+            HandoffBuilder(
+                name="customer_support_handoff",
+                participants=[triage, refund, order, support],
+                # Custom termination: Check if one of the agents has provided a closing message.
+                # This looks for the last message containing "welcome", which indicates the
+                # conversation has concluded naturally.
+                termination_condition=lambda conversation: (
+                    len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+                ),
+            )
+            .with_start_agent(triage)
+            .build()
+        ),
     )
 
     # Scripted user responses for reproducible demo
