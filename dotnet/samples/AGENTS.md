@@ -74,14 +74,13 @@ dotnet/samples/
 
 ## Default provider
 
-All canonical samples (01-get-started) use **Azure OpenAI** via `AzureOpenAIClient`
+All canonical samples (01-get-started) use **Azure AI Projects** via `AIProjectClient`
 with `DefaultAzureCredential`:
 
 ```csharp
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -90,9 +89,8 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(instructions: "...", name: "...");
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: deploymentName, instructions: "...", name: "...");
 ```
 
 Environment variables:
@@ -122,9 +120,9 @@ dotnet run
 
 ## Current API notes
 
-- `AIAgent` is the primary agent abstraction (created via `ChatClient.AsAIAgent(...)`)
+- `AIAgent` is the primary agent abstraction (created via `AIProjectClient.AsAIAgent(...)`)
 - `AgentSession` manages multi-turn conversation state
 - `AIContextProvider` injects memory and context
-- Prefer `client.GetChatClient(deployment).AsAIAgent(...)` extension method pattern
+- Prefer `client.AsAIAgent(model: deployment, ...)` extension method pattern
 - Azure Functions hosting uses `ConfigureDurableAgents(options => options.AddAIAgent(agent))`
 - Workflows use `WorkflowBuilder` with `Executor<TIn, TOut>` and edge connections
