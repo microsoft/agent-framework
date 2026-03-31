@@ -20,4 +20,4 @@ Neo4j offers two context providers for the Agent Framework, each serving a diffe
 
 - [Neo4j GraphRAG Provider Repository](https://github.com/neo4j-labs/neo4j-maf-provider)
 - [Neo4j Agent Memory Repository](https://github.com/neo4j-labs/agent-memory)
-- [Python Neo4j Context Provider Samples](../../../python/samples/02-agents/context_providers/neo4j/README.md)
+- [Python Neo4j Context Provider Samples](../../../../python/samples/02-agents/context_providers/neo4j/README.md)

@@ -45,10 +45,13 @@ $env:AZURE_AI_EMBEDDING_NAME="text-embedding-3-small"  # Embedding model deploym
 ```csharp
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using Neo4j.AgentFramework.GraphRAG;
+using Neo4j.Driver;
 
-var neo4jSettings = Neo4jSettings.FromEnvironment();
+var neo4jSettings = new Neo4jSettings();
 
 var azureClient = new AzureOpenAIClient(
     new Uri(Environment.GetEnvironmentVariable("AZURE_AI_SERVICES_ENDPOINT")!),
@@ -58,8 +61,11 @@ var embeddingGenerator = azureClient
     .GetEmbeddingClient(Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_NAME"))
     .AsIEmbeddingGenerator();
 
-var provider = new Neo4jContextProvider(
-    neo4jSettings,
+await using var driver = GraphDatabase.Driver(
+    neo4jSettings.Uri!, AuthTokens.Basic(neo4jSettings.Username!, neo4jSettings.Password!));
+
+await using var provider = new Neo4jContextProvider(
+    driver,
     new Neo4jContextProviderOptions
     {
         IndexName = "chunkEmbeddings",
@@ -82,19 +88,22 @@ var agent = chatClient
     .UseAIContextProviders(provider)
     .BuildAIAgent(new ChatClientAgentOptions
     {
-        Instructions = "You are a financial analyst assistant.",
+        ChatOptions = new ChatOptions
+        {
+            Instructions = "You are a financial analyst assistant.",
+        },
     });
 
 var session = await agent.CreateSessionAsync();
 var response = await agent.RunAsync("What risks does Acme Corp face?", session);
-Console.WriteLine(response.Text);
+Console.WriteLine(response);
 ```
 
 ### Fulltext Search (No Embedding Generator Required)
 
 ```csharp
-var provider = new Neo4jContextProvider(
-    neo4jSettings,
+await using var provider = new Neo4jContextProvider(
+    driver,
     new Neo4jContextProviderOptions
     {
         IndexName = "search_chunks",
@@ -106,8 +115,8 @@ var provider = new Neo4jContextProvider(
 ### Hybrid Search
 
 ```csharp
-var provider = new Neo4jContextProvider(
-    neo4jSettings,
+await using var provider = new Neo4jContextProvider(
+    driver,
     new Neo4jContextProviderOptions
     {
         IndexName = "chunkEmbeddings",
