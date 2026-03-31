@@ -28,6 +28,7 @@ from ._types import AgentResponse, Message
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
+    from ._middleware import MiddlewareTypes
 
 
 # Registry of known types for state deserialization
@@ -137,6 +138,8 @@ class SessionContext:
             Maintains insertion order (provider execution order).
         instructions: Additional instructions added by providers.
         tools: Additional tools added by providers.
+        middleware: Dict mapping source_id -> chat/function middleware added by that provider.
+            Maintains insertion order (provider execution order).
         response: After invocation, contains the full AgentResponse, should not be changed.
         options: Options passed to agent.run() - read-only, for reflection only.
         metadata: Shared metadata dictionary for cross-provider communication.
@@ -151,6 +154,7 @@ class SessionContext:
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
         tools: list[Any] | None = None,
+        middleware: dict[str, list[MiddlewareTypes]] | None = None,
         options: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ):
@@ -163,6 +167,7 @@ class SessionContext:
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
             tools: Pre-populated tools.
+            middleware: Pre-populated chat/function middleware by source.
             options: Options from agent.run() - read-only for providers.
             metadata: Shared metadata for cross-provider communication.
         """
@@ -172,6 +177,10 @@ class SessionContext:
         self.context_messages: dict[str, list[Message]] = context_messages or {}
         self.instructions: list[str] = instructions or []
         self.tools: list[Any] = tools or []
+        self.middleware: dict[str, list[MiddlewareTypes]] = {}
+        if middleware:
+            for source_id, provider_middleware in middleware.items():
+                self.extend_middleware(source_id, provider_middleware)
         self._response: AgentResponse | None = None
         self.options: dict[str, Any] = options or {}
         self.metadata: dict[str, Any] = metadata or {}
@@ -241,6 +250,39 @@ class SessionContext:
                     additional_properties = cast(dict[str, Any], additional_properties_obj)
                     additional_properties["context_source"] = source_id
         self.tools.extend(tools)
+
+    def extend_middleware(
+        self,
+        source_id: str,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+    ) -> None:
+        """Add middleware to be applied for this invocation.
+
+        Args:
+            source_id: The provider source_id adding this middleware.
+            middleware: A single chat/function middleware object/callable or sequence of middleware.
+        """
+        from ._middleware import categorize_middleware
+        from .exceptions import MiddlewareException
+
+        middleware_items: list[MiddlewareTypes]
+        if isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes)):
+            middleware_items = list(cast("Sequence[MiddlewareTypes]", middleware))
+        else:
+            middleware_items = [cast("MiddlewareTypes", middleware)]
+        middleware_list = categorize_middleware(middleware_items)
+        if middleware_list["agent"]:
+            raise MiddlewareException("Context providers may only add chat or function middleware.")
+        if source_id not in self.middleware:
+            self.middleware[source_id] = []
+        self.middleware[source_id].extend(middleware_items)
+
+    def get_middleware(self) -> list[MiddlewareTypes]:
+        """Get provider-added chat/function middleware in provider execution order."""
+        result: list[MiddlewareTypes] = []
+        for middleware_items in self.middleware.values():
+            result.extend(middleware_items)
+        return result
 
     def get_messages(
         self,
@@ -313,7 +355,7 @@ class ContextProvider:
         Args:
             agent: The agent running this invocation.
             session: The current session.
-            context: The invocation context - add messages/instructions/tools here.
+            context: The invocation context - add messages/instructions/tools/chat/function middleware here.
             state: The provider-scoped mutable state dict for this provider.
                 Full cross-provider state remains available at ``session.state``.
         """

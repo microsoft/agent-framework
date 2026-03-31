@@ -29,7 +29,7 @@ from . import _tools as _tool_utils  # pyright: ignore[reportPrivateUsage]
 from ._clients import BaseChatClient, SupportsChatGetResponse
 from ._docstrings import apply_layered_docstring
 from ._mcp import LOG_LEVEL_MAPPING, MCPTool
-from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes
+from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, MiddlewareTypes, categorize_middleware
 from ._serialization import SerializationMixin
 from ._sessions import (
     AgentSession,
@@ -885,97 +885,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             When stream=True: A ResponseStream of AgentResponseUpdate items with
                 ``get_final_response()`` for the final AgentResponse.
         """
-        if not stream:
 
-            async def _run_non_streaming() -> AgentResponse[Any]:
-                ctx = await self._prepare_run_context(
-                    messages=messages,
-                    session=session,
-                    tools=tools,
-                    options=options,
-                    compaction_strategy=compaction_strategy,
-                    tokenizer=tokenizer,
-                    function_invocation_kwargs=function_invocation_kwargs,
-                    client_kwargs=client_kwargs,
-                )
-                response = cast(
-                    ChatResponse[Any],
-                    await self.client.get_response(  # type: ignore
-                        messages=ctx["session_messages"],
-                        stream=False,
-                        options=ctx["chat_options"],  # type: ignore[reportArgumentType]
-                        compaction_strategy=ctx["compaction_strategy"],
-                        tokenizer=ctx["tokenizer"],
-                        function_invocation_kwargs=ctx["function_invocation_kwargs"],
-                        client_kwargs=ctx["client_kwargs"],
-                    ),
-                )
-
-                if not response:
-                    raise AgentInvalidResponseException("Chat client did not return a response.")
-
-                await self._finalize_response(
-                    response=response,
-                    agent_name=ctx["agent_name"],
-                    session=ctx["session"],
-                    session_context=ctx["session_context"],
-                )
-                response_format = ctx["chat_options"].get("response_format")
-                if not (
-                    response_format is not None
-                    and isinstance(response_format, type)
-                    and issubclass(response_format, BaseModel)
-                ):
-                    response_format = None
-
-                return AgentResponse(
-                    messages=response.messages,
-                    response_id=response.response_id,
-                    created_at=response.created_at,
-                    usage_details=response.usage_details,
-                    value=response.value,
-                    response_format=response_format,
-                    continuation_token=response.continuation_token,
-                    raw_representation=response,
-                    additional_properties=response.additional_properties,
-                )
-
-            return _run_non_streaming()
-
-        # Use a holder to capture the context created during stream initialization
-        ctx_holder: dict[str, _RunContext | None] = {"ctx": None}
-
-        async def _post_hook(response: AgentResponse) -> None:
-            ctx = ctx_holder["ctx"]
-            if ctx is None:
-                return  # No context available (shouldn't happen in normal flow)
-
-            # Update thread with conversation_id derived from streaming raw updates.
-            # Using response_id here can break function-call continuation for APIs
-            # where response IDs are not valid conversation handles.
-            conversation_id = self._extract_conversation_id_from_streaming_response(response)
-            # Ensure author names are set for all messages
-            for message in response.messages:
-                if message.author_name is None:
-                    message.author_name = ctx["agent_name"]
-
-            # Propagate conversation_id back to session from streaming updates.
-            # For Responses-style APIs this can rotate every turn (response_id-based continuation),
-            # so refresh when a newer value is returned.
-            sess = ctx["session"]
-            if sess and conversation_id and sess.service_session_id != conversation_id:
-                sess.service_session_id = conversation_id
-
-            # Run after_run providers (reverse order)
-            session_context = ctx["session_context"]
-            session_context._response = AgentResponse(  # type: ignore[assignment]
-                messages=response.messages,
-                response_id=response.response_id,
-            )
-            await self._run_after_providers(session=ctx["session"], context=session_context)
-
-        async def _get_stream() -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
-            ctx_holder["ctx"] = await self._prepare_run_context(
+        async def _prepare_run_context() -> _RunContext:
+            return await self._prepare_run_context(
                 messages=messages,
                 session=session,
                 tools=tools,
@@ -985,45 +897,151 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 function_invocation_kwargs=function_invocation_kwargs,
                 client_kwargs=client_kwargs,
             )
-            ctx: _RunContext = ctx_holder["ctx"]  # type: ignore[assignment]  # Safe: we just assigned it
+
+        if not stream:
+
+            async def _run_non_streaming() -> AgentResponse[Any]:
+                ctx = await _prepare_run_context()
+                response = await self._call_chat_client(ctx, stream=False)
+                return await self._parse_non_streaming_response(ctx, response)
+
+            return _run_non_streaming()
+
+        async def _run_streaming() -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+            ctx = await _prepare_run_context()
+            stream_response = self._call_chat_client(ctx, stream=True)
+            return self._parse_streaming_response(ctx, stream_response)
+
+        return cast(
+            ResponseStream[AgentResponseUpdate, AgentResponse[Any]],
+            cast(Any, ResponseStream).from_awaitable(_run_streaming()),
+        )
+
+    @overload
+    def _call_chat_client(
+        self,
+        context: _RunContext,
+        *,
+        stream: Literal[False],
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def _call_chat_client(
+        self,
+        context: _RunContext,
+        *,
+        stream: Literal[True],
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def _call_chat_client(
+        self,
+        context: _RunContext,
+        *,
+        stream: bool,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Invoke the downstream chat client for a prepared run context."""
+        if stream:
             return self.client.get_response(  # type: ignore[call-overload, no-any-return]
-                messages=ctx["session_messages"],
+                messages=context["session_messages"],
                 stream=True,
-                options=ctx["chat_options"],  # type: ignore[reportArgumentType]
-                compaction_strategy=ctx["compaction_strategy"],
-                tokenizer=ctx["tokenizer"],
-                function_invocation_kwargs=ctx["function_invocation_kwargs"],
-                client_kwargs=ctx["client_kwargs"],
+                options=context["chat_options"],  # type: ignore[reportArgumentType]
+                compaction_strategy=context["compaction_strategy"],
+                tokenizer=context["tokenizer"],
+                function_invocation_kwargs=context["function_invocation_kwargs"],
+                client_kwargs=context["client_kwargs"],
             )
 
-        def _propagate_conversation_id(
-            update: AgentResponseUpdate,
-        ) -> AgentResponseUpdate:
-            """Eagerly propagate conversation_id to session as updates arrive.
+        return self.client.get_response(  # type: ignore[call-overload, no-any-return]
+            messages=context["session_messages"],
+            stream=False,
+            options=context["chat_options"],  # type: ignore[reportArgumentType]
+            compaction_strategy=context["compaction_strategy"],
+            tokenizer=context["tokenizer"],
+            function_invocation_kwargs=context["function_invocation_kwargs"],
+            client_kwargs=context["client_kwargs"],
+        )
 
-            This ensures session.service_session_id is set even when the user
-            only iterates the stream without calling get_final_response().
-            """
+    async def _parse_non_streaming_response(
+        self,
+        context: _RunContext,
+        response: ChatResponse[Any],
+    ) -> AgentResponse[Any]:
+        """Finalize a non-streaming chat response into an AgentResponse."""
+        if not response:
+            raise AgentInvalidResponseException("Chat client did not return a response.")
+
+        await self._finalize_response(
+            response=response,
+            agent_name=context["agent_name"],
+            session=context["session"],
+            session_context=context["session_context"],
+        )
+
+        response_format = context["chat_options"].get("response_format")
+        if not (
+            response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
+        ):
+            response_format = None
+
+        return AgentResponse(
+            messages=response.messages,
+            response_id=response.response_id,
+            created_at=response.created_at,
+            usage_details=response.usage_details,
+            value=response.value,
+            response_format=response_format,
+            continuation_token=response.continuation_token,
+            raw_representation=response,
+            additional_properties=response.additional_properties,
+        )
+
+    def _parse_streaming_response(
+        self,
+        context: _RunContext,
+        stream_response: ResponseStream[ChatResponseUpdate, ChatResponse[Any]],
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Finalize a streaming chat response into an agent response stream."""
+
+        async def _post_hook(response: AgentResponse) -> None:
+            # Update thread with conversation_id derived from streaming raw updates.
+            # Using response_id here can break function-call continuation for APIs
+            # where response IDs are not valid conversation handles.
+            conversation_id = self._extract_conversation_id_from_streaming_response(response)
+
+            for message in response.messages:
+                if message.author_name is None:
+                    message.author_name = context["agent_name"]
+
+            session = context["session"]
+            if session and conversation_id and session.service_session_id != conversation_id:
+                session.service_session_id = conversation_id
+
+            session_context = context["session_context"]
+            session_context._response = AgentResponse(  # type: ignore[assignment]
+                messages=response.messages,
+                response_id=response.response_id,
+            )
+            await self._run_after_providers(session=session, context=session_context)
+
+        def _propagate_conversation_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
+            """Eagerly propagate conversation_id to session as updates arrive."""
+            session = context["session"]
             if session is None:
                 return update
             raw = update.raw_representation
-            conv_id = getattr(raw, "conversation_id", None) if raw else None
-            if isinstance(conv_id, str) and conv_id and session.service_session_id != conv_id:
-                session.service_session_id = conv_id
+            conversation_id = getattr(raw, "conversation_id", None) if raw else None
+            if isinstance(conversation_id, str) and conversation_id and session.service_session_id != conversation_id:
+                session.service_session_id = conversation_id
             return update
 
         def _finalizer(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
-            ctx = ctx_holder["ctx"]
-            rf = (
-                ctx.get("chat_options", {}).get("response_format")
-                if ctx
-                else (options.get("response_format") if options else None)  # type: ignore[union-attr]
+            return self._finalize_response_updates(
+                updates,
+                response_format=context["chat_options"].get("response_format"),
             )
-            return self._finalize_response_updates(updates, response_format=rf)
 
         return (
-            ResponseStream
-            .from_awaitable(_get_stream())  # type: ignore[reportUnknownMemberType]
+            stream_response
             .map(
                 transform=partial(
                     map_chat_to_agent_update,
@@ -1191,6 +1209,27 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
+        provider_middleware = session_context.get_middleware()
+        if provider_middleware:
+            middleware_list = categorize_middleware(provider_middleware)
+            provider_function_chat_middleware = [
+                *middleware_list["function"],
+                *middleware_list["chat"],
+            ]
+            if provider_function_chat_middleware:
+                existing_middleware = effective_client_kwargs.get("middleware")
+                if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
+                    effective_client_kwargs["middleware"] = [
+                        *existing_middleware,
+                        *provider_function_chat_middleware,
+                    ]
+                elif existing_middleware is not None:
+                    effective_client_kwargs["middleware"] = [
+                        cast(MiddlewareTypes, existing_middleware),
+                        *provider_function_chat_middleware,
+                    ]
+                else:
+                    effective_client_kwargs["middleware"] = provider_function_chat_middleware
 
         return {
             "session": active_session,

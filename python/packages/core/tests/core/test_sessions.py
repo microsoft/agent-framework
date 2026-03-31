@@ -1,20 +1,25 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import pytest
 
-from agent_framework import Message
-from agent_framework._sessions import (
+from agent_framework import (
+    AgentContext,
     AgentSession,
     BaseContextProvider,
     BaseHistoryProvider,
+    ChatContext,
     ContextProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
+    Message,
     SessionContext,
+    agent_middleware,
+    chat_middleware,
 )
+from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -105,6 +110,50 @@ class TestSessionContext:
         ctx = SessionContext(input_messages=[])
         ctx.extend_instructions("sys", ["Be helpful", "Be concise"])
         assert ctx.instructions == ["Be helpful", "Be concise"]
+
+    def test_extend_middleware_creates_key_and_appends(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("rag", first_middleware)
+        ctx.extend_middleware("rag", [second_middleware])
+
+        assert ctx.middleware["rag"] == [first_middleware, second_middleware]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_preserves_source_order(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @chat_middleware
+        async def first_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        @chat_middleware
+        async def second_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        ctx.extend_middleware("a", first_middleware)
+        ctx.extend_middleware("b", second_middleware)
+
+        assert list(ctx.middleware.keys()) == ["a", "b"]
+        assert ctx.get_middleware() == [first_middleware, second_middleware]
+
+    def test_extend_middleware_rejects_agent_middleware(self) -> None:
+        ctx = SessionContext(input_messages=[])
+
+        @agent_middleware
+        async def provider_agent_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        with pytest.raises(MiddlewareException, match="Context providers may only add chat or function middleware"):
+            ctx.extend_middleware("rag", provider_agent_middleware)
 
     def test_get_messages_all(self) -> None:
         ctx = SessionContext(input_messages=[])

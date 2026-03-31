@@ -3,7 +3,7 @@
 import contextlib
 import inspect
 import json
-from collections.abc import AsyncIterable, MutableSequence
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -18,6 +18,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    ChatContext,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
@@ -29,6 +30,7 @@ from agent_framework import (
     SupportsAgentRun,
     SupportsChatGetResponse,
     TruncationStrategy,
+    chat_middleware,
     tool,
 )
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
@@ -1847,6 +1849,33 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 
     # The context instructions should now be in the options
     assert options.get("instructions") == "Context-provided instructions"
+
+
+async def test_chat_agent_context_provider_adds_middleware_when_agent_has_none(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Test that context provider middleware is collected during preparation."""
+
+    @chat_middleware
+    async def context_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+
+    class MiddlewareContextProvider(ContextProvider):
+        def __init__(self) -> None:
+            super().__init__(source_id="middleware-context")
+
+        async def before_run(self, *, agent, session, context, state) -> None:
+            context.extend_middleware("middleware-context", context_chat_middleware)
+
+    agent = Agent(client=chat_client_base, context_providers=[MiddlewareContextProvider()])
+
+    session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
+        session=None,
+        input_messages=[Message(role="user", text="Hello")],
+    )
+
+    assert session_context.middleware["middleware-context"] == [context_chat_middleware]
+    assert session_context.get_middleware() == [context_chat_middleware]
 
 
 # region STORES_BY_DEFAULT tests
