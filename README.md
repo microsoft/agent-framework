@@ -131,7 +131,8 @@ using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-// Replace <endpoint> and gpt-4o-mini with your Azure AI endpoint and deployment name.
+// Replace <endpoint> with your Azure AI Foundry project endpoint
+// and gpt-4o-mini with your model deployment name.
 var agent = new AIProjectClient(new Uri("<endpoint>"), new DefaultAzureCredential())
     .AsAIAgent(model: "gpt-4o-mini", name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
