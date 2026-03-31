@@ -3,26 +3,24 @@
 """Chain two runs of a single agent inside a Durable Functions orchestration.
 
 Components used in this sample:
-- AzureOpenAIChatClient to construct the writer agent hosted by Agent Framework.
+- FoundryChatClient to construct the writer agent hosted by Agent Framework.
 - AgentFunctionApp to surface HTTP and orchestration triggers via the Azure Functions extension.
 - Durable Functions orchestration to run sequential agent invocations on the same conversation session.
 
-Prerequisites: configure `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, and either
-`AZURE_OPENAI_API_KEY` or authenticate with Azure CLI before starting the Functions host."""
+Prerequisites: configure `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_MODEL`, and sign in with Azure CLI before starting the Functions host."""
 
 import json
 import logging
+import os
 from collections.abc import Generator
 from typing import Any
 
 import azure.functions as func
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
 from azure.durable_functions import DurableOrchestrationClient, DurableOrchestrationContext
-from azure.identity import AzureCliCredential
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from azure.identity.aio import AzureCliCredential
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +36,13 @@ def _create_writer_agent() -> Any:
         "when given an improved sentence you polish it further."
     )
 
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name=WRITER_AGENT_NAME,
         instructions=instructions,
     )

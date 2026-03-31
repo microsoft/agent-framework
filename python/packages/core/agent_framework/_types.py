@@ -2003,6 +2003,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         messages: Message | Sequence[Message] | None = None,
         response_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -2019,8 +2020,9 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             messages: A single Message or sequence of Message objects to include in the response.
             response_id: Optional ID of the chat response.
             conversation_id: Optional identifier for the state of the conversation.
-            model_id: Optional model ID used in the creation of the chat response.
-            created_at: Optional timestamp for the chat response.
+            model: Optional model used in the creation of the chat response.
+            model_id: Deprecated alias for ``model``.
+            created_at: Optional timestamp for when the response was created.
             finish_reason: Optional reason for the chat response (e.g., "stop", "length", "tool_calls").
             usage_details: Optional usage details for the chat response.
             value: Optional value of the structured output.
@@ -2030,6 +2032,8 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             additional_properties: Optional additional properties associated with the chat response.
             raw_representation: Optional raw representation of the chat response from an underlying implementation.
         """
+        if model_id is not None and model is None:
+            model = model_id
         if messages is None:
             self.messages: list[Message] = []
         elif isinstance(messages, Message):
@@ -2047,7 +2051,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             self.messages = processed_messages
         self.response_id = response_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.usage_details = usage_details
@@ -2059,6 +2063,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @overload
     @classmethod
@@ -2257,6 +2270,7 @@ class ChatResponseUpdate(SerializationMixin):
         response_id: str | None = None,
         message_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
         model_id: str | None = None,
         created_at: CreatedAtT | None = None,
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
@@ -2273,7 +2287,8 @@ class ChatResponseUpdate(SerializationMixin):
             response_id: Optional ID of the response of which this update is a part.
             message_id: Optional ID of the message of which this update is a part.
             conversation_id: Optional identifier for the state of the conversation of which this update is a part
-            model_id: Optional model ID associated with this response update.
+            model: Optional model associated with this response update.
+            model_id: Deprecated alias for ``model``.
             created_at: Optional timestamp for the chat response update.
             finish_reason: Optional finish reason for the operation.
             continuation_token: Optional token for resuming a long-running background operation.
@@ -2283,6 +2298,8 @@ class ChatResponseUpdate(SerializationMixin):
                 from an underlying implementation.
 
         """
+        if model_id is not None and model is None:
+            model = model_id
         # Handle contents - support dict conversion for from_dict
         if contents is None:
             self.contents: list[Content] = []
@@ -2302,7 +2319,7 @@ class ChatResponseUpdate(SerializationMixin):
         self.response_id = response_id
         self.message_id = message_id
         self.conversation_id = conversation_id
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.finish_reason = finish_reason
         self.continuation_token = continuation_token
@@ -2311,6 +2328,15 @@ class ChatResponseUpdate(SerializationMixin):
             allow_none=True,
         )
         self.raw_representation = raw_representation
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def text(self) -> str:
@@ -3426,7 +3452,7 @@ class Embedding(Generic[EmbeddingT]):
 
     Args:
         vector: The embedding vector data.
-        model_id: The model used to generate this embedding.
+        model: The model used to generate this embedding.
         dimensions: Explicit dimension count (computed from vector length if omitted).
         created_at: Timestamp of when the embedding was generated.
         additional_properties: Additional metadata.
@@ -3438,7 +3464,7 @@ class Embedding(Generic[EmbeddingT]):
 
             embedding = Embedding(
                 vector=[0.1, 0.2, 0.3],
-                model_id="text-embedding-3-small",
+                model="text-embedding-3-small",
             )
             assert embedding.dimensions == 3
     """
@@ -3447,18 +3473,30 @@ class Embedding(Generic[EmbeddingT]):
         self,
         vector: EmbeddingT,
         *,
+        model: str | None = None,
         model_id: str | None = None,
         dimensions: int | None = None,
         created_at: datetime | None = None,
         additional_properties: dict[str, Any] | None = None,
     ) -> None:
+        if model_id is not None and model is None:
+            model = model_id
         self.vector = vector
         self._dimensions = dimensions
-        self.model_id = model_id
+        self.model = model
         self.created_at = created_at
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
         )
+
+    @property
+    def model_id(self) -> str | None:
+        """Deprecated alias for :attr:`model`."""
+        return self.model
+
+    @model_id.setter
+    def model_id(self, value: str | None) -> None:
+        self.model = value
 
     @property
     def dimensions(self) -> int | None:

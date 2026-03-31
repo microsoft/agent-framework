@@ -138,6 +138,9 @@ public sealed partial class ChatClientAgent : AIAgent
         this._aiContextProviderStateKeys = ValidateAndCollectStateKeys(this._agentOptions?.AIContextProviders, this.ChatHistoryProvider);
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
+
+        // Warn if using a custom chat client stack with simulated service stored persistence but no PerServiceCallChatHistoryPersistingChatClient.
+        this.WarnOnMissingPerServiceCallChatHistoryPersistingChatClient();
     }
 
     /// <summary>
@@ -211,12 +214,14 @@ public sealed partial class ChatClientAgent : AIAgent
          ChatClientAgentContinuationToken? _) =
             await this.PrepareSessionAndMessagesAsync(session, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
-        var chatClient = this.ChatClient;
+        // Update the run context with the resolved session so any downstream classes
+        // always have a valid session, even when the caller passed null.
+        EnsureRunContextHasSession(safeSession);
 
+        var chatClient = this.ChatClient;
         chatClient = ApplyRunOptionsTransformations(options, chatClient);
 
         var loggingAgentName = this.GetLoggingAgentName();
-
         this._logger.LogAgentChatClientInvokingAgent(nameof(RunAsync), this.Id, loggingAgentName, this._chatClientType);
 
         // Call the IChatClient and notify the AIContextProvider of any failures.
@@ -227,8 +232,7 @@ public sealed partial class ChatClientAgent : AIAgent
         }
         catch (Exception ex)
         {
-            await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
-            await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, inputMessagesForChatClient, cancellationToken).ConfigureAwait(false);
+            await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -236,7 +240,8 @@ public sealed partial class ChatClientAgent : AIAgent
 
         // We can derive the type of supported session from whether we have a conversation id,
         // so let's update it and set the conversation id for the service session case.
-        this.UpdateSessionConversationId(safeSession, chatResponse.ConversationId, cancellationToken);
+        var forceEndOfRunPersistence = chatOptions?.ContinuationToken is not null || chatOptions?.AllowBackgroundResponses is true;
+        this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
 
         // Ensure that the author name is set for each message in the response.
         foreach (ChatMessage chatResponseMessage in chatResponse.Messages)
@@ -244,11 +249,10 @@ public sealed partial class ChatClientAgent : AIAgent
             chatResponseMessage.AuthorName ??= this.Name;
         }
 
-        // Only notify the session of new messages if the chatResponse was successful to avoid inconsistent message state in the session.
-        await this.NotifyChatHistoryProviderOfNewMessagesAsync(safeSession, inputMessagesForChatClient, chatResponse.Messages, chatOptions, cancellationToken).ConfigureAwait(false);
-
-        // Notify the AIContextProvider of all new messages.
-        await this.NotifyAIContextProviderOfSuccessAsync(safeSession, inputMessagesForChatClient, chatResponse.Messages, cancellationToken).ConfigureAwait(false);
+        // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
+        // When background responses are allowed, force notification since per-service-call persistence
+        // is unreliable (the caller may stop consuming the stream before the decorator can persist).
+        await this.NotifyProvidersOfNewMessagesAtEndOfRunAsync(safeSession, inputMessagesForChatClient, chatResponse.Messages, chatOptions, cancellationToken, forceNotify: forceEndOfRunPersistence).ConfigureAwait(false);
 
         return new AgentResponse(chatResponse)
         {
@@ -296,6 +300,10 @@ public sealed partial class ChatClientAgent : AIAgent
          ChatClientAgentContinuationToken? continuationToken) =
             await this.PrepareSessionAndMessagesAsync(session, inputMessages, options, cancellationToken).ConfigureAwait(false);
 
+        // Update the run context with the resolved session so any downstream classes
+        // always have a valid session, even when the caller passed null.
+        EnsureRunContextHasSession(safeSession);
+
         var chatClient = this.ChatClient;
 
         chatClient = ApplyRunOptionsTransformations(options, chatClient);
@@ -315,8 +323,7 @@ public sealed partial class ChatClientAgent : AIAgent
         }
         catch (Exception ex)
         {
-            await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
-            await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
+            await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -330,8 +337,7 @@ public sealed partial class ChatClientAgent : AIAgent
         }
         catch (Exception ex)
         {
-            await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
-            await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
+            await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
             throw;
         }
 
@@ -353,27 +359,31 @@ public sealed partial class ChatClientAgent : AIAgent
 
             try
             {
+                // Re-ensure the run context has the resolved session before each MoveNextAsync.
+                // The base class RunStreamingAsync restores the original context (potentially with
+                // null session) after each yield, so we must re-establish it for the decorator.
+                EnsureRunContextHasSession(safeSession);
                 hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                await this.NotifyChatHistoryProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
-                await this.NotifyAIContextProviderOfFailureAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), cancellationToken).ConfigureAwait(false);
+                await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
                 throw;
             }
         }
 
         var chatResponse = responseUpdates.ToChatResponse();
 
+        var forceEndOfRunPersistence = continuationToken is not null || chatOptions?.AllowBackgroundResponses is true;
+
         // We can derive the type of supported session from whether we have a conversation id,
         // so let's update it and set the conversation id for the service session case.
-        this.UpdateSessionConversationId(safeSession, chatResponse.ConversationId, cancellationToken);
+        this.UpdateSessionConversationIdAtEndOfRun(safeSession, chatResponse.ConversationId, cancellationToken, forceUpdate: forceEndOfRunPersistence);
 
-        // To avoid inconsistent state we only notify the session of the input messages if no error occurs after the initial request.
-        await this.NotifyChatHistoryProviderOfNewMessagesAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), chatResponse.Messages, chatOptions, cancellationToken).ConfigureAwait(false);
-
-        // Notify the AIContextProvider of all new messages.
-        await this.NotifyAIContextProviderOfSuccessAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), chatResponse.Messages, cancellationToken).ConfigureAwait(false);
+        // Notify providers of all new messages unless persistence is handled per-service-call by the decorator.
+        // When resuming from a continuation token or using background responses, force notification
+        // to send the combined data (per-service-call persistence is unreliable for these scenarios).
+        await this.NotifyProvidersOfNewMessagesAtEndOfRunAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), chatResponse.Messages, chatOptions, cancellationToken, forceNotify: forceEndOfRunPersistence).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -441,17 +451,29 @@ public sealed partial class ChatClientAgent : AIAgent
     #region Private
 
     /// <summary>
-    /// Notify the <see cref="AIContextProvider"/> when an agent run succeeded, if there is an <see cref="AIContextProvider"/>.
+    /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of successfully completed messages.
     /// </summary>
-    private async Task NotifyAIContextProviderOfSuccessAsync(
+    /// <remarks>
+    /// This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to persist messages per-service-call.
+    /// </remarks>
+    internal async Task NotifyProvidersOfNewMessagesAsync(
         ChatClientAgentSession session,
-        IEnumerable<ChatMessage> inputMessages,
+        IEnumerable<ChatMessage> requestMessages,
         IEnumerable<ChatMessage> responseMessages,
+        ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+
+        if (chatHistoryProvider is not null)
+        {
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, requestMessages, responseMessages);
+            await chatHistoryProvider.InvokedAsync(invokedContext, cancellationToken).ConfigureAwait(false);
+        }
+
         if (this.AIContextProviders is { Count: > 0 } contextProviders)
         {
-            AIContextProvider.InvokedContext invokedContext = new(this, session, inputMessages, responseMessages);
+            AIContextProvider.InvokedContext invokedContext = new(this, session, requestMessages, responseMessages);
 
             foreach (var contextProvider in contextProviders)
             {
@@ -461,17 +483,29 @@ public sealed partial class ChatClientAgent : AIAgent
     }
 
     /// <summary>
-    /// Notify the <see cref="AIContextProvider"/> of any failure during an agent run, if there is an <see cref="AIContextProvider"/>.
+    /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of a failure during a service call.
     /// </summary>
-    private async Task NotifyAIContextProviderOfFailureAsync(
+    /// <remarks>
+    /// This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to report failures per-service-call.
+    /// </remarks>
+    internal async Task NotifyProvidersOfFailureAsync(
         ChatClientAgentSession session,
         Exception ex,
-        IEnumerable<ChatMessage> inputMessages,
+        IEnumerable<ChatMessage> requestMessages,
+        ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
+        ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+
+        if (chatHistoryProvider is not null)
+        {
+            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, requestMessages, ex);
+            await chatHistoryProvider.InvokedAsync(invokedContext, cancellationToken).ConfigureAwait(false);
+        }
+
         if (this.AIContextProviders is { Count: > 0 } contextProviders)
         {
-            AIContextProvider.InvokedContext invokedContext = new(this, session, inputMessages, ex);
+            AIContextProvider.InvokedContext invokedContext = new(this, session, requestMessages, ex);
 
             foreach (var contextProvider in contextProviders)
             {
@@ -667,6 +701,12 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("A session must be provided when continuing a background response with a continuation token.");
         }
 
+        if ((continuationToken is not null || chatOptions?.AllowBackgroundResponses is true) && this.RequiresPerServiceCallChatHistoryPersistence && this._logger.IsEnabled(LogLevel.Warning))
+        {
+            var warningAgentName = this.GetLoggingAgentName();
+            this._logger.LogAgentChatClientBackgroundResponseFallback(this.Id, warningAgentName);
+        }
+
         session ??= await this.CreateSessionAsync(cancellationToken).ConfigureAwait(false);
         if (session is not ChatClientAgentSession typedSession)
         {
@@ -677,57 +717,6 @@ public sealed partial class ChatClientAgent : AIAgent
         if (chatOptions?.ContinuationToken is not null && inputMessages.Any())
         {
             throw new InvalidOperationException("Input messages are not allowed when continuing a background response using a continuation token.");
-        }
-
-        IEnumerable<ChatMessage> inputMessagesForChatClient = inputMessages;
-
-        // Populate the session messages only if we are not continuing an existing response as it's not allowed
-        if (chatOptions?.ContinuationToken is null)
-        {
-            ChatHistoryProvider? chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions, typedSession);
-
-            // Add any existing messages from the session to the messages to be sent to the chat client.
-            // The ChatHistoryProvider returns the merged result (history + input messages).
-            if (chatHistoryProvider is not null)
-            {
-                var invokingContext = new ChatHistoryProvider.InvokingContext(this, typedSession, inputMessagesForChatClient);
-                inputMessagesForChatClient = await chatHistoryProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
-            }
-
-            // If we have an AIContextProvider, we should get context from it, and update our
-            // messages and options with the additional context.
-            // The AIContextProvider returns the accumulated AIContext (original + new contributions).
-            if (this.AIContextProviders is { Count: > 0 } aiContextProviders)
-            {
-                var aiContext = new AIContext
-                {
-                    Instructions = chatOptions?.Instructions,
-                    Messages = inputMessagesForChatClient,
-                    Tools = chatOptions?.Tools
-                };
-
-                foreach (var aiContextProvider in aiContextProviders)
-                {
-                    var invokingContext = new AIContextProvider.InvokingContext(this, typedSession, aiContext);
-                    aiContext = await aiContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
-                }
-
-                // Materialize the accumulated messages and tools once at the end of the provider pipeline.
-                inputMessagesForChatClient = aiContext.Messages ?? [];
-
-                var tools = aiContext.Tools as IList<AITool> ?? aiContext.Tools?.ToList();
-                if (chatOptions?.Tools is { Count: > 0 } || tools is { Count: > 0 })
-                {
-                    chatOptions ??= new();
-                    chatOptions.Tools = tools;
-                }
-
-                if (chatOptions?.Instructions is not null || aiContext.Instructions is not null)
-                {
-                    chatOptions ??= new();
-                    chatOptions.Instructions = aiContext.Instructions;
-                }
-            }
         }
 
         // If a user provided two different session ids, via the session object and options, we should throw
@@ -748,13 +737,61 @@ public sealed partial class ChatClientAgent : AIAgent
             chatOptions.ConversationId = typedSession.ConversationId;
         }
 
+        IEnumerable<ChatMessage> inputMessagesForChatClient = inputMessages;
+
+        // Populate the session messages only if we are not continuing an existing response as it's not allowed.
+        // When RequirePerServiceCallChatHistoryPersistence is active, the PerServiceCallChatHistoryPersistingChatClient
+        // owns the chat history lifecycle — it loads history before each service call. The agent
+        // must not load history itself, as that would result in duplicate messages.
+        if (chatOptions?.ContinuationToken is null && !this.RequiresPerServiceCallChatHistoryPersistence)
+        {
+            // Add any existing messages from the session to the messages to be sent to the chat client.
+            // The ChatHistoryProvider returns the merged result (history + input messages).
+            inputMessagesForChatClient = await this.LoadChatHistoryAsync(typedSession, inputMessagesForChatClient, chatOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        // AIContextProviders should always be invoked (unless continuing an existing response)
+        // to contribute additional messages, tools, and instructions — even when the decorator
+        // handles history loading.
+        if (chatOptions?.ContinuationToken is null && this.AIContextProviders is { Count: > 0 } aiContextProviders)
+        {
+            var aiContext = new AIContext
+            {
+                Instructions = chatOptions?.Instructions,
+                Messages = inputMessagesForChatClient,
+                Tools = chatOptions?.Tools
+            };
+
+            foreach (var aiContextProvider in aiContextProviders)
+            {
+                var invokingContext = new AIContextProvider.InvokingContext(this, typedSession, aiContext);
+                aiContext = await aiContextProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Materialize the accumulated messages and tools once at the end of the provider pipeline.
+            inputMessagesForChatClient = aiContext.Messages ?? [];
+
+            var tools = aiContext.Tools as IList<AITool> ?? aiContext.Tools?.ToList();
+            if (chatOptions?.Tools is { Count: > 0 } || tools is { Count: > 0 })
+            {
+                chatOptions ??= new();
+                chatOptions.Tools = tools;
+            }
+
+            if (chatOptions?.Instructions is not null || aiContext.Instructions is not null)
+            {
+                chatOptions ??= new();
+                chatOptions.Instructions = aiContext.Instructions;
+            }
+        }
+
         // Materialize the accumulated messages once at the end of the provider pipeline, reusing the existing list if possible.
         List<ChatMessage> messagesList = inputMessagesForChatClient as List<ChatMessage> ?? inputMessagesForChatClient.ToList();
 
         return (typedSession, chatOptions, messagesList, continuationToken);
     }
 
-    private void UpdateSessionConversationId(ChatClientAgentSession session, string? responseConversationId, CancellationToken cancellationToken)
+    internal void UpdateSessionConversationId(ChatClientAgentSession session, string? responseConversationId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(responseConversationId) && !string.IsNullOrWhiteSpace(session.ConversationId))
         {
@@ -792,61 +829,146 @@ public sealed partial class ChatClientAgent : AIAgent
                 }
             }
 
-            // If we got a conversation id back from the chat client, it means that the service supports server side session storage
-            // so we should update the session with the new id.
             session.ConversationId = responseConversationId;
         }
     }
 
-    private Task NotifyChatHistoryProviderOfFailureAsync(
+    /// <summary>
+    /// Updates the session conversation ID at the end of an agent run.
+    /// </summary>
+    /// <remarks>
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
+    /// conversation ID updates, this end-of-run update is skipped. When the decorator is
+    /// absent, the update is performed here. When <paramref name="forceUpdate"/> is <see langword="true"/>
+    /// (continuation token scenarios), the update is always performed.
+    /// </remarks>
+    private void UpdateSessionConversationIdAtEndOfRun(ChatClientAgentSession session, string? responseConversationId, CancellationToken cancellationToken, bool forceUpdate = false)
+    {
+        if (!forceUpdate && this.RequiresPerServiceCallChatHistoryPersistence)
+        {
+            return;
+        }
+
+        this.UpdateSessionConversationId(session, responseConversationId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Notifies providers of successfully completed messages at the end of an agent run.
+    /// </summary>
+    /// <remarks>
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
+    /// notification, this end-of-run notification is skipped. When no decorator is present,
+    /// all messages are persisted.
+    /// When <paramref name="forceNotify"/> is <see langword="true"/> (continuation token or
+    /// background response scenarios), notification is always performed with all messages because
+    /// per-service-call persistence is unreliable in these scenarios.
+    /// </remarks>
+    private Task NotifyProvidersOfNewMessagesAtEndOfRunAsync(
+        ChatClientAgentSession session,
+        IEnumerable<ChatMessage> requestMessages,
+        IEnumerable<ChatMessage> responseMessages,
+        ChatOptions? chatOptions,
+        CancellationToken cancellationToken,
+        bool forceNotify = false)
+    {
+        if (!forceNotify && this.RequiresPerServiceCallChatHistoryPersistence)
+        {
+            return Task.CompletedTask;
+        }
+
+        return this.NotifyProvidersOfNewMessagesAsync(session, requestMessages, responseMessages, chatOptions, cancellationToken);
+    }
+
+    /// <summary>
+    /// Notifies providers of a failure at the end of an agent run.
+    /// </summary>
+    /// <remarks>
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
+    /// notification (including failure), this end-of-run notification is skipped to avoid
+    /// duplicate notification. In all other cases, failure is reported at the end of the run.
+    /// </remarks>
+    private Task NotifyProvidersOfFailureAtEndOfRunAsync(
         ChatClientAgentSession session,
         Exception ex,
         IEnumerable<ChatMessage> requestMessages,
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        ChatHistoryProvider? provider = this.ResolveChatHistoryProvider(chatOptions, session);
-
-        // Only notify the provider if we have one.
-        // If we don't have one, it means that the chat history is service managed and the underlying service is responsible for storing messages.
-        if (provider is not null)
+        if (this.RequiresPerServiceCallChatHistoryPersistence)
         {
-            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, requestMessages, ex);
-
-            return provider.InvokedAsync(invokedContext, cancellationToken).AsTask();
+            return Task.CompletedTask;
         }
 
-        return Task.CompletedTask;
+        return this.NotifyProvidersOfFailureAsync(session, ex, requestMessages, chatOptions, cancellationToken);
     }
 
-    private Task NotifyChatHistoryProviderOfNewMessagesAsync(
-        ChatClientAgentSession session,
-        IEnumerable<ChatMessage> requestMessages,
-        IEnumerable<ChatMessage> responseMessages,
-        ChatOptions? chatOptions,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Gets a value indicating whether the agent is configured to simulate service-stored chat history.
+    /// When <see langword="true"/>, end-of-run persistence and history loading are skipped because a
+    /// per-service-call decorator (such as <see cref="PerServiceCallChatHistoryPersistingChatClient"/> or a
+    /// user-supplied equivalent) is expected to handle the history lifecycle.
+    /// </summary>
+    private bool RequiresPerServiceCallChatHistoryPersistence
     {
-        ChatHistoryProvider? provider = this.ResolveChatHistoryProvider(chatOptions, session);
-
-        // Only notify the provider if we have one.
-        // If we don't have one, it means that the chat history is service managed and the underlying service is responsible for storing messages.
-        if (provider is not null)
+        get
         {
-            var invokedContext = new ChatHistoryProvider.InvokedContext(this, session, requestMessages, responseMessages);
-            return provider.InvokedAsync(invokedContext, cancellationToken).AsTask();
+            return this._agentOptions?.RequirePerServiceCallChatHistoryPersistence is true;
+        }
+    }
+
+    /// <summary>
+    /// Ensures that <see cref="AIAgent.CurrentRunContext"/> contains the resolved session.
+    /// </summary>
+    /// <remarks>
+    /// The base class sets <see cref="AIAgent.CurrentRunContext"/> with the raw session parameter
+    /// (which may be null) and restores it after each yield in streaming scenarios. After
+    /// <see cref="PrepareSessionAndMessagesAsync"/> resolves or creates a session, we update the
+    /// context so the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> decorator always has a valid session.
+    /// The original agent from the context is preserved to maintain the top-of-stack agent in
+    /// decorated agent scenarios.
+    /// </remarks>
+    private static void EnsureRunContextHasSession(ChatClientAgentSession safeSession)
+    {
+        var context = CurrentRunContext;
+        if (context is not null && context.Session != safeSession)
+        {
+            CurrentRunContext = new(context.Agent, safeSession, context.RequestMessages, context.RunOptions);
+        }
+    }
+
+    /// <summary>
+    /// Checks for potential misconfiguration when using a custom chat client stack and logs warnings.
+    /// </summary>
+    private void WarnOnMissingPerServiceCallChatHistoryPersistingChatClient()
+    {
+        if (this._agentOptions?.UseProvidedChatClientAsIs is not true)
+        {
+            return;
         }
 
-        return Task.CompletedTask;
+        if (this._agentOptions?.RequirePerServiceCallChatHistoryPersistence is not true)
+        {
+            return;
+        }
+
+        var persistingClient = this.ChatClient.GetService<PerServiceCallChatHistoryPersistingChatClient>();
+        if (persistingClient is null && this._logger.IsEnabled(LogLevel.Warning))
+        {
+            var loggingAgentName = this.GetLoggingAgentName();
+            this._logger.LogAgentChatClientMissingPersistingClient(
+                this.Id,
+                loggingAgentName); // CodeQL [CWE-359] False positive: Agent name is not personal information, but rather just the name of a code component (agent in this case).
+        }
     }
 
-    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions, ChatClientAgentSession session)
+    private ChatHistoryProvider? ResolveChatHistoryProvider(ChatOptions? chatOptions)
     {
-        ChatHistoryProvider? provider = session.ConversationId is null ? this.ChatHistoryProvider : null;
+        ChatHistoryProvider? provider = chatOptions?.ConversationId is null ? this.ChatHistoryProvider : null;
 
         // If someone provided an override ChatHistoryProvider via AdditionalProperties, we should use that instead.
         if (chatOptions?.AdditionalProperties?.TryGetValue(out ChatHistoryProvider? overrideProvider) is true)
         {
-            if (session.ConversationId is not null && overrideProvider is not null)
+            if (this._agentOptions?.ThrowOnChatHistoryProviderConflict is true && string.IsNullOrWhiteSpace(chatOptions?.ConversationId) is false)
             {
                 throw new InvalidOperationException(
                     $"Only {nameof(ChatClientAgentSession.ConversationId)} or {nameof(this.ChatHistoryProvider)} may be used, but not both. The current {nameof(ChatClientAgentSession)} has a {nameof(ChatClientAgentSession.ConversationId)} indicating server-side chat history management, but an override {nameof(this.ChatHistoryProvider)} was provided via {nameof(AgentRunOptions.AdditionalProperties)}.");
@@ -869,6 +991,29 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return provider;
+    }
+
+    /// <summary>
+    /// Loads chat history from the resolved <see cref="ChatHistoryProvider"/> and prepends it to the given messages.
+    /// </summary>
+    /// <remarks>
+    /// This method is used by both the agent (during <see cref="PrepareSessionAndMessagesAsync"/>) and by
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to load history before each service call.
+    /// </remarks>
+    internal async Task<IEnumerable<ChatMessage>> LoadChatHistoryAsync(
+        ChatClientAgentSession session,
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? chatOptions,
+        CancellationToken cancellationToken)
+    {
+        var chatHistoryProvider = this.ResolveChatHistoryProvider(chatOptions);
+        if (chatHistoryProvider is null)
+        {
+            return messages;
+        }
+
+        var invokingContext = new ChatHistoryProvider.InvokingContext(this, session, messages);
+        return await chatHistoryProvider.InvokingAsync(invokingContext, cancellationToken).ConfigureAwait(false);
     }
 
     private static ChatClientAgentContinuationToken? WrapContinuationToken(ResponseContinuationToken? continuationToken, IEnumerable<ChatMessage>? inputMessages = null, List<ChatResponseUpdate>? responseUpdates = null)

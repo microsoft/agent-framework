@@ -6,8 +6,8 @@ This worker registers the TravelPlanner agent with the Durable Task Scheduler
 and uses RedisStreamCallback to persist streaming responses to Redis for reliable delivery.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
-  (plus AZURE_OPENAI_API_KEY or Azure CLI authentication)
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 - Start Redis (e.g., docker run -d --name redis -p 6379:6379 redis:latest)
 """
@@ -22,10 +22,11 @@ from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentResponseCallbackProtocol,
-    AzureOpenAIChatClient,
     DurableAIAgentWorker,
 )
-from azure.identity import AzureCliCredential, DefaultAzureCredential
+from agent_framework.foundry import FoundryChatClient
+from azure.identity import AzureCliCredential
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
 from durabletask.azuremanaged.worker import DurableTaskSchedulerWorker
 from redis_stream_response_handler import RedisStreamResponseHandler
@@ -153,7 +154,13 @@ def create_travel_agent() -> "Agent":
     Returns:
         Agent: The configured TravelPlanner agent with travel planning tools.
     """
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    _client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AsyncAzureCliCredential(),
+    )
+    return Agent(
+        client=_client,
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:
@@ -191,7 +198,7 @@ def get_worker(
     logger.debug(f"Using taskhub: {taskhub_name}")
     logger.debug(f"Using endpoint: {endpoint_url}")
 
-    credential = None if endpoint_url == "http://localhost:8080" else DefaultAzureCredential()
+    credential = None if endpoint_url == "http://localhost:8080" else AzureCliCredential()
 
     return DurableTaskSchedulerWorker(
         host_address=endpoint_url,

@@ -1,32 +1,30 @@
 # Azure AI Package (agent-framework-azure-ai)
 
-Integration with Azure AI Foundry for persistent agents and project-based agent management.
+Integration with Azure AI inference embeddings plus shared Azure authentication helpers.
 
 ## Main Classes
 
-- **`AzureAIAgentClient`** - Chat client for Azure AI Agents (persistent agents with threads)
-- **`AzureAIClient`** - Client for Azure AI Foundry project-based agents
-- **`AzureAIAgentsProvider`** - Provider for listing/managing Azure AI agents
-- **`AzureAIProjectAgentProvider`** - Provider for project-scoped agent management
-- **`AzureAISettings`** - Pydantic settings for Azure AI configuration
-- **`AzureAIAgentOptions`** / **`AzureAIProjectAgentOptions`** - Options TypedDicts
+- **`AzureAIInferenceEmbeddingClient`** - Full-featured Azure AI inference embeddings client
+- **`RawAzureAIInferenceEmbeddingClient`** - Raw embeddings client without middleware layers
+- **`AzureAIInferenceEmbeddingOptions`** / **`AzureAIInferenceEmbeddingSettings`** - Embedding options and settings
+- **`AzureAISettings`** - Shared Azure AI project settings TypedDict
+- **`AzureCredentialTypes`** / **`AzureTokenProvider`** - Shared Azure authentication helpers
 
 ## Usage
 
 ```python
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework_azure_ai import AzureAIInferenceEmbeddingClient
 
-client = AzureAIAgentClient(
-    endpoint="https://your-project.services.ai.azure.com",
-    agent_id="your-agent-id",
+client = AzureAIInferenceEmbeddingClient(
+    endpoint="https://<resource>.inference.ai.azure.com",
+    api_key="...",
+    model_id="text-embedding-3-large",
 )
-response = await client.get_response("Hello")
+result = await client.get_embeddings(["Hello"])
 ```
 
 ## Import Path
 
 ```python
-from agent_framework.azure import AzureAIAgentClient, AzureAIClient
-# or directly:
-from agent_framework_azure_ai import AzureAIAgentClient
+from agent_framework_azure_ai import AzureAIInferenceEmbeddingClient
 ```

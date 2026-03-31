@@ -18,6 +18,7 @@ using OpenTelemetry.Trace;
 
 #region Setup Telemetry
 
+// Source name for this sample's custom ActivitySource and Meter; other instrumentation uses their own sources/categories.
 const string SourceName = "OpenTelemetryAspire.ConsoleApp";
 const string ServiceName = "AgentOpenTelemetry";
 
@@ -40,7 +41,6 @@ var resource = ResourceBuilder.CreateDefault()
 var tracerProviderBuilder = Sdk.CreateTracerProviderBuilder()
     .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
     .AddSource(SourceName) // Our custom activity source
-    .AddSource("*Microsoft.Agents.AI") // Agent Framework telemetry
     .AddHttpClientInstrumentation() // Capture HTTP calls to OpenAI
     .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
 
@@ -54,8 +54,7 @@ using var tracerProvider = tracerProviderBuilder.Build();
 // Setup metrics with resource and instrument name filtering
 using var meterProvider = Sdk.CreateMeterProviderBuilder()
     .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(ServiceName, serviceVersion: "1.0.0"))
-    .AddMeter(SourceName) // Our custom meter
-    .AddMeter("*Microsoft.Agents.AI") // Agent Framework metrics
+    .AddMeter(SourceName) // Our custom meter source
     .AddHttpClientInstrumentation() // HTTP client metrics
     .AddRuntimeInstrumentation() // .NET runtime metrics
     .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint))
@@ -128,7 +127,7 @@ var agent = new ChatClientAgent(instrumentedChatClient,
     instructions: "You are a helpful assistant that provides concise and informative responses.",
     tools: [AIFunctionFactory.Create(GetWeatherAsync)])
     .AsBuilder()
-    .UseOpenTelemetry(SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
+    .UseOpenTelemetry(sourceName: SourceName, configure: (cfg) => cfg.EnableSensitiveData = true) // enable telemetry at the agent level
     .Build();
 
 var session = await agent.CreateSessionAsync();

@@ -4,7 +4,7 @@ import asyncio
 import os
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 """
@@ -21,7 +21,7 @@ Prerequisites:
 2. Environment variables:
    - GITHUB_PAT: Your GitHub Personal Access Token (required)
    - OPENAI_API_KEY: Your OpenAI API key (required)
-   - OPENAI_RESPONSES_MODEL_ID: Your OpenAI model ID (required)
+   - OPENAI_MODEL: Your OpenAI model ID (required)
 """
 
 
@@ -45,7 +45,7 @@ async def github_mcp_example() -> None:
     # 4. Create agent with the GitHub MCP tool using instance method
     # The MCP tool manages the connection to the MCP server and makes its tools available
     # Set approval_mode="never_require" to allow the MCP tool to execute without approval
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
     github_mcp_tool = client.get_mcp_tool(
         name="GitHub",
         url="https://api.githubcopilot.com/mcp/",

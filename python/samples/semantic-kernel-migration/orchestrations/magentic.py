@@ -15,7 +15,7 @@ import asyncio
 from collections.abc import Sequence
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder
 from dotenv import load_dotenv
 from semantic_kernel.agents import (
@@ -137,12 +137,12 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        client=OpenAIChatClient(model_id="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model="gpt-4o-search-preview"),
     )
 
     # Create code interpreter tool using static method
-    coder_client = OpenAIResponsesClient()
-    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+    coder_client = OpenAIChatClient()
+    code_interpreter_tool = OpenAIChatClient.get_code_interpreter_tool()
 
     coder = Agent(
         name="CoderAgent",

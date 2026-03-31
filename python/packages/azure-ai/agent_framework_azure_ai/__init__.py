@@ -2,37 +2,27 @@
 
 import importlib.metadata
 
-from ._agent_provider import AzureAIAgentsProvider
-from ._chat_client import AzureAIAgentClient, AzureAIAgentOptions
-from ._client import AzureAIClient, AzureAIProjectAgentOptions, RawAzureAIClient
 from ._embedding_client import (
     AzureAIInferenceEmbeddingClient,
     AzureAIInferenceEmbeddingOptions,
     AzureAIInferenceEmbeddingSettings,
     RawAzureAIInferenceEmbeddingClient,
 )
-from ._foundry_memory_provider import FoundryMemoryProvider
-from ._project_provider import AzureAIProjectAgentProvider
+from ._entra_id_authentication import AzureCredentialTypes, AzureTokenProvider
 from ._shared import AzureAISettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
 except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0.0"  # Fallback for development mode
+    __version__ = "0.0.0"
 
 __all__ = [
-    "AzureAIAgentClient",
-    "AzureAIAgentOptions",
-    "AzureAIAgentsProvider",
-    "AzureAIClient",
     "AzureAIInferenceEmbeddingClient",
     "AzureAIInferenceEmbeddingOptions",
     "AzureAIInferenceEmbeddingSettings",
-    "AzureAIProjectAgentOptions",
-    "AzureAIProjectAgentProvider",
     "AzureAISettings",
-    "FoundryMemoryProvider",
-    "RawAzureAIClient",
+    "AzureCredentialTypes",
+    "AzureTokenProvider",
     "RawAzureAIInferenceEmbeddingClient",
     "__version__",
 ]

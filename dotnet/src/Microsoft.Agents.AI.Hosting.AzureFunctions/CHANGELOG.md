@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added MCP tool trigger support for durable workflows ([#4768](https://github.com/microsoft/agent-framework/pull/4768))
 - Added Azure Functions hosting support for durable workflows ([#4436](https://github.com/microsoft/agent-framework/pull/4436))
 
 ## v1.0.0-preview.251219.1

@@ -28,7 +28,7 @@ dotnet/samples/
 │   ├── AGUI/                          # AG-UI protocol samples
 │   ├── DeclarativeAgents/             # Declarative agent definitions
 │   ├── DevUI/                         # DevUI samples
-│   ├── FoundryAgents/                 # Azure AI Foundry agent samples
+│   ├── AgentsWithFoundry/             # Azure AI Foundry samples (FoundryAgent + AsAIAgent extensions)
 │   └── ModelContextProtocol/          # MCP server/client patterns
 ├── 03-workflows/                      # Workflow patterns
 │   ├── _StartHere/                    # Introductory workflow samples

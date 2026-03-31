@@ -35,6 +35,7 @@ from html import escape as xml_escape
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, runtime_checkable
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import BaseContextProvider
 from ._tools import FunctionTool
 
@@ -47,13 +48,9 @@ logger = logging.getLogger(__name__)
 # region Models
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillResource:
     """A named piece of supplementary content attached to a skill.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A resource provides data that an agent can retrieve on demand.  It holds
     either a static ``content`` string or a ``function`` that produces content
@@ -117,13 +114,9 @@ class SkillResource:
             self._accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScript:
     """An executable script attached to a skill.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A script represents executable code that an agent can run.  It holds
     either an inline ``function`` callable (code-defined scripts) or
@@ -202,11 +195,6 @@ class SkillScript:
     def parameters_schema(self) -> dict[str, Any] | None:
         """JSON Schema describing the script's parameters.
 
-        .. warning:: Experimental
-
-            This API is experimental and subject to change or removal
-            in future versions without notice.
-
         Lazily generated from the callable's signature on first access.
         Returns ``None`` for file-based scripts or functions with no
         introspectable parameters.
@@ -219,13 +207,9 @@ class SkillScript:
         return self._parameters_schema
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class Skill:
     """A skill definition with optional resources.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A skill bundles a set of instructions (``content``) with metadata and
     zero or more :class:`SkillResource` and :class:`SkillScript` instances.
@@ -432,13 +416,9 @@ class Skill:
 
 
 @runtime_checkable
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillScriptRunner(Protocol):
     """Protocol for skill script runners.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     A script runner determines how **file-based** skill scripts are
     run. Implementations decide the execution strategy
@@ -538,13 +518,9 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 # region SkillsProvider
 
 
+@experimental(feature_id=ExperimentalFeature.SKILLS)
 class SkillsProvider(BaseContextProvider):
     """Context provider that advertises skills and exposes skill tools.
-
-    .. warning:: Experimental
-
-        This API is experimental and subject to change or removal
-        in future versions without notice.
 
     Supports both **file-based** skills (discovered from ``SKILL.md`` files)
     and **code-defined** skills (passed as :class:`Skill` instances).

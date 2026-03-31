@@ -9,7 +9,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 from create_workflow import create_and_run_workflow
 from dotenv import load_dotenv
 
@@ -33,8 +33,8 @@ This script:
 
 def create_openai_client() -> OpenAI:
     project_client = AIProjectClient(
-        endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        credential=DefaultAzureCredential(),
+        endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        credential=AzureCliCredential(),
     )
     return project_client.get_openai_client()
 
@@ -58,7 +58,7 @@ async def run_workflow(deployment_name: str | None = None) -> dict[str, Any]:
     print("Executing multi-agent travel planning workflow...")
     print("This may take a few minutes...")
 
-    workflow_data = await create_and_run_workflow(deployment_name=deployment_name)
+    workflow_data = await create_and_run_workflow(model=deployment_name)
 
     print("Workflow execution completed")
     return workflow_data
@@ -99,7 +99,7 @@ def fetch_agent_responses(openai_client: OpenAI, workflow_data: dict[str, Any], 
 
 def create_evaluation(openai_client: OpenAI, deployment_name: str | None = "gpt-5.2") -> EvalCreateResponse:
     """Create evaluation with multiple evaluators."""
-    deployment_name = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", deployment_name)
+    deployment_name = os.environ.get("FOUNDRY_MODEL", deployment_name)
     data_source_config = {"type": "azure_ai_source", "scenario": "responses"}
 
     testing_criteria = [
@@ -199,8 +199,8 @@ async def main():
     openai_client = create_openai_client()
 
     # Model configuration
-    workflow_agent_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW", "gpt-4.1-nano")
-    eval_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_EVAL", "gpt-5.2")
+    workflow_agent_model = os.environ.get("FOUNDRY_MODEL_WORKFLOW", "gpt-4.1-nano")
+    eval_model = os.environ.get("FOUNDRY_MODEL_EVAL", "gpt-5.2")
 
     # Focus on these agents, uncomment other ones you want to have evals run on
     agents_to_evaluate = [
@@ -216,7 +216,7 @@ async def main():
     print_section("Travel Planning Workflow Evaluation")
 
     print_section("Step 1: Running Workflow")
-    workflow_data = await run_workflow(deployment_name=workflow_agent_model)
+    workflow_data = await run_workflow(model=workflow_agent_model)
 
     print_section("Step 2: Response Data Summary")
     display_response_summary(workflow_data)
@@ -225,7 +225,7 @@ async def main():
     fetch_agent_responses(openai_client, workflow_data, agents_to_evaluate)
 
     print_section("Step 4: Creating Evaluation")
-    eval_object = create_evaluation(openai_client, deployment_name=eval_model)
+    eval_object = create_evaluation(openai_client, model=eval_model)
 
     print_section("Step 5: Running Evaluation")
     eval_run = run_evaluation(openai_client, eval_object, workflow_data, agents_to_evaluate)

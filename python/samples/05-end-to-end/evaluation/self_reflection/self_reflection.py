@@ -17,26 +17,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-import openai
 import pandas as pd
-from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIResponsesClient
-from azure.ai.projects import AIProjectClient
-from azure.identity import AzureCliCredential
+from agent_framework import Agent, EvalItem, Message
+from agent_framework.foundry import FoundryChatClient, FoundryEvals
+from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
 from dotenv import load_dotenv
-from openai.types.eval_create_params import DataSourceConfigCustom
-from openai.types.evals.create_eval_jsonl_run_data_source_param import (
-    CreateEvalJSONLRunDataSourceParam,
-    SourceFileContent,
-    SourceFileContentContent,
-)
 
 """
 Self-Reflection LLM Runner
 
 Reflexion: language agents with verbal reinforcement learning.
 Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023.
-In Proceedings of the 37th International Conference on Neural Information Processing Systems (NIPS '23). Curran Associates Inc., Red Hook, NY, USA, Article 377, 8634–8652.
+In Proceedings of the 37th International Conference on Neural Information
+Processing Systems (NIPS '23). Curran Associates Inc., Red Hook, NY, USA,
+Article 377, 8634–8652.
 https://arxiv.org/abs/2303.11366
 
 This module implements a self-reflection loop for LLM responses using groundedness evaluation.
@@ -59,8 +53,8 @@ Usage as CLI with extra options:
 SUMMARY
 ============================================================
 Total prompts processed: 31
-  ✓ Successful: 30
-  ✗ Failed: 1
+  [PASS] Successful: 30
+  [FAIL] Failed: 1
 
 Groundedness Scores:
   Average best score: 4.77/5
@@ -77,7 +71,7 @@ Iteration Statistics:
   Best on first try: 25/30 (83.3%)
 ============================================================
 
-✓ Processing complete!
+[PASS] Processing complete!
 
 """
 
@@ -86,104 +80,37 @@ DEFAULT_AGENT_MODEL = "gpt-5.2"
 DEFAULT_JUDGE_MODEL = "gpt-5.2"
 
 
-def create_openai_client():
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    credential = AzureCliCredential()
-    project_client = AIProjectClient(endpoint=endpoint, credential=credential)
-    return project_client.get_openai_client()
-
-
-def create_async_project_client():
-    from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
-    from azure.identity.aio import AzureCliCredential as AsyncAzureCliCredential
-
-    return AsyncAIProjectClient(endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"], credential=AsyncAzureCliCredential())
-
-
-def create_eval(client: openai.OpenAI, judge_model: str) -> openai.types.EvalCreateResponse:
-    print("Creating Eval")
-    data_source_config = DataSourceConfigCustom({
-        "type": "custom",
-        "item_schema": {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "response": {"type": "string"},
-                "context": {"type": "string"},
-            },
-            "required": [],
-        },
-        "include_sample_schema": True,
-    })
-
-    testing_criteria = [
-        {
-            "type": "azure_ai_evaluator",
-            "name": "groundedness",
-            "evaluator_name": "builtin.groundedness",
-            "data_mapping": {"query": "{{item.query}}", "response": "{{item.response}}", "context": "{{item.context}}"},
-            "initialization_parameters": {"deployment_name": f"{judge_model}"},
-        }
-    ]
-
-    return client.evals.create(
-        name="Eval",
-        data_source_config=data_source_config,
-        testing_criteria=testing_criteria,  # type: ignore
-    )
-
-
-def run_eval(
-    client: openai.OpenAI,
-    eval_object: openai.types.EvalCreateResponse,
+async def evaluate_groundedness(
+    evals: FoundryEvals,
     query: str,
     response: str,
     context: str,
-):
-    eval_run_object = client.evals.runs.create(
-        eval_id=eval_object.id,
-        name="inline_data_run",
-        metadata={"team": "eval-exp", "scenario": "inline-data-v1"},
-        data_source=CreateEvalJSONLRunDataSourceParam(
-            type="jsonl",
-            source=SourceFileContent(
-                type="file_content",
-                content=[
-                    SourceFileContentContent(
-                        item={
-                            "query": query,
-                            "context": context,
-                            "response": response,
-                        }
-                    ),
-                ],
-            ),
-        ),
+) -> float | None:
+    """Run a single groundedness evaluation and return the score."""
+    item = EvalItem(
+        conversation=[
+            Message("user", [query]),
+            Message("assistant", [response]),
+        ],
+        context=context,
     )
-
-    eval_run_response = client.evals.runs.retrieve(run_id=eval_run_object.id, eval_id=eval_object.id)
-
-    MAX_RETRY = 10
-    for _ in range(0, MAX_RETRY):
-        run = client.evals.runs.retrieve(run_id=eval_run_response.id, eval_id=eval_object.id)
-        if run.status == "failed":
-            print(
-                f"Eval run failed. Run ID: {run.id}, Status: {run.status}, Error: {getattr(run, 'error', 'Unknown error')}"
-            )
-            continue
-        if run.status == "completed":
-            return list(client.evals.runs.output_items.list(run_id=run.id, eval_id=eval_object.id))
-        time.sleep(5)
-
-    print("Eval result retrieval timeout.")
+    results = await evals.evaluate(
+        [item],
+        eval_name="Self-Reflection Groundedness",
+    )
+    if results.status != "completed" or not results.items:
+        return None
+    # Return the first evaluator score
+    for score in results.items[0].scores:
+        if score.score is not None:
+            return float(score.score)
     return None
 
 
 async def execute_query_with_self_reflection(
     *,
-    client: openai.OpenAI,
+    evals: FoundryEvals,
     agent: Agent,
-    eval_object: openai.types.EvalCreateResponse,
     full_user_query: str,
     context: str,
     max_self_reflections: int = 3,
@@ -192,10 +119,10 @@ async def execute_query_with_self_reflection(
     Execute a query with self-reflection loop.
 
     Args:
+        evals: FoundryEvals instance for groundedness scoring
         agent: Agent instance to use for generating responses
         full_user_query: Complete prompt including system prompt, user request, and context
         context: Context document for groundedness evaluation
-        evaluator: Groundedness evaluator function
         max_self_reflections: Maximum number of self-reflection iterations
 
     Returns:
@@ -205,7 +132,6 @@ async def execute_query_with_self_reflection(
             - best_iteration: Iteration number where best score was achieved
             - iteration_scores: List of groundedness scores for each iteration
             - messages: Full conversation history
-            - usage_metadata: Token usage information
             - num_retries: Number of iterations performed
             - total_groundedness_eval_time: Time spent on evaluations (seconds)
             - total_end_to_end_time: Total execution time (seconds)
@@ -219,7 +145,7 @@ async def execute_query_with_self_reflection(
     raw_response = None
     total_groundedness_eval_time = 0.0
     start_time = time.time()
-    iteration_scores = []  # Store all iteration scores in structured format
+    iteration_scores = []
 
     for i in range(max_self_reflections):
         print(f"  Self-reflection iteration {i + 1}/{max_self_reflections}...")
@@ -227,21 +153,15 @@ async def execute_query_with_self_reflection(
         raw_response = await agent.run(messages=messages)
         agent_response = raw_response.text
 
-        # Evaluate groundedness
+        # Evaluate groundedness using FoundryEvals
         start_time_eval = time.time()
-        eval_run_output_items = run_eval(
-            client=client,
-            eval_object=eval_object,
-            query=full_user_query,
-            response=agent_response,
-            context=context,
-        )
-        if eval_run_output_items is None:
-            print(f"  ⚠️ Groundedness evaluation failed (timeout or error) for iteration {i + 1}.")
-            continue
-        score = eval_run_output_items[0].results[0].score
+        score = await evaluate_groundedness(evals, full_user_query, agent_response, context)
         end_time_eval = time.time()
         total_groundedness_eval_time += end_time_eval - start_time_eval
+
+        if score is None:
+            print(f"  ⚠️ Groundedness evaluation failed for iteration {i + 1}.")
+            continue
 
         # Store score in structured format
         iteration_scores.append(score)
@@ -252,15 +172,15 @@ async def execute_query_with_self_reflection(
         # Update best response if improved
         if score > best_score:
             if best_score > 0:
-                print(f"  ✓ Score improved from {best_score} to {score}/{max_score}")
+                print(f"  [PASS] Score improved from {best_score} to {score}/{max_score}")
             best_score = score
             best_response = agent_response
             best_iteration = i + 1
             if score == max_score:
-                print("  ✓ Perfect groundedness score achieved!")
+                print("  [PASS] Perfect groundedness score achieved!")
                 break
         else:
-            print(f"  → No improvement (score: {score}/{max_score}). Trying again...")
+            print(f"  -> No improvement (score: {score}/{max_score}). Trying again...")
 
         # Add to conversation history
         messages.append(Message("assistant", [agent_response]))
@@ -293,7 +213,6 @@ async def execute_query_with_self_reflection(
 
 
 async def run_self_reflection_batch(
-    project_client: AIProjectClient,
     input_file: str,
     output_file: str,
     agent_model: str = DEFAULT_AGENT_MODEL,
@@ -301,7 +220,7 @@ async def run_self_reflection_batch(
     max_self_reflections: int = 3,
     env_file: str | None = None,
     limit: int | None = None,
-):
+) -> None:
     """
     Run self-reflection on a batch of prompts.
 
@@ -315,15 +234,34 @@ async def run_self_reflection_batch(
         limit: Optional limit to process only the first N prompts
     """
     # Load environment variables
-    if env_file and os.path.exists(env_file):
+    if env_file:
+        if not os.path.isfile(env_file):
+            raise FileNotFoundError(f"Env file not found: {env_file}")
         load_dotenv(env_file, override=True)
     else:
         load_dotenv(override=True)
 
-    # Create agent, it loads environment variables AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT automatically
-    responses_client = AzureOpenAIResponsesClient(
+    from azure.ai.projects.aio import AIProjectClient as AsyncAIProjectClient
+
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    credential = AsyncAzureCliCredential()
+    project_client = AsyncAIProjectClient(endpoint=endpoint, credential=credential)
+
+    # Create agent client
+    agent_client = FoundryChatClient(
         project_client=project_client,
-        deployment_name=agent_model,
+        model=agent_model,
+    )
+
+    # Create FoundryEvals for groundedness scoring
+    judge_client = FoundryChatClient(
+        project_client=project_client,
+        model=judge_model,
+    )
+    evals = FoundryEvals(
+        client=judge_client,
+        model=judge_model,
+        evaluators=[FoundryEvals.GROUNDEDNESS],
     )
 
     # Load input data
@@ -351,13 +289,6 @@ async def run_self_reflection_batch(
     if missing_columns:
         raise ValueError(f"Input file missing required columns: {missing_columns}")
 
-    # Configure clients
-    print("Configuring Azure OpenAI client...")
-    client = create_openai_client()
-
-    # Create Eval
-    eval_object = create_eval(client=client, judge_model=judge_model)
-
     # Process each prompt
     print(f"Max self-reflections: {max_self_reflections}\n")
 
@@ -367,9 +298,8 @@ async def run_self_reflection_batch(
 
         try:
             result = await execute_query_with_self_reflection(
-                client=client,
-                agent=responses_client.as_agent(instructions=row["system_instruction"]),
-                eval_object=eval_object,
+                evals=evals,
+                agent=Agent(client=agent_client, instructions=row["system_instruction"]),
                 full_user_query=row["full_prompt"],
                 context=row["context_document"],
                 max_self_reflections=max_self_reflections,
@@ -393,13 +323,13 @@ async def run_self_reflection_batch(
             results.append(result_data)
 
             print(
-                f"  ✓ Completed with score: {result['best_response_score']}/5 "
+                f"  [PASS] Completed with score: {result['best_response_score']}/5 "
                 f"(best at iteration {result['best_iteration']}/{result['num_retries']}, "
                 f"time: {result['total_end_to_end_time']:.1f}s)\n"
             )
 
         except Exception as e:
-            print(f"  ✗ Error: {str(e)}\n")
+            print(f"  [FAIL] Error: {str(e)}\n")
 
             # Save error information
             error_data = {
@@ -434,8 +364,8 @@ async def run_self_reflection_batch(
     print("SUMMARY")
     print("=" * 60)
     print(f"Total prompts processed: {len(results_df)}")
-    print(f"  ✓ Successful: {len(successful_runs)}")
-    print(f"  ✗ Failed: {len(failed_runs)}")
+    print(f"  [PASS] Successful: {len(successful_runs)}")
+    print(f"  [FAIL] Failed: {len(failed_runs)}")
 
     if len(successful_runs) > 0:
         # Extract scores and iteration data from nested agent_response dict
@@ -452,9 +382,8 @@ async def run_self_reflection_batch(
             perfect_scores = sum(1 for s in best_scores if s == 5)
             print("\nGroundedness Scores:")
             print(f"  Average best score: {avg_score:.2f}/5")
-            print(
-                f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({100 * perfect_scores / len(best_scores):.1f}%)"
-            )
+            pct = 100 * perfect_scores / len(best_scores)
+            print(f"  Perfect scores (5/5): {perfect_scores}/{len(best_scores)} ({pct:.1f}%)")
 
             # Calculate improvement metrics
             if iteration_scores_list:
@@ -472,9 +401,8 @@ async def run_self_reflection_batch(
                     print(f"  Average first score: {avg_first_score:.2f}/5")
                     print(f"  Average final score: {avg_last_score:.2f}/5")
                     print(f"  Average improvement: +{avg_improvement:.2f}")
-                    print(
-                        f"  Responses that improved: {improved_count}/{len(improvements)} ({100 * improved_count / len(improvements):.1f}%)"
-                    )
+                    pct = 100 * improved_count / len(improvements)
+                    print(f"  Responses that improved: {improved_count}/{len(improvements)} ({pct:.1f}%)")
 
             # Show iteration statistics
             if iterations:
@@ -485,6 +413,8 @@ async def run_self_reflection_batch(
                 print(f"  Best on first try: {first_try}/{len(iterations)} ({100 * first_try / len(iterations):.1f}%)")
 
     print("=" * 60)
+
+    await credential.close()
 
 
 async def main():
@@ -519,7 +449,6 @@ async def main():
     # Run the batch processing
     try:
         await run_self_reflection_batch(
-            project_client=create_async_project_client(),
             input_file=args.input,
             output_file=args.output,
             agent_model=args.agent_model,
@@ -528,10 +457,10 @@ async def main():
             env_file=args.env_file,
             limit=args.limit,
         )
-        print("\n✓ Processing complete!")
+        print("\n[PASS] Processing complete!")
 
     except Exception as e:
-        print(f"\n✗ Error: {str(e)}")
+        print(f"\n[FAIL] Error: {str(e)}")
         return 1
     return 0
 

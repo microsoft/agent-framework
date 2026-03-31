@@ -41,13 +41,13 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
     ],
     requiredEnvVars: [
       {
-        name: "AZURE_AI_PROJECT_ENDPOINT",
+        name: "FOUNDRY_PROJECT_ENDPOINT",
         description: "Azure AI Foundry project endpoint URL",
         required: true,
         example: "https://your-project.api.azureml.ms",
       },
       {
-        name: "FOUNDRY_MODEL_DEPLOYMENT_NAME",
+        name: "FOUNDRY_MODEL",
         description: "Name of the deployed model in Azure AI Foundry",
         required: true,
         example: "gpt-4o",
@@ -78,7 +78,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
         required: true,
       },
       {
-        name: "AZURE_OPENAI_CHAT_DEPLOYMENT_NAME",
+        name: "AZURE_OPENAI_DEPLOYMENT_NAME",
         description: "Name of the deployed model in Azure OpenAI",
         required: true,
         example: "gpt-4o",

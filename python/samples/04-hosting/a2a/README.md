@@ -1,11 +1,12 @@
 # A2A Agent Examples
 
-This sample demonstrates how to host and consume agents using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/) with the `agent_framework` package. There are two runnable entry points:
+This sample demonstrates how to host and consume agents using the [A2A (Agent2Agent) protocol](https://a2a-protocol.org/latest/) with the `agent_framework` package. There are three runnable entry points:
 
 | Run this file | To... |
 |---------------|-------|
 | **[`a2a_server.py`](a2a_server.py)** | Host an Agent Framework agent as an A2A-compliant server. |
 | **[`agent_with_a2a.py`](agent_with_a2a.py)** | Connect to an A2A server and send requests (non-streaming and streaming). |
+| **[`a2a_agent_as_function_tools.py`](a2a_agent_as_function_tools.py)** | Convert A2A agent skills into function tools for a host agent. |
 
 The remaining files are supporting modules used by the server:
 
@@ -21,11 +22,16 @@ The remaining files are supporting modules used by the server:
 Make sure to set the following environment variables before running the examples:
 
 ### Required (Server)
-- `AZURE_AI_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` — Model deployment name (e.g. `gpt-4o`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ### Required (Client)
 - `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5001/`)
+
+### Required (Function Tools Sample)
+- `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5000/`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ## Quick Start
 
@@ -54,4 +60,15 @@ In a separate terminal (from the same directory), point the client at a running 
 ```powershell
 $env:A2A_AGENT_HOST = "http://localhost:5001/"
 uv run python agent_with_a2a.py
+```
+
+### 3. Run the Function Tools Sample
+
+This sample resolves the remote agent's skills and registers each one as a function tool
+on a host Foundry-backed agent. The host agent then autonomously selects the right skill
+to handle the user's request.
+
+```powershell
+$env:A2A_AGENT_HOST = "http://localhost:5000/"
+uv run python a2a_agent_as_function_tools.py
 ```

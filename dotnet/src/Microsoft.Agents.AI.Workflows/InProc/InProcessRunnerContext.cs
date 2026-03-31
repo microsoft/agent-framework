@@ -296,6 +296,9 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         return this._externalRequests.TryRemove(requestId, out _);
     }
 
+    internal bool TryGetResponsePortExecutorId(string portId, [NotNullWhen(true)] out string? executorId)
+        => this._edgeMap.TryGetResponsePortExecutorId(portId, out executorId);
+
     private IEventSink OutgoingEvents { get; }
 
     internal StateManager StateManager { get; } = new();

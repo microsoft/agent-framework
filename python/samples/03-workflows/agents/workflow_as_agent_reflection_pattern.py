@@ -14,7 +14,7 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -39,8 +39,8 @@ Key Concepts Demonstrated:
 - State management for pending requests and retry logic.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.
 """
@@ -195,27 +195,23 @@ async def main() -> None:
     print("Building workflow with Worker ↔ Reviewer cycle...")
     worker = Worker(
         id="worker",
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
     reviewer = Reviewer(
         id="reviewer",
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
 
     agent = (
-        WorkflowBuilder(start_executor=worker)
-        .add_edge(worker, reviewer)  # Worker sends responses to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer provides feedback to Worker
-        .build()
-        .as_agent()  # Wrap workflow as an agent
+        WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build().as_agent()
     )
 
     print("Running workflow agent with user query...")
