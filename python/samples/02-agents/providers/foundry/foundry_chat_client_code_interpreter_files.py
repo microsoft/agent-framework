@@ -18,6 +18,10 @@ Foundry Chat Client with Code Interpreter and Files Example
 
 This sample demonstrates using get_code_interpreter_tool() with Responses on Foundry
 for Python code execution and data analysis with uploaded files.
+
+Environment variables:
+    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_MODEL            — Model deployment name (e.g. "gpt-4o")
 """
 
 # Helper functions
@@ -67,10 +71,13 @@ async def main() -> None:
 
     # Initialize the underlying OpenAI client for file operations
     credential = AzureCliCredential()
-    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
 
     # Create FoundryChatClient first, then reuse its project client for file operations
-    client = FoundryChatClient(credential=credential, project_endpoint=project_endpoint)
+    client = FoundryChatClient(
+        credential=credential,
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+    )
     openai_client = client.project_client.get_openai_client()
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)

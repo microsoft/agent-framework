@@ -26,7 +26,7 @@ async def main() -> None:
     agent = FoundryAgent(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
         credential=AzureCliCredential(),
     )
 
