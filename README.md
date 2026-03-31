@@ -140,7 +140,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 Create a simple Agent, using Azure OpenAI with token-based auth, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI --prerelease
+// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
 // dotnet add package Azure.AI.OpenAI
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
@@ -241,7 +241,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Environment Variables
 
-The framework reads configuration from environment variables. Common required variables:
+The samples typically read configuration from environment variables. Common required variables:
 
 | Variable | Used by | Purpose |
 |----------|---------|---------|
