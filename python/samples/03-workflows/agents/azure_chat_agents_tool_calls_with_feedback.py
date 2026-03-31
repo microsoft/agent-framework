@@ -49,7 +49,7 @@ Demonstrates:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -122,11 +122,7 @@ class Coordinator(Executor):
         # Writer agent response; request human feedback.
         # Preserve the full conversation so the final editor
         # can see tool traces and the initial prompt.
-        conversation: list[Message]
-        if draft.full_conversation is not None:
-            conversation = list(draft.full_conversation)
-        else:
-            conversation = list(draft.agent_response.messages)
+        conversation = list(draft.full_conversation)
         draft_text = draft.agent_response.text.strip()
         if not draft_text:
             draft_text = "No draft text was produced."
@@ -178,7 +174,7 @@ def create_writer_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="writer_agent",
@@ -188,7 +184,9 @@ def create_writer_agent() -> Agent:
             "produce a 3-sentence draft."
         ),
         tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice="required",
+        default_options={
+            "tool_choice": "required",
+        },
     )
 
 
@@ -197,7 +195,7 @@ def create_final_editor_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="final_editor_agent",

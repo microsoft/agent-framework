@@ -180,7 +180,7 @@ This will show you which files are not covered by the tests, including the speci
 
 ## Catching up with the latest changes
 
-There are many people committing to Semantic Kernel, so it is important to keep your local repository up to date. To do this, you can run the following commands:
+There are many people committing to Agent Framework, so it is important to keep your local repository up to date. To do this, you can run the following commands:
 
 ```bash
     git fetch upstream main

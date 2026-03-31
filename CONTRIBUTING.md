@@ -123,22 +123,30 @@ We use and recommend the following workflow:
      "issue-123" or "githubhandle-issue".
 4. Make and commit your changes to your branch.
 5. Add new tests corresponding to your change, if applicable.
-6. Run the relevant scripts in [the section below](#development-scripts) to ensure that your build is clean and all tests are passing.
+6. Run the relevant scripts in [the section below](#development-setup) to ensure that your build is clean and all tests are passing.
 7. Create a PR against the repository's **main** branch.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
 8. Wait for feedback or approval of your changes from the code maintainers.
 9. When area owners have signed off, and all checks are green, your PR will be merged.
 
-### Development scripts
+### Development Setup
 
-The scripts below are used to build, test, and lint within the project.
+Each language has its own dev setup guide, coding standards, and build scripts:
 
-- Python: see [python/DEV_SETUP.md](./python/DEV_SETUP.md).
-- .NET:
-  - Build: `dotnet build`
-  - Test: `dotnet test`
-  - Linting (auto-fix): `dotnet format`
+- **Python**: [Dev Setup](./python/DEV_SETUP.md) · [Coding Standard](./python/CODING_STANDARD.md) · [README](./python/README.md)
+  - From the `./python` directory:
+    - Build: `uv run poe build`
+    - Unit tests: `uv run poe test -A -m "not integration"`
+    - Integration tests: `uv run poe test -A -m integration` (requires API keys/endpoints)
+    - Format + lint: `uv run poe syntax`
+    - All checks: `uv run poe check`
+- **.NET**: [README](./dotnet/README.md) · [Agent Instructions](./dotnet/AGENTS.md)
+  - From the `./dotnet` directory:
+    - Build: `dotnet build`
+    - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
+    - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
+    - Linting (auto-fix): `dotnet format`
 
 ### PR - CI Process
 

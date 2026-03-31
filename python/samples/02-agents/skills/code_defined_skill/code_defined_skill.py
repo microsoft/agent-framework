@@ -151,7 +151,7 @@ async def main() -> None:
         print("-" * 60)
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
-            precision=2,
+            function_invocation_kwargs={"precision": 2},
         )
         print(f"Agent: {response}\n")
 

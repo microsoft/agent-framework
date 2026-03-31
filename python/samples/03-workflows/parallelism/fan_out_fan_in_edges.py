@@ -37,8 +37,8 @@ Show how to construct a parallel branch pattern in workflows. Demonstrate:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
-- Azure OpenAI access configured for FoundryChatClient. Log in with Azure CLI and set any required environment variables.
 - Comfort reading AgentExecutorResponse.agent_response.text for assistant output aggregation.
 """
 
@@ -118,7 +118,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(
@@ -132,7 +132,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(
@@ -146,7 +146,7 @@ async def main() -> None:
         Agent(
             client=FoundryChatClient(
                 project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-                model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+                model=os.environ["FOUNDRY_MODEL"],
                 credential=AzureCliCredential(),
             ),
             instructions=(

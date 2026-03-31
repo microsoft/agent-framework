@@ -23,7 +23,7 @@ like any other agent while still emitting callback telemetry.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI credentials configured for `FoundryChatClient` and `FoundryChatClient`.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -37,7 +37,7 @@ async def main() -> None:
         # This agent requires the gpt-4o-search-preview model to perform web searches.
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
@@ -45,7 +45,7 @@ async def main() -> None:
     # Create code interpreter tool using instance method
     coder_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     code_interpreter_tool = coder_client.get_code_interpreter_tool()
@@ -65,7 +65,7 @@ async def main() -> None:
         instructions="You coordinate a team to complete complex tasks efficiently.",
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
@@ -98,7 +98,7 @@ async def main() -> None:
     try:
         # Wrap the workflow as an agent for composition scenarios
         print("\nWrapping workflow as an agent and running...")
-        workflow_agent = Agent(client=workflow, name="MagenticWorkflowAgent")
+        workflow_agent = workflow.as_agent()
 
         last_response_id: str | None = None
         async for update in workflow_agent.run(task, stream=True):

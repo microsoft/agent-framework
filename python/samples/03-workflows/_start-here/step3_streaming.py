@@ -23,7 +23,7 @@ how agents can be used in a workflow.
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
+- FOUNDRY_MODEL must be the deployment name of a model in your Foundry project.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -34,7 +34,7 @@ async def main():
     # Create the Azure chat client. AzureCliCredential uses your current az login.
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     writer_agent = Agent(

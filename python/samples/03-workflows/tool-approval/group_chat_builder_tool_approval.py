@@ -45,7 +45,7 @@ Demonstrate:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI or Azure OpenAI configured with the required environment variables.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Basic familiarity with GroupChatBuilder and streaming workflow events.
 """
 
@@ -136,7 +136,7 @@ async def main() -> None:
     # 3. Create specialized agents
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
