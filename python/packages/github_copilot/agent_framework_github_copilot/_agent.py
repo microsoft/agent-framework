@@ -354,13 +354,22 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             AgentException: If the request fails.
         """
         if stream:
+            ctx_holder: dict[str, Any] = {}
+
+            async def _after_run_hook(response: AgentResponse) -> None:
+                session_context = ctx_holder.get("session_context")
+                sess = ctx_holder.get("session")
+                if session_context is not None and sess is not None:
+                    session_context._response = response
+                    await self._run_after_providers(session=sess, context=session_context)
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
                 return AgentResponse.from_updates(updates)
 
             return ResponseStream(
-                self._stream_updates(messages=messages, session=session, options=options),
+                self._stream_updates(messages=messages, session=session, options=options, _ctx_holder=ctx_holder),
                 finalizer=_finalize,
+                result_hooks=[_after_run_hook],
             )
         return self._run_impl(messages=messages, session=session, options=options)
 
@@ -379,14 +388,17 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             session = self.create_session()
 
         opts: dict[str, Any] = dict(options) if options else {}
-        timeout = opts.pop("timeout", None) or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
+        timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
-        prompt = "\n".join([message.text for message in input_messages])
+        # Build the prompt from the full set of messages in the session context,
+        # so that any context/history provider-injected messages are included.
+        context_messages = session_context.get_messages(include_input=True)
+        prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
         message_options = cast(MessageOptions, {"prompt": prompt})
@@ -426,6 +438,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         *,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        _ctx_holder: dict[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal method to stream updates from GitHub Copilot.
 
@@ -435,6 +448,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
+            _ctx_holder: Internal dict populated with session_context and session
+                so that the caller (via a ResponseStream result_hook) can run
+                after_run providers without duplicating the updates buffer.
 
         Yields:
             AgentResponseUpdate items.
@@ -455,7 +471,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
-        prompt = "\n".join([message.text for message in input_messages])
+        if _ctx_holder is not None:
+            _ctx_holder["session_context"] = session_context
+            _ctx_holder["session"] = session
+
+        # Build the prompt from the full session context so provider-injected messages are included.
+        context_messages = session_context.get_messages(include_input=True)
+        prompt = "\n".join([message.text for message in context_messages])
         if session_context.instructions:
             prompt = "\n".join(session_context.instructions) + "\n" + prompt
         message_options = cast(MessageOptions, {"prompt": prompt})
@@ -517,7 +539,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
         unsubscribe = copilot_session.on(event_handler)
-        all_updates: list[AgentResponseUpdate] = []
 
         try:
             await copilot_session.send(message_options)
@@ -525,14 +546,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
                     raise item
-                all_updates.append(item)
                 yield item
         finally:
             unsubscribe()
 
-        if all_updates:
-            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
-        await self._run_after_providers(session=session, context=session_context)
 
     async def _run_before_providers(
         self,
@@ -542,6 +559,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         options: dict[str, Any],
     ) -> SessionContext:
         """Run before_run on all context providers and return the session context.
+
+        Creates a SessionContext and invokes ``before_run`` on each provider in
+        forward order.  ``BaseHistoryProvider`` instances with
+        ``load_messages=False`` are skipped.
 
         Keyword Args:
             session: The conversation session.
