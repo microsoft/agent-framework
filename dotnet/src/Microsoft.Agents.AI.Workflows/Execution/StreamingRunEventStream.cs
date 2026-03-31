@@ -24,6 +24,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     private readonly bool _disableRunLoop;
     private Task? _runLoopTask;
     private RunStatus _runStatus = RunStatus.NotStarted;
+
     private int _completionEpoch; // Tracks which completion signal belongs to which consumer iteration
 
     public StreamingRunEventStream(ISuperStepRunner stepRunner, bool disableRunLoop = false)
@@ -205,7 +206,9 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
-        int myEpoch = Volatile.Read(ref this._completionEpoch) + 1;
+        int currentEpoch = Volatile.Read(ref this._completionEpoch);
+        bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages || this._runStatus == RunStatus.Running;
+        int myEpoch = expectingFreshWork ? currentEpoch + 1 : currentEpoch;
 
         // Use custom async enumerable to avoid exceptions on cancellation.
         NonThrowingChannelReaderAsyncEnumerable<WorkflowEvent> eventStream = new(this._eventChannel.Reader);
