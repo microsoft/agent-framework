@@ -2001,6 +2001,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
+    _INTERNAL_CONVERSATION_ID_KEY: ClassVar[str] = "_agent_framework_internal_conversation_id"
 
     def __init__(
         self,
@@ -2068,6 +2069,18 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    def mark_internal_conversation_id(self) -> None:
+        """Mark the current conversation_id as internal control-flow state."""
+        self.additional_properties[self._INTERNAL_CONVERSATION_ID_KEY] = True
+
+    def clear_internal_conversation_id(self) -> None:
+        """Remove the internal conversation-id marker."""
+        self.additional_properties.pop(self._INTERNAL_CONVERSATION_ID_KEY, None)
+
+    def has_internal_conversation_id(self) -> bool:
+        """Return whether conversation_id is internal control-flow state."""
+        return bool(self.additional_properties.get(self._INTERNAL_CONVERSATION_ID_KEY, False))
 
     @property
     def model_id(self) -> str | None:

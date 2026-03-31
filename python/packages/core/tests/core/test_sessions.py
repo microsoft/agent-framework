@@ -19,6 +19,7 @@ from agent_framework import (
     agent_middleware,
     chat_middleware,
 )
+from agent_framework._sessions import LOCAL_HISTORY_CONVERSATION_ID, is_local_history_conversation_id
 from agent_framework.exceptions import MiddlewareException
 
 # ---------------------------------------------------------------------------
@@ -206,6 +207,10 @@ class TestSessionContext:
         resp = AgentResponse(messages=[])
         ctx._response = resp
         assert ctx.response is resp
+
+    def test_local_history_conversation_id_sentinel(self) -> None:
+        assert is_local_history_conversation_id(LOCAL_HISTORY_CONVERSATION_ID) is True
+        assert is_local_history_conversation_id("some_other_id") is False
 
 
 # ---------------------------------------------------------------------------

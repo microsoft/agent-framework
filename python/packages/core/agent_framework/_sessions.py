@@ -554,7 +554,7 @@ def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Mess
     return input_messages, context_messages
 
 
-class PerServiceCalHistoryPersistingMiddleware(ChatMiddleware):
+class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
     """Persist local chat history after each service call when history is framework-managed.
 
     This middleware runs around each model call when
@@ -653,6 +653,7 @@ class PerServiceCalHistoryPersistingMiddleware(ChatMiddleware):
             response=response,
         )
         if _response_contains_follow_up_request(response):
+            response.mark_internal_conversation_id()
             response.conversation_id = LOCAL_HISTORY_CONVERSATION_ID
         return response
 
@@ -681,7 +682,7 @@ class PerServiceCalHistoryPersistingMiddleware(ChatMiddleware):
         if context.stream:
             if not isinstance(context.result, ResponseStream):
                 raise ValueError("Streaming chat middleware requires a ResponseStream result.")
-            context.result.with_result_hook(
+            context.result = context.result.with_result_hook(
                 lambda response: self._finalize_response(
                     service_call_context=service_call_context,
                     response=response,

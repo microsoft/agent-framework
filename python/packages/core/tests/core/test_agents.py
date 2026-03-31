@@ -39,7 +39,7 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
-from agent_framework.exceptions import ChatClientInvalidResponseException
+from agent_framework.exceptions import AgentInvalidRequestException, ChatClientInvalidResponseException
 
 
 class _FixedTokenizer:
@@ -635,6 +635,26 @@ async def test_per_service_call_persistence_rejects_real_service_conversation_id
         match="require_per_service_call_history_persistence cannot be used",
     ):
         await agent.run("Hello", session=session, options={"store": False})
+
+
+async def test_per_service_call_persistence_rejects_existing_conversation_id_when_service_not_storing_history(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with pytest.raises(
+        AgentInvalidRequestException,
+        match="require_per_service_call_history_persistence cannot be used",
+    ):
+        await agent.run("Hello", session=session, options={"store": False, "conversation_id": "existing_conversation"})
 
 
 async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:

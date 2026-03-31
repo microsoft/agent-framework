@@ -36,7 +36,7 @@ from ._sessions import (
     ContextProvider,
     HistoryProvider,
     InMemoryHistoryProvider,
-    PerServiceCalHistoryPersistingMiddleware,
+    PerServiceCallHistoryPersistingMiddleware,
     SessionContext,
     is_local_history_conversation_id,
 )
@@ -369,6 +369,7 @@ class BaseAgent(SerializationMixin):
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"additional_properties"}
+    require_per_service_call_history_persistence: bool = False
 
     def __init__(
         self,
@@ -458,9 +459,9 @@ class BaseAgent(SerializationMixin):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
-        per_service_call_history_required = bool(
-            getattr(self, "require_per_service_call_history_persistence", False)
-        ) and any(isinstance(provider, HistoryProvider) for provider in self.context_providers)
+        per_service_call_history_required = self.require_per_service_call_history_persistence and any(
+            isinstance(provider, HistoryProvider) for provider in self.context_providers
+        )
         for provider in reversed(self.context_providers):
             if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
@@ -1276,7 +1277,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
         if per_service_call_history_providers and active_session is not None:
-            per_service_call_history_middleware = PerServiceCalHistoryPersistingMiddleware(
+            per_service_call_history_middleware = PerServiceCallHistoryPersistingMiddleware(
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
