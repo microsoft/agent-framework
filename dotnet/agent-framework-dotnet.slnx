@@ -171,6 +171,7 @@
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step05_Neo4jGraphRAG/AgentWithRAG_Step05_Neo4jGraphRAG.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/ModelContextProtocol/">
     <File Path="samples/02-agents/ModelContextProtocol/README.md" />

@@ -135,6 +135,9 @@
     <PackageVersion Include="Microsoft.Azure.Functions.Worker.Sdk" Version="2.0.7" />
     <!-- Redis -->
     <PackageVersion Include="StackExchange.Redis" Version="2.10.1" />
+    <!-- External provider samples -->
+    <PackageVersion Include="Neo4j.AgentFramework.GraphRAG" Version="0.1.0-preview.2" />
+    <PackageVersion Include="Neo4j.Driver" Version="5.28.0" />
     <!-- Test -->
     <PackageVersion Include="FluentAssertions" Version="8.8.0" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Condition="'$(TargetFramework)' == 'net8.0'" Version="8.0.22" />
