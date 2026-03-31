@@ -20,7 +20,7 @@ This sample demonstrates using Anthropic with:
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient[AnthropicChatOptions]()
+    client = AnthropicClient[AnthropicChatOptions](model_id="claude-sonnet-4-5-20250929")
 
     # Create MCP tool configuration using instance method
     mcp_tool = client.get_mcp_tool(

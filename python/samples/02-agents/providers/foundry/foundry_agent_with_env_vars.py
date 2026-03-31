@@ -5,7 +5,10 @@ import os
 
 from agent_framework.foundry import FoundryAgent
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
 """
 Foundry Agent with Environment Variables
 
@@ -23,7 +26,7 @@ async def main() -> None:
     agent = FoundryAgent(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
+        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
         credential=AzureCliCredential(),
     )
 

@@ -1,12 +1,17 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.foundry import FoundryAgent
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import Field
+
+# Load environment variables from .env file
+load_dotenv()
 
 """
 Foundry Agent with Local Function Tools
@@ -35,9 +40,9 @@ def get_weather(
 
 async def main() -> None:
     agent = FoundryAgent(
-        project_endpoint="https://your-project.services.ai.azure.com",
-        agent_name="my-weather-agent",
-        agent_version="1.0",
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        agent_name=os.environ["FOUNDRY_AGENT_NAME"],
+        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
         credential=AzureCliCredential(),
         tools=[get_weather],
     )

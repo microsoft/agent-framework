@@ -8,7 +8,7 @@ from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from openai import AsyncAzureOpenAI
+from openai import AsyncOpenAI
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,7 +23,7 @@ for Python code execution and data analysis with uploaded files.
 # Helper functions
 
 
-async def create_sample_file_and_upload(openai_client: AsyncAzureOpenAI) -> tuple[str, str]:
+async def create_sample_file_and_upload(openai_client: AsyncOpenAI) -> tuple[str, str]:
     """Create a sample CSV file and upload it for Foundry code interpreter use."""
     csv_data = """name,department,salary,years_experience
 Alice Johnson,Engineering,95000,5
@@ -51,7 +51,7 @@ Frank Wilson,Engineering,88000,6
     return temp_file_path, uploaded_file.id
 
 
-async def cleanup_files(openai_client: AsyncAzureOpenAI, temp_file_path: str, file_id: str) -> None:
+async def cleanup_files(openai_client: AsyncOpenAI, temp_file_path: str, file_id: str) -> None:
     """Clean up both local temporary file and uploaded file."""
     # Clean up: delete the uploaded file
     await openai_client.files.delete(file_id)
@@ -67,20 +67,13 @@ async def main() -> None:
 
     # Initialize the underlying OpenAI client for file operations
     credential = AzureCliCredential()
+    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
 
-    async def get_token():
-        token = credential.get_token("https://cognitiveservices.azure.com/.default")
-        return token.token
-
-    openai_client = AsyncAzureOpenAI(
-        azure_ad_token_provider=get_token,
-        api_version="2024-05-01-preview",
-    )
+    # Create FoundryChatClient first, then reuse its project client for file operations
+    client = FoundryChatClient(credential=credential, project_endpoint=project_endpoint)
+    openai_client = client.project_client.get_openai_client()
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
-
-    # Create agent using FoundryChatClient
-    client = FoundryChatClient(credential=credential)
 
     # Create code interpreter tool with file access
     code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])
