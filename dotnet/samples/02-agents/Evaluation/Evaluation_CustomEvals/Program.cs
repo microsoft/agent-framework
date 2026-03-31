@@ -8,17 +8,19 @@ using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-// Create a customer support agent.
-AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
-    .AsAIAgent(
-        model: deploymentName,
-        instructions: "You are a customer support agent. Help users resolve their issues "
-                    + "politely and provide clear, actionable steps.",
-        name: "SupportAgent");
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+AIAgent agent = projectClient.AsAIAgent(
+    model: deploymentName,
+    instructions: "You are a customer support agent. Help users resolve their issues "
+                + "politely and provide clear, actionable steps.",
+    name: "SupportAgent");
 
 // Custom check: the agent should not refuse to help.
 EvalCheck noRefusal = FunctionEvaluator.Create("no_refusal", (string response) =>

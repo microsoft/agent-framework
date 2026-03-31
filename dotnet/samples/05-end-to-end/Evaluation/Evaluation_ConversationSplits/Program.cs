@@ -9,18 +9,13 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using FoundryEvals = Microsoft.Agents.AI.AzureAI.FoundryEvals;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
-
-IChatClient chatClient = aiProjectClient
-    .GetProjectOpenAIClient()
-    .GetChatClient(deploymentName)
-    .AsIChatClient();
-
-ChatConfiguration chatConfig = new(chatClient);
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // A multi-turn conversation with tool calls to evaluate three ways.
 List<ChatMessage> conversation =
@@ -45,7 +40,7 @@ List<ChatMessage> conversation =
     ]),
     new(ChatRole.Tool,
     [
-        new FunctionResultContent("c2", "68\u00b0F, partly sunny"),
+        new FunctionResultContent("c2", "Paris is 68\u00b0F, partly sunny"),
     ]),
     new(ChatRole.Assistant, "Paris is 68\u00b0F, partly sunny."),
 
@@ -69,7 +64,7 @@ EvalItem lastTurnItem = new(
     response: "Seattle is cooler at 62\u00b0F with rain likely, while Paris is warmer at 68\u00b0F and partly sunny.",
     conversation: conversation);
 
-FoundryEvals lastTurnEvals = new(chatConfig, FoundryEvals.Relevance, FoundryEvals.Coherence);
+FoundryEvals lastTurnEvals = new(projectClient, deploymentName, FoundryEvals.Relevance, FoundryEvals.Coherence);
 AgentEvaluationResults lastTurnResults = await lastTurnEvals.EvaluateAsync(
     [lastTurnItem],
     "Split Strategy: LastTurn");
@@ -92,7 +87,7 @@ EvalItem fullItem = new(
     Splitter = ConversationSplitters.Full,
 };
 
-FoundryEvals fullEvals = new(chatConfig, ConversationSplitters.Full, FoundryEvals.Relevance, FoundryEvals.Coherence);
+FoundryEvals fullEvals = new(projectClient, deploymentName, ConversationSplitters.Full, FoundryEvals.Relevance, FoundryEvals.Coherence);
 AgentEvaluationResults fullResults = await fullEvals.EvaluateAsync(
     [fullItem],
     "Split Strategy: Full");
@@ -118,7 +113,7 @@ for (int i = 0; i < perTurnItems.Count; i++)
 
 Console.WriteLine();
 
-FoundryEvals perTurnEvals = new(chatConfig, FoundryEvals.Relevance, FoundryEvals.Coherence);
+FoundryEvals perTurnEvals = new(projectClient, deploymentName, FoundryEvals.Relevance, FoundryEvals.Coherence);
 AgentEvaluationResults perTurnResults = await perTurnEvals.EvaluateAsync(
     perTurnItems,
     "Split Strategy: Per-Turn");
@@ -132,6 +127,10 @@ Console.WriteLine(new string('=', 70));
 static void PrintResults(string strategy, AgentEvaluationResults results)
 {
     Console.WriteLine($"\n  Result: {results.Passed}/{results.Total} passed");
+    if (results.ReportUrl is not null)
+    {
+        Console.WriteLine($"  Report: {results.ReportUrl}");
+    }
 
     for (int i = 0; i < results.Items.Count; i++)
     {

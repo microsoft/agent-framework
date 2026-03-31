@@ -31,8 +31,6 @@
   <!-- Evaluation support requires net8.0+ (MEAI.Evaluation does not support legacy TFMs) -->
   <ItemGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <PackageReference Include="Microsoft.Extensions.AI.Evaluation" />
-    <PackageReference Include="Microsoft.Extensions.AI.Evaluation.Quality" />
-    <PackageReference Include="Microsoft.Extensions.AI.Evaluation.Safety" />
   </ItemGroup>
   <ItemGroup Condition="!$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
     <Compile Remove="Evaluation\**\*.cs" />

@@ -1,30 +1,46 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using Microsoft.Extensions.AI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using Azure.AI.Projects;
 using Microsoft.Extensions.AI.Evaluation;
-using Microsoft.Extensions.AI.Evaluation.Quality;
-using Microsoft.Extensions.AI.Evaluation.Safety;
+using OpenAI.Evals;
+
+#pragma warning disable OPENAI001 // EvaluationClient is experimental
 
 namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
-/// Azure AI Foundry evaluator provider with built-in evaluator name constants.
+/// Azure AI Foundry evaluator provider that calls the Foundry Evals API.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Combines evaluator constants (e.g., <see cref="Relevance"/>, <see cref="Coherence"/>)
-/// with the <see cref="IAgentEvaluator"/> implementation that maps them to MEAI evaluators.
+/// Uses the OpenAI Evals API (<c>evals.create</c> / <c>evals.runs.create</c>) via the
+/// project endpoint to run evaluations server-side. All built-in Foundry evaluators
+/// (quality, safety, agent behavior, tool usage) are supported.
 /// </para>
 /// <para>
-/// When the Azure.AI.Projects .NET SDK adds native evaluation API support, this class
-/// will be updated to use it for full parity with the Python <c>FoundryEvals</c> class.
+/// Results appear in the Azure AI Foundry portal with a report URL for detailed analysis.
 /// </para>
 /// </remarks>
+[UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Serializing Dictionary<string, object> for eval API payloads.")]
+[UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Serializing Dictionary<string, object> for eval API payloads.")]
 public sealed class FoundryEvals : IAgentEvaluator
 {
-    private readonly ChatConfiguration _chatConfiguration;
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private readonly EvaluationClient _evaluationClient;
+    private readonly string _model;
     private readonly string[] _evaluatorNames;
     private readonly IConversationSplitter? _splitter;
+    private readonly double _pollIntervalSeconds = 5.0;
+    private readonly double _timeoutSeconds = 300.0;
 
     // -----------------------------------------------------------------------
     // Constructors
@@ -33,23 +49,31 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <summary>
     /// Initializes a new instance of the <see cref="FoundryEvals"/> class.
     /// </summary>
-    /// <param name="chatConfiguration">Chat configuration for the LLM-based evaluators.</param>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="evaluators">
     /// Names of evaluators to use (e.g., <see cref="Relevance"/>, <see cref="Coherence"/>).
     /// When empty, defaults to relevance and coherence.
     /// </param>
-    public FoundryEvals(ChatConfiguration chatConfiguration, params string[] evaluators)
-        : this(chatConfiguration, splitter: null, evaluators)
+    public FoundryEvals(AIProjectClient projectClient, string model, params string[] evaluators)
     {
+        ArgumentNullException.ThrowIfNull(projectClient);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+
+        this._evaluationClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
+        this._model = model;
+        this._evaluatorNames = evaluators.Length > 0
+            ? evaluators
+            : [Relevance, Coherence];
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="FoundryEvals"/> class with a default splitter.
+    /// Initializes a new instance of the <see cref="FoundryEvals"/> class with a conversation splitter.
     /// </summary>
-    /// <param name="chatConfiguration">Chat configuration for the LLM-based evaluators.</param>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
     /// <param name="splitter">
-    /// Default conversation splitter for multi-turn conversations. Overridden by
-    /// <see cref="EvalItem.Splitter"/> when set on individual items.
+    /// Default conversation splitter for multi-turn conversations.
     /// Use <see cref="ConversationSplitters.LastTurn"/>, <see cref="ConversationSplitters.Full"/>,
     /// or a custom <see cref="IConversationSplitter"/> implementation.
     /// </param>
@@ -57,13 +81,38 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Names of evaluators to use (e.g., <see cref="Relevance"/>, <see cref="Coherence"/>).
     /// When empty, defaults to relevance and coherence.
     /// </param>
-    public FoundryEvals(ChatConfiguration chatConfiguration, IConversationSplitter? splitter, params string[] evaluators)
+    public FoundryEvals(
+        AIProjectClient projectClient,
+        string model,
+        IConversationSplitter? splitter,
+        params string[] evaluators)
+        : this(projectClient, model, evaluators)
     {
-        this._chatConfiguration = chatConfiguration;
         this._splitter = splitter;
-        this._evaluatorNames = evaluators.Length > 0
-            ? evaluators
-            : [Relevance, Coherence];
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="FoundryEvals"/> class with full configuration.
+    /// </summary>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="splitter">
+    /// Default conversation splitter for multi-turn conversations.
+    /// </param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 180).</param>
+    /// <param name="evaluators">Evaluator names to use.</param>
+    public FoundryEvals(
+        AIProjectClient projectClient,
+        string model,
+        IConversationSplitter? splitter,
+        double pollIntervalSeconds,
+        double timeoutSeconds,
+        params string[] evaluators)
+        : this(projectClient, model, splitter, evaluators)
+    {
+        this._pollIntervalSeconds = pollIntervalSeconds;
+        this._timeoutSeconds = timeoutSeconds;
     }
 
     // -----------------------------------------------------------------------
@@ -76,44 +125,107 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// <inheritdoc />
     public async Task<AgentEvaluationResults> EvaluateAsync(
         IReadOnlyList<EvalItem> items,
-        string evalName = "Foundry Eval",
+        string evalName = "Agent Framework Eval",
         CancellationToken cancellationToken = default)
     {
-        var meaiEvaluators = BuildEvaluators(this._evaluatorNames);
-        var composite = new CompositeEvaluator(meaiEvaluators.ToArray());
-
-        var results = new List<EvaluationResult>(items.Count);
-
+        // 1. Convert EvalItems to JSONL dicts
+        var dicts = new List<Dictionary<string, object>>(items.Count);
         foreach (var item in items)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            // Resolve splitter: item-level > evaluator-level > LastTurn default
-            var effectiveSplitter = item.Splitter ?? this._splitter;
-            var (queryMessages, _) = item.Split(effectiveSplitter);
-            var messages = queryMessages.ToList();
-
-            var chatResponse = item.RawResponse
-                ?? new ChatResponse(new ChatMessage(ChatRole.Assistant, item.Response));
-
-            var additionalContext = new List<EvaluationContext>();
-
-            if (item.Context is not null)
-            {
-                additionalContext.Add(new GroundednessEvaluatorContext(item.Context));
-            }
-
-            var result = await composite.EvaluateAsync(
-                messages,
-                chatResponse,
-                this._chatConfiguration,
-                additionalContext: additionalContext.Count > 0 ? additionalContext : null,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            results.Add(result);
+            dicts.Add(FoundryEvalConverter.ConvertEvalItem(item, this._splitter));
         }
 
-        return new AgentEvaluationResults(this.Name, results);
+        bool hasContext = dicts.Any(d => d.ContainsKey("context"));
+        bool hasTools = dicts.Any(d => d.ContainsKey("tool_definitions"));
+
+        // Filter out tool evaluators if no items have tools
+        var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
+
+        // 2. Create the evaluation definition
+        var createEvalPayload = new Dictionary<string, object>
+        {
+            ["name"] = evalName,
+            ["data_source_config"] = new Dictionary<string, object>
+            {
+                ["type"] = "custom",
+                ["item_schema"] = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
+                ["include_sample_schema"] = true,
+            },
+            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(
+                evaluators, this._model, includeDataMapping: true),
+        };
+
+        var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
+        var createEvalResult = await this._evaluationClient.CreateEvaluationAsync(
+            BinaryContent.Create(BinaryData.FromString(createEvalJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string evalId;
+        using (var evalResponse = JsonDocument.Parse(createEvalResult.GetRawResponse().Content))
+        {
+            evalId = evalResponse.RootElement.GetProperty("id").GetString()!;
+        }
+
+        // 3. Create the evaluation run with inline JSONL data
+        var dataSource = new Dictionary<string, object>
+        {
+            ["type"] = "jsonl",
+            ["source"] = new Dictionary<string, object>
+            {
+                ["type"] = "file_content",
+                ["content"] = dicts.ConvertAll(d => (object)new Dictionary<string, object> { ["item"] = d }),
+            },
+        };
+
+        var createRunPayload = new Dictionary<string, object>
+        {
+            ["name"] = $"{evalName} Run",
+            ["data_source"] = dataSource,
+        };
+
+        var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);
+        var createRunResult = await this._evaluationClient.CreateEvaluationRunAsync(
+            evalId,
+            BinaryContent.Create(BinaryData.FromString(createRunJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string runId;
+        using (var runResponse = JsonDocument.Parse(createRunResult.GetRawResponse().Content))
+        {
+            runId = runResponse.RootElement.GetProperty("id").GetString()!;
+        }
+
+        // 4. Poll until complete
+        var (status, reportUrl, errorMessage) = await this.PollEvalRunAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        if (status is "failed" or "canceled")
+        {
+            throw new InvalidOperationException(
+                $"Foundry evaluation run {runId} {status}: {errorMessage ?? "no details available"}");
+        }
+
+        if (status == "timeout")
+        {
+            throw new TimeoutException(
+                $"Foundry evaluation run {runId} did not complete within {this._timeoutSeconds}s. " +
+                "Increase timeoutSeconds or check the run status in the Foundry portal.");
+        }
+
+        // 5. Fetch output items and build results
+        var evalResults = await this.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        // Pad results if we got fewer than items (e.g. partial output)
+        while (evalResults.Count < items.Count)
+        {
+            evalResults.Add(new EvaluationResult());
+        }
+
+        return new AgentEvaluationResults(this.Name, evalResults, inputItems: items)
+        {
+            ReportUrl = reportUrl is not null ? new Uri(reportUrl) : null,
+            EvalId = evalId,
+            RunId = runId,
+        };
     }
 
     // -----------------------------------------------------------------------
@@ -189,49 +301,125 @@ public sealed class FoundryEvals : IAgentEvaluator
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    internal static List<IEvaluator> BuildEvaluators(string[] names)
+    private async Task<(string Status, string? ReportUrl, string? ErrorMessage)> PollEvalRunAsync(
+        string evalId,
+        string runId,
+        CancellationToken cancellationToken)
     {
-        var evaluators = new List<IEvaluator>();
-        bool hasSafetyEvaluator = false;
+        var deadline = DateTime.UtcNow.AddSeconds(this._timeoutSeconds);
 
-        foreach (var name in names)
+        while (true)
         {
-            IEvaluator? evaluator = name switch
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result = await this._evaluationClient.GetEvaluationRunAsync(
+                evalId,
+                runId,
+                new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+            using var runDoc = JsonDocument.Parse(result.GetRawResponse().Content);
+            var root = runDoc.RootElement;
+            var status = root.GetProperty("status").GetString()!;
+
+            if (status is "completed" or "failed" or "canceled")
             {
-                Relevance => new RelevanceEvaluator(),
-                Coherence => new CoherenceEvaluator(),
-                Groundedness => new GroundednessEvaluator(),
-                Fluency => new FluencyEvaluator(),
-
-                // ContentHarmEvaluator covers all harm categories in one call — deduplicate
-                Violence or
-                Sexual or
-                SelfHarm or
-                HateUnfairness when !hasSafetyEvaluator => new ContentHarmEvaluator(),
-
-                Violence or
-                Sexual or
-                SelfHarm or
-                HateUnfairness => null,
-
-                _ => throw new ArgumentException(
-                    $"Evaluator '{name}' is not supported by the .NET FoundryEvals adapter. " +
-                    $"Supported: {Relevance}, {Coherence}, {Groundedness}, {Fluency}, " +
-                    $"{Violence}, {Sexual}, {SelfHarm}, {HateUnfairness}.",
-                    nameof(names)),
-            };
-
-            if (evaluator is ContentHarmEvaluator)
-            {
-                hasSafetyEvaluator = true;
+                string? reportUrl = root.TryGetProperty("report_url", out var urlProp) ? urlProp.GetString() : null;
+                string? errorMessage = root.TryGetProperty("error", out var errProp) ? errProp.ToString() : null;
+                return (status, reportUrl, errorMessage);
             }
 
-            if (evaluator is not null)
+            if (DateTime.UtcNow >= deadline)
             {
-                evaluators.Add(evaluator);
+                return ("timeout", null, null);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(this._pollIntervalSeconds), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<List<EvaluationResult>> FetchOutputItemResultsAsync(
+        string evalId,
+        string runId,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<EvaluationResult>();
+
+        var response = await this._evaluationClient.GetEvaluationRunOutputItemsAsync(
+            evalId,
+            runId,
+            limit: null,
+            order: null,
+            after: null,
+            outputItemStatus: null,
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        using var doc = JsonDocument.Parse(response.GetRawResponse().Content);
+        if (doc.RootElement.TryGetProperty("data", out var dataArray))
+        {
+            foreach (var outputItem in dataArray.EnumerateArray())
+            {
+                var evalResult = new EvaluationResult();
+
+                if (outputItem.TryGetProperty("results", out var itemResults))
+                {
+                    foreach (var r in itemResults.EnumerateArray())
+                    {
+                        var metricName = r.TryGetProperty("name", out var nameProp)
+                            ? nameProp.GetString() ?? "unknown"
+                            : "unknown";
+
+                        bool? passed = r.TryGetProperty("passed", out var passedProp) && passedProp.ValueKind == JsonValueKind.True
+                            ? true
+                            : r.TryGetProperty("passed", out var passedProp2) && passedProp2.ValueKind == JsonValueKind.False
+                                ? false
+                                : null;
+
+                        double? score = r.TryGetProperty("score", out var scoreProp) && scoreProp.ValueKind == JsonValueKind.Number
+                            ? scoreProp.GetDouble()
+                            : null;
+
+                        EvaluationMetricInterpretation? interpretation = passed.HasValue
+                            ? new EvaluationMetricInterpretation
+                            {
+                                Rating = passed.Value ? EvaluationRating.Good : EvaluationRating.Unacceptable,
+                                Failed = !passed.Value,
+                            }
+                            : null;
+
+                        if (score.HasValue)
+                        {
+                            evalResult.Metrics[metricName] = new NumericMetric(metricName, score.Value)
+                            {
+                                Interpretation = interpretation,
+                            };
+                        }
+                        else
+                        {
+                            evalResult.Metrics[metricName] = new BooleanMetric(metricName, passed ?? false)
+                            {
+                                Interpretation = interpretation,
+                            };
+                        }
+                    }
+                }
+
+                results.Add(evalResult);
             }
         }
 
-        return evaluators;
+        return results;
+    }
+
+    private static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)
+    {
+        if (hasTools)
+        {
+            return evaluators;
+        }
+
+        var filtered = Array.FindAll(evaluators, e =>
+            !FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(e)));
+
+        return filtered.Length > 0 ? filtered : evaluators;
     }
 }

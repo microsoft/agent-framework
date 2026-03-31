@@ -1,34 +1,29 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates agent evaluation using MEAI quality evaluators
-// (Relevance, Coherence) via FoundryEvals.
+// This sample demonstrates agent evaluation using Foundry quality evaluators
+// (Relevance, Coherence) via the Foundry Evals API.
 
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using FoundryEvals = Microsoft.Agents.AI.AzureAI.FoundryEvals;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-// Build chat configuration for MEAI quality evaluators.
-IChatClient chatClient = aiProjectClient
-    .GetProjectOpenAIClient()
-    .GetChatClient(deploymentName)
-    .AsIChatClient();
-
-ChatConfiguration chatConfiguration = new(chatClient);
-
-// Create the agent.
-AIAgent agent = aiProjectClient.AsAIAgent(
+AIAgent agent = projectClient.AsAIAgent(
     model: deploymentName,
     instructions: "You are a helpful assistant that provides clear, accurate answers.",
     name: "QualityTestAgent");
+
+// Configure Foundry evaluators.
+FoundryEvals foundryEvals = new(projectClient, deploymentName, FoundryEvals.Relevance, FoundryEvals.Coherence);
 
 // --- Pattern 1: Run agent, then evaluate pre-existing responses ---
 string[] queries = ["What is photosynthesis?", "Explain gravity in simple terms."];
@@ -39,7 +34,6 @@ for (int i = 0; i < queries.Length; i++)
     responses[i] = await agent.RunAsync(queries[i]);
 }
 
-FoundryEvals foundryEvals = new(chatConfiguration, FoundryEvals.Relevance, FoundryEvals.Coherence);
 AgentEvaluationResults results1 = await agent.EvaluateAsync(responses, queries, foundryEvals);
 
 Console.WriteLine("=== Pattern 1: Evaluate pre-existing responses ===");
@@ -56,6 +50,11 @@ static void PrintResults(AgentEvaluationResults results, string[] queries)
 {
     Console.WriteLine($"Provider: {results.ProviderName}");
     Console.WriteLine($"Passed: {results.Passed}/{results.Total}");
+    if (results.ReportUrl is not null)
+    {
+        Console.WriteLine($"Report: {results.ReportUrl}");
+    }
+
     Console.WriteLine();
 
     for (int i = 0; i < results.Items.Count; i++)

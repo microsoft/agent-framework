@@ -1083,51 +1083,34 @@ public sealed class EvaluationTests
     }
 
     // ---------------------------------------------------------------
-    // FoundryEvals.BuildEvaluators tests
+    // FoundryEvalConverter tests
     // ---------------------------------------------------------------
 
     [Fact]
-    public void BuildEvaluators_QualityNames_ReturnsDistinctEvaluators()
+    public void ResolveEvaluator_QualityShortNames_ResolvesToBuiltin()
     {
-        var evaluators = AzureAI.FoundryEvals.BuildEvaluators(
-            new[] { AzureAI.FoundryEvals.Relevance, AzureAI.FoundryEvals.Coherence });
-
-        Assert.Equal(2, evaluators.Count);
+        Assert.Equal("builtin.relevance", AzureAI.FoundryEvalConverter.ResolveEvaluator("relevance"));
+        Assert.Equal("builtin.coherence", AzureAI.FoundryEvalConverter.ResolveEvaluator("coherence"));
     }
 
     [Fact]
-    public void BuildEvaluators_MultipleSafetyNames_SingleContentHarmEvaluator()
+    public void ResolveEvaluator_FullyQualifiedName_ReturnsSame()
     {
-        var evaluators = AzureAI.FoundryEvals.BuildEvaluators(
-            new[]
-            {
-                AzureAI.FoundryEvals.Violence,
-                AzureAI.FoundryEvals.Sexual,
-                AzureAI.FoundryEvals.SelfHarm,
-                AzureAI.FoundryEvals.HateUnfairness,
-            });
-
-        // All four safety names produce exactly one ContentHarmEvaluator
-        Assert.Single(evaluators);
+        Assert.Equal("builtin.relevance", AzureAI.FoundryEvalConverter.ResolveEvaluator("builtin.relevance"));
     }
 
     [Fact]
-    public void BuildEvaluators_UnknownName_ThrowsArgumentException()
+    public void ResolveEvaluator_UnknownName_ThrowsArgumentException()
     {
-        var names = new[] { "gobblygook" };
         var ex = Assert.Throws<ArgumentException>(
-            () => AzureAI.FoundryEvals.BuildEvaluators(names));
+            () => AzureAI.FoundryEvalConverter.ResolveEvaluator("gobblygook"));
         Assert.Contains("gobblygook", ex.Message);
-        Assert.Contains("not supported", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public void BuildEvaluators_DefaultSelection_ReturnsRelevanceAndCoherence()
+    public void ResolveEvaluator_AgentEvaluators_ResolveCorrectly()
     {
-        // Default evaluator names when constructor receives empty array
-        var defaults = new[] { AzureAI.FoundryEvals.Relevance, AzureAI.FoundryEvals.Coherence };
-        var evaluators = AzureAI.FoundryEvals.BuildEvaluators(defaults);
-
-        Assert.Equal(2, evaluators.Count);
+        Assert.Equal("builtin.intent_resolution", AzureAI.FoundryEvalConverter.ResolveEvaluator("intent_resolution"));
+        Assert.Equal("builtin.tool_call_accuracy", AzureAI.FoundryEvalConverter.ResolveEvaluator("tool_call_accuracy"));
     }
 }

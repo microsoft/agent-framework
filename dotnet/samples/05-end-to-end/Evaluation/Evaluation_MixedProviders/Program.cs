@@ -1,28 +1,22 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample demonstrates combining local evaluators and MEAI/Foundry evaluators.
+// This sample demonstrates combining local evaluators and Foundry evaluators.
 
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.AI.Evaluation;
 using FoundryEvals = Microsoft.Agents.AI.AzureAI.FoundryEvals;
 
-string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
-IChatClient chatClient = aiProjectClient
-    .GetProjectOpenAIClient()
-    .GetChatClient(deploymentName)
-    .AsIChatClient();
-
-ChatConfiguration chatConfiguration = new(chatClient);
-
-AIAgent agent = aiProjectClient.AsAIAgent(
+AIAgent agent = projectClient.AsAIAgent(
     model: deploymentName,
     instructions: "You are a travel advisor. Provide helpful travel recommendations.",
     name: "TravelAdvisor");
@@ -40,8 +34,8 @@ Console.WriteLine("=== Pattern 1: Local-only ===");
 Console.WriteLine($"  {localResults.ProviderName}: {localResults.Passed}/{localResults.Total} passed");
 Console.WriteLine();
 
-// --- Pattern 2: Foundry/MEAI-only ---
-FoundryEvals foundryEvaluator = new(chatConfiguration, FoundryEvals.Relevance);
+// --- Pattern 2: Foundry-only ---
+FoundryEvals foundryEvaluator = new(projectClient, deploymentName, FoundryEvals.Relevance);
 
 AgentEvaluationResults foundryResults = await agent.EvaluateAsync(queries, foundryEvaluator);
 

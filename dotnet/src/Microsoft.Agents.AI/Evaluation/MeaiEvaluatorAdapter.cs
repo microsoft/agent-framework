@@ -58,6 +58,6 @@ internal sealed class MeaiEvaluatorAdapter : IAgentEvaluator
             results.Add(result);
         }
 
-        return new AgentEvaluationResults(this.Name, results);
+        return new AgentEvaluationResults(this.Name, results, inputItems: items);
     }
 }

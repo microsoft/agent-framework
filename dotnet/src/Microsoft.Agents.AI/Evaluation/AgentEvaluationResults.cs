@@ -33,6 +33,12 @@ public sealed class AgentEvaluationResults
     /// <summary>Gets the portal URL for viewing results (Foundry only).</summary>
     public Uri? ReportUrl { get; set; }
 
+    /// <summary>Gets the Foundry evaluation ID (Foundry only).</summary>
+    public string? EvalId { get; set; }
+
+    /// <summary>Gets the Foundry evaluation run ID (Foundry only).</summary>
+    public string? RunId { get; set; }
+
     /// <summary>Gets the per-item MEAI evaluation results.</summary>
     public IReadOnlyList<EvaluationResult> Items => this._items;
 
