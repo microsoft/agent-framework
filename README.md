@@ -137,23 +137,23 @@ var agent = new OpenAIClient("<apikey>")
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
-Create a simple Agent, using Azure OpenAI Responses with token based auth, that writes a haiku about the Microsoft Agent Framework
+Create a simple Agent, using Azure OpenAI with token-based auth, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+// dotnet add package Microsoft.Agents.AI --prerelease
+// dotnet add package Azure.AI.OpenAI
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
-using System.ClientModel.Primitives;
+using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI;
-using OpenAI.Responses;
+using OpenAI.Chat;
 
-// Replace <resource> and gpt-4o-mini with your Azure OpenAI resource name and deployment name.
-var agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
-    new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
-    .GetResponsesClient("gpt-4o-mini")
+var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
+    .GetChatClient(deploymentName)
     .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
@@ -163,15 +163,20 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Python
 
-- [Getting Started with Agents](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
+- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
 - [Agent Concepts](./python/samples/02-agents): deep-dive samples by topic (tools, middleware, providers, etc.)
-- [Getting Started with Workflows](./python/samples/03-workflows): workflow creation and integration with agents
+- [Workflows](./python/samples/03-workflows): workflow creation and integration with agents
+- [Hosting](./python/samples/04-hosting): A2A, Azure Functions, Durable Task hosting
+- [End-to-End](./python/samples/05-end-to-end): full applications, evaluation, and demos
 
 ### .NET
 
-- [Getting Started with Agents](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
+- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to hosting
+- [Agent Concepts](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
+- [Agent Providers](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
+- [Workflows](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
+- [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
+- [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
 ## Contributor Resources
 
