@@ -37,7 +37,7 @@ Drinks:
 
 ## Prerequisites
 
-- Azure AI Foundry configured with required environment variables
+- Microsoft Foundry configured with required environment variables
 - Authentication via azure-identity (run `az login` before executing)
 
 ## Usage
