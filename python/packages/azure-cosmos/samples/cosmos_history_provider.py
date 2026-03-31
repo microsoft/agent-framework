@@ -4,7 +4,7 @@
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -17,13 +17,13 @@ load_dotenv()
 This sample demonstrates CosmosHistoryProvider as an agent context provider.
 
 Key components:
-- AzureOpenAIResponsesClient configured with an Azure AI project endpoint
+- FoundryChatClient configured with an Azure AI project endpoint
 - CosmosHistoryProvider configured for Cosmos DB-backed message history
 - Provider-configured container name with session_id as partition key
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME
+  FOUNDRY_PROJECT_ENDPOINT
+  FOUNDRY_MODEL
   AZURE_COSMOS_ENDPOINT
   AZURE_COSMOS_DATABASE_NAME
   AZURE_COSMOS_CONTAINER_NAME
@@ -34,8 +34,8 @@ Optional:
 
 async def main() -> None:
     """Run the Cosmos history provider sample with an Agent."""
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    deployment_name = os.getenv("FOUNDRY_MODEL")
     cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
     cosmos_database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME")
     cosmos_container_name = os.getenv("AZURE_COSMOS_CONTAINER_NAME")
@@ -49,16 +49,16 @@ async def main() -> None:
         or not cosmos_container_name
     ):
         print(
-            "Please set AZURE_AI_PROJECT_ENDPOINT, AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME, "
+            "Please set FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_MODEL, "
             "AZURE_COSMOS_ENDPOINT, AZURE_COSMOS_DATABASE_NAME, and AZURE_COSMOS_CONTAINER_NAME."
         )
         return
 
-    # 1. Create an Azure credential and Responses client using project endpoint auth.
+    # 1. Create an Azure credential and Foundry chat client using project endpoint auth.
     async with AzureCliCredential() as credential:
-        client = AzureOpenAIResponsesClient(
+        client = FoundryChatClient(
             project_endpoint=project_endpoint,
-            deployment_name=deployment_name,
+            model=deployment_name,
             credential=credential,
         )
 

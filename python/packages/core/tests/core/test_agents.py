@@ -148,11 +148,9 @@ async def test_chat_client_agent_init_with_name(
     assert agent.description == "Test"
 
 
-def test_agent_init_warns_for_direct_additional_properties(client: SupportsChatGetResponse) -> None:
-    with pytest.warns(DeprecationWarning, match="additional_properties"):
-        agent = Agent(client=client, legacy_key="legacy-value")
-
-    assert agent.additional_properties["legacy_key"] == "legacy-value"
+def test_agent_init_rejects_direct_additional_properties(client: SupportsChatGetResponse) -> None:
+    with pytest.raises(TypeError):
+        Agent(client=client, legacy_key="legacy-value")
 
 
 async def test_chat_client_agent_run(client: SupportsChatGetResponse) -> None:
@@ -303,7 +301,6 @@ async def test_prepare_run_context_handles_function_kwargs(
         },
         compaction_strategy=None,
         tokenizer=None,
-        legacy_kwargs={"legacy_key": "legacy-value"},
         function_invocation_kwargs={"runtime_key": "runtime-value"},
         client_kwargs={"client_key": "client-value"},
     )
@@ -311,7 +308,6 @@ async def test_prepare_run_context_handles_function_kwargs(
     assert ctx["chat_options"]["temperature"] == 0.4
     assert "additional_function_arguments" not in ctx["chat_options"]
     assert ctx["function_invocation_kwargs"]["from_options"] == "options-value"
-    assert ctx["function_invocation_kwargs"]["legacy_key"] == "legacy-value"
     assert ctx["function_invocation_kwargs"]["runtime_key"] == "runtime-value"
     assert "session" not in ctx["function_invocation_kwargs"]
     assert ctx["client_kwargs"]["client_key"] == "client-value"
@@ -1181,8 +1177,8 @@ async def test_agent_run_accepts_prefixed_mcp_tools(chat_client_base: Any) -> No
     assert tool_names == ["search", "docs_search"]
 
 
-async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> None:
-    """Verify legacy **kwargs tools receive the session when agent.run() is called with one."""
+async def test_agent_tool_without_context_does_not_receive_session(chat_client_base: Any) -> None:
+    """Verify tools without FunctionInvocationContext no longer receive injected session kwargs."""
 
     captured: dict[str, Any] = {}
 
@@ -1215,8 +1211,8 @@ async def test_agent_tool_receives_session_in_kwargs(chat_client_base: Any) -> N
     result = await agent.run("hello", session=session)
 
     assert result.text == "done"
-    assert captured.get("has_session") is True
-    assert captured.get("has_state") is True
+    assert captured.get("has_session") is False
+    assert captured.get("has_state") is False
 
 
 async def test_agent_tool_receives_explicit_session_via_function_invocation_context_kwargs(
@@ -1278,7 +1274,7 @@ async def test_chat_agent_tool_choice_run_level_overrides_agent_level(chat_clien
     agent = Agent(
         client=chat_client_base,
         tools=[tool_tool],
-        options={"tool_choice": "auto"},
+        default_options={"tool_choice": "auto"},
     )
 
     # Run with run-level tool_choice="required"

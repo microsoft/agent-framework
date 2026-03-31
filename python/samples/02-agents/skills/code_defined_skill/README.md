@@ -27,8 +27,8 @@ code_defined_skill/
 
 Set the required environment variables in a `.env` file (see `python/.env.example`):
 
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your model deployment (defaults to `gpt-4o-mini`)
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `AZURE_OPENAI_DEPLOYMENT_NAME`: The name of your model deployment (defaults to `gpt-4o-mini`)
 
 ### Authentication
 

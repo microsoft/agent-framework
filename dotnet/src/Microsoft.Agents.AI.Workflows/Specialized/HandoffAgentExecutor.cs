@@ -42,7 +42,7 @@ internal sealed class HandoffMessagesFilter
 
     internal static bool IsHandoffFunctionName(string name)
     {
-        return name.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
+        return name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
     }
 
     public IEnumerable<ChatMessage> FilterMessages(List<ChatMessage> messages)
@@ -173,6 +173,7 @@ internal sealed class HandoffAgentExecutor(
 
     private readonly AIAgent _agent = agent;
     private readonly HashSet<string> _handoffFunctionNames = [];
+    private readonly Dictionary<string, string> _handoffFunctionToAgentId = [];
     private ChatClientAgentRunOptions? _agentOptions;
 
     public void Initialize(
@@ -199,9 +200,10 @@ internal sealed class HandoffAgentExecutor(
                 foreach (HandoffTarget handoff in handoffs)
                 {
                     index++;
-                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffsWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
+                    var handoffFunc = AIFunctionFactory.CreateDeclaration($"{HandoffWorkflowBuilder.FunctionPrefix}{index}", handoff.Reason, s_handoffSchema);
 
                     this._handoffFunctionNames.Add(handoffFunc.Name);
+                    this._handoffFunctionToAgentId[handoffFunc.Name] = handoff.Target.Id;
 
                     this._agentOptions.ChatOptions.Tools.Add(handoffFunc);
 
@@ -267,7 +269,11 @@ internal sealed class HandoffAgentExecutor(
 
         roleChanges.ResetUserToAssistantForChangedRoles();
 
-        return new(message.TurnToken, requestedHandoff, allMessages);
+        string currentAgentId = requestedHandoff is not null && this._handoffFunctionToAgentId.TryGetValue(requestedHandoff, out string? targetAgentId)
+            ? targetAgentId
+            : this._agent.Id;
+
+        return new(message.TurnToken, requestedHandoff, allMessages, currentAgentId);
 
         async Task AddUpdateAsync(AgentResponseUpdate update, CancellationToken cancellationToken)
         {

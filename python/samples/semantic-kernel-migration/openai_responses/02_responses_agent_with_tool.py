@@ -43,14 +43,14 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework import Agent, tool
-    from agent_framework.openai import OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient
 
     @tool(name="add", description="Add two numbers")
     async def add(a: float, b: float) -> float:
         return a + b
 
     chat_agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions="Use the add tool when math is required.",
         name="MathExpert",
         # AF registers the async function as a tool at construction.

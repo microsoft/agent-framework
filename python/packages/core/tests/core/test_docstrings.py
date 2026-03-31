@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-from agent_framework._docstrings import apply_layered_docstring, build_layered_docstring
+from agent_framework._docstrings import apply_layered_docstring, build_layered_docstring, insert_docstring_block
 
 # -- Helpers: stub functions with various docstring shapes --
 
@@ -34,6 +34,14 @@ def _source_with_args_only(x: int) -> int:
 
 def _source_no_sections() -> None:
     """A plain summary with no Google-style sections."""
+
+
+def _source_with_attributes() -> None:
+    """A documented object.
+
+    Attributes:
+        value: A documented attribute.
+    """
 
 
 def _source_no_docstring() -> None:
@@ -139,6 +147,67 @@ def test_build_preserves_multiple_extra_kwargs_order() -> None:
     beta_idx = next(i for i, line in enumerate(lines) if "beta:" in line)
     gamma_idx = next(i for i, line in enumerate(lines) if "gamma:" in line)
     assert alpha_idx < beta_idx < gamma_idx
+
+
+# -- insert_docstring_block tests --
+
+
+def test_insert_docstring_block_before_args_section() -> None:
+    result = insert_docstring_block(
+        _source_with_args_only.__doc__,
+        block="""\
+        .. warning:: Experimental
+
+            This API is experimental.
+        """,
+    )
+    assert result is not None
+    lines = result.splitlines()
+    warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
+    args_index = next(i for i, line in enumerate(lines) if line == "Args:")
+    assert warning_index < args_index
+
+
+def test_insert_docstring_block_before_attributes_section() -> None:
+    result = insert_docstring_block(
+        _source_with_attributes.__doc__,
+        block="""\
+        .. warning:: Experimental
+
+            This API is experimental.
+        """,
+    )
+    assert result is not None
+    lines = result.splitlines()
+    warning_index = next(i for i, line in enumerate(lines) if line == ".. warning:: Experimental")
+    attributes_index = next(i for i, line in enumerate(lines) if line == "Attributes:")
+    assert warning_index < attributes_index
+
+
+def test_insert_docstring_block_appends_when_no_sections() -> None:
+    result = insert_docstring_block(
+        _source_no_sections.__doc__,
+        block="""\
+        .. note:: Release candidate
+
+            This API is nearly final.
+        """,
+    )
+    assert result is not None
+    assert result.endswith("This API is nearly final.")
+    assert ".. note:: Release candidate" in result
+
+
+def test_insert_docstring_block_returns_block_for_missing_docstring() -> None:
+    result = insert_docstring_block(
+        _source_no_docstring.__doc__,
+        block="""\
+        .. warning:: Experimental
+
+            This API is experimental.
+        """,
+    )
+    assert result == ".. warning:: Experimental\n\n    This API is experimental."
 
 
 # -- apply_layered_docstring tests --

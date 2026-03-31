@@ -2,7 +2,7 @@
 
 # Welcome to Microsoft Agent Framework!
 
-[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
+[![Microsoft Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
@@ -137,24 +137,21 @@ var agent = new OpenAIClient("<apikey>")
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
-Create a simple Agent, using Azure OpenAI Responses with token based auth, that writes a haiku about the Microsoft Agent Framework
+Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+// dotnet add package Microsoft.Agents.AI.AzureAI --prerelease
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
-using System.ClientModel.Primitives;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI;
-using OpenAI.Responses;
 
-// Replace <resource> and gpt-4o-mini with your Azure OpenAI resource name and deployment name.
-var agent = new OpenAIClient(
-    new BearerTokenPolicy(new AzureCliCredential(), "https://ai.azure.com/.default"),
-    new OpenAIClientOptions() { Endpoint = new Uri("https://<resource>.openai.azure.com/openai/v1") })
-    .GetResponsesClient("gpt-4o-mini")
-    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+
+var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
@@ -163,15 +160,43 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 
 ### Python
 
-- [Getting Started with Agents](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
+- [Getting Started](./python/samples/01-get-started): progressive tutorial from hello-world to hosting
 - [Agent Concepts](./python/samples/02-agents): deep-dive samples by topic (tools, middleware, providers, etc.)
-- [Getting Started with Workflows](./python/samples/03-workflows): workflow creation and integration with agents
+- [Workflows](./python/samples/03-workflows): workflow creation and integration with agents
+- [Hosting](./python/samples/04-hosting): A2A, Azure Functions, Durable Task hosting
+- [End-to-End](./python/samples/05-end-to-end): full applications, evaluation, and demos
 
 ### .NET
 
-- [Getting Started with Agents](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
-- [Agent Provider Samples](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
-- [Workflow Samples](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
+- [Getting Started](./dotnet/samples/01-get-started): progressive tutorial from hello agent to hosting
+- [Agent Concepts](./dotnet/samples/02-agents/Agents): basic agent creation and tool usage
+- [Agent Providers](./dotnet/samples/02-agents/AgentProviders): samples showing different agent providers
+- [Workflows](./dotnet/samples/03-workflows): advanced multi-agent patterns and workflow orchestration
+- [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
+- [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
+
+## Troubleshooting
+
+### Authentication
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Authentication errors when using Azure credentials | Not signed in to Azure CLI | Run `az login` before starting your app |
+| API key errors | Wrong or missing API key | Verify the key and ensure it's for the correct resource/provider |
+
+> **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+
+### Environment Variables
+
+The samples typically read configuration from environment variables. Common required variables:
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI samples | Your Azure OpenAI resource URL |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI samples | Model deployment name (e.g. `gpt-4o-mini`) |
+| `AZURE_AI_PROJECT_ENDPOINT` | Microsoft Foundry samples | Your Microsoft Foundry project endpoint |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Microsoft Foundry samples | Model deployment name |
+| `OPENAI_API_KEY` | OpenAI (non-Azure) samples | Your OpenAI platform API key |
 
 ## Contributor Resources
 

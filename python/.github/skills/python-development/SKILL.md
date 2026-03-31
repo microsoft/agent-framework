@@ -76,7 +76,7 @@ from agent_framework.observability import enable_instrumentation
 
 # Connectors (lazy-loaded)
 from agent_framework.openai import OpenAIChatClient
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 ```
 
 ## Public API and Exports

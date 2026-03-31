@@ -2,6 +2,13 @@
 
 """Tests for tau2 utils module."""
 
+import pytest
+
+try:
+    from litellm import completion as _litellm_completion  # noqa: F401
+except Exception:
+    pytest.skip("LiteLLM import surface required by tau2 is unavailable.", allow_module_level=True)
+
 from agent_framework import Content, FunctionTool, Message
 from agent_framework_lab_tau2._tau2_utils import (
     convert_agent_framework_messages_to_tau2_messages,

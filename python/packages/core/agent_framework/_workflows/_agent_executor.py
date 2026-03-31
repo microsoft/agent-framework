@@ -12,7 +12,7 @@ from agent_framework import Content
 
 from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
-from .._types import AgentResponse, AgentResponseUpdate, Message
+from .._types import AgentResponse, AgentResponseUpdate, Message, ResponseStream
 from ._agent_utils import resolve_agent_id
 from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
@@ -251,21 +251,6 @@ class AgentExecutor(Executor):
         Returns:
             Dict containing serialized cache and session state
         """
-        # Check if using AzureAIAgentClient with server-side session and warn about checkpointing limitations
-        if is_chat_agent(self._agent) and self._session.service_session_id is not None:
-            client_class_name = self._agent.client.__class__.__name__
-            client_module = self._agent.client.__class__.__module__
-
-            if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
-                logger.warning(
-                    "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side sessions. "
-                    "Currently, checkpointing does not capture messages from server-side sessions "
-                    "(service_session_id: %s). The session state in checkpoints is not immutable and can be "
-                    "modified by subsequent runs. If you need reliable checkpointing with Azure AI agents, "
-                    "consider implementing a custom executor and managing the session state yourself.",
-                    self._session.service_session_id,
-                )
-
         serialized_session = self._session.to_dict()
 
         return {
@@ -353,7 +338,9 @@ class AgentExecutor(Executor):
         function_invocation_kwargs, client_kwargs, backward_compatible_kwargs = self._prepare_agent_run_args(
             ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
         )
-        response = await self._agent.run(
+
+        run_agent = cast(Callable[..., Awaitable[AgentResponse[Any]]], self._agent.run)
+        response = await run_agent(
             self._cache,
             stream=False,
             session=self._session,
@@ -387,7 +374,8 @@ class AgentExecutor(Executor):
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
-        stream = self._agent.run(
+        run_agent_stream = cast(Callable[..., ResponseStream[AgentResponseUpdate, AgentResponse[Any]]], self._agent.run)
+        stream = run_agent_stream(
             self._cache,
             stream=True,
             session=self._session,

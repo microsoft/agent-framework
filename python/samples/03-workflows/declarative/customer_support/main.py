@@ -173,7 +173,7 @@ async def main() -> None:
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
         # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

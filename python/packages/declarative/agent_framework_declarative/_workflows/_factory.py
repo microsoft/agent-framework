@@ -70,11 +70,11 @@ class WorkflowFactory:
 
         .. code-block:: python
 
-            from agent_framework.azure import AzureOpenAIChatClient
+            from agent_framework.openai import OpenAIChatClient
             from agent_framework.declarative import WorkflowFactory
 
             # Pre-register agents for InvokeAzureAgent actions
-            client = AzureOpenAIChatClient()
+            client = OpenAIChatClient()
             agent = client.as_agent(name="MyAgent", instructions="You are helpful.")
 
             factory = WorkflowFactory(agents={"MyAgent": agent})
@@ -116,11 +116,11 @@ class WorkflowFactory:
 
             .. code-block:: python
 
-                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
                 from agent_framework.declarative import WorkflowFactory
 
                 # With pre-registered agents
-                client = AzureOpenAIChatClient()
+                client = OpenAIChatClient()
                 agents = {
                     "WriterAgent": client.as_agent(name="Writer", instructions="Write content."),
                     "ReviewerAgent": client.as_agent(name="Reviewer", instructions="Review content."),
@@ -535,10 +535,10 @@ class WorkflowFactory:
         Examples:
             .. code-block:: python
 
-                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
                 from agent_framework.declarative import WorkflowFactory
 
-                client = AzureOpenAIChatClient()
+                client = OpenAIChatClient()
 
                 # Method chaining to register multiple agents
                 factory = (

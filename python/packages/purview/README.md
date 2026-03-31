@@ -54,12 +54,12 @@ Add Purview when you need to:
 ```python
 import asyncio
 from agent_framework import Agent, Message, Role
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import InteractiveBrowserCredential
 
 async def main():
-	client = AzureOpenAIChatClient()  # uses environment for endpoint + deployment
+	client = OpenAIChatCompletionClient()  # uses environment for endpoint + deployment
 
 	purview_middleware = PurviewPolicyMiddleware(
 		credential=InteractiveBrowserCredential(),
@@ -219,12 +219,12 @@ Use the agent middleware when you already have / want the full agent pipeline:
 
 ```python
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.microsoft import PurviewPolicyMiddleware, PurviewSettings
 from azure.identity import DefaultAzureCredential
 
 credential = DefaultAzureCredential()
-client = AzureOpenAIChatClient()
+client = OpenAIChatCompletionClient()
 
 agent = Agent(
 	client=client,
@@ -238,15 +238,15 @@ Use the chat middleware when you attach directly to a chat client (e.g. minimal 
 ```python
 import os
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.microsoft import PurviewChatPolicyMiddleware, PurviewSettings
 from azure.identity import DefaultAzureCredential
 
 credential = DefaultAzureCredential()
 
-client = AzureOpenAIChatClient(
-	deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
-	endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+client = OpenAIChatCompletionClient(
+	model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+	azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
 	middleware=[
 		PurviewChatPolicyMiddleware(credential, PurviewSettings(app_name="My App (Chat)"))
