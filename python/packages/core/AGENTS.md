@@ -82,13 +82,12 @@ agent_framework/
 
 ### OpenAI (`openai/`)
 
-- **`OpenAIChatClient`** - Chat client for OpenAI API
-- **`OpenAIResponsesClient`** - Client for OpenAI Responses API
+- **`OpenAIChatClient`** - Chat client for the OpenAI Responses API
+- **`OpenAIChatCompletionClient`** - Chat client for the OpenAI Chat Completions API
 
-### Azure OpenAI (`azure/`)
+### Foundry (`foundry/`)
 
-- **`AzureOpenAIChatClient`** - Chat client for Azure OpenAI
-- **`AzureOpenAIResponsesClient`** - Client for Azure OpenAI Responses API
+- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
 
 ## Key Patterns
 

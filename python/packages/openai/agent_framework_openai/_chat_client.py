@@ -1235,7 +1235,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
     def _check_model_presence(self, options: dict[str, Any]) -> None:
         """Check if the 'model' param is present, and if not raise a Error.
 
-        Since AzureAIClients use a different param for this, this method is overridden in those clients.
+        Subclasses can override this when they populate the model through a different option field.
         """
         if not options.get("model"):
             if not self.model:

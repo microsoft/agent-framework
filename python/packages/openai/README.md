@@ -22,7 +22,7 @@ Use `OpenAIChatClient` for new work unless you specifically need the Chat Comple
 - `OpenAIChatCompletionClient` uses the Chat Completions API and is mainly for compatibility with
   existing Chat Completions-based integrations.
 
-The deprecated `OpenAIResponsesClient` alias points to `OpenAIChatClient`.
+The previous deprecated Responses alias has been removed. Use `OpenAIChatClient` directly.
 
 ## Environment variables
 

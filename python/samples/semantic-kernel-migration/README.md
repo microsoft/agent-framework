@@ -44,7 +44,7 @@ Each script is fully async and the `main()` routine runs both implementations ba
 - Python 3.10 or later.
 - Access to the necessary model endpoints (Azure OpenAI, OpenAI, Azure AI, Copilot Studio, etc.).
 - Installed SDKs: `semantic-kernel` and the Microsoft Agent Framework (`pip install semantic-kernel agent-framework`), or the repo’s editable packages if you are developing locally.
-- Service credentials exposed through environment variables (for example `OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`, or Copilot Studio auth settings).
+- Service credentials exposed through environment variables (for example `OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, or Copilot Studio auth settings).
 
 ## Running Single-Agent Samples
 From the repository root:

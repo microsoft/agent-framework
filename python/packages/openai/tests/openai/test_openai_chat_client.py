@@ -54,7 +54,7 @@ from openai.types.responses.response_text_delta_event import ResponseTextDeltaEv
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework_openai import OpenAIChatClient
 from agent_framework_openai._chat_client import OPENAI_LOCAL_SHELL_CALL_ITEM_ID_KEY
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
@@ -125,27 +125,27 @@ def test_init_uses_explicit_parameters() -> None:
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
-def test_deprecated_responses_client_supports_all_tool_protocols() -> None:
-    assert isinstance(OpenAIResponsesClient, SupportsCodeInterpreterTool)
-    assert isinstance(OpenAIResponsesClient, SupportsWebSearchTool)
-    assert isinstance(OpenAIResponsesClient, SupportsImageGenerationTool)
-    assert isinstance(OpenAIResponsesClient, SupportsMCPTool)
-    assert isinstance(OpenAIResponsesClient, SupportsFileSearchTool)
+def test_openai_chat_client_supports_all_tool_protocols() -> None:
+    assert isinstance(OpenAIChatClient, SupportsCodeInterpreterTool)
+    assert isinstance(OpenAIChatClient, SupportsWebSearchTool)
+    assert isinstance(OpenAIChatClient, SupportsImageGenerationTool)
+    assert isinstance(OpenAIChatClient, SupportsMCPTool)
+    assert isinstance(OpenAIChatClient, SupportsFileSearchTool)
 
 
-def test_protocol_isinstance_with_responses_client_instance() -> None:
-    client = object.__new__(OpenAIResponsesClient)
+def test_protocol_isinstance_with_openai_chat_client_instance() -> None:
+    client = object.__new__(OpenAIChatClient)
 
     assert isinstance(client, SupportsCodeInterpreterTool)
     assert isinstance(client, SupportsWebSearchTool)
 
 
-def test_deprecated_responses_client_tool_methods_return_dict() -> None:
-    code_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+def test_openai_chat_client_tool_methods_return_dict() -> None:
+    code_tool = OpenAIChatClient.get_code_interpreter_tool()
     assert isinstance(code_tool, dict)
     assert code_tool.get("type") == "code_interpreter"
 
-    web_tool = OpenAIResponsesClient.get_web_search_tool()
+    web_tool = OpenAIChatClient.get_web_search_tool()
     assert isinstance(web_tool, dict)
     assert web_tool.get("type") == "web_search"
 

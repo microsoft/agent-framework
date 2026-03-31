@@ -26,7 +26,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from agent_framework import Agent
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 
 
 @asynccontextmanager
@@ -47,15 +47,15 @@ async def create_gaia_agent() -> AsyncIterator[Agent]:
             result = await agent.run("What is the capital of France?")
             print(result.text)
     """
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
 
     async with client.as_agent(
         name="GaiaAgent",
         instructions="Solve tasks to your best ability. Use Web Search to find "
         "information and Code Interpreter to perform calculations and data analysis.",
         tools=[
-            OpenAIResponsesClient.get_web_search_tool(),
-            OpenAIResponsesClient.get_code_interpreter_tool(),
+            OpenAIChatClient.get_web_search_tool(),
+            OpenAIChatClient.get_code_interpreter_tool(),
         ],
     ) as agent:
         yield agent

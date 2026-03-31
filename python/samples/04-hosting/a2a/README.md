@@ -22,8 +22,8 @@ The remaining files are supporting modules used by the server:
 Make sure to set the following environment variables before running the examples:
 
 ### Required (Server)
-- `AZURE_AI_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` — Model deployment name (e.g. `gpt-4o`)
+- `FOUNDRY_PROJECT_ENDPOINT` — Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL` — Model deployment name (e.g. `gpt-4o`)
 
 ### Required (Client)
 - `A2A_AGENT_HOST` — URL of the A2A server (e.g. `http://localhost:5001/`)

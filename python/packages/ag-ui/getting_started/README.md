@@ -185,7 +185,7 @@ Create a file named `server.py`:
 import os
 
 from agent_framework import Agent
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
 from fastapi import FastAPI
 
@@ -205,9 +205,9 @@ if not api_key:
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client=OpenAIChatCompletionClient(
+        azure_endpoint=endpoint,
+        model=deployment_name,
         api_key=api_key,
     ),
 )
@@ -230,7 +230,7 @@ if __name__ == "__main__":
 - **`Agent`**: The agent that will handle incoming requests
 - **FastAPI Integration**: Uses FastAPI's native async support for streaming responses
 - **Instructions**: The agent is created with default instructions, which can be overridden by client messages
-- **Configuration**: `AzureOpenAIChatClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
+- **Configuration**: `OpenAIChatCompletionClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
 
 **Alternative (simpler)**: Use environment variables only:
 
@@ -239,7 +239,7 @@ if __name__ == "__main__":
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant.",
-    client=AzureOpenAIChatClient(),  # Reads from environment automatically
+    client=OpenAIChatCompletionClient(),  # Reads from environment automatically
 )
 ```
 
@@ -249,7 +249,7 @@ Set the required environment variables:
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
 # Optional: Set API key if not using DefaultAzureCredential
 # export AZURE_OPENAI_API_KEY="your-api-key"
 ```

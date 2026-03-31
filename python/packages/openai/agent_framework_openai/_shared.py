@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Literal, Union
 
-import openai
-from agent_framework._serialization import SerializationMixin
 from agent_framework._settings import SecretString, load_settings
-from agent_framework._telemetry import APP_INFO, USER_AGENT_KEY, prepend_agent_framework_to_user_agent
-from agent_framework._tools import FunctionTool
+from agent_framework._telemetry import APP_INFO, prepend_agent_framework_to_user_agent
 from agent_framework.exceptions import SettingNotFoundError
 from openai import AsyncAzureOpenAI, AsyncOpenAI, AsyncStream, _legacy_response  # type: ignore
 from openai.types import Completion
@@ -21,7 +17,6 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.images_response import ImagesResponse
 from openai.types.responses.response import Response
 from openai.types.responses.response_stream_event import ResponseStreamEvent
-from packaging.version import parse
 
 if sys.version_info >= (3, 11):
     from typing import TypedDict  # type: ignore # pragma: no cover
@@ -34,8 +29,6 @@ if TYPE_CHECKING:
 
     AzureCredentialTypes = TokenCredential | AsyncTokenCredential
 
-
-logger: logging.Logger = logging.getLogger("agent_framework.openai")
 
 AZURE_OPENAI_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"  # noqa: S105 # nosec B105
 
@@ -54,29 +47,6 @@ RESPONSE_TYPE = Union[
 ]
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
-
-
-def _check_openai_version_for_callable_api_key() -> None:
-    """Check if OpenAI version supports callable API keys.
-
-    Callable API keys require OpenAI >= 1.106.0.
-    If the version is too old, raise a ValueError with helpful message.
-    """
-    try:
-        current_version = parse(openai.__version__)
-        min_required_version = parse("1.106.0")
-
-        if current_version < min_required_version:
-            raise ValueError(
-                f"Callable API keys require OpenAI SDK >= 1.106.0, but you have {openai.__version__}. "
-                f"Please upgrade with 'pip install openai>=1.106.0' or provide a string API key instead. "
-                f"Note: If you're using mem0ai, you may need to upgrade to mem0ai>=1.0.0 "
-                f"to allow newer OpenAI versions."
-            )
-    except ValueError:
-        raise  # Re-raise our own exception
-    except Exception as e:
-        logger.warning(f"Could not check OpenAI version for callable API key support: {e}")
 
 
 class OpenAISettings(TypedDict, total=False):
@@ -374,256 +344,4 @@ def get_api_key(
     if isinstance(api_key, SecretString):
         return api_key.get_secret_value()
 
-    # Check version compatibility for callable API keys
-    if callable(api_key):
-        _check_openai_version_for_callable_api_key()
-
     return api_key  # Pass callable, string, or None directly to OpenAI SDK
-
-
-class OpenAIBase(SerializationMixin):
-    """Base class for OpenAI Clients.
-
-    .. deprecated::
-        ``OpenAIBase`` is deprecated and only used by ``OpenAIAssistantsClient``
-        and ``AzureOpenAIAssistantsClient``.  New clients should manage ``client``
-        and ``model`` directly in their own ``__init__``.
-    """
-
-    INJECTABLE: ClassVar[set[str]] = {"client"}
-
-    def __init__(
-        self, *, model: str | None = None, model_id: str | None = None, client: AsyncOpenAI | None = None, **kwargs: Any
-    ) -> None:
-        """Initialize OpenAIBase.
-
-        Keyword Args:
-            client: The AsyncOpenAI client instance.
-            model: The AI model to use.
-            model_id: Deprecated alias for ``model``.
-            **kwargs: Additional keyword arguments.
-        """
-        if model_id is not None and model is None:
-            import warnings
-
-            warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
-            model = model_id
-        self.client = client
-        self.model: str | None = None
-        if model:
-            self.model = model.strip()
-
-        # Call super().__init__() to continue MRO chain (e.g., RawChatClient)
-        # Extract known kwargs that belong to other base classes
-        additional_properties = kwargs.pop("additional_properties", None)
-        middleware = kwargs.pop("middleware", None)
-        instruction_role = kwargs.pop("instruction_role", None)
-        function_invocation_configuration = kwargs.pop("function_invocation_configuration", None)
-
-        # Build super().__init__() args
-        super_kwargs = {}
-        if additional_properties is not None:
-            super_kwargs["additional_properties"] = additional_properties
-        if middleware is not None:
-            super_kwargs["middleware"] = middleware
-        if function_invocation_configuration is not None:
-            super_kwargs["function_invocation_configuration"] = function_invocation_configuration
-
-        # Call super().__init__() with filtered kwargs
-        super().__init__(**super_kwargs)
-
-        # Store instruction_role and any remaining kwargs as instance attributes
-        if instruction_role is not None:
-            self.instruction_role = instruction_role
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    async def _initialize_client(self) -> None:
-        """Initialize OpenAI client asynchronously.
-
-        Override in subclasses to initialize the OpenAI client asynchronously.
-        """
-        pass
-
-    async def _ensure_client(self) -> AsyncOpenAI:
-        """Ensure OpenAI client is initialized."""
-        await self._initialize_client()
-        if self.client is None:
-            raise RuntimeError("OpenAI client is not initialized")
-
-        return self.client
-
-    def _get_api_key(
-        self, api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None
-    ) -> str | Callable[[], str | Awaitable[str]] | None:
-        """Get the appropriate API key value for client initialization.
-
-        Args:
-            api_key: The API key parameter which can be a string, SecretString, callable, or None.
-
-        Returns:
-            For callable API keys: returns the callable directly.
-            For SecretString/string/None API keys: returns as-is (SecretString is a str subclass).
-        """
-        if isinstance(api_key, SecretString):
-            return api_key.get_secret_value()
-
-        # Check version compatibility for callable API keys
-        if callable(api_key):
-            _check_openai_version_for_callable_api_key()
-
-        return api_key  # Pass callable, string, or None directly to OpenAI SDK
-
-
-class OpenAIConfigMixin(OpenAIBase):
-    """Internal class for configuring a connection to an OpenAI service.
-
-    .. deprecated::
-        ``OpenAIConfigMixin`` is deprecated and only used by ``OpenAIAssistantsClient``
-        and ``AzureOpenAIAssistantsClient``.  New clients handle configuration
-        directly in their own ``__init__``.
-    """
-
-    OTEL_PROVIDER_NAME: ClassVar[str] = "openai"  # type: ignore[reportIncompatibleVariableOverride, misc]
-
-    def __init__(
-        self,
-        model: str,
-        api_key: str | Callable[[], str | Awaitable[str]] | None = None,
-        org_id: str | None = None,
-        default_headers: Mapping[str, str] | None = None,
-        client: AsyncOpenAI | None = None,
-        instruction_role: str | None = None,
-        base_url: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Initialize a client for OpenAI services.
-
-        This constructor sets up a client to interact with OpenAI's API, allowing for
-        different types of AI model interactions, like chat or text completion.
-
-        Args:
-            model: OpenAI model identifier. Must be non-empty.
-                Default to a preset value.
-            api_key: OpenAI API key for authentication, or a callable that returns an API key.
-                Must be non-empty. (Optional)
-            org_id: OpenAI organization ID. This is optional
-                unless the account belongs to multiple organizations.
-            default_headers: Default headers
-                for HTTP requests. (Optional)
-            client: An existing OpenAI client, optional.
-            instruction_role: The role to use for 'instruction'
-                messages, for example, summarization prompts could use `developer` or `system`. (Optional)
-            base_url: The optional base URL to use. If provided will override the standard value for a OpenAI connector.
-                Will not be used when supplying a custom client.
-            kwargs: Additional keyword arguments.
-
-        """
-        # Merge APP_INFO into the headers if it exists
-        merged_headers = dict(copy(default_headers)) if default_headers else {}
-        if APP_INFO:
-            merged_headers.update(APP_INFO)
-            merged_headers = prepend_agent_framework_to_user_agent(merged_headers)
-
-        # Handle callable API key using base class method
-        api_key_value = self._get_api_key(api_key)
-
-        if not client:
-            if not api_key:
-                raise ValueError("Please provide an api_key")
-            args: dict[str, Any] = {"api_key": api_key_value, "default_headers": merged_headers}
-            if org_id:
-                args["organization"] = org_id
-            if base_url:
-                args["base_url"] = base_url
-            client = AsyncOpenAI(**args)
-
-        # Store configuration as instance attributes for serialization
-        self.org_id = org_id
-        self.base_url = str(base_url)
-        # Store default_headers but filter out USER_AGENT_KEY for serialization
-        if default_headers:
-            self.default_headers: dict[str, Any] | None = {
-                k: v for k, v in default_headers.items() if k != USER_AGENT_KEY
-            }
-        else:
-            self.default_headers = None
-
-        args = {
-            "model": model,
-            "client": client,
-        }
-        if instruction_role:
-            args["instruction_role"] = instruction_role
-
-        # Ensure additional_properties and middleware are passed through kwargs to RawChatClient
-        # These are consumed by RawChatClient.__init__ via kwargs
-        super().__init__(**args, **kwargs)
-
-
-def to_assistant_tools(
-    tools: Sequence[FunctionTool | MutableMapping[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    """Convert Agent Framework tools to OpenAI Assistants API format.
-
-    Handles FunctionTool instances and dict-based tools from static factory methods.
-
-    Args:
-        tools: Sequence of Agent Framework tools.
-
-    Returns:
-        List of tool definitions for OpenAI Assistants API.
-    """
-    if not tools:
-        return []
-
-    tool_definitions: list[dict[str, Any]] = []
-
-    for tool in tools:
-        if isinstance(tool, FunctionTool):
-            tool_definitions.append(tool.to_json_schema_spec())
-        elif isinstance(tool, MutableMapping):
-            # Pass through dict-based tools directly (from static factory methods)
-            tool_definitions.append(dict(tool))
-
-    return tool_definitions
-
-
-def from_assistant_tools(
-    assistant_tools: list[Any] | None,
-) -> list[dict[str, Any]]:
-    """Convert OpenAI Assistant tools to dict-based format.
-
-    This converts hosted tools (code_interpreter, file_search) from an OpenAI
-    Assistant definition back to dict-based tool definitions.
-
-    Note: Function tools are skipped - user must provide implementations separately.
-
-    Args:
-        assistant_tools: Tools from OpenAI Assistant object (assistant.tools).
-
-    Returns:
-        List of dict-based tool definitions for hosted tools.
-    """
-    if not assistant_tools:
-        return []
-
-    tools: list[dict[str, Any]] = []
-
-    for tool in assistant_tools:
-        if hasattr(tool, "type"):
-            tool_type = tool.type
-        elif isinstance(tool, Mapping):
-            typed_tool = cast(Mapping[str, Any], tool)
-            tool_type_value: Any = typed_tool.get("type")
-            tool_type = tool_type_value if isinstance(tool_type_value, str) else None
-        else:
-            tool_type = None
-
-        if tool_type == "code_interpreter":
-            tools.append({"type": "code_interpreter"})
-        elif tool_type == "file_search":
-            tools.append({"type": "file_search"})
-        # Skip function tools - user must provide implementations
-
-    return tools
