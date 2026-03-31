@@ -2,7 +2,7 @@
 
 # Welcome to Microsoft Agent Framework!
 
-[![Microsoft Azure AI Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
+[![Microsoft Foundry Discord](https://dcbadge.limes.pink/api/server/b5zjErwbQM?style=flat)](https://discord.gg/b5zjErwbQM)
 [![MS Learn Documentation](https://img.shields.io/badge/MS%20Learn-Documentation-blue)](https://learn.microsoft.com/en-us/agent-framework/)
 [![PyPI](https://img.shields.io/pypi/v/agent-framework)](https://pypi.org/project/agent-framework/)
 [![NuGet](https://img.shields.io/nuget/v/Microsoft.Agents.AI)](https://www.nuget.org/profiles/MicrosoftAgentFramework/)
@@ -192,10 +192,12 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
           │                  └──────────┬─────────────┘
 ┌─────────▼──────────┐                  │
 │  ChatClientAgent   │       ┌──────────▼─────────────┐
-│   + Middleware     │       │    Executor Graph      │
-│   + Tools          │       │  (edges, fan-out,      │
-│   + Memory         │       │   conditions, etc.)    │
-└─────────┬──────────┘       └──────────┬─────────────┘
+│  A2AAgent, ...     │       │    Executor Graph      │
+│   + Middleware     │       │  (edges, fan-out,      │
+│   + Tools          │       │   conditions, etc.)    │
+│   + Memory         │       └──────────┬─────────────┘
+│   + Skills         │                  │
+└─────────┬──────────┘                  │
           │                             │
 ┌─────────▼─────────────────────────────▼─────────────┐
 │                   IChatClient                       │
@@ -204,7 +206,8 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 ```
 
 - **`AIAgent`** — abstract base class with `RunAsync` / `RunStreamingAsync`. All agents derive from this.
-- **`ChatClientAgent`** — concrete agent backed by any `IChatClient`. Created via `.AsAIAgent()` extension methods.
+- **`ChatClientAgent`** — the most common agent, backed by any `IChatClient` (Azure OpenAI, OpenAI, Anthropic, etc.). Created via `.AsAIAgent()`.
+- **`A2AAgent`** — proxy agent for calling remote agents via the [Agent-to-Agent (A2A) protocol](https://google.github.io/A2A/).
 - **`AgentSession`** — conversation state container (history, memory, custom state). Serializable for persistence.
 - **`Workflow`** — graph-based orchestration built with `WorkflowBuilder`. Connects executors via typed edges (direct, fan-out/fan-in, conditional).
 
