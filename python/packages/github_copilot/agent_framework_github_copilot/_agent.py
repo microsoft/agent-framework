@@ -550,7 +550,6 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         finally:
             unsubscribe()
 
-
     async def _run_before_providers(
         self,
         *,

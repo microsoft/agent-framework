@@ -20,7 +20,6 @@ from agent_framework import (
     BaseHistoryProvider,
     Content,
     Message,
-    SessionContext,
 )
 from agent_framework.exceptions import AgentException
 from copilot.generated.session_events import Data, ErrorClass, Result, SessionEvent, SessionEventType
@@ -1584,10 +1583,24 @@ class TestGitHubCopilotAgentContextProviders:
             def __init__(self) -> None:
                 super().__init__(source_id="msg-injector")
 
-            async def before_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 context.extend_messages(self, [Message(role="user", contents=[Content.from_text("History message")])])
 
-            async def after_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 pass
 
         provider = MessageInjectingProvider()
@@ -1620,10 +1633,24 @@ class TestGitHubCopilotAgentContextProviders:
             def __init__(self) -> None:
                 super().__init__(source_id="msg-injector")
 
-            async def before_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 context.extend_messages(self, [Message(role="user", contents=[Content.from_text("History message")])])
 
-            async def after_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 pass
 
         provider = MessageInjectingProvider()
@@ -1694,10 +1721,24 @@ class TestGitHubCopilotAgentContextProviders:
                 super().__init__(source_id=name)
                 self.name = name
 
-            async def before_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 call_order.append(f"before:{self.name}")
 
-            async def after_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 call_order.append(f"after:{self.name}")
 
         providers = [OrderedProvider("A"), OrderedProvider("B"), OrderedProvider("C")]
@@ -1721,10 +1762,24 @@ class TestGitHubCopilotAgentContextProviders:
                 super().__init__(source_id="stub-history", load_messages=load_messages)
                 self.before_run_called = False
 
-            async def before_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 self.before_run_called = True
 
-            async def after_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 pass
 
             async def get_messages(self, *, session_id: str, **kwargs: Any) -> list[Message]:
@@ -1814,10 +1869,24 @@ class TestGitHubCopilotAgentContextProviders:
             def __init__(self) -> None:
                 super().__init__(source_id="options-observer")
 
-            async def before_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def before_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 observed_options.update(context.options)
 
-            async def after_run(self, *, agent: Any, session: AgentSession, context: Any, state: dict[str, Any]) -> None:
+            async def after_run(
+                self,
+                *,
+                agent: Any,
+                session: AgentSession,
+                context: Any,
+                state: dict[str, Any],
+            ) -> None:
                 pass
 
         provider = OptionsObserverProvider()
@@ -1826,4 +1895,3 @@ class TestGitHubCopilotAgentContextProviders:
         await agent.run("Hello", session=session, options={"timeout": 120})
 
         assert observed_options.get("timeout") == 120
-
