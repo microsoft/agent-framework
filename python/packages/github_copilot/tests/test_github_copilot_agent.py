@@ -16,6 +16,7 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
+    BaseContextProvider,
     Content,
     Message,
 )
@@ -1367,3 +1368,203 @@ class TestGitHubCopilotAgentPermissions:
         call_args = mock_client.create_session.call_args
         config = call_args[0][0]
         assert "on_permission_request" not in config
+
+
+class SpyContextProvider(BaseContextProvider):
+    """A context provider that records whether its hooks are called."""
+
+    def __init__(self) -> None:
+        super().__init__(source_id="spy-provider")
+        self.before_run_called = False
+        self.after_run_called = False
+        self.before_run_context: Any = None
+        self.after_run_context: Any = None
+
+    async def before_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        self.before_run_called = True
+        self.before_run_context = context
+        context.instructions.append("Injected by spy provider")
+
+    async def after_run(
+        self,
+        *,
+        agent: Any,
+        session: AgentSession,
+        context: Any,
+        state: dict[str, Any],
+    ) -> None:
+        self.after_run_called = True
+        self.after_run_context = context
+
+
+class TestGitHubCopilotAgentContextProviders:
+    """Test cases for context provider integration."""
+
+    async def test_before_run_called_on_run(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that before_run is called on context providers during run()."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        assert spy.before_run_called
+
+    async def test_after_run_called_on_run(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that after_run is called on context providers after run()."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        assert spy.after_run_called
+
+    async def test_provider_instructions_included_in_prompt(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that instructions added by context providers are included in the prompt."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        sent_prompt = mock_session.send_and_wait.call_args[0][0]["prompt"]
+        assert "Injected by spy provider" in sent_prompt
+
+    async def test_after_run_receives_response(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that after_run context contains the agent response."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        await agent.run("Hello", session=session)
+
+        assert spy.after_run_context is not None
+        assert spy.after_run_context.response is not None
+
+    async def test_before_run_called_on_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that before_run is called on context providers during streaming."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        assert spy.before_run_called
+
+    async def test_after_run_called_on_streaming(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that after_run is called on context providers after streaming."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        assert spy.after_run_called
+
+    async def test_provider_instructions_included_in_streaming_prompt(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_delta_event: SessionEvent,
+        session_idle_event: SessionEvent,
+    ) -> None:
+        """Test that instructions from context providers are included in the streaming prompt."""
+        events = [assistant_delta_event, session_idle_event]
+
+        def mock_on(handler: Any) -> Any:
+            for event in events:
+                handler(event)
+            return lambda: None
+
+        mock_session.on = mock_on
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+        async for _ in agent.run("Hello", stream=True, session=session):
+            pass
+
+        sent_prompt = mock_session.send.call_args[0][0]["prompt"]
+        assert "Injected by spy provider" in sent_prompt
+
+    async def test_context_preserved_across_runs(
+        self,
+        mock_client: MagicMock,
+        mock_session: MagicMock,
+        assistant_message_event: SessionEvent,
+    ) -> None:
+        """Test that provider state is preserved across multiple runs with the same session."""
+        mock_session.send_and_wait.return_value = assistant_message_event
+        spy = SpyContextProvider()
+
+        agent = GitHubCopilotAgent(client=mock_client, context_providers=[spy])
+        session = agent.create_session()
+
+        await agent.run("Hello", session=session)
+        assert spy.before_run_called
+
+        spy.before_run_called = False
+        await agent.run("Hello again", session=session)
+        assert spy.before_run_called

@@ -16,9 +16,11 @@ from agent_framework import (
     AgentSession,
     BaseAgent,
     BaseContextProvider,
+    BaseHistoryProvider,
     Content,
     Message,
     ResponseStream,
+    SessionContext,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -381,7 +383,14 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
+
+        session_context = await self._run_before_providers(
+            session=session, input_messages=input_messages, options=opts
+        )
+
         prompt = "\n".join([message.text for message in input_messages])
+        if session_context.instructions:
+            prompt = "\n".join(session_context.instructions) + "\n" + prompt
         message_options = cast(MessageOptions, {"prompt": prompt})
 
         try:
@@ -408,7 +417,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 )
             response_id = message_id
 
-        return AgentResponse(messages=response_messages, response_id=response_id)
+        response = AgentResponse(messages=response_messages, response_id=response_id)
+        session_context._response = response  # type: ignore[assignment]
+        await self._run_after_providers(session=session, context=session_context)
+        return response
 
     async def _stream_updates(
         self,
@@ -442,7 +454,14 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
+
+        session_context = await self._run_before_providers(
+            session=session, input_messages=input_messages, options=opts
+        )
+
         prompt = "\n".join([message.text for message in input_messages])
+        if session_context.instructions:
+            prompt = "\n".join(session_context.instructions) + "\n" + prompt
         message_options = cast(MessageOptions, {"prompt": prompt})
 
         queue: asyncio.Queue[AgentResponseUpdate | Exception | None] = asyncio.Queue()
@@ -502,6 +521,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 queue.put_nowait(AgentException(f"GitHub Copilot session error: {error_msg}"))
 
         unsubscribe = copilot_session.on(event_handler)
+        all_updates: list[AgentResponseUpdate] = []
 
         try:
             await copilot_session.send(message_options)
@@ -509,9 +529,50 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             while (item := await queue.get()) is not None:
                 if isinstance(item, Exception):
                     raise item
+                all_updates.append(item)
                 yield item
         finally:
             unsubscribe()
+
+        if all_updates:
+            session_context._response = AgentResponse.from_updates(all_updates)  # type: ignore[assignment]
+        await self._run_after_providers(session=session, context=session_context)
+
+    async def _run_before_providers(
+        self,
+        *,
+        session: AgentSession,
+        input_messages: list[Message],
+        options: dict[str, Any],
+    ) -> SessionContext:
+        """Run before_run on all context providers and return the session context.
+
+        Keyword Args:
+            session: The conversation session.
+            input_messages: The normalized input messages.
+            options: Runtime options dict.
+
+        Returns:
+            The SessionContext with provider context populated.
+        """
+        session_context = SessionContext(
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
+            input_messages=input_messages,
+            options=options,
+        )
+
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        return session_context
 
     @staticmethod
     def _prepare_system_message(
