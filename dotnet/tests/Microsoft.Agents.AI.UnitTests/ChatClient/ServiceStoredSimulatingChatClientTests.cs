@@ -13,15 +13,15 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Contains unit tests for the <see cref="ChatHistoryPersistingChatClient"/> decorator,
+/// Contains unit tests for the <see cref="ServiceStoredSimulatingChatClient"/> decorator,
 /// verifying that it persists messages via the <see cref="ChatHistoryProvider"/> after each
 /// individual service call by default, or marks messages for end-of-run persistence when the
-/// <see cref="ChatClientAgentOptions.PersistChatHistoryAtEndOfRun"/> option is enabled.
+/// <see cref="ChatClientAgentOptions.SimulateServiceStoredChatHistory"/> option is enabled.
 /// </summary>
-public class ChatHistoryPersistingChatClientTests
+public class ServiceStoredSimulatingChatClientTests
 {
     /// <summary>
-    /// Verifies that by default (PersistChatHistoryAtEndOfRun is false),
+    /// Verifies that by default (SimulateServiceStoredChatHistory is false),
     /// the ChatHistoryProvider receives messages after a successful non-streaming call.
     /// </summary>
     [Fact]
@@ -50,7 +50,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -97,7 +97,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = true,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -145,7 +145,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -163,11 +163,10 @@ public class ChatHistoryPersistingChatClientTests
     }
 
     /// <summary>
-    /// Verifies that the decorator is injected in persist mode by default
-    /// and can be discovered via GetService.
+    /// Verifies that the decorator is NOT injected by default (SimulateServiceStoredChatHistory is false).
     /// </summary>
     [Fact]
-    public void ChatClient_ContainsDecorator_InPersistMode_ByDefault()
+    public void ChatClient_DoesNotContainDecorator_ByDefault()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -176,16 +175,15 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new());
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ChatHistoryPersistingChatClient>();
-        Assert.NotNull(decorator);
-        Assert.False(decorator.MarkOnly);
+        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
+        Assert.Null(decorator);
     }
 
     /// <summary>
-    /// Verifies that the decorator is injected in mark-only mode when PersistChatHistoryAtEndOfRun is true.
+    /// Verifies that the decorator is injected when SimulateServiceStoredChatHistory is true.
     /// </summary>
     [Fact]
-    public void ChatClient_ContainsDecorator_InMarkOnlyMode_WhenPersistAtEndOfRun()
+    public void ChatClient_ContainsDecorator_WhenSimulateServiceStoredChatHistory()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -193,13 +191,12 @@ public class ChatHistoryPersistingChatClientTests
         // Act
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            PersistChatHistoryAtEndOfRun = true,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ChatHistoryPersistingChatClient>();
+        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
         Assert.NotNull(decorator);
-        Assert.True(decorator.MarkOnly);
     }
 
     /// <summary>
@@ -218,27 +215,27 @@ public class ChatHistoryPersistingChatClientTests
         });
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ChatHistoryPersistingChatClient>();
+        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
         Assert.Null(decorator);
     }
 
     /// <summary>
-    /// Verifies that the PersistChatHistoryAtEndOfRun option is included in Clone().
+    /// Verifies that the SimulateServiceStoredChatHistory option is included in Clone().
     /// </summary>
     [Fact]
-    public void ChatClientAgentOptions_Clone_IncludesPersistChatHistoryAtEndOfRun()
+    public void ChatClientAgentOptions_Clone_IncludesSimulateServiceStoredChatHistory()
     {
         // Arrange
         var options = new ChatClientAgentOptions
         {
-            PersistChatHistoryAtEndOfRun = true,
+            SimulateServiceStoredChatHistory = true,
         };
 
         // Act
         var cloned = options.Clone();
 
         // Assert
-        Assert.True(cloned.PersistChatHistoryAtEndOfRun);
+        Assert.True(cloned.SimulateServiceStoredChatHistory);
     }
 
     /// <summary>
@@ -292,7 +289,7 @@ public class ChatHistoryPersistingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -361,7 +358,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -410,7 +407,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             AIContextProviders = [mockContextProvider.Object],
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -457,7 +454,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             AIContextProviders = [mockContextProvider.Object],
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -516,7 +513,7 @@ public class ChatHistoryPersistingChatClientTests
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
             AIContextProviders = [mockContextProvider.Object],
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -590,7 +587,7 @@ public class ChatHistoryPersistingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -655,7 +652,7 @@ public class ChatHistoryPersistingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -680,52 +677,12 @@ public class ChatHistoryPersistingChatClientTests
     /// Verifies that after a successful run with per-service-call persistence, the notified
     /// messages are stamped with the persisted marker so they are not re-notified.
     /// </summary>
-    [Fact]
-    public async Task RunAsync_MarksNotifiedMessages_WithPersistedMarkerAsync()
-    {
-        // Arrange
-        Mock<IChatClient> mockService = new();
-        mockService.Setup(
-            s => s.GetResponseAsync(
-                It.IsAny<IEnumerable<ChatMessage>>(),
-                It.IsAny<ChatOptions>(),
-                It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
-
-        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
-        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
-        mockChatHistoryProvider
-            .Protected()
-            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
-            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
-                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
-        mockChatHistoryProvider
-            .Protected()
-            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
-            .Returns(() => new ValueTask());
-
-        ChatClientAgent agent = new(mockService.Object, options: new()
-        {
-            ChatHistoryProvider = mockChatHistoryProvider.Object,
-            PersistChatHistoryAtEndOfRun = false,
-        });
-
-        // Act
-        var inputMessage = new ChatMessage(ChatRole.User, "test");
-        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
-        await agent.RunAsync([inputMessage], session);
-
-        // Assert — input message should be marked as persisted
-        Assert.True(
-            inputMessage.AdditionalProperties?.ContainsKey(ChatHistoryPersistingChatClient.PersistedMarkerKey) == true,
-            "Input message should be marked as persisted after a successful run.");
-    }
-
     /// <summary>
-    /// Verifies that when per-service-call persistence is enabled and the inner client returns a
-    /// conversation ID, the session's ConversationId is updated after the service call.
+    /// Verifies that when the inner client returns a real conversation ID,
+    /// the session's ConversationId is updated after the run.
     /// </summary>
     [Fact]
-    public async Task RunAsync_UpdatesSessionConversationId_WhenPerServiceCallPersistenceEnabledAsync()
+    public async Task RunAsync_UpdatesSessionConversationId_WhenServiceReturnsOneAsync()
     {
         // Arrange
         const string ExpectedConversationId = "conv-123";
@@ -741,10 +698,7 @@ public class ChatHistoryPersistingChatClientTests
                 ConversationId = ExpectedConversationId,
             });
 
-        ChatClientAgent agent = new(mockService.Object, options: new()
-        {
-            PersistChatHistoryAtEndOfRun = false,
-        });
+        ChatClientAgent agent = new(mockService.Object);
 
         // Act
         var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
@@ -766,8 +720,8 @@ public class ChatHistoryPersistingChatClientTests
 
     /// <summary>
     /// Verifies that when per-service-call persistence is active and no real conversation ID exists,
-    /// <see cref="ChatClientAgent"/> sets the <see cref="ChatHistoryPersistingChatClient.LocalHistoryConversationId"/>
-    /// sentinel on the chat options and <see cref="ChatHistoryPersistingChatClient"/> strips it before
+    /// <see cref="ChatClientAgent"/> sets the <see cref="ServiceStoredSimulatingChatClient.LocalHistoryConversationId"/>
+    /// sentinel on the chat options and <see cref="ServiceStoredSimulatingChatClient"/> strips it before
     /// forwarding to the inner client.
     /// </summary>
     [Fact]
@@ -787,7 +741,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -819,7 +773,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            PersistChatHistoryAtEndOfRun = true,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -854,7 +808,7 @@ public class ChatHistoryPersistingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Create a session with a real conversation ID.
@@ -888,7 +842,7 @@ public class ChatHistoryPersistingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
@@ -903,11 +857,12 @@ public class ChatHistoryPersistingChatClientTests
     }
 
     /// <summary>
-    /// Verifies that the session's conversation ID is NOT set to the sentinel after the run.
-    /// The sentinel should only exist transiently on the ChatOptions for the pipeline.
+    /// Verifies that the session's conversation ID IS set to the sentinel after the run
+    /// when simulating service-stored chat history. This allows subsequent runs to
+    /// skip provider resolution in the agent (the decorator handles it).
     /// </summary>
     [Fact]
-    public async Task RunAsync_SentinelDoesNotLeakToSession_WhenPerServiceCallPersistenceActiveAsync()
+    public async Task RunAsync_SetsSentinelOnSession_WhenSimulateServiceStoredChatHistoryActiveAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -920,14 +875,440 @@ public class ChatHistoryPersistingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            PersistChatHistoryAtEndOfRun = false,
+            SimulateServiceStoredChatHistory = true,
         });
 
         // Act
         var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
-        // Assert — session should NOT have the sentinel conversation ID
-        Assert.Null(session!.ConversationId);
+        // Assert — session should have the sentinel conversation ID
+        Assert.Equal(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when simulating service-stored chat history and the service returns
+    /// a real <see cref="ChatResponse.ConversationId"/>, the conflict detection in
+    /// <see cref="ChatClientAgent.UpdateSessionConversationId"/> throws because both a
+    /// <see cref="ChatHistoryProvider"/> and a service-managed ConversationId are present.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_Throws_WhenServiceReturnsRealConversationIdWithChatHistoryProviderAsync()
+    {
+        // Arrange
+        const string RealConversationId = "service-conv-456";
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<IEnumerable<ChatMessage>>(ctx.RequestMessages.ToList()));
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")])
+            {
+                ConversationId = RealConversationId,
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            SimulateServiceStoredChatHistory = true,
+        });
+
+        // Act & Assert — conflict detection should throw
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
+    }
+
+    /// <summary>
+    /// Verifies that when simulating service-stored chat history and the request carries a real
+    /// <see cref="ChatOptions.ConversationId"/>, the decorator skips history loading but still
+    /// notifies <see cref="AIContextProvider"/>s on success and updates the session ConversationId.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_NotifiesProvidersAndUpdatesSession_WhenRequestHasRealConversationIdAsync()
+    {
+        // Arrange
+        const string RealConversationId = "real-conv-request";
+        const string ServiceConversationId = "real-conv-response";
+
+        Mock<AIContextProvider> mockContextProvider = new(null, null, null);
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["TestContextProvider"]);
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((AIContextProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<AIContext>(new AIContext { Messages = ctx.AIContext.Messages }));
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")])
+            {
+                ConversationId = ServiceConversationId,
+            });
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+            AIContextProviders = [mockContextProvider.Object],
+        });
+
+        // Create a session with a real conversation ID so it's on chatOptions.
+        var session = await agent.CreateSessionAsync(RealConversationId);
+
+        // Act
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert — AIContextProvider.InvokedAsync should have been called
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.Is<AIContextProvider.InvokedContext>(x =>
+                    x.RequestMessages.Any(m => m.Text == "test") &&
+                    x.ResponseMessages!.Any(m => m.Text == "response")),
+                ItExpr.IsAny<CancellationToken>());
+
+        // Assert — session should have the service-returned ConversationId
+        Assert.Equal(ServiceConversationId, (session as ChatClientAgentSession)!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when simulating service-stored chat history and the request carries a real
+    /// <see cref="ChatOptions.ConversationId"/>, the decorator notifies providers of failure
+    /// when the inner client throws.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_NotifiesProvidersOfFailure_WhenRequestHasRealConversationIdAsync()
+    {
+        // Arrange
+        const string RealConversationId = "real-conv-failure";
+
+        Mock<AIContextProvider> mockContextProvider = new(null, null, null);
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["TestContextProvider"]);
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((AIContextProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<AIContext>(new AIContext { Messages = ctx.AIContext.Messages }));
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Service error"));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+            AIContextProviders = [mockContextProvider.Object],
+        });
+
+        var session = await agent.CreateSessionAsync(RealConversationId);
+
+        // Act & Assert — should throw
+        await Assert.ThrowsAsync<InvalidOperationException>(() => agent.RunAsync([new(ChatRole.User, "test")], session));
+
+        // Assert — AIContextProvider.InvokedAsync should have been called with the failure
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.Is<AIContextProvider.InvokedContext>(x => x.InvokeException != null),
+                ItExpr.IsAny<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that in the streaming path, when the request carries a real
+    /// <see cref="ChatOptions.ConversationId"/>, the decorator skips history loading but still
+    /// notifies providers and updates the session ConversationId.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_NotifiesProvidersAndUpdatesSession_WhenRequestHasRealConversationIdAsync()
+    {
+        // Arrange
+        const string RealConversationId = "real-conv-streaming";
+        const string ServiceConversationId = "service-conv-streaming";
+
+        Mock<AIContextProvider> mockContextProvider = new(null, null, null);
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["TestContextProvider"]);
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((AIContextProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<AIContext>(new AIContext { Messages = ctx.AIContext.Messages }));
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "streamed") { ConversationId = ServiceConversationId }));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+            AIContextProviders = [mockContextProvider.Object],
+        });
+
+        var session = await agent.CreateSessionAsync(RealConversationId);
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "test")], session))
+        {
+            // Consume all updates.
+        }
+
+        // Assert — AIContextProvider.InvokedAsync should have been called
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.IsAny<AIContextProvider.InvokedContext>(),
+                ItExpr.IsAny<CancellationToken>());
+
+        // Assert — session should have the service-returned ConversationId
+        Assert.Equal(ServiceConversationId, (session as ChatClientAgentSession)!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when simulating and the service unexpectedly returns a real
+    /// <see cref="ChatResponse.ConversationId"/> (no ConversationId on the request), the decorator
+    /// notifies providers and updates the session ConversationId without setting the sentinel.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_NotifiesProvidersAndUpdatesSession_WhenServiceReturnsUnexpectedConversationIdAsync()
+    {
+        // Arrange
+        const string ServiceConversationId = "unexpected-conv-id";
+
+        Mock<AIContextProvider> mockContextProvider = new(null, null, null);
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["TestContextProvider"]);
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((AIContextProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<AIContext>(new AIContext { Messages = ctx.AIContext.Messages }));
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")])
+            {
+                ConversationId = ServiceConversationId,
+            });
+
+        // No ChatHistoryProvider — so conflict detection won't throw.
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+            AIContextProviders = [mockContextProvider.Object],
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync([new(ChatRole.User, "test")], session);
+
+        // Assert — AIContextProvider.InvokedAsync should have been called
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.Is<AIContextProvider.InvokedContext>(x =>
+                    x.ResponseMessages!.Any(m => m.Text == "response")),
+                ItExpr.IsAny<CancellationToken>());
+
+        // Assert — session should have the service ConversationId, not the sentinel
+        Assert.Equal(ServiceConversationId, session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that in the streaming path, when the service returns a real ConversationId mid-stream
+    /// (no ConversationId on the request), the decorator notifies providers and updates the session.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_NotifiesProvidersAndUpdatesSession_WhenServiceReturnsUnexpectedConversationIdAsync()
+    {
+        // Arrange
+        const string ServiceConversationId = "unexpected-stream-conv";
+
+        Mock<AIContextProvider> mockContextProvider = new(null, null, null);
+        mockContextProvider.SetupGet(p => p.StateKeys).Returns(["TestContextProvider"]);
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask<AIContext>>("InvokingCoreAsync", ItExpr.IsAny<AIContextProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((AIContextProvider.InvokingContext ctx, CancellationToken _) =>
+                new ValueTask<AIContext>(new AIContext { Messages = ctx.AIContext.Messages }));
+        mockContextProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<AIContextProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(
+                new ChatResponseUpdate(ChatRole.Assistant, "part1"),
+                new ChatResponseUpdate(null, "part2") { ConversationId = ServiceConversationId }));
+
+        // No ChatHistoryProvider — so conflict detection won't throw.
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+            AIContextProviders = [mockContextProvider.Object],
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await foreach (var _ in agent.RunStreamingAsync([new(ChatRole.User, "test")], session))
+        {
+            // Consume all updates.
+        }
+
+        // Assert — AIContextProvider.InvokedAsync should have been called
+        mockContextProvider
+            .Protected()
+            .Verify<ValueTask>("InvokedCoreAsync", Times.Once(),
+                ItExpr.IsAny<AIContextProvider.InvokedContext>(),
+                ItExpr.IsAny<CancellationToken>());
+
+        // Assert — session should have the service ConversationId, not the sentinel
+        Assert.Equal(ServiceConversationId, session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that when <see cref="ChatOptions.AllowBackgroundResponses"/> is true,
+    /// the decorator skips history loading and sentinel setting, letting the agent's
+    /// forced end-of-run path handle persistence.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_SkipsSimulation_WhenAllowBackgroundResponsesAsync()
+    {
+        // Arrange
+        IEnumerable<ChatMessage>? capturedMessages = null;
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions?, CancellationToken>((msgs, _, _) => capturedMessages = msgs)
+            .ReturnsAsync(new ChatResponse([new(ChatRole.Assistant, "response")]));
+
+        Mock<ChatHistoryProvider> mockChatHistoryProvider = new(null, null, null);
+        mockChatHistoryProvider.SetupGet(p => p.StateKeys).Returns(["TestChatHistoryProvider"]);
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask<IEnumerable<ChatMessage>>>("InvokingCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokingContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns((ChatHistoryProvider.InvokingContext ctx, CancellationToken _) =>
+            {
+                // Add a history message to verify it's NOT prepended in this scenario.
+                var result = ctx.RequestMessages.ToList();
+                result.Insert(0, new ChatMessage(ChatRole.Assistant, "history"));
+                return new ValueTask<IEnumerable<ChatMessage>>(result);
+            });
+        mockChatHistoryProvider
+            .Protected()
+            .Setup<ValueTask>("InvokedCoreAsync", ItExpr.IsAny<ChatHistoryProvider.InvokedContext>(), ItExpr.IsAny<CancellationToken>())
+            .Returns(new ValueTask());
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            ChatHistoryProvider = mockChatHistoryProvider.Object,
+            SimulateServiceStoredChatHistory = true,
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        await agent.RunAsync(
+            [new(ChatRole.User, "test")],
+            session,
+            new AgentRunOptions { AllowBackgroundResponses = true });
+
+        // Assert — the inner client should NOT have received history messages
+        Assert.NotNull(capturedMessages);
+        var messageList = capturedMessages!.ToList();
+        Assert.Single(messageList);
+        Assert.Equal("test", messageList[0].Text);
+
+        // Assert — session should NOT have the sentinel (agent handles ConversationId at end-of-run)
+        Assert.NotEqual(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
+    }
+
+    /// <summary>
+    /// Verifies that in the streaming path, when <see cref="ChatOptions.AllowBackgroundResponses"/> is true,
+    /// the decorator skips history loading and sentinel setting.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_SkipsSimulation_WhenAllowBackgroundResponsesAsync()
+    {
+        // Arrange
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(CreateAsyncEnumerableAsync(new ChatResponseUpdate(ChatRole.Assistant, "response")));
+
+        ChatClientAgent agent = new(mockService.Object, options: new()
+        {
+            SimulateServiceStoredChatHistory = true,
+        });
+
+        // Act
+        var session = await agent.CreateSessionAsync() as ChatClientAgentSession;
+        List<AgentResponseUpdate> updates = [];
+        await foreach (var update in agent.RunStreamingAsync(
+            [new(ChatRole.User, "test")],
+            session,
+            new AgentRunOptions { AllowBackgroundResponses = true }))
+        {
+            updates.Add(update);
+        }
+
+        // Assert — updates should NOT carry the sentinel ConversationId
+        Assert.NotEmpty(updates);
+
+        // Assert — session should NOT have the sentinel
+        Assert.NotEqual(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
 }

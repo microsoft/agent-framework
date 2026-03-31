@@ -46,8 +46,8 @@ Pattern:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Azure CLI authentication (az login).
-- Environment variables configured for FoundryChatClient.
 """
 
 CHECKPOINT_DIR = Path(__file__).parent / "tmp" / "handoff_checkpoints"
@@ -102,7 +102,7 @@ def create_workflow(checkpoint_storage: FileCheckpointStorage) -> Workflow:
 
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     triage, refund, order = create_agents(client)

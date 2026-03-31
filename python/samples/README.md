@@ -44,8 +44,8 @@ Samples call `load_dotenv()` to automatically load environment variables from a 
 
 **Option 2: Export environment variables directly**:
 ```bash
-export AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
-export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+export FOUNDRY_PROJECT_ENDPOINT="your-foundry-project-endpoint"
+export FOUNDRY_MODEL="gpt-4o"
 ```
 
 **Option 3: Using `env_file_path` parameter** (for per-client configuration):
@@ -73,8 +73,8 @@ you pass an explicit Azure input.
 
 For the getting-started samples, you'll need at minimum:
 ```bash
-AZURE_AI_PROJECT_ENDPOINT="your-foundry-project-endpoint"
-AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
+FOUNDRY_PROJECT_ENDPOINT="your-foundry-project-endpoint"
+FOUNDRY_MODEL="gpt-4o"
 ```
 
 **Note for production**: In production environments, set environment variables through your deployment platform (e.g., Azure App Settings, Kubernetes ConfigMaps/Secrets) rather than using `.env` files. The `load_dotenv()` call in samples will have no effect when a `.env` file is not present, allowing environment variables to be loaded from the system.
