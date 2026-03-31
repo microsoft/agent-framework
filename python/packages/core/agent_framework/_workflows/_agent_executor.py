@@ -2,7 +2,7 @@
 
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -14,7 +14,7 @@ from .._agents import SupportsAgentRun
 from .._sessions import AgentSession
 from .._types import AgentResponse, AgentResponseUpdate, Message
 from ._agent_utils import resolve_agent_id
-from ._const import WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._executor import Executor, handler
 from ._message_utils import normalize_messages_input
 from ._request_info_mixin import response_handler
@@ -350,14 +350,16 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}))
-
+        function_invocation_kwargs, client_kwargs, backward_compatible_kwargs = self._prepare_agent_run_args(
+            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        )
         response = await self._agent.run(
             self._cache,
             stream=False,
             session=self._session,
-            options=options,
-            **run_kwargs,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **backward_compatible_kwargs,
         )
         await ctx.yield_output(response)
 
@@ -379,7 +381,9 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        run_kwargs, options = self._prepare_agent_run_args(ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {}))
+        function_invocation_kwargs, client_kwargs, backward_compatible_kwargs = self._prepare_agent_run_args(
+            ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
+        )
 
         updates: list[AgentResponseUpdate] = []
         streamed_user_input_requests: list[Content] = []
@@ -387,8 +391,9 @@ class AgentExecutor(Executor):
             self._cache,
             stream=True,
             session=self._session,
-            options=options,
-            **run_kwargs,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **backward_compatible_kwargs,
         )
         async for update in stream:
             updates.append(update)
@@ -438,20 +443,34 @@ class AgentExecutor(Executor):
     # and must not appear in **run_kwargs to avoid TypeError from duplicate values.
     _RESERVED_RUN_PARAMS: frozenset[str] = frozenset({"session", "stream", "messages"})
 
-    @staticmethod
-    def _prepare_agent_run_args(raw_run_kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
-        """Prepare kwargs and options for agent.run(), avoiding duplicate option passing.
+    def _prepare_agent_run_args(
+        self,
+        raw_run_kwargs: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any]]:
+        """Prepare function_invocation_kwargs, client_kwargs, and backward-compatible kwargs for agent.run().
 
-        Workflow-level kwargs are propagated to tool calls through
-        `options.additional_function_arguments`. If workflow kwargs include an
-        `options` key, merge it into the final options object and remove it from
-        kwargs before spreading `**run_kwargs`.
+        Extracts ``function_invocation_kwargs`` and ``client_invocation_kwargs`` from the
+        workflow state dict, resolving per-executor entries using ``self.id``. The
+        ``__global__`` sentinel key (set by ``Workflow._resolve_invocation_kwargs``) denotes
+        global kwargs that apply to all executors. Per-executor dicts use executor IDs as
+        keys; this executor extracts only its own entry.
 
-        Reserved parameters (session, stream, messages) that are explicitly
-        managed by AgentExecutor are stripped from run_kwargs to prevent
-        ``TypeError: got multiple values for keyword argument`` collisions.
+        Any remaining keys in the raw dict are treated as backward-compatible agent.run()
+        kwargs. Reserved parameters (session, stream, messages) that are explicitly managed
+        by AgentExecutor are stripped to prevent duplicate-keyword collisions.
+
+        Returns:
+            A 3-tuple of (function_invocation_kwargs, client_kwargs, backward_compatible_kwargs).
         """
         run_kwargs = dict(raw_run_kwargs)
+
+        # Extract the already-resolved invocation kwargs dicts
+        # (set by Workflow._resolve_invocation_kwargs).
+        fi_resolved = run_kwargs.pop("function_invocation_kwargs", None)
+        ci_resolved = run_kwargs.pop("client_invocation_kwargs", None)
+
+        function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
+        client_kwargs = self._resolve_executor_kwargs(ci_resolved)
 
         # Strip reserved params that AgentExecutor passes explicitly to agent.run().
         for key in AgentExecutor._RESERVED_RUN_PARAMS:
@@ -463,45 +482,22 @@ class AgentExecutor(Executor):
                 )
                 run_kwargs.pop(key)
 
-        options_from_workflow = run_kwargs.pop("options", None)
-        workflow_additional_args = run_kwargs.pop("additional_function_arguments", None)
+        return function_invocation_kwargs, client_kwargs, run_kwargs
 
-        options: dict[str, Any] = {}
-        if options_from_workflow is not None:
-            if isinstance(options_from_workflow, Mapping):
-                options_from_workflow_map = cast(Mapping[str, Any], options_from_workflow)
-                for key, value in options_from_workflow_map.items():
-                    options[key] = value
-            else:
-                logger.warning(
-                    "Ignoring non-mapping workflow 'options' kwarg of type %s for AgentExecutor %s.",
-                    type(options_from_workflow).__name__,
-                    AgentExecutor.__name__,
-                )
+    def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Extract this executor's kwargs from a resolved invocation kwargs dict.
 
-        existing_additional_args = options.get("additional_function_arguments")
-        additional_args: dict[str, Any]
-        if isinstance(existing_additional_args, Mapping):
-            existing_additional_args_map = cast(Mapping[str, Any], existing_additional_args)
-            additional_args = {key: value for key, value in existing_additional_args_map.items()}
-        else:
-            additional_args = {}
+        Args:
+            resolved: The resolved dict produced by ``Workflow._resolve_invocation_kwargs``,
+                containing either a ``__global__`` key (global kwargs) or executor-ID keys
+                (per-executor kwargs). May also be ``None``.
 
-        if workflow_additional_args is not None:
-            if isinstance(workflow_additional_args, Mapping):
-                workflow_additional_args_map = cast(Mapping[str, Any], workflow_additional_args)
-                additional_args.update({key: value for key, value in workflow_additional_args_map.items()})
-            else:
-                logger.warning(
-                    "Ignoring non-mapping workflow 'additional_function_arguments' kwarg of type %s for AgentExecutor %s.",  # noqa: E501
-                    type(workflow_additional_args).__name__,
-                    AgentExecutor.__name__,
-                )
-
-        if run_kwargs:
-            additional_args.update(run_kwargs)
-
-        if additional_args:
-            options["additional_function_arguments"] = additional_args
-
-        return run_kwargs, options or None
+        Returns:
+            The kwargs for this executor, or ``None`` if not applicable.
+        """
+        if not isinstance(resolved, dict):
+            return None
+        executor_kwargs = resolved.get(self.id) or resolved.get(GLOBAL_KWARGS_KEY)
+        if isinstance(executor_kwargs, dict):
+            return cast(dict[str, Any], executor_kwargs) or None
+        return None
