@@ -32,6 +32,10 @@ runs:
       shell: bash
       run: npm install -g @github/copilot
 
+    - name: GitHub Copilot Login
+      shell: bash
+      run: gh auth login
+
     - name: Test Copilot CLI
       shell: bash
       run: copilot -p "What can you do in one sentence?"
