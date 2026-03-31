@@ -13,13 +13,12 @@
 // Run with: func start
 // Then call: POST http://localhost:7071/api/agents/HostedAgent/run
 
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting.AzureFunctions;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.Hosting;
-using OpenAI.Chat;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
     ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
@@ -29,9 +28,9 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIAgent agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
     .AsAIAgent(
+        model: deploymentName,
         instructions: "You are a helpful assistant hosted in Azure Functions.",
         name: "HostedAgent");
 
@@ -42,4 +41,5 @@ using IHost app = FunctionsApplication
     .ConfigureFunctionsWebApplication()
     .ConfigureDurableAgents(options => options.AddAIAgent(agent, timeToLive: TimeSpan.FromHours(1)))
     .Build();
+
 app.Run();
