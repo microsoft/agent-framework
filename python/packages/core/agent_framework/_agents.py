@@ -100,10 +100,19 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         A new merged options dict.
     """
     result = dict(base)
+    if result.get("model") is not None and result.get("model_id") is not None:
+        result.pop("model_id", None)
+
     for key, value in override.items():
         if value is None:
             continue
-        if key == "tools" and (result.get("tools") or value):
+        if key == "model":
+            result.pop("model_id", None)
+            result["model"] = value
+        elif key == "model_id":
+            result.pop("model", None)
+            result["model_id"] = value
+        elif key == "tools" and (result.get("tools") or value):
             base_tools = normalize_tools(result.get("tools"))
             override_tools = normalize_tools(value)
             result["tools"] = _append_unique_tools(
@@ -692,7 +701,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 service-managed conversation instead.
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
-                provider-specific options including temperature, max_tokens, model_id,
+                provider-specific options including temperature, max_tokens, model,
                 tool_choice, and provider-specific options like reasoning_effort.
                 You can also create your own TypedDict for custom chat clients.
                 Note: response_format typing does not flow into run outputs when set via default_options.
@@ -737,7 +746,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         model = opts.pop("model", None) or getattr(self.client, "model", None)
-        model_id = None if model is not None else (opts.pop("model_id", None) or getattr(self.client, "model_id", None))
+        model_id = opts.pop("model_id", None)
+        if model is None:
+            model_id = model_id or getattr(self.client, "model_id", None)
 
         # Build chat options dict
         self.default_options: dict[str, Any] = {
@@ -1250,7 +1261,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
-        model_id = None if model is not None else opts.pop("model_id", None)
+        model_id = opts.pop("model_id", None)
+        if model is not None:
+            model_id = None
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {

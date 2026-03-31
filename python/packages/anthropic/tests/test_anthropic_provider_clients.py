@@ -65,6 +65,25 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_settings(tmp_path)
     )
 
 
+def test_raw_anthropic_foundry_client_requires_resource_or_base_url() -> None:
+    with patch("agent_framework_anthropic._foundry_client.load_settings") as mock_load:
+        mock_load.return_value = {
+            "anthropic_foundry_api_key": None,
+            "anthropic_foundry_resource": None,
+            "anthropic_foundry_base_url": None,
+            "anthropic_chat_model": None,
+        }
+
+        with pytest.raises(
+            ValueError,
+            match=(
+                "Anthropic Foundry requires either `resource`/`ANTHROPIC_FOUNDRY_RESOURCE` "
+                "or `base_url`/`ANTHROPIC_FOUNDRY_BASE_URL`\\."
+            ),
+        ):
+            RawAnthropicFoundryClient()
+
+
 def test_raw_anthropic_bedrock_client_creates_sdk_client_from_arguments() -> None:
     mock_transport = _create_mock_transport("https://bedrock-runtime.us-east-1.amazonaws.com")
 

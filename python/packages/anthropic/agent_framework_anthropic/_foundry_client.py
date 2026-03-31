@@ -80,6 +80,12 @@ class RawAnthropicFoundryClient(RawAnthropicClient[AnthropicOptionsT], Generic[A
         api_key_value = api_key_secret.get_secret_value() if api_key_secret is not None else None
 
         if anthropic_client is None:
+            if base_url_setting is None and resource_setting is None:
+                message = (
+                    "Anthropic Foundry requires either `resource`/`ANTHROPIC_FOUNDRY_RESOURCE` "
+                    "or `base_url`/`ANTHROPIC_FOUNDRY_BASE_URL`."
+                )
+                raise ValueError(message)
             if base_url_setting is not None:
                 anthropic_client = AsyncAnthropicFoundry(
                     base_url=base_url_setting,

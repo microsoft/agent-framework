@@ -3121,12 +3121,12 @@ class _ChatOptionsBase(TypedDict, total=False):
             options: ChatOptions = {
                 "temperature": 0.7,
                 "max_tokens": 1000,
-                "model_id": "gpt-4",
+                "model": "gpt-4",
             }
 
             # With tools
             options_with_tools: ChatOptions = {
-                "model_id": "gpt-4",
+                "model": "gpt-4",
                 "tool_choice": "auto",
                 "temperature": 0.7,
             }
