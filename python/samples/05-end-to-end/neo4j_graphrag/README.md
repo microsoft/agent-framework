@@ -21,8 +21,8 @@ This sample keeps setup lightweight by using a pre-built Neo4j fulltext index pl
 
 This sample expects:
 
-- `FOUNDRY_PROJECT_ENDPOINT` or `AZURE_AI_PROJECT_ENDPOINT`
-- `FOUNDRY_MODEL` or `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_MODEL`
 - `NEO4J_URI`
 - `NEO4J_USERNAME`
 - `NEO4J_PASSWORD`
@@ -33,7 +33,7 @@ This sample expects:
 From the `python/` directory:
 
 ```bash
-uv run samples/02-agents/context_providers/neo4j_graphrag/main.py
+uv run samples/05-end-to-end/neo4j_graphrag/main.py
 ```
 
 ## Notes

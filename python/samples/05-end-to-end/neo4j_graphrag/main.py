@@ -3,8 +3,6 @@
 # dependencies = [
 #     "agent-framework-foundry",
 #     "agent-framework-neo4j",
-#     "azure-identity",
-#     "python-dotenv",
 # ]
 # ///
 
@@ -26,10 +24,8 @@ This sample demonstrates how to use the Neo4j GraphRAG context provider with
 Agent Framework and Azure AI Foundry.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT
-                           — Azure AI Foundry project endpoint
-    FOUNDRY_MODEL or AZURE_AI_MODEL_DEPLOYMENT_NAME
-                           — Model deployment name (e.g. gpt-4o)
+    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
+    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
     NEO4J_URI              — Neo4j connection URI
     NEO4J_USERNAME         — Neo4j username
     NEO4J_PASSWORD         — Neo4j password
@@ -42,6 +38,9 @@ USER_INPUTS = [
     "Tell me about NVIDIA's AI business and risk factors.",
 ]
 
+# Optional graph-enrichment query: retrieval works without this, but supplying
+# a query lets the sample attach related company, product, and risk metadata to
+# each retrieved chunk.
 RETRIEVAL_QUERY = """
 MATCH (node)-[:FROM_DOCUMENT]->(doc:Document)<-[:FILED]-(company:Company)
 OPTIONAL MATCH (company)-[:FACES_RISK]->(risk:RiskFactor)
@@ -67,11 +66,11 @@ async def main() -> None:
         raise RuntimeError("Set NEO4J_URI, NEO4J_USERNAME, and NEO4J_PASSWORD before running this sample.")
 
     # 2. Read the Azure AI Foundry project endpoint and model configuration.
-    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+    project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT")
     if not project_endpoint:
-        raise RuntimeError("Set FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT before running this sample.")
+        raise RuntimeError("Set FOUNDRY_PROJECT_ENDPOINT before running this sample.")
 
-    model = os.environ.get("FOUNDRY_MODEL") or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") or "gpt-4o"
+    model = os.environ.get("FOUNDRY_MODEL") or "gpt-4o"
 
     # 3. Create the Neo4j context provider and Foundry-backed agent, then ask sample questions.
     async with (
