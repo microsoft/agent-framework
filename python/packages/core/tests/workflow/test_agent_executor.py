@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
+from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
 
 if TYPE_CHECKING:
     from _pytest.logging import LogCaptureFixture
@@ -649,9 +650,6 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
 # ---------------------------------------------------------------------------
 # Per-executor kwargs resolution tests
 # ---------------------------------------------------------------------------
-
-
-from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
 
 
 async def test_resolve_executor_kwargs_returns_global_kwargs() -> None:
