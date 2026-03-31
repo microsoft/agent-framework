@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import Agent, SupportsAgentRun
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
+from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, Content, Message
@@ -137,8 +137,6 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
         if context.function.name not in self._handoff_functions:
             await call_next()
             return
-
-        from agent_framework._middleware import MiddlewareTermination
 
         # Short-circuit execution and provide deterministic response payload for the tool call.
         # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
@@ -375,6 +373,7 @@ class HandoffAgentExecutor(AgentExecutor):
             description=agent.description,
             context_providers=agent.context_providers,
             middleware=agent.agent_middleware,
+            simulate_service_stored_history=agent.simulate_service_stored_history,
             default_options=cloned_options,  # type: ignore[assignment]
         )
 

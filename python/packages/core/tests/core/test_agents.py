@@ -3,8 +3,8 @@
 import contextlib
 import inspect
 import json
-from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence
-from typing import Any
+from collections.abc import AsyncIterable, Awaitable, Callable, MutableSequence, Sequence
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -25,6 +25,8 @@ from agent_framework import (
     Content,
     ContextProvider,
     FunctionTool,
+    HistoryProvider,
+    InMemoryHistoryProvider,
     Message,
     SlidingWindowStrategy,
     SupportsAgentRun,
@@ -36,6 +38,7 @@ from agent_framework import (
 from agent_framework._agents import _get_tool_name, _merge_options, _sanitize_agent_name
 from agent_framework._mcp import MCPTool, _build_prefixed_mcp_name, _normalize_mcp_name
 from agent_framework._middleware import FunctionInvocationContext
+from agent_framework.exceptions import ChatClientInvalidResponseException
 
 
 class _FixedTokenizer:
@@ -68,6 +71,36 @@ class _ConnectedMCPTool(MCPTool):
 
     def get_mcp_client(self) -> contextlib.AbstractAsyncContextManager[Any]:
         raise NotImplementedError
+
+
+class _RecordingHistoryProvider(HistoryProvider):
+    def __init__(self, source_id: str = "recording_history") -> None:
+        super().__init__(source_id=source_id)
+
+    async def get_messages(
+        self,
+        session_id: str | None,
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[Message]:
+        if state is None:
+            return []
+        state["get_call_count"] = state.get("get_call_count", 0) + 1
+        return list(cast(list[Message], state.get("messages", [])))
+
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if state is None:
+            return
+        state["save_call_count"] = state.get("save_call_count", 0) + 1
+        state.setdefault("messages", []).extend(messages)
 
 
 def test_agent_session_type(agent_session: AgentSession) -> None:
@@ -314,6 +347,226 @@ async def test_prepare_run_context_handles_function_kwargs(
     assert "session" not in ctx["function_invocation_kwargs"]
     assert ctx["client_kwargs"]["client_key"] == "client-value"
     assert ctx["client_kwargs"]["session"] is session
+
+
+async def test_chat_agent_simulates_service_stored_history_per_model_call(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    session = AgentSession()
+    session.state[provider.source_id] = {
+        "messages": [
+            Message(role="user", text="Earlier question"),
+            Message(role="assistant", text="Earlier answer"),
+        ]
+    }
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "Seattle"}',
+                    )
+                ],
+            ),
+            response_id="resp_call_1",
+        ),
+        ChatResponse(messages=Message(role="assistant", text="It is sunny in Seattle."), response_id="resp_call_2"),
+    ]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        simulate_service_stored_history=True,
+    )
+
+    result = await agent.run("What's the weather in Seattle?", session=session)
+
+    provider_state = session.state[provider.source_id]
+    stored_messages = cast(list[Message], provider_state["messages"])
+
+    assert result.text == "It is sunny in Seattle."
+    assert result.response_id is None
+    assert chat_client_base.call_count == 2
+    assert provider_state["get_call_count"] == 2
+    assert provider_state["save_call_count"] == 2
+    assert stored_messages[-1].text == "It is sunny in Seattle."
+    assert session.service_session_id is None
+
+
+async def test_chat_agent_simulates_service_stored_history_per_model_call_streaming(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    session = AgentSession()
+    session.state[provider.source_id] = {
+        "messages": [
+            Message(role="user", text="Earlier question"),
+            Message(role="assistant", text="Earlier answer"),
+        ]
+    }
+    chat_client_base.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "Seattle"}',
+                    )
+                ],
+                role="assistant",
+                finish_reason="stop",
+                response_id="resp_call_1",
+            )
+        ],
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text("It is sunny in Seattle.")],
+                role="assistant",
+                finish_reason="stop",
+                response_id="resp_call_2",
+            )
+        ],
+    ]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        simulate_service_stored_history=True,
+    )
+
+    stream = agent.run("What's the weather in Seattle?", session=session, stream=True)
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    provider_state = session.state[provider.source_id]
+    stored_messages = cast(list[Message], provider_state["messages"])
+
+    assert result.text == "It is sunny in Seattle."
+    assert result.response_id is None
+    assert chat_client_base.call_count == 2
+    assert provider_state["get_call_count"] == 2
+    assert provider_state["save_call_count"] == 2
+    assert stored_messages[-1].text == "It is sunny in Seattle."
+    assert session.service_session_id is None
+
+
+async def test_chat_agent_simulated_service_stored_history_uses_real_service_storage_when_client_stores_by_default(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "Seattle"}',
+                    )
+                ],
+            ),
+            conversation_id="resp_service_managed",
+            response_id="resp_call_1",
+        ),
+        ChatResponse(
+            messages=Message(role="assistant", text="It is sunny in Seattle."),
+            conversation_id="resp_service_managed",
+            response_id="resp_call_2",
+        ),
+    ]
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        simulate_service_stored_history=True,
+    )
+
+    result = await agent.run("What's the weather in Seattle?", session=session)
+
+    provider_state = session.state[provider.source_id]
+
+    assert result.text == "It is sunny in Seattle."
+    assert result.response_id == "resp_call_2"
+    assert chat_client_base.call_count == 2
+    assert "get_call_count" not in provider_state
+    assert "save_call_count" not in provider_state
+    assert session.service_session_id == "resp_service_managed"
+
+
+async def test_chat_agent_without_simulation_preserves_response_id(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(role="assistant", text="Hello"),
+            response_id="resp_call_1",
+        )
+    ]
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[InMemoryHistoryProvider()],
+    )
+
+    result = await agent.run("Hello", session=AgentSession(), options={"store": False})
+
+    assert result.response_id == "resp_call_1"
+
+
+async def test_chat_agent_simulated_service_stored_history_rejects_real_service_conversation_id(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    chat_client_base.run_responses = [
+        ChatResponse(
+            messages=Message(role="assistant", text="Hello"),
+            conversation_id="resp_service_managed",
+        )
+    ]
+
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[provider],
+        simulate_service_stored_history=True,
+    )
+
+    with pytest.raises(
+        ChatClientInvalidResponseException,
+        match="simulate_service_stored_history cannot be used",
+    ):
+        await agent.run("Hello", session=session, options={"store": False})
 
 
 async def test_chat_client_agent_run_with_session(chat_client_base: SupportsChatGetResponse) -> None:

@@ -16,7 +16,7 @@ import copy
 import sys
 import uuid
 from abc import abstractmethod
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if sys.version_info >= (3, 13):
@@ -24,7 +24,9 @@ if sys.version_info >= (3, 13):
 else:
     from typing_extensions import deprecated  # type: ignore # pragma: no cover
 
-from ._types import AgentResponse, Message
+from ._middleware import ChatContext, ChatMiddleware
+from ._types import AgentResponse, ChatResponse, Message, ResponseStream
+from .exceptions import ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
@@ -504,6 +506,181 @@ class HistoryProvider(ContextProvider):
             messages_to_store.extend(context.response.messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
+
+
+SIMULATED_SERVICE_CONVERSATION_ID = "agent_framework_local_history_simulation"
+
+
+def is_simulated_service_conversation_id(conversation_id: str | None) -> bool:
+    """Return whether a conversation id is the local history-simulation sentinel."""
+    return conversation_id == SIMULATED_SERVICE_CONVERSATION_ID
+
+
+def _response_contains_follow_up_request(response: ChatResponse) -> bool:
+    """Return whether a response requires another model call in the current run."""
+    return any(
+        item.type in {"function_call", "function_approval_request"}
+        for message in response.messages
+        for item in message.contents
+    )
+
+
+def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Message], dict[str, list[Message]]]:
+    """Split service-call messages into input messages and attributed context messages."""
+    input_messages: list[Message] = []
+    context_messages: dict[str, list[Message]] = {}
+    for message in messages:
+        attribution = message.additional_properties.get("_attribution")
+        if isinstance(attribution, Mapping):
+            attribution_mapping = cast(Mapping[str, Any], attribution)
+            source_id = attribution_mapping.get("source_id")
+            if isinstance(source_id, str):
+                context_messages.setdefault(source_id, []).append(message)
+                continue
+        input_messages.append(message)
+    return input_messages, context_messages
+
+
+class HistorySimulationChatMiddleware(ChatMiddleware):
+    """Simulate service-stored history behavior for local history providers.
+
+    This middleware runs around each model call when
+    ``simulate_service_stored_history`` is enabled. It loads history providers
+    before the model call, persists them after the model call, and uses a local
+    sentinel conversation id so the function loop follows the existing
+    service-managed branch without forwarding that sentinel to the leaf client.
+    """
+
+    def __init__(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        providers: Sequence[HistoryProvider],
+    ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            agent: The agent that owns the history providers.
+            session: The active session for the current run.
+            providers: The history providers participating in the simulation.
+        """
+        self._agent = agent
+        self._session = session
+        self._providers = list(providers)
+
+    async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
+        """Create a per-call SessionContext and load history providers into it."""
+        input_messages, context_messages = _split_service_call_messages(messages)
+        service_call_context = SessionContext(
+            session_id=self._session.session_id,
+            service_session_id=None,
+            input_messages=list(input_messages),
+        )
+        for source_id, source_messages in context_messages.items():
+            service_call_context.extend_messages(source_id, source_messages)
+        for provider in self._providers:
+            if not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self._agent,
+                session=self._session,
+                context=service_call_context,
+                state=self._session.state.setdefault(provider.source_id, {}),
+            )
+        return service_call_context
+
+    async def _persist_service_call_response(
+        self,
+        *,
+        service_call_context: SessionContext,
+        response: ChatResponse,
+    ) -> None:
+        """Persist a single model-call response through the configured history providers."""
+        service_call_context._response = AgentResponse(  # type: ignore[assignment]
+            messages=response.messages,
+            response_id=response.response_id,
+        )
+        for provider in reversed(self._providers):
+            await provider.after_run(
+                agent=self._agent,
+                session=self._session,
+                context=service_call_context,
+                state=self._session.state.setdefault(provider.source_id, {}),
+            )
+
+    def _strip_local_conversation_id(self, context: ChatContext) -> None:
+        """Remove the local sentinel before the leaf chat client is invoked."""
+        if is_simulated_service_conversation_id(cast(str | None, context.kwargs.get("conversation_id"))):
+            context.kwargs.pop("conversation_id", None)
+
+        if context.options is None:
+            return
+
+        mutable_options = dict(context.options)
+        if is_simulated_service_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
+            mutable_options.pop("conversation_id", None)
+        context.options = mutable_options
+
+    async def _finalize_response(
+        self,
+        *,
+        service_call_context: SessionContext,
+        response: ChatResponse,
+    ) -> ChatResponse:
+        """Persist a model response and apply the local follow-up sentinel when needed."""
+        if response.conversation_id is not None and not is_simulated_service_conversation_id(response.conversation_id):
+            raise ChatClientInvalidResponseException(
+                "simulate_service_stored_history cannot be used when the chat client returns a real conversation_id."
+            )
+
+        await self._persist_service_call_response(
+            service_call_context=service_call_context,
+            response=response,
+        )
+        if _response_contains_follow_up_request(response):
+            response.conversation_id = SIMULATED_SERVICE_CONVERSATION_ID
+        return response
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        """Load and persist history providers around a single model call.
+
+        Args:
+            context: The chat invocation context for the current model call.
+            call_next: The next middleware or the leaf chat client.
+
+        Raises:
+            ChatClientInvalidResponseException: If the leaf client returns a real
+                service-managed conversation id while local simulation is enabled.
+            ValueError: If the downstream middleware contract returns the wrong
+                result type for streaming or non-streaming execution.
+        """
+        service_call_context = await self._prepare_service_call_context(context.messages)
+        context.messages = service_call_context.get_messages(include_input=True)
+        self._strip_local_conversation_id(context)
+
+        await call_next()
+
+        if context.result is None:
+            return
+
+        if context.stream:
+            if not isinstance(context.result, ResponseStream):
+                raise ValueError("Streaming chat middleware requires a ResponseStream result.")
+            context.result.with_result_hook(
+                lambda response: self._finalize_response(
+                    service_call_context=service_call_context,
+                    response=response,
+                )
+            )
+            return
+
+        if isinstance(context.result, ResponseStream):
+            raise ValueError("Non-streaming chat middleware requires a ChatResponse result.")
+        context.result = await self._finalize_response(
+            service_call_context=service_call_context,
+            response=context.result,
+        )
 
 
 @deprecated(

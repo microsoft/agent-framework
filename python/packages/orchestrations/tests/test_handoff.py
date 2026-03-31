@@ -12,6 +12,7 @@ from agent_framework import (
     ChatResponseUpdate,
     Content,
     ContextProvider,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     WorkflowEvent,
@@ -693,6 +694,48 @@ def test_handoff_clone_disables_provider_side_storage() -> None:
     executor = workflow.executors[resolve_agent_id(triage)]
     assert isinstance(executor, HandoffAgentExecutor)
     assert executor._agent.default_options.get("store") is False
+
+
+async def test_handoff_clone_preserves_simulated_history_behavior() -> None:
+    """Handoff clones should keep history simulation active for auto-handoff termination."""
+    triage_history = InMemoryHistoryProvider()
+    triage = Agent(
+        id="triage",
+        name="triage",
+        client=MockChatClient(name="triage", handoff_to="specialist"),
+        context_providers=[triage_history],
+        simulate_service_stored_history=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        default_options={"tool_choice": "none"},
+    )
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist], termination_condition=lambda _: False)
+        .with_start_agent(triage)
+        .add_handoff(triage, [specialist])
+        .add_handoff(specialist, [triage])
+        .build()
+    )
+
+    await _drain(workflow.run("start", stream=True))
+
+    executor = workflow.executors[resolve_agent_id(triage)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    assert executor._agent.simulate_service_stored_history is True
+
+    provider_state = executor._session.state[triage_history.source_id]
+    stored_messages = await triage_history.get_messages(
+        executor._session.session_id,
+        state=provider_state,
+    )
+
+    assert [message.role for message in stored_messages] == ["user", "assistant"]
+    assert any(content.type == "function_call" for content in stored_messages[-1].contents)
+    assert all(message.role != "tool" for message in stored_messages)
 
 
 async def test_handoff_clears_stale_service_session_id_before_run() -> None:
