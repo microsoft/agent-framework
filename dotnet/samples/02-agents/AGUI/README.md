@@ -199,6 +199,23 @@ cd Step05_StateManagement/Client
 dotnet run
 ```
 
+### Step06_McpPermissionEvents
+
+Demonstrates AG-UI tool call visibility and human-in-the-loop (HITL) approval for MCP tool calls made by the GitHub Copilot SDK.
+
+Unlike Step04 (which handles .NET-defined tools via `ServerFunctionApprovalAgent`), this sample addresses **MCP tool calls** — tools managed server-side by the Copilot SDK that are normally invisible to AG-UI clients.
+
+**Key features:**
+- `TOOL_CALL_START/ARGS/END/RESULT` events emitted for every MCP tool execution (Phase 1: visibility)
+- AG-UI `CUSTOM` events (`tool_approval_requested` / `tool_approval_completed`) for HITL flows (Phase 2: approval)
+- `POST /approve` side-channel endpoint for client approval responses
+- Configurable timeout via `AGUIOptions.ApprovalTimeout`
+- Works with any AG-UI client — not tied to a specific frontend framework
+
+**Prerequisites:** GitHub Copilot CLI installed and in PATH, an MCP server to connect to.
+
+See the [Step06 README](Step06_McpPermissionEvents/README.md) for architecture diagrams, server setup code, client integration examples (JavaScript, React, CopilotKit), and the detailed HITL blocking flow.
+
 ## How AG-UI Works
 
 ### Server-Side
