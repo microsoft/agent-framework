@@ -1888,7 +1888,12 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
             if first_new_content is None:
                 first_new_content = deepcopy(content)
             else:
-                first_new_content += content
+                try:
+                    first_new_content += content
+                except AdditionItemMismatch:
+                    # Different IDs means a new logical segment; flush the current one
+                    coalesced_contents.append(first_new_content)
+                    first_new_content = deepcopy(content)
         else:
             # skip this content, it is not of the right type
             # so write the existing one to the list and start a new one,

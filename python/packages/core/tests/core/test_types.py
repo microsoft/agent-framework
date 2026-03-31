@@ -1584,6 +1584,30 @@ def test_text_reasoning_content_add_neither_has_id():
     assert result.id is None
 
 
+def test_coalesce_text_reasoning_with_different_ids():
+    """Test that _coalesce_text_content keeps separate text_reasoning items when IDs differ.
+
+    Regression test: streaming responses can produce multiple text_reasoning
+    segments with distinct IDs. These must not be merged into one.
+    """
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text_reasoning(id="rs_aaa", text="Thinking A1"),
+        Content.from_text_reasoning(id="rs_aaa", text=" A2"),
+        Content.from_text_reasoning(id="rs_bbb", text="Thinking B1"),
+        Content.from_text_reasoning(id="rs_bbb", text=" B2"),
+    ]
+
+    _coalesce_text_content(contents, "text_reasoning")
+
+    assert len(contents) == 2
+    assert contents[0].id == "rs_aaa"
+    assert contents[0].text == "Thinking A1 A2"
+    assert contents[1].id == "rs_bbb"
+    assert contents[1].text == "Thinking B1 B2"
+
+
 def test_comprehensive_to_dict_exclude_options():
     """Test to_dict methods with various exclude options for better coverage."""
 
