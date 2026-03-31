@@ -23,7 +23,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     private readonly CancellationTokenSource _runLoopCancellation;
     private readonly bool _disableRunLoop;
     private Task? _runLoopTask;
-    private RunStatus _runStatus = RunStatus.NotStarted;
+    private volatile RunStatus _runStatus = RunStatus.NotStarted;
 
     private int _completionEpoch; // Tracks which completion signal belongs to which consumer iteration
 
@@ -207,6 +207,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
     {
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
         int currentEpoch = Volatile.Read(ref this._completionEpoch);
+
         bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages || this._runStatus == RunStatus.Running;
         int myEpoch = expectingFreshWork ? currentEpoch + 1 : currentEpoch;
 
