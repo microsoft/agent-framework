@@ -1688,10 +1688,10 @@ def _update_conversation_id(
         options["conversation_id"] = conversation_id
 
 
-def _clear_simulated_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
-    from ._sessions import is_simulated_service_conversation_id
+def _clear_local_history_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    from ._sessions import is_local_history_conversation_id
 
-    if is_simulated_service_conversation_id(response.conversation_id):
+    if is_local_history_conversation_id(response.conversation_id):
         response.conversation_id = None
     return response
 
@@ -2231,7 +2231,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     )
                     if result.get("action") == "return":
                         response.usage_details = aggregated_usage
-                        return _clear_simulated_conversation_id(response)
+                        return _clear_local_history_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
                     if result.get("action") == "stop":
                         # Error threshold reached: force a final non-tool turn so
@@ -2291,7 +2291,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
-                return _clear_simulated_conversation_id(response)
+                return _clear_local_history_conversation_id(response)
 
             return _get_response()
 

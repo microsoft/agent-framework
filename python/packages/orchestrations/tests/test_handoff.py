@@ -696,15 +696,15 @@ def test_handoff_clone_disables_provider_side_storage() -> None:
     assert executor._agent.default_options.get("store") is False
 
 
-async def test_handoff_clone_preserves_simulated_history_behavior() -> None:
-    """Handoff clones should keep history simulation active for auto-handoff termination."""
+async def test_handoff_clone_preserves_per_service_call_history_persistence() -> None:
+    """Handoff clones should keep per-service-call history persistence active for auto-handoff termination."""
     triage_history = InMemoryHistoryProvider()
     triage = Agent(
         id="triage",
         name="triage",
         client=MockChatClient(name="triage", handoff_to="specialist"),
         context_providers=[triage_history],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
     specialist = Agent(
         id="specialist",
@@ -725,7 +725,7 @@ async def test_handoff_clone_preserves_simulated_history_behavior() -> None:
 
     executor = workflow.executors[resolve_agent_id(triage)]
     assert isinstance(executor, HandoffAgentExecutor)
-    assert executor._agent.simulate_service_stored_history is True
+    assert executor._agent.require_per_service_call_history_persistence is True
 
     provider_state = executor._session.state[triage_history.source_id]
     stored_messages = await triage_history.get_messages(

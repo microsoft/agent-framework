@@ -521,12 +521,12 @@ class HistoryProvider(ContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
-SIMULATED_SERVICE_CONVERSATION_ID = "agent_framework_local_history_simulation"
+LOCAL_HISTORY_CONVERSATION_ID = "agent_framework_local_history_persistence"
 
 
-def is_simulated_service_conversation_id(conversation_id: str | None) -> bool:
-    """Return whether a conversation id is the local history-simulation sentinel."""
-    return conversation_id == SIMULATED_SERVICE_CONVERSATION_ID
+def is_local_history_conversation_id(conversation_id: str | None) -> bool:
+    """Return whether a conversation id is the local history-persistence sentinel."""
+    return conversation_id == LOCAL_HISTORY_CONVERSATION_ID
 
 
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
@@ -554,11 +554,11 @@ def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Mess
     return input_messages, context_messages
 
 
-class HistorySimulationChatMiddleware(ChatMiddleware):
-    """Simulate service-stored history behavior for local history providers.
+class PerServiceCalHistoryPersistingMiddleware(ChatMiddleware):
+    """Persist local chat history after each service call when history is framework-managed.
 
     This middleware runs around each model call when
-    ``simulate_service_stored_history`` is enabled. It loads history providers
+    ``require_per_service_call_history_persistence`` is enabled. It loads history providers
     before the model call, persists them after the model call, and uses a local
     sentinel conversation id so the function loop follows the existing
     service-managed branch without forwarding that sentinel to the leaf client.
@@ -576,7 +576,7 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
         Args:
             agent: The agent that owns the history providers.
             session: The active session for the current run.
-            providers: The history providers participating in the simulation.
+            providers: The history providers participating in per-service-call persistence.
         """
         self._agent = agent
         self._session = session
@@ -624,14 +624,14 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
 
     def _strip_local_conversation_id(self, context: ChatContext) -> None:
         """Remove the local sentinel before the leaf chat client is invoked."""
-        if is_simulated_service_conversation_id(cast(str | None, context.kwargs.get("conversation_id"))):
+        if is_local_history_conversation_id(cast(str | None, context.kwargs.get("conversation_id"))):
             context.kwargs.pop("conversation_id", None)
 
         if context.options is None:
             return
 
         mutable_options = dict(context.options)
-        if is_simulated_service_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
+        if is_local_history_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
             mutable_options.pop("conversation_id", None)
         context.options = mutable_options
 
@@ -642,9 +642,10 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
         response: ChatResponse,
     ) -> ChatResponse:
         """Persist a model response and apply the local follow-up sentinel when needed."""
-        if response.conversation_id is not None and not is_simulated_service_conversation_id(response.conversation_id):
+        if response.conversation_id is not None and not is_local_history_conversation_id(response.conversation_id):
             raise ChatClientInvalidResponseException(
-                "simulate_service_stored_history cannot be used when the chat client returns a real conversation_id."
+                "require_per_service_call_history_persistence cannot be used "
+                "when the chat client returns a real conversation_id."
             )
 
         await self._persist_service_call_response(
@@ -652,7 +653,7 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
             response=response,
         )
         if _response_contains_follow_up_request(response):
-            response.conversation_id = SIMULATED_SERVICE_CONVERSATION_ID
+            response.conversation_id = LOCAL_HISTORY_CONVERSATION_ID
         return response
 
     async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
@@ -664,7 +665,7 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
 
         Raises:
             ChatClientInvalidResponseException: If the leaf client returns a real
-                service-managed conversation id while local simulation is enabled.
+                service-managed conversation id while local per-service-call persistence is enabled.
             ValueError: If the downstream middleware contract returns the wrong
                 result type for streaming or non-streaming execution.
         """

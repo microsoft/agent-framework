@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from pydantic import Field
 
 """
-Compare Foundry agents with and without ``simulate_service_stored_history``.
+Compare Foundry agents with and without per-service-call chat history persistence.
 
 This sample runs two otherwise identical Foundry agents with ``store=False`` so
 history stays local for both runs.
@@ -31,12 +31,12 @@ call.
 
 That early termination is the important difference:
 
-- Without ``simulate_service_stored_history``, the synthesized tool result is
+- Without per-service-call chat history persistence, the synthesized tool result is
   still written to local history.
-- With ``simulate_service_stored_history=True``, that synthesized tool result is
+- With ``require_per_service_call_history_persistence=True``, that synthesized tool result is
   not written to local history.
 
-The simulated case matches service-side storage behavior. When a terminated
+The per-service-call persistence case matches service-side storage behavior. When a terminated
 request never sends the tool result back to the service, that result also never
 becomes part of the service-managed history.
 """
@@ -88,14 +88,14 @@ def _includes_tool_result(messages: list[Message]) -> bool:
 
 async def main() -> None:
     """Run both comparison scenarios."""
-    print("=== simulate_service_stored_history when middleware terminates the tool loop ===\n")
+    print("=== require_per_service_call_history_persistence when middleware terminates the tool loop ===\n")
 
     # 1. Create one Foundry chat client that both agents will share.
     client = FoundryChatClient(credential=AzureCliCredential())
     query = "What is the weather in Seattle, and should I bring sunglasses?"
 
-    # 2. Create and run the agent without simulate_service_stored_history.
-    agent_without_simulation = Agent(
+    # 2. Create and run the agent without per-service-call persistence.
+    agent_without_persistence = Agent(
         client=client,
         instructions=(
             "You are a weather assistant. Call lookup_weather exactly once before answering "
@@ -106,25 +106,25 @@ async def main() -> None:
         middleware=[TerminateAfterToolMiddleware()],
         default_options={"tool_choice": "required", "store": False},
     )
-    session_without_simulation = agent_without_simulation.create_session()
-    await agent_without_simulation.run(
+    session_without_persistence = agent_without_persistence.create_session()
+    await agent_without_persistence.run(
         query,
-        session=session_without_simulation,
+        session=session_without_persistence,
     )
-    stored_messages_without_simulation = session_without_simulation.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID][
+    stored_messages_without_persistence = session_without_persistence.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID][
         "messages"
     ]
 
-    print("=== Without simulate_service_stored_history ===")
+    print("=== Without per-service-call persistence ===")
     print("Loop terminated immediately after the tool finished.")
-    print(f"Stored synthesized tool result: {_includes_tool_result(stored_messages_without_simulation)}")
+    print(f"Stored synthesized tool result: {_includes_tool_result(stored_messages_without_persistence)}")
     print("Stored history:")
-    for index, message in enumerate(stored_messages_without_simulation, start=1):
+    for index, message in enumerate(stored_messages_without_persistence, start=1):
         print(f"  {index}. {_describe_message(message)}")
     print()
 
-    # 3. Create and run the agent with simulate_service_stored_history enabled.
-    agent_with_simulation = Agent(
+    # 3. Create and run the agent with per-service-call persistence enabled.
+    agent_with_persistence = Agent(
         client=client,
         instructions=(
             "You are a weather assistant. Call lookup_weather exactly once before answering "
@@ -133,31 +133,31 @@ async def main() -> None:
         tools=[lookup_weather],
         context_providers=[InMemoryHistoryProvider()],
         middleware=[TerminateAfterToolMiddleware()],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
         default_options={"tool_choice": "required", "store": False},
     )
-    session_with_simulation = agent_with_simulation.create_session()
-    await agent_with_simulation.run(
+    session_with_persistence = agent_with_persistence.create_session()
+    await agent_with_persistence.run(
         query,
-        session=session_with_simulation,
+        session=session_with_persistence,
     )
-    stored_messages_with_simulation = session_with_simulation.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID][
+    stored_messages_with_persistence = session_with_persistence.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID][
         "messages"
     ]
 
-    print("=== With simulate_service_stored_history=True ===")
+    print("=== With per-service-call persistence ===")
     print("Loop terminated immediately after the tool finished.")
-    print(f"Stored synthesized tool result: {_includes_tool_result(stored_messages_with_simulation)}")
+    print(f"Stored synthesized tool result: {_includes_tool_result(stored_messages_with_persistence)}")
     print("Stored history:")
-    for index, message in enumerate(stored_messages_with_simulation, start=1):
+    for index, message in enumerate(stored_messages_with_persistence, start=1):
         print(f"  {index}. {_describe_message(message)}")
     print()
 
     # 4. Summarize the effect of the flag.
     print(
         "Both runs used FoundryChatClient with store=False and terminated right after the tool. "
-        "Without simulation, local history still stored the synthesized tool result. "
-        "With simulation, local history stopped at the assistant function-call message instead, "
+        "Without per-service-call persistence, local history still stored the synthesized tool result. "
+        "With per-service-call persistence, local history stopped at the assistant function-call message instead, "
         "which matches service-side storage because the terminated tool result is never sent back to the service."
     )
 
@@ -168,9 +168,9 @@ if __name__ == "__main__":
 
 """
 Sample output:
-=== simulate_service_stored_history when middleware terminates the tool loop ===
+=== require_per_service_call_history_persistence when middleware terminates the tool loop ===
 
-=== Without simulate_service_stored_history ===
+=== Without per-service-call persistence ===
 Loop terminated immediately after the tool finished.
 Stored synthesized tool result: True
 Stored history:
@@ -178,7 +178,7 @@ Stored history:
   2. assistant: function_call -> lookup_weather({"location":"Seattle"})
   3. tool: function_result -> The weather in Seattle is sunny.
 
-=== With simulate_service_stored_history=True ===
+=== With per-service-call persistence ===
 Loop terminated immediately after the tool finished.
 Stored synthesized tool result: False
 Stored history:
@@ -186,8 +186,9 @@ Stored history:
   2. assistant: function_call -> lookup_weather({"location":"Seattle"})
 
 Both runs used FoundryChatClient with store=False and terminated right after
-the tool. Without simulation, local history still stored the synthesized tool
-result. With simulation, local history stopped at the assistant function-call
-message instead, which matches service-side storage because the terminated tool
-result is never sent back to the service.
+the tool. Without per-service-call persistence, local history still stored the
+synthesized tool result. With per-service-call persistence, local history
+stopped at the assistant function-call message instead, which matches
+service-side storage because the terminated tool result is never sent back to
+the service.
 """

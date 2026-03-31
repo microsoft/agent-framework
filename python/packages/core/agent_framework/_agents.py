@@ -35,10 +35,10 @@ from ._sessions import (
     AgentSession,
     ContextProvider,
     HistoryProvider,
-    HistorySimulationChatMiddleware,
     InMemoryHistoryProvider,
+    PerServiceCalHistoryPersistingMiddleware,
     SessionContext,
-    is_simulated_service_conversation_id,
+    is_local_history_conversation_id,
 )
 from ._tools import FunctionInvocationLayer, FunctionTool, ToolTypes, normalize_tools
 from ._types import (
@@ -458,11 +458,11 @@ class BaseAgent(SerializationMixin):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
-        simulate_service_history = bool(getattr(self, "simulate_service_stored_history", False)) and any(
-            isinstance(provider, HistoryProvider) for provider in self.context_providers
-        )
+        per_service_call_history_required = bool(
+            getattr(self, "require_per_service_call_history_persistence", False)
+        ) and any(isinstance(provider, HistoryProvider) for provider in self.context_providers)
         for provider in reversed(self.context_providers):
-            if simulate_service_history and isinstance(provider, HistoryProvider):
+            if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -666,7 +666,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        simulate_service_stored_history: bool = False,
+        require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -684,7 +684,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             description: A brief description of the agent's purpose.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
-            simulate_service_stored_history: When True, history providers are invoked
+            require_per_service_call_history_persistence: When True, history providers are invoked
                 around each model call instead of once per ``run()`` when the service
                 is not already storing history. If service-side storage is active for
                 the run, the agent skips local history providers and relies on the
@@ -720,7 +720,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
         self.client = client
         self.compaction_strategy = compaction_strategy
-        self.simulate_service_stored_history = simulate_service_stored_history
+        self.require_per_service_call_history_persistence = require_per_service_call_history_persistence
         self.tokenizer = tokenizer
 
         # Get tools from options or named parameter (named param takes precedence)
@@ -782,7 +782,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
 
-    def _resolve_history_simulation_providers(
+    def _resolve_per_service_call_history_providers(
         self,
         *,
         session: AgentSession | None,
@@ -790,7 +790,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         service_stores_history: bool,
     ) -> list[HistoryProvider]:
         history_providers = self._get_history_providers()
-        if not self.simulate_service_stored_history or not history_providers:
+        if not self.require_per_service_call_history_persistence or not history_providers:
             return []
 
         conversation_id = (
@@ -803,7 +803,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
 
         if conversation_id is not None:
             raise AgentInvalidRequestException(
-                "simulate_service_stored_history cannot be used with an existing service-managed conversation."
+                "require_per_service_call_history_persistence cannot be used "
+                "with an existing service-managed conversation."
             )
         return history_providers
 
@@ -1060,7 +1061,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if (
                 session
                 and conversation_id
-                and not is_simulated_service_conversation_id(conversation_id)
+                and not is_local_history_conversation_id(conversation_id)
                 and session.service_session_id != conversation_id
             ):
                 session.service_session_id = conversation_id
@@ -1083,14 +1084,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             if (
                 isinstance(conversation_id, str)
                 and conversation_id
-                and not is_simulated_service_conversation_id(conversation_id)
+                and not is_local_history_conversation_id(conversation_id)
                 and session.service_session_id != conversation_id
             ):
                 session.service_session_id = conversation_id
             return update
 
         def _suppress_response_id(update: AgentResponseUpdate) -> AgentResponseUpdate:
-            """Hide raw service response ids when local history simulation owns continuation."""
+            """Hide raw service response ids when local per-service-call persistence owns continuation."""
             update.response_id = None
             return update
 
@@ -1188,7 +1189,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if active_session is None and self.context_providers:
             active_session = AgentSession()
 
-        history_simulation_providers = self._resolve_history_simulation_providers(
+        per_service_call_history_providers = self._resolve_per_service_call_history_providers(
             session=active_session,
             options=opts,
             service_stores_history=bool(store_),
@@ -1274,22 +1275,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         if active_session is not None:
             effective_client_kwargs["session"] = active_session
-        if history_simulation_providers and active_session is not None:
-            history_simulation_middleware = HistorySimulationChatMiddleware(
+        if per_service_call_history_providers and active_session is not None:
+            per_service_call_history_middleware = PerServiceCalHistoryPersistingMiddleware(
                 agent=self,
                 session=active_session,
-                providers=history_simulation_providers,
+                providers=per_service_call_history_providers,
             )
             existing_middleware = effective_client_kwargs.get("middleware")
             if isinstance(existing_middleware, Sequence) and not isinstance(existing_middleware, (str, bytes)):
-                effective_client_kwargs["middleware"] = [history_simulation_middleware, *existing_middleware]
+                effective_client_kwargs["middleware"] = [per_service_call_history_middleware, *existing_middleware]
             elif existing_middleware is not None:
                 effective_client_kwargs["middleware"] = [
-                    history_simulation_middleware,
+                    per_service_call_history_middleware,
                     cast(MiddlewareTypes, existing_middleware),
                 ]
             else:
-                effective_client_kwargs["middleware"] = [history_simulation_middleware]
+                effective_client_kwargs["middleware"] = [per_service_call_history_middleware]
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             middleware_list = categorize_middleware(provider_middleware)
@@ -1318,7 +1319,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "input_messages": input_messages,
             "session_messages": session_messages,
             "agent_name": agent_name,
-            "suppress_response_id": bool(history_simulation_providers),
+            "suppress_response_id": bool(per_service_call_history_providers),
             "chat_options": co,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
@@ -1354,7 +1355,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         if (
             session
             and response.conversation_id
-            and not is_simulated_service_conversation_id(response.conversation_id)
+            and not is_local_history_conversation_id(response.conversation_id)
             and session.service_session_id != response.conversation_id
         ):
             session.service_session_id = response.conversation_id
@@ -1412,11 +1413,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             options=options or {},
         )
 
-        simulate_service_history = self.simulate_service_stored_history and bool(self._get_history_providers())
+        per_service_call_history_required = self.require_per_service_call_history_persistence and bool(
+            self._get_history_providers()
+        )
 
-        # Run before_run providers (forward order, skip HistoryProvider when simulation owns history loading)
+        # Run before_run providers (forward order, skip HistoryProvider when per-service-call persistence owns history)
         for provider in self.context_providers:
-            if simulate_service_history and isinstance(provider, HistoryProvider):
+            if per_service_call_history_required and isinstance(provider, HistoryProvider):
                 continue
             if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
@@ -1685,7 +1688,7 @@ class Agent(
         default_options: OptionsCoT | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
-        simulate_service_stored_history: bool = False,
+        require_per_service_call_history_persistence: bool = False,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -1701,7 +1704,7 @@ class Agent(
             default_options=default_options,
             context_providers=context_providers,
             middleware=middleware,
-            simulate_service_stored_history=simulate_service_stored_history,
+            require_per_service_call_history_persistence=require_per_service_call_history_persistence,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=additional_properties,

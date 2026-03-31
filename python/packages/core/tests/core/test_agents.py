@@ -363,7 +363,7 @@ async def test_prepare_run_context_handles_function_kwargs(
     assert ctx["client_kwargs"]["session"] is session
 
 
-async def test_chat_agent_simulates_service_stored_history_per_model_call(
+async def test_chat_agent_persists_history_per_service_call(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
@@ -400,7 +400,7 @@ async def test_chat_agent_simulates_service_stored_history_per_model_call(
         client=chat_client_base,
         tools=[lookup_weather],
         context_providers=[provider],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
 
     result = await agent.run("What's the weather in Seattle?", session=session)
@@ -417,7 +417,7 @@ async def test_chat_agent_simulates_service_stored_history_per_model_call(
     assert session.service_session_id is None
 
 
-async def test_chat_agent_simulates_service_stored_history_per_model_call_streaming(
+async def test_chat_agent_persists_history_per_service_call_streaming(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
@@ -462,7 +462,7 @@ async def test_chat_agent_simulates_service_stored_history_per_model_call_stream
         client=chat_client_base,
         tools=[lookup_weather],
         context_providers=[provider],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
 
     stream = agent.run("What's the weather in Seattle?", session=session, stream=True)
@@ -482,7 +482,7 @@ async def test_chat_agent_simulates_service_stored_history_per_model_call_stream
     assert session.service_session_id is None
 
 
-async def test_chat_agent_simulated_service_stored_history_streaming_hides_response_id_from_after_run(
+async def test_streaming_per_service_call_persistence_hides_response_id_from_after_run(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _ResponseIdRecordingHistoryProvider()
@@ -522,7 +522,7 @@ async def test_chat_agent_simulated_service_stored_history_streaming_hides_respo
         client=chat_client_base,
         tools=[lookup_weather],
         context_providers=[provider],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
 
     stream = agent.run("What's the weather in Seattle?", session=session, stream=True)
@@ -536,7 +536,7 @@ async def test_chat_agent_simulated_service_stored_history_streaming_hides_respo
     assert provider_state["response_ids"] == [None, None]
 
 
-async def test_chat_agent_simulated_service_stored_history_uses_real_service_storage_when_client_stores_by_default(
+async def test_per_service_call_persistence_uses_real_service_storage_when_client_stores_by_default(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
@@ -575,7 +575,7 @@ async def test_chat_agent_simulated_service_stored_history_uses_real_service_sto
         client=chat_client_base,
         tools=[lookup_weather],
         context_providers=[provider],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
 
     result = await agent.run("What's the weather in Seattle?", session=session)
@@ -590,7 +590,7 @@ async def test_chat_agent_simulated_service_stored_history_uses_real_service_sto
     assert session.service_session_id == "resp_service_managed"
 
 
-async def test_chat_agent_without_simulation_preserves_response_id(
+async def test_chat_agent_without_per_service_call_persistence_preserves_response_id(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     chat_client_base.run_responses = [
@@ -610,7 +610,7 @@ async def test_chat_agent_without_simulation_preserves_response_id(
     assert result.response_id == "resp_call_1"
 
 
-async def test_chat_agent_simulated_service_stored_history_rejects_real_service_conversation_id(
+async def test_per_service_call_persistence_rejects_real_service_conversation_id(
     chat_client_base: SupportsChatGetResponse,
 ) -> None:
     provider = _RecordingHistoryProvider()
@@ -627,12 +627,12 @@ async def test_chat_agent_simulated_service_stored_history_rejects_real_service_
     agent = Agent(
         client=chat_client_base,
         context_providers=[provider],
-        simulate_service_stored_history=True,
+        require_per_service_call_history_persistence=True,
     )
 
     with pytest.raises(
         ChatClientInvalidResponseException,
-        match="simulate_service_stored_history cannot be used",
+        match="require_per_service_call_history_persistence cannot be used",
     ):
         await agent.run("Hello", session=session, options={"store": False})
 
