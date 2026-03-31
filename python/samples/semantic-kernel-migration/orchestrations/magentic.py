@@ -13,6 +13,7 @@
 
 import asyncio
 from collections.abc import Sequence
+from typing import cast
 
 from agent_framework import Agent, AgentResponseUpdate, Message
 from agent_framework.openai import OpenAIChatClient
@@ -27,7 +28,6 @@ from semantic_kernel.agents import (
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion, OpenAISettings
 from semantic_kernel.contents import ChatMessageContent
-from typing_extensions import cast
 
 # Load environment variables from .env file
 load_dotenv()
