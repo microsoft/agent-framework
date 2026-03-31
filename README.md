@@ -137,24 +137,21 @@ var agent = new OpenAIClient("<apikey>")
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
 
-Create a simple Agent, using Azure OpenAI with token-based auth, that writes a haiku about the Microsoft Agent Framework
+Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-// dotnet add package Azure.AI.OpenAI
+// dotnet add package Microsoft.Agents.AI.AzureAI --prerelease
 // dotnet add package Azure.Identity
 // Use `az login` to authenticate with Azure CLI
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using OpenAI.Chat;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-var agent = new AzureOpenAIClient(new Uri(endpoint), new DefaultAzureCredential())
-    .GetChatClient(deploymentName)
-    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+var agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(model: deploymentName, name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
@@ -178,64 +175,14 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────┐
-│                     Your Application                │
-└─────────┬─────────────────────────────┬─────────────┘
-          │                             │
-┌─────────▼──────────┐       ┌──────────▼─────────────┐
-│      AIAgent       │       │       Workflow         │
-│    (RunAsync)      │       │   (WorkflowBuilder +   │
-└─────────┬──────────┘       │      Executors)        │
-          │                  └──────────┬─────────────┘
-┌─────────▼──────────┐                  │
-│  ChatClientAgent   │       ┌──────────▼─────────────┐
-│  A2AAgent, ...     │       │    Executor Graph      │
-│   + Middleware     │       │  (edges, fan-out,      │
-│   + Tools          │       │   conditions, etc.)    │
-│   + Memory         │       └──────────┬─────────────┘
-│   + Skills         │                  │
-└─────────┬──────────┘                  │
-          │                             │
-┌─────────▼─────────────────────────────▼─────────────┐
-│                   IChatClient                       │
-│     (Azure OpenAI, OpenAI, Anthropic, etc.)         │
-└─────────────────────────────────────────────────────┘
-```
-
-- **`AIAgent`** — abstract base class with `RunAsync` / `RunStreamingAsync`. All agents derive from this.
-- **`ChatClientAgent`** — the most common agent, backed by any `IChatClient` (Azure OpenAI, OpenAI, Anthropic, etc.). Created via `.AsAIAgent()`.
-- **`A2AAgent`** — proxy agent for calling remote agents via the [Agent-to-Agent (A2A) protocol](https://google.github.io/A2A/).
-- **`AgentSession`** — conversation state container (history, memory, custom state). Serializable for persistence.
-- **`Workflow`** — graph-based orchestration built with `WorkflowBuilder`. Connects executors via typed edges (direct, fan-out/fan-in, conditional).
-
-### Agent vs. Workflow — When to Use Which
-
-| Scenario | Use an Agent | Use a Workflow |
-|----------|:---:|:---:|
-| Single LLM conversation with tools | ✅ | |
-| Multi-turn chat with memory | ✅ | |
-| Chain multiple agents sequentially | | ✅ |
-| Run agents in parallel (fan-out) | | ✅ |
-| Conditional branching on output | | ✅ |
-| Human-in-the-loop approval steps | | ✅ |
-| Mix deterministic code with LLM calls | | ✅ |
-| Durable/checkpointed orchestration | | ✅ |
-
-**Start with a single agent** — most use cases only need `ChatClientAgent` with tools. Move to workflows when you need to coordinate multiple agents or add deterministic control flow between steps.
-
-- [Get started](./dotnet/samples/01-get-started/) | [Agent samples](./dotnet/samples/02-agents/) | [Workflow samples](./dotnet/samples/03-workflows/)
-
 ## Troubleshooting
 
 ### Authentication
 
 | Problem | Cause | Fix |
 |---------|-------|-----|
-| `AuthenticationFailedException` | Not signed in to Azure CLI | Run `az login` before starting your app |
-| `ApiKeyCredential` errors | Wrong or missing API key | Verify the key and ensure it's for the correct resource/provider |
+| Authentication errors when using Azure credentials | Not signed in to Azure CLI | Run `az login` before starting your app |
+| API key errors | Wrong or missing API key | Verify the key and ensure it's for the correct resource/provider |
 
 > **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 
