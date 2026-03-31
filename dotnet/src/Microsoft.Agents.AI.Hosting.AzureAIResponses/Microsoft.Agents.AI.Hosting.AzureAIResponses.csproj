@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>$(TargetFrameworksCore)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Microsoft.Agents.AI.Hosting.AzureAIResponses</RootNamespace>
+    <VersionSuffix>alpha</VersionSuffix>
+    <NoWarn>$(NoWarn);MEAI001;NU1903</NoWarn>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.AgentServer.Responses" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Abstractions\Microsoft.Agents.AI.Abstractions.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI\Microsoft.Agents.AI.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows\Microsoft.Agents.AI.Workflows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Hosting.AzureAIResponses.UnitTests" />
+  </ItemGroup>
+
+</Project>

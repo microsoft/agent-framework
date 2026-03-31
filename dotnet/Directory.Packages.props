@@ -19,9 +19,13 @@
     <PackageVersion Include="Aspire.Microsoft.Azure.Cosmos" Version="$(AspireAppHostSdkVersion)" />
     <PackageVersion Include="CommunityToolkit.Aspire.OllamaSharp" Version="13.0.0" />
     <!-- Azure.* -->
+    <PackageVersion Include="Azure.AI.AgentServer.Core" Version="1.0.0-alpha.20260331.6" />
+    <PackageVersion Include="Azure.AI.AgentServer.Invocations" Version="1.0.0-alpha.20260331.6" />
+    <PackageVersion Include="Azure.AI.AgentServer.Responses" Version="1.0.0-alpha.20260331.6" />
     <PackageVersion Include="Azure.AI.Projects" Version="2.0.0" />
     <PackageVersion Include="Azure.AI.Agents.Persistent" Version="1.2.0-beta.10" />
     <PackageVersion Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+    <PackageVersion Include="Azure.Core" Version="1.52.0" />
     <PackageVersion Include="Azure.Identity" Version="1.20.0" />
     <PackageVersion Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.4.0" />
     <!-- Google Gemini  -->
