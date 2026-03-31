@@ -612,7 +612,7 @@ class HistorySimulationChatMiddleware(ChatMiddleware):
         """Persist a single model-call response through the configured history providers."""
         service_call_context._response = AgentResponse(  # type: ignore[assignment]
             messages=response.messages,
-            response_id=response.response_id,
+            response_id=None,
         )
         for provider in reversed(self._providers):
             await provider.after_run(

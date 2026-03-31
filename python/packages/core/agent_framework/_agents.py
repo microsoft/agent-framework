@@ -1065,10 +1065,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             ):
                 session.service_session_id = conversation_id
 
+            suppress_response_id = context["suppress_response_id"]
             session_context = context["session_context"]
             session_context._response = AgentResponse(  # type: ignore[assignment]
                 messages=response.messages,
-                response_id=response.response_id,
+                response_id=None if suppress_response_id else response.response_id,
             )
             await self._run_after_providers(session=session, context=session_context)
 

@@ -9,7 +9,7 @@ This folder contains examples for direct chat client usage patterns.
 | [`built_in_chat_clients.py`](built_in_chat_clients.py) | Consolidated sample for built-in chat clients. Uses `get_client()` to create the selected client and pass it to `main()`. |
 | [`chat_response_cancellation.py`](chat_response_cancellation.py) | Demonstrates how to cancel chat responses during streaming, showing proper cancellation handling and cleanup. |
 | [`custom_chat_client.py`](custom_chat_client.py) | Demonstrates how to create custom chat clients by extending the `BaseChatClient` class. Shows a `EchoingChatClient` implementation and how to integrate it with `Agent` using the `as_agent()` method. |
-| [`simulate_service_stored_history.py`](simulate_service_stored_history.py) | Compares two otherwise identical `FoundryChatClient` agents with `store=False`; the only difference is `simulate_service_stored_history`, and the sample shows that only the non-simulated run surfaces a raw `response_id`. |
+| [`simulate_service_stored_history.py`](simulate_service_stored_history.py) | Compares two otherwise identical `FoundryChatClient` agents with `store=False`; the only difference is `simulate_service_stored_history`, and the sample shows that only the non-simulated run stores the synthesized tool result when middleware terminates the loop early. |
 
 ## Selecting a built-in client
 
