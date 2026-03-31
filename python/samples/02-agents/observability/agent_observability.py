@@ -7,6 +7,7 @@ from typing import Annotated
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import configure_otel_providers, get_tracer
+from azure.identity._credentials import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry.trace import SpanKind
 from opentelemetry.trace.span import format_trace_id
@@ -18,6 +19,10 @@ load_dotenv()
 """
 This sample shows how you can observe an agent in Agent Framework by using the
 same observability setup function.
+
+Pre-requisites:
+- A Foundry project
+- A local OpenTelemetry Collector instance to receive the traces and metrics.
 """
 
 
@@ -47,7 +52,7 @@ async def main():
         print(f"Trace ID: {format_trace_id(current_span.get_span_context().trace_id)}")
 
         agent = Agent(
-            client=FoundryChatClient(),
+            client=FoundryChatClient(credential=AzureCliCredential()),
             tools=get_weather,
             name="WeatherAgent",
             instructions="You are a weather assistant.",
