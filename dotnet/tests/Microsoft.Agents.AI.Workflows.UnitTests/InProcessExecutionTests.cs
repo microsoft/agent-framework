@@ -151,7 +151,10 @@ public class InProcessExecutionTests
         bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
         messageSent.Should().BeTrue("TurnToken should be accepted");
 
-        Thread.Sleep(TimeSpan.FromSeconds(2));
+        while (await run.GetStatusAsync() != RunStatus.Idle)
+        {
+            await Task.Delay(200);
+        }
 
         // Collect events
         List<WorkflowEvent> events = [];
