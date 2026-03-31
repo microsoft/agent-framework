@@ -33,7 +33,7 @@ What it does:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure AI/ Azure OpenAI for `FoundryChatClient` agent.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via `azure-identity` — uses `AzureCliCredential()` (run `az login`).
 """
 
@@ -126,7 +126,7 @@ def create_judge_agent() -> Agent:
     return Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         instructions=("You strictly respond with one of: MATCHED, ABOVE, BELOW based on the given target and guess."),
