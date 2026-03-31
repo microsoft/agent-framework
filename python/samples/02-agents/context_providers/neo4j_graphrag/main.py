@@ -3,7 +3,6 @@
 # dependencies = [
 #     "agent-framework-foundry",
 #     "agent-framework-neo4j",
-#     "aiohttp",
 #     "azure-identity",
 #     "python-dotenv",
 # ]
@@ -27,11 +26,13 @@ This sample demonstrates how to use the Neo4j GraphRAG context provider with
 Agent Framework and Azure AI Foundry.
 
 Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
-    FOUNDRY_MODEL            — Model deployment name (e.g. gpt-4o)
-    NEO4J_URI                — Neo4j connection URI
-    NEO4J_USERNAME           — Neo4j username
-    NEO4J_PASSWORD           — Neo4j password
+    FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT
+                           — Azure AI Foundry project endpoint
+    FOUNDRY_MODEL or AZURE_AI_MODEL_DEPLOYMENT_NAME
+                           — Model deployment name (e.g. gpt-4o)
+    NEO4J_URI              — Neo4j connection URI
+    NEO4J_USERNAME         — Neo4j username
+    NEO4J_PASSWORD         — Neo4j password
     NEO4J_FULLTEXT_INDEX_NAME — Optional fulltext index name (defaults to search_chunks)
 """
 
@@ -68,7 +69,7 @@ async def main() -> None:
     # 2. Read the Azure AI Foundry project endpoint and model configuration.
     project_endpoint = os.environ.get("FOUNDRY_PROJECT_ENDPOINT") or os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
     if not project_endpoint:
-        raise RuntimeError("Set FOUNDRY_PROJECT_ENDPOINT before running this sample.")
+        raise RuntimeError("Set FOUNDRY_PROJECT_ENDPOINT or AZURE_AI_PROJECT_ENDPOINT before running this sample.")
 
     model = os.environ.get("FOUNDRY_MODEL") or os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME") or "gpt-4o"
 

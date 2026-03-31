@@ -21,7 +21,7 @@ This sample keeps setup lightweight by using a pre-built Neo4j fulltext index pl
 
 This sample expects:
 
-- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_PROJECT_ENDPOINT` or `AZURE_AI_PROJECT_ENDPOINT`
 - `FOUNDRY_MODEL` or `AZURE_AI_MODEL_DEPLOYMENT_NAME`
 - `NEO4J_URI`
 - `NEO4J_USERNAME`
