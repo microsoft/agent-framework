@@ -176,6 +176,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
+- [Code of Conduct](./CODE_OF_CONDUCT.md)
 - [Python Development Guide](./python/DEV_SETUP.md)
 - [Design Documents](./docs/design)
 - [Architectural Decision Records](./docs/decisions)
