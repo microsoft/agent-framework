@@ -33,8 +33,8 @@ Set the following environment variables:
 - `OPENAI_API_KEY`: Your OpenAI API key (used by Mem0 OSS for embedding generation and automatic memory extraction)
 
 **For Azure AI:**
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI project endpoint
+- `FOUNDRY_MODEL`: The name of your model deployment
 
 ## Key Concepts
 

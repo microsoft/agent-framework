@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,18 +11,20 @@ using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
+[Obsolete("Use FoundryVersionedAgentFixture instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientFixture : IChatClientAgentFixture
 {
-    private ChatClientAgent _agent = null!;
+    private FoundryAgent _agent = null!;
     private AIProjectClient _client = null!;
 
-    public IChatClient ChatClient => this._agent.ChatClient;
+    public IChatClient ChatClient => this._agent.GetService<ChatClientAgent>()!.ChatClient;
 
     public AIAgent Agent => this._agent;
 
@@ -115,14 +119,14 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        return await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools);
+        return (await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools)).GetService<ChatClientAgent>()!;
     }
 
     public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        return await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
+        return (await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options)).GetService<ChatClientAgent>()!;
     }
 
     public static string GenerateUniqueAgentName(string baseName) =>
@@ -170,12 +174,13 @@ public class AIProjectClientFixture : IChatClientAgentFixture
     public virtual async ValueTask InitializeAsync()
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
-        this._agent = await this.CreateChatClientAgentAsync();
+        this._agent = await this._client.CreateAIAgentAsync(GenerateUniqueAgentName("HelpfulAssistant"), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: "You are a helpful assistant.");
     }
 
     public async Task InitializeAsync(ChatClientAgentOptions options)
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
-        this._agent = await this.CreateChatClientAgentAsync(options);
+        options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
+        this._agent = await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
     }
 }

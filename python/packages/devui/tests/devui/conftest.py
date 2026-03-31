@@ -446,7 +446,7 @@ async def executor_with_real_agent() -> tuple[AgentFrameworkExecutor, str, MockB
         name="Test Chat Agent",
         description="A real Agent for testing execution flow",
         client=mock_client,
-        system_message="You are a helpful test assistant.",
+        instructions="You are a helpful test assistant.",
     )
 
     # Register the real agent
@@ -478,14 +478,14 @@ async def sequential_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         name="Writer",
         description="Content writer agent",
         client=mock_client,
-        system_message="You are a content writer. Create clear, engaging content.",
+        instructions="You are a content writer. Create clear, engaging content.",
     )
     reviewer = Agent(
         id="reviewer",
         name="Reviewer",
         description="Content reviewer agent",
         client=mock_client,
-        system_message="You are a reviewer. Provide constructive feedback.",
+        instructions="You are a reviewer. Provide constructive feedback.",
     )
 
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
@@ -523,21 +523,21 @@ async def concurrent_workflow() -> tuple[AgentFrameworkExecutor, str, MockBaseCh
         name="Researcher",
         description="Research agent",
         client=mock_client,
-        system_message="You are a researcher. Find key data and insights.",
+        instructions="You are a researcher. Find key data and insights.",
     )
     analyst = Agent(
         id="analyst",
         name="Analyst",
         description="Analysis agent",
         client=mock_client,
-        system_message="You are an analyst. Identify trends and patterns.",
+        instructions="You are an analyst. Identify trends and patterns.",
     )
     summarizer = Agent(
         id="summarizer",
         name="Summarizer",
         description="Summary agent",
         client=mock_client,
-        system_message="You are a summarizer. Provide concise summaries.",
+        instructions="You are a summarizer. Provide concise summaries.",
     )
 
     workflow = ConcurrentBuilder(participants=[researcher, analyst, summarizer]).build()

@@ -49,14 +49,14 @@ Run `az login` if using Entra ID authentication.
 **Common (both modes):**
 - `AZURE_SEARCH_ENDPOINT`: Your Azure AI Search endpoint (e.g., `https://myservice.search.windows.net`)
 - `AZURE_SEARCH_INDEX_NAME`: Name of your search index
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: Model deployment name (e.g., `gpt-4o`, defaults to `gpt-4o`)
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL`: Model deployment name (e.g., `gpt-4o`, defaults to `gpt-4o`)
 - `AZURE_SEARCH_API_KEY`: _(Optional)_ Your search API key - if not provided, uses DefaultAzureCredential
 
 **Agentic mode only:**
 - `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`: Name of your Knowledge Base in Azure AI Search
 - `AZURE_OPENAI_RESOURCE_URL`: Your Azure OpenAI resource URL (e.g., `https://myresource.openai.azure.com`)
-  - **Important**: This is different from `AZURE_AI_PROJECT_ENDPOINT` - Knowledge Base needs the OpenAI endpoint for model calls
+  - **Important**: This is different from `FOUNDRY_PROJECT_ENDPOINT` - Knowledge Base needs the OpenAI endpoint for model calls
 
 ### Example .env file
 
@@ -64,8 +64,8 @@ Run `az login` if using Entra ID authentication.
 ```env
 AZURE_SEARCH_ENDPOINT=https://myservice.search.windows.net
 AZURE_SEARCH_INDEX_NAME=my-index
-AZURE_AI_PROJECT_ENDPOINT=https://<resource-name>.services.ai.azure.com/api/projects/<project-name>
-AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4o
+FOUNDRY_PROJECT_ENDPOINT=https://<resource-name>.services.ai.azure.com/api/projects/<project-name>
+FOUNDRY_MODEL=gpt-4o
 # Optional - omit to use Entra ID
 AZURE_SEARCH_API_KEY=your-search-key
 ```
@@ -127,7 +127,8 @@ AZURE_OPENAI_RESOURCE_URL=https://myresource.openai.azure.com
 
 ```python
 from agent_framework import Agent
-from agent_framework.azure import AzureAIAgentClient, AzureAISearchContextProvider
+from agent_framework.azure import AzureAISearchContextProvider
+from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import DefaultAzureCredential
 
 # Create search provider with semantic mode (default)
@@ -140,10 +141,13 @@ search_provider = AzureAISearchContextProvider(
 )
 
 # Create agent with search context
-async with AzureAIAgentClient(credential=DefaultAzureCredential()) as client:
+async with FoundryChatClient(
+    project_endpoint=project_endpoint,
+    model=model_deployment,
+    credential=DefaultAzureCredential(),
+) as client:
     async with Agent(
         client=client,
-        model=model_deployment,
         context_providers=[search_provider],
     ) as agent:
         response = await agent.run("What information is in the knowledge base?")

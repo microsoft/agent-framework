@@ -11,6 +11,7 @@ using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Agents.AI.FoundryMemory;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
@@ -19,6 +20,9 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 string embeddingModelName = Environment.GetEnvironmentVariable("AZURE_AI_EMBEDDING_DEPLOYMENT_NAME") ?? "text-embedding-ada-002";
 
 // Create an AIProjectClient for Foundry with Azure Identity authentication.
+// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
+// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
+// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
 DefaultAzureCredential credential = new();
 AIProjectClient projectClient = new(new Uri(foundryEndpoint), credential);
 
@@ -33,11 +37,15 @@ FoundryMemoryProvider memoryProvider = new(
     memoryStoreName,
     stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
-AIAgent agent = await projectClient.CreateAIAgentAsync(deploymentName,
-    options: new ChatClientAgentOptions()
+FoundryAgent agent = projectClient.AsAIAgent(
+    new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",
-        ChatOptions = new() { Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details." },
+        ChatOptions = new()
+        {
+            ModelId = deploymentName,
+            Instructions = "You are a friendly travel assistant. Use known memories about the user when responding, and do not invent details."
+        },
         AIContextProviders = [memoryProvider]
     });
 

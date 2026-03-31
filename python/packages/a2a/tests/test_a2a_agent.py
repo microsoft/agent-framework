@@ -368,7 +368,7 @@ def test_get_uri_data_invalid_uri() -> None:
 def test_parse_contents_from_a2a_conversion(a2a_agent: A2AAgent) -> None:
     """Test A2A parts to contents conversion."""
 
-    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), _http_client=None)
+    agent = A2AAgent(name="Test Agent", client=MockA2AClient(), http_client=None)
 
     # Create A2A parts
     parts = [Part(root=TextPart(text="First part")), Part(root=TextPart(text="Second part"))]
@@ -487,7 +487,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 
     mock_a2a_client = MagicMock()
 
-    agent = A2AAgent(client=mock_a2a_client, _http_client=None)
+    agent = A2AAgent(client=mock_a2a_client, http_client=None)
 
     # This should not raise any errors
     async with agent:
@@ -497,7 +497,7 @@ async def test_context_manager_no_cleanup_when_no_http_client() -> None:
 def test_prepare_message_for_a2a_with_multiple_contents() -> None:
     """Test conversion of Message with multiple contents."""
 
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     # Create message with multiple content types
     message = Message(
@@ -525,7 +525,7 @@ def test_prepare_message_for_a2a_with_multiple_contents() -> None:
 def test_prepare_message_for_a2a_forwards_context_id() -> None:
     """Test conversion of Message preserves context_id without duplicating it in metadata."""
 
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     message = Message(
         role="user",
@@ -542,7 +542,7 @@ def test_prepare_message_for_a2a_forwards_context_id() -> None:
 def test_parse_contents_from_a2a_with_data_part() -> None:
     """Test conversion of A2A DataPart."""
 
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     # Create DataPart
     data_part = Part(root=DataPart(data={"key": "value", "number": 42}, metadata={"source": "test"}))
@@ -558,7 +558,7 @@ def test_parse_contents_from_a2a_with_data_part() -> None:
 
 def test_parse_contents_from_a2a_unknown_part_kind() -> None:
     """Test error handling for unknown A2A part kind."""
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     # Create a mock part with unknown kind
     mock_part = MagicMock()
@@ -571,7 +571,7 @@ def test_parse_contents_from_a2a_unknown_part_kind() -> None:
 def test_prepare_message_for_a2a_with_hosted_file() -> None:
     """Test conversion of Message with HostedFileContent to A2A message."""
 
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     # Create message with hosted file content
     message = Message(
@@ -597,7 +597,7 @@ def test_prepare_message_for_a2a_with_hosted_file() -> None:
 def test_parse_contents_from_a2a_with_hosted_file_uri() -> None:
     """Test conversion of A2A FilePart with hosted file URI back to UriContent."""
 
-    agent = A2AAgent(client=MagicMock(), _http_client=None)
+    agent = A2AAgent(client=MagicMock(), http_client=None)
 
     # Create FilePart with hosted file URI (simulating what A2A would send back)
     file_part = Part(

@@ -34,7 +34,7 @@ runs:
 
     - name: Test Copilot CLI
       shell: bash
-      run: copilot -p "What can you do in one sentence?"
+      run: copilot --version && copilot -p "What can you do in one sentence?"
 
     - name: Azure CLI Login
       uses: azure/login@v2

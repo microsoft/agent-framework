@@ -13,6 +13,11 @@
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
 
+  <!-- Package not yet published to NuGet — disable baseline validation until first release -->
+  <PropertyGroup>
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Declarative Workflows MCP</Title>

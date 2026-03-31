@@ -12,7 +12,8 @@ namespace Microsoft.Agents.AI;
 /// <remarks>
 /// <para>
 /// A skill represents a domain-specific capability with instructions, resources, and scripts.
-/// Concrete implementations include <see cref="AgentFileSkill"/> (filesystem-backed).
+/// Concrete implementations include <see cref="AgentFileSkill"/> (filesystem-backed)
+/// and <see cref="AgentInlineSkill"/> (code-defined).
 /// </para>
 /// <para>
 /// Skill metadata follows the <see href="https://agentskills.io/specification">Agent Skills specification</see>.
@@ -35,6 +36,8 @@ public abstract class AgentSkill
     /// </summary>
     /// <remarks>
     /// For file-based skills this is the raw SKILL.md file content.
+    /// For code-defined skills this is a synthesized XML document
+    /// containing name, description, and body (instructions, resources, scripts).
     /// </remarks>
     public abstract string Content { get; }
 

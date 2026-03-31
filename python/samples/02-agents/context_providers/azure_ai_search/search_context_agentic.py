@@ -34,7 +34,7 @@ Environment variables:
    - AZURE_SEARCH_ENDPOINT: Your Azure AI Search endpoint
    - AZURE_SEARCH_API_KEY: (Optional) API key - if not provided, uses AzureCliCredential
    - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
-   - AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name (e.g., "gpt-4o")
+   - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
 
 For using an existing Knowledge Base (recommended):
    - AZURE_SEARCH_KNOWLEDGE_BASE_NAME: Your Knowledge Base name
@@ -59,7 +59,7 @@ async def main() -> None:
     search_endpoint = os.environ["AZURE_SEARCH_ENDPOINT"]
     search_key = os.environ.get("AZURE_SEARCH_API_KEY")
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-    model_deployment = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o")
+    model_deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o")
 
     # Agentic mode requires exactly ONE of: knowledge_base_name OR index_name
     # Option 1: Use existing Knowledge Base (recommended)
