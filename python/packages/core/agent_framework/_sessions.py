@@ -17,7 +17,7 @@ import sys
 import uuid
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
 
 if sys.version_info >= (3, 13):
     from warnings import deprecated  # type: ignore # pragma: no cover
@@ -35,6 +35,18 @@ if TYPE_CHECKING:
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
+
+
+def _is_middleware_sequence(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[Sequence[MiddlewareTypes]]:
+    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
+
+
+def _is_single_middleware(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[MiddlewareTypes]:
+    return not _is_middleware_sequence(middleware)
 
 
 def register_state_type(cls: type) -> None:
@@ -267,11 +279,12 @@ class SessionContext:
         from ._middleware import categorize_middleware
         from .exceptions import MiddlewareException
 
-        middleware_items: list[MiddlewareTypes]
-        if isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes)):
-            middleware_items = list(cast("Sequence[MiddlewareTypes]", middleware))
+        if _is_middleware_sequence(middleware):
+            middleware_items = list(middleware)
+        elif _is_single_middleware(middleware):
+            middleware_items = [middleware]
         else:
-            middleware_items = [cast("MiddlewareTypes", middleware)]
+            raise TypeError("middleware must be a middleware object or a sequence of middleware objects.")
         middleware_list = categorize_middleware(middleware_items)
         if middleware_list["agent"]:
             raise MiddlewareException("Context providers may only add chat or function middleware.")

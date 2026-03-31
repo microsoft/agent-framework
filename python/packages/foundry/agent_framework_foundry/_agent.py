@@ -226,6 +226,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
         context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        simulate_service_stored_history: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -246,6 +247,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
                 tools=function_tools,
                 context_providers=context_providers,
                 middleware=middleware,
+                simulate_service_stored_history=simulate_service_stored_history,
                 client_type=cast(type[RawFoundryAgentChatClient], self.__class__),
                 id=id,
                 name=self.agent_name if name is None else name,
@@ -478,6 +480,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         description: str | None = None,
         instructions: str | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        simulate_service_stored_history: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -507,6 +510,8 @@ class RawFoundryAgent(  # type: ignore[misc]
             description: Optional local description for the local agent wrapper.
             instructions: Optional instructions for the local agent wrapper.
             default_options: Default chat options for the local agent wrapper.
+            simulate_service_stored_history: Whether to simulate service-stored
+                history boundaries when using local history providers.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
@@ -548,6 +553,7 @@ class RawFoundryAgent(  # type: ignore[misc]
             default_options=cast(FoundryAgentOptionsT | None, default_options),
             context_providers=context_providers,
             middleware=middleware,
+            simulate_service_stored_history=simulate_service_stored_history,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
             additional_properties=dict(additional_properties) if additional_properties is not None else None,
@@ -671,6 +677,7 @@ class FoundryAgent(  # type: ignore[misc]
         description: str | None = None,
         instructions: str | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
+        simulate_service_stored_history: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -696,6 +703,8 @@ class FoundryAgent(  # type: ignore[misc]
             description: Optional local description for the local agent wrapper.
             instructions: Optional instructions for the local agent wrapper.
             default_options: Default chat options for the local agent wrapper.
+            simulate_service_stored_history: Whether to simulate service-stored
+                history boundaries when using local history providers.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level in-run compaction override.
             tokenizer: Optional agent-level tokenizer override.
@@ -719,6 +728,7 @@ class FoundryAgent(  # type: ignore[misc]
             description=description,
             instructions=instructions,
             default_options=default_options,
+            simulate_service_stored_history=simulate_service_stored_history,
             function_invocation_configuration=function_invocation_configuration,
             compaction_strategy=compaction_strategy,
             tokenizer=tokenizer,
