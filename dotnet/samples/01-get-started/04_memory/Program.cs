@@ -8,23 +8,19 @@
 
 using System.Text;
 using System.Text.Json;
-using Azure.AI.OpenAI;
+using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 using SampleApp;
 
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
+var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-ChatClient chatClient = new AzureOpenAIClient(
-    new Uri(endpoint),
-    new DefaultAzureCredential())
-    .GetChatClient(deploymentName);
+AIProjectClient aIProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create the agent and provide a factory to add our custom memory component to
 // all sessions created by the agent. Here each new memory component will have its own
@@ -33,10 +29,10 @@ ChatClient chatClient = new AzureOpenAIClient(
 // and preferably shared between multiple sessions used by the same user, ensure that the
 // factory reads the user id from the current context and scopes the memory component
 // and its storage to that user id.
-AIAgent agent = chatClient.AsAIAgent(new ChatClientAgentOptions()
+AIAgent agent = aIProjectClient.AsAIAgent(new ChatClientAgentOptions()
 {
-    ChatOptions = new() { Instructions = "You are a friendly assistant. Always address the user by their name." },
-    AIContextProviders = [new UserInfoMemory(chatClient.AsIChatClient())]
+    ChatOptions = new() { ModelId = deploymentName, Instructions = "You are a friendly assistant. Always address the user by their name." },
+    AIContextProviders = [new UserInfoMemory(aIProjectClient.OpenAI.GetChatClient(deploymentName).AsIChatClient())]
 });
 
 // Create a new session for the conversation.
