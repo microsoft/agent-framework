@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -7,6 +9,7 @@ using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Files;
 using OpenAI.Responses;
@@ -14,6 +17,7 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
+[Obsolete("Use FoundryVersionedAgentCreateTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientCreateTests
 {
     private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
@@ -51,7 +55,7 @@ public class AIProjectClientCreateTests
             Assert.NotNull(agent);
             Assert.Equal(AgentName, agent.Name);
             Assert.Equal(AgentDescription, agent.Description);
-            Assert.Equal(AgentInstructions, agent.Instructions);
+            Assert.Equal(AgentInstructions, agent.GetService<ChatClientAgent>()!.Instructions);
 
             var agentRecord = await this._client.Agents.GetAgentAsync(agent.Name);
             Assert.NotNull(agentRecord);
@@ -275,7 +279,7 @@ public class AIProjectClientCreateTests
         try
         {
             // Step 2: Wrap the agent version using AsAIAgent extension.
-            ChatClientAgent agent = this._client.AsAIAgent(agentVersion);
+            FoundryAgent agent = this._client.AsAIAgent(agentVersion);
 
             // Assert the agent was created correctly and retains version metadata.
             Assert.NotNull(agent);
@@ -327,7 +331,7 @@ public class AIProjectClientCreateTests
         static string GetWeather(string location) => $"The weather in {location} is sunny with a high of 23C.";
         var weatherFunction = AIFunctionFactory.Create(GetWeather);
 
-        ChatClientAgent agent = createMechanism switch
+        FoundryAgent agent = createMechanism switch
         {
             "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
                 model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),

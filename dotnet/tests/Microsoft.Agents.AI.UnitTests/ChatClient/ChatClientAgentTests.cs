@@ -379,12 +379,10 @@ public partial class ChatClientAgentTests
     }
 
     /// <summary>
-    /// Verify that RunAsync passes ChatOptions with null ConversationId when using regular AgentRunOptions.
-    /// When per-service-call persistence is active (default), the sentinel conversation ID is set on ChatOptions
-    /// and then stripped by ChatHistoryPersistingChatClient before reaching the inner client.
+    /// Verify that RunAsync passes null ChatOptions when using regular AgentRunOptions.
     /// </summary>
     [Fact]
-    public async Task RunAsyncPassesChatOptionsWithNullConversationIdWhenUsingRegularAgentRunOptionsAsync()
+    public async Task RunAsyncPassesNullChatOptionsWhenUsingRegularAgentRunOptionsAsync()
     {
         // Arrange
         ChatOptions? capturedOptions = null;
@@ -403,9 +401,8 @@ public partial class ChatClientAgentTests
         // Act
         await agent.RunAsync([new(ChatRole.User, "test")], options: runOptions);
 
-        // Assert — the inner client receives ChatOptions with null ConversationId (sentinel was stripped)
-        Assert.NotNull(capturedOptions);
-        Assert.Null(capturedOptions!.ConversationId);
+        // Assert
+        Assert.Null(capturedOptions);
     }
 
     /// <summary>
@@ -1791,6 +1788,75 @@ public partial class ChatClientAgentTests
                     It.IsAny<ChatOptions>(),
                     It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync passes through null MessageId from provider without modification.
+    /// MessageId generation is handled by downstream consumers (e.g., AGUI layer), not ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_WithNullMessageId_PassesThroughNullAsync()
+    {
+        // Arrange - Provider returns updates WITHOUT MessageId
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "Hello"),
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: " world"),
+            ];
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+
+        // Act
+        List<AgentResponseUpdate> result = [];
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            result.Add(update);
+        }
+
+        // Assert - MessageId should be null (ChatClientAgent does not generate fallback IDs)
+        Assert.Equal(2, result.Count);
+        Assert.All(result, u => Assert.Null(u.MessageId));
+    }
+
+    /// <summary>
+    /// Verify that RunStreamingAsync preserves provider-supplied MessageId when present.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsync_WithProviderMessageId_PreservesItAsync()
+    {
+        // Arrange - Provider returns updates WITH MessageId (like OpenAI)
+        ChatResponseUpdate[] returnUpdates =
+            [
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: "Hello") { MessageId = "chatcmpl-abc123" },
+                new ChatResponseUpdate(role: ChatRole.Assistant, content: " world") { MessageId = "chatcmpl-abc123" },
+            ];
+
+        Mock<IChatClient> mockService = new();
+        mockService.Setup(
+            s => s.GetStreamingResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>())).Returns(ToAsyncEnumerableAsync(returnUpdates));
+
+        ChatClientAgent agent = new(mockService.Object);
+
+        // Act
+        List<AgentResponseUpdate> result = [];
+        await foreach (var update in agent.RunStreamingAsync([new ChatMessage(ChatRole.User, "Hi")]))
+        {
+            result.Add(update);
+        }
+
+        // Assert - Provider's MessageId should be preserved, not overwritten
+        Assert.Equal(2, result.Count);
+        Assert.All(result, u => Assert.Equal("chatcmpl-abc123", u.MessageId));
     }
 
     /// <summary>

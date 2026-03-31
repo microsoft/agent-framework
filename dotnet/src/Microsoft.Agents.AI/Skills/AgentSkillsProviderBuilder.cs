@@ -13,9 +13,13 @@ namespace Microsoft.Agents.AI;
 /// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by a composite source.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Use this builder to combine multiple skill sources into a single provider:
+/// </para>
 /// <code>
 /// var provider = new AgentSkillsProviderBuilder()
 ///     .UseFileSkills("/path/to/skills")
+///     .UseSkills(myInlineSkill1, myInlineSkill2)
 ///     .Build();
 /// </code>
 /// </remarks>
@@ -62,6 +66,40 @@ public sealed class AgentSkillsProviderBuilder
                 ?? throw new InvalidOperationException($"File-based skill sources require a script runner. Call {nameof(this.UseFileScriptRunner)} or pass a runner to {nameof(this.UseFileSkill)}/{nameof(this.UseFileSkills)}.");
             return new AgentFileSkillsSource(skillPaths, resolvedRunner, options, loggerFactory);
         });
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a single skill.
+    /// </summary>
+    /// <param name="skill">The skill to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkill(AgentSkill skill)
+    {
+        return this.UseSkills(skill);
+    }
+
+    /// <summary>
+    /// Adds one or more skills.
+    /// </summary>
+    /// <param name="skills">The skills to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkills(params AgentSkill[] skills)
+    {
+        var source = new AgentInMemorySkillsSource(skills);
+        this._sourceFactories.Add((_, _) => source);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds skills from the specified collection.
+    /// </summary>
+    /// <param name="skills">The skills to add.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder UseSkills(IEnumerable<AgentSkill> skills)
+    {
+        var source = new AgentInMemorySkillsSource(skills);
+        this._sourceFactories.Add((_, _) => source);
         return this;
     }
 
