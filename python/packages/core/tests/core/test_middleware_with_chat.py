@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import patch
 
 from agent_framework import (
     Agent,
@@ -296,50 +297,77 @@ class TestChatMiddleware:
         assert response3 is not None
         assert execution_count["count"] == 2  # Should be 2 now
 
-    async def test_chat_client_middleware_can_access_and_override_custom_kwargs(
+    async def test_run_level_middleware_is_not_forwarded_to_inner_client(
         self, chat_client_base: "MockBaseChatClient"
     ) -> None:
-        """Test that chat client middleware can access and override custom parameters like temperature."""
-        captured_kwargs: dict[str, Any] = {}
-        modified_kwargs: dict[str, Any] = {}
+        """Test that run-level middleware stays in the middleware pipeline only."""
+        observed_context_kwargs: dict[str, Any] = {}
+
+        @chat_middleware
+        async def inspecting_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            observed_context_kwargs.update(context.kwargs)
+            await call_next()
+
+        async def fake_inner_get_response(**kwargs: Any) -> ChatResponse:
+            assert "middleware" not in kwargs
+            return ChatResponse(messages=[Message(role="assistant", text="ok")])
+
+        with patch.object(
+            chat_client_base,
+            "_inner_get_response",
+            side_effect=fake_inner_get_response,
+        ) as mock_inner_get_response:
+            response = await chat_client_base.get_response(
+                [Message(role="user", text="hello")],
+                client_kwargs={"middleware": [inspecting_middleware], "trace_id": "trace-123"},
+            )
+
+        assert response.messages[0].text == "ok"
+        assert observed_context_kwargs == {"trace_id": "trace-123"}
+        mock_inner_get_response.assert_called_once()
+
+    async def test_chat_client_middleware_can_access_and_override_options(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test that chat client middleware can access and override runtime options."""
+        captured_options: dict[str, Any] = {}
+        modified_options: dict[str, Any] = {}
 
         @chat_middleware
         async def kwargs_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
-            # Capture the original kwargs
-            captured_kwargs.update(context.kwargs)
+            assert isinstance(context.options, dict)
+            captured_options.update(context.options)
 
-            # Modify some kwargs
-            context.kwargs["temperature"] = 0.9
-            context.kwargs["max_tokens"] = 500
-            context.kwargs["new_param"] = "added_by_middleware"
+            context.options["temperature"] = 0.9
+            context.options["max_tokens"] = 500
+            context.options["new_param"] = "added_by_middleware"
 
-            # Store modified kwargs for verification
-            modified_kwargs.update(context.kwargs)
+            modified_options.update(context.options)
 
             await call_next()
 
         # Add middleware to chat client
         chat_client_base.chat_middleware = [kwargs_middleware]
 
-        # Execute chat client with custom parameters
+        # Execute chat client with runtime options
         messages = [Message(role="user", text="test message")]
         response = await chat_client_base.get_response(
-            messages, temperature=0.7, max_tokens=100, custom_param="test_value"
+            messages,
+            options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
         )
 
         # Verify response
         assert response is not None
         assert len(response.messages) > 0
 
-        assert captured_kwargs["temperature"] == 0.7
-        assert captured_kwargs["max_tokens"] == 100
-        assert captured_kwargs["custom_param"] == "test_value"
+        assert captured_options["temperature"] == 0.7
+        assert captured_options["max_tokens"] == 100
+        assert captured_options["custom_param"] == "test_value"
 
-        # Verify middleware could modify the kwargs
-        assert modified_kwargs["temperature"] == 0.9
-        assert modified_kwargs["max_tokens"] == 500
-        assert modified_kwargs["new_param"] == "added_by_middleware"
-        assert modified_kwargs["custom_param"] == "test_value"  # Should still be there
+        assert modified_options["temperature"] == 0.9
+        assert modified_options["max_tokens"] == 500
+        assert modified_options["new_param"] == "added_by_middleware"
+        assert modified_options["custom_param"] == "test_value"
 
     def test_chat_middleware_pipeline_cache_reuses_matching_middleware(
         self,

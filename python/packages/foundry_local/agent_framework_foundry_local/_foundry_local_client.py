@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
-from typing import Any, Generic
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import Any, Generic, Literal, cast, overload
 
 from agent_framework import (
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
     ChatOptions,
+    ChatResponse,
+    ChatResponseUpdate,
+    CompactionStrategy,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
+    Message,
+    ResponseStream,
+    TokenizerProtocol,
 )
 from agent_framework._settings import load_settings
 from agent_framework.observability import ChatTelemetryLayer
@@ -122,8 +128,8 @@ class FoundryLocalSettings(TypedDict, total=False):
     'FOUNDRY_LOCAL_'.
 
     Keys:
-        model_id: The name of the model deployment to use.
-            (Env var FOUNDRY_LOCAL_MODEL_ID)
+        model: The name of the model deployment to use.
+            (Env var FOUNDRY_LOCAL_MODEL)
     """
 
     model: str | None
@@ -137,6 +143,78 @@ class FoundryLocalClient(
     Generic[FoundryLocalChatOptionsT],
 ):
     """Foundry Local Chat completion class with middleware, telemetry, and function invocation support."""
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: ChatOptions[ResponseModelT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+    ) -> Awaitable[ChatResponse[ResponseModelT]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[False] = ...,
+        options: FoundryLocalChatOptionsT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+    ) -> Awaitable[ChatResponse[Any]]: ...
+
+    @overload
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: Literal[True],
+        options: FoundryLocalChatOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+    ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
+
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: FoundryLocalChatOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
+        middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
+    ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
+        """Get a response from the Foundry Local chat client with all standard layers enabled."""
+        super_get_response = cast(
+            "Callable[..., Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]]",
+            super().get_response,
+        )
+        effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        if middleware is not None:
+            effective_client_kwargs["middleware"] = middleware
+        return super_get_response(
+            messages=messages,
+            stream=stream,
+            options=options,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=effective_client_kwargs,
+        )
 
     def __init__(
         self,
@@ -182,7 +260,7 @@ class FoundryLocalClient(
                 # Create a FoundryLocalClient with a specific model ID:
                 from agent_framework.foundry import FoundryLocalClient
 
-                client = FoundryLocalClient(model_id="phi-4-mini")
+                client = FoundryLocalClient(model="phi-4-mini")
 
                 agent = client.as_agent(
                     name="LocalAgent",
@@ -192,7 +270,7 @@ class FoundryLocalClient(
                 response = await agent.run("What's the weather like in Seattle?")
 
                 # Or you can set the model id in the environment:
-                os.environ["FOUNDRY_LOCAL_MODEL_ID"] = "phi-4-mini"
+                os.environ["FOUNDRY_LOCAL_MODEL"] = "phi-4-mini"
                 client = FoundryLocalClient()
 
                 # A FoundryLocalManager is created and if set, the service is started.
@@ -205,12 +283,12 @@ class FoundryLocalClient(
                 from foundry_local.models import DeviceType
 
                 client = FoundryLocalClient(
-                    model_id="phi-4-mini",
+                    model="phi-4-mini",
                     device=DeviceType.GPU,
                 )
                 # and choosing if the model should be prepared on initialization:
                 client = FoundryLocalClient(
-                    model_id="phi-4-mini",
+                    model="phi-4-mini",
                     prepare_model=False,
                 )
                 # Beware, in this case the first request to generate a completion
@@ -230,7 +308,7 @@ class FoundryLocalClient(
                 class MyOptions(FoundryLocalChatOptions, total=False):
                     my_custom_option: str
 
-                client: FoundryLocalClient[MyOptions] = FoundryLocalClient(model_id="phi-4-mini")
+                client: FoundryLocalClient[MyOptions] = FoundryLocalClient(model="phi-4-mini")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         Raises:

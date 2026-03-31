@@ -24,7 +24,10 @@ from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT, APP_INFO, pre
 from agent_framework._tools import FunctionInvocationConfiguration, FunctionInvocationLayer
 from agent_framework._types import Annotation, Content
 from agent_framework.observability import ChatTelemetryLayer, EmbeddingTelemetryLayer
-from agent_framework_openai._assistants_client import OpenAIAssistantsClient, OpenAIAssistantsOptions
+from agent_framework_openai._assistants_client import (
+    OpenAIAssistantsClient,  # type: ignore[reportDeprecated]
+    OpenAIAssistantsOptions,
+)
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from agent_framework_openai._chat_completion_client import OpenAIChatCompletionOptions, RawOpenAIChatCompletionClient
 from agent_framework_openai._embedding_client import OpenAIEmbeddingOptions, RawOpenAIEmbeddingClient
@@ -673,7 +676,8 @@ AzureOpenAIAssistantsOptions = OpenAIAssistantsOptions
     "Use OpenAIAssistantsClient (also deprecated) or migrate to OpenAIChatClient."
 )
 class AzureOpenAIAssistantsClient(
-    OpenAIAssistantsClient[AzureOpenAIAssistantsOptionsT], Generic[AzureOpenAIAssistantsOptionsT]
+    OpenAIAssistantsClient[AzureOpenAIAssistantsOptionsT],  # type: ignore[reportDeprecated]
+    Generic[AzureOpenAIAssistantsOptionsT],
 ):
     """Deprecated Azure OpenAI Assistants client. Use OpenAIAssistantsClient or migrate to OpenAIChatClient."""
 

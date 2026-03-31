@@ -1,5 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;

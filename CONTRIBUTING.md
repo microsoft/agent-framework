@@ -74,6 +74,37 @@ Contributions must maintain API signature and behavioral compatibility. Contribu
 that include breaking changes will be rejected. Please file an issue to discuss
 your idea or change if you believe that a breaking change is warranted.
 
+#### Automated API Compatibility Validation
+
+The .NET projects use [Package Validation](https://learn.microsoft.com/dotnet/fundamentals/package-validation/overview)
+to automatically detect API breaking changes. This validation runs during `dotnet build`
+(Release configuration) and `dotnet pack`, comparing the current API surface against the
+latest published NuGet baseline version.
+
+**What gets validated:** By default, packable RC packages (`IsReleaseCandidate=true`) and
+GA packages (`IsGenerallyAvailable=true`) that have a published NuGet baseline and do not
+override validation settings are automatically validated. The shared baseline version and
+default validation settings are defined in `dotnet/nuget/nuget-package.props`, but
+individual projects may opt out (for example by setting `EnablePackageValidation=false`).
+
+**If the build fails with CP errors (e.g., CP0001, CP0002):**
+
+1. **Unintentional breaking change** — Refactor your code to maintain backward compatibility.
+2. **Intentional breaking change** (approved by maintainers) — Generate a suppression file:
+   ```bash
+   dotnet build <project>.csproj -c Release /p:ApiCompatGenerateSuppressionFile=true
+   ```
+   This creates or updates a `CompatibilitySuppressions.xml` in the project directory.
+   Include this file in your PR with justification for the breaking change.
+
+**After each release:**
+
+1. Delete all `CompatibilitySuppressions.xml` files from validated projects.
+2. Update `PackageValidationBaselineVersion` in `dotnet/nuget/nuget-package.props` to the
+   newly published version.
+
+For more details, see the [Package Validation diagnostic IDs](https://learn.microsoft.com/dotnet/fundamentals/package-validation/diagnostic-ids).
+
 ### Suggested Workflow
 
 We use and recommend the following workflow:

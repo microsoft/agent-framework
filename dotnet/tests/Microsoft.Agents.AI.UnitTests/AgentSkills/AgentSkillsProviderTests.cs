@@ -270,7 +270,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var source = new CountingAgentSkillsSource(
         [
-            new TestAgentSkill("concurrent-skill", "Concurrent test", "Body.")
+            new AgentInlineSkill("concurrent-skill", "Concurrent test", "Body.")
         ]);
         var provider = new AgentSkillsProvider(source);
 
@@ -502,7 +502,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var source = new CountingAgentSkillsSource(
         [
-            new TestAgentSkill("no-cache-skill", "No cache test", "Body.")
+            new AgentInlineSkill("no-cache-skill", "No cache test", "Body.")
         ]);
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
@@ -525,7 +525,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var source = new CountingAgentSkillsSource(
         [
-            new TestAgentSkill("cached-skill", "Cached test", "Body.")
+            new AgentInlineSkill("cached-skill", "Cached test", "Body.")
         ]);
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
@@ -547,7 +547,7 @@ public sealed class AgentSkillsProviderTests : IDisposable
         // Arrange
         var source = new CountingAgentSkillsSource(
         [
-            new TestAgentSkill("default-skill", "Default test", "Body.")
+            new AgentInlineSkill("default-skill", "Default test", "Body.")
         ]);
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
@@ -561,6 +561,78 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert — default behavior caches
         Assert.Equal(1, source.GetSkillsCallCount);
+    }
+
+    [Fact]
+    public async Task Build_PreservesSourceRegistrationOrderAsync()
+    {
+        // Arrange — register file, inline, file in that order
+        string dir1 = Path.Combine(this._testRoot, "dir1");
+        string dir2 = Path.Combine(this._testRoot, "dir2");
+        CreateSkillIn(dir1, "file-skill-1", "First file skill", "Body 1.");
+        CreateSkillIn(dir2, "file-skill-2", "Second file skill", "Body 2.");
+
+        var inlineSkill = new AgentInlineSkill("inline-skill", "Inline skill", "Body inline.");
+
+        var provider = new AgentSkillsProviderBuilder()
+            .UseFileSkill(dir1)
+            .UseSkills(inlineSkill)
+            .UseFileSkill(dir2)
+            .UseFileScriptRunner(s_noOpExecutor)
+            .UseOptions(o => o.DisableCaching = true)
+            .Build();
+
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — all three skills should be present in alphabetical order in the prompt
+        Assert.NotNull(result.Instructions);
+        var instructions = result.Instructions!;
+        var indexFileSkill1 = instructions.IndexOf("file-skill-1", StringComparison.Ordinal);
+        var indexFileSkill2 = instructions.IndexOf("file-skill-2", StringComparison.Ordinal);
+        var indexInlineSkill = instructions.IndexOf("inline-skill", StringComparison.Ordinal);
+
+        Assert.True(indexFileSkill1 >= 0, "file-skill-1 should be present in the instructions.");
+        Assert.True(indexFileSkill2 >= 0, "file-skill-2 should be present in the instructions.");
+        Assert.True(indexInlineSkill >= 0, "inline-skill should be present in the instructions.");
+
+        Assert.True(indexFileSkill1 < indexFileSkill2, "file-skill-1 should appear before file-skill-2.");
+        Assert.True(indexFileSkill2 < indexInlineSkill, "file-skill-2 should appear before inline-skill.");
+    }
+
+    [Fact]
+    public async Task Build_MixedSources_AllSkillsDiscoveredAsync()
+    {
+        // Arrange — use UseSource, UseSkill, and UseFileSkill in mixed order
+        string dir = Path.Combine(this._testRoot, "mixed-dir");
+        CreateSkillIn(dir, "file-skill", "File skill", "Body file.");
+
+        var inlineSkill = new AgentInlineSkill("inline-skill", "Inline skill", "Body inline.");
+        var customSource = new CountingAgentSkillsSource(
+        [
+            new AgentInlineSkill("custom-skill", "Custom source skill", "Body custom.")
+        ]);
+
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(customSource)
+            .UseSkills(inlineSkill)
+            .UseFileSkill(dir)
+            .UseFileScriptRunner(s_noOpExecutor)
+            .UseOptions(o => o.DisableCaching = true)
+            .Build();
+
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert — all skills from all sources are present
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("custom-skill", result.Instructions);
+        Assert.Contains("inline-skill", result.Instructions);
+        Assert.Contains("file-skill", result.Instructions);
     }
 
     [Fact]
@@ -722,6 +794,63 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("Body 1.", content!.ToString()!);
     }
 
+    [Fact]
+    public async Task Constructor_InlineSkillsParams_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skill1 = new AgentInlineSkill("inline-a", "Inline A", "Instructions A.");
+        var skill2 = new AgentInlineSkill("inline-b", "Inline B", "Instructions B.");
+        var provider = new AgentSkillsProvider(skill1, skill2);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("inline-a", result.Instructions);
+        Assert.Contains("inline-b", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_InlineSkillsEnumerable_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skills = new List<AgentInlineSkill>
+        {
+            new("enum-inline-a", "Inline A", "Instructions A."),
+            new("enum-inline-b", "Inline B", "Instructions B."),
+        };
+        var provider = new AgentSkillsProvider(skills);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("enum-inline-a", result.Instructions);
+        Assert.Contains("enum-inline-b", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_InlineSkills_DeduplicatesAsync()
+    {
+        // Arrange — two inline skills with the same name
+        var skill1 = new AgentInlineSkill("dup-inline", "First", "First instructions.");
+        var skill2 = new AgentInlineSkill("dup-inline", "Second", "Second instructions.");
+        var provider = new AgentSkillsProvider(skill1, skill2);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+        var content = await loadSkillTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "dup-inline" }));
+
+        // Assert — only one occurrence (first)
+        Assert.Contains("First instructions.", content!.ToString()!);
+    }
+
     /// <summary>
     /// A test skill source that counts how many times <see cref="GetSkillsAsync"/> is called.
     /// </summary>
@@ -742,24 +871,5 @@ public sealed class AgentSkillsProviderTests : IDisposable
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
         }
-    }
-
-    private sealed class TestAgentSkill : AgentSkill
-    {
-        private readonly string _content;
-
-        public TestAgentSkill(string name, string description, string content)
-        {
-            this.Frontmatter = new AgentSkillFrontmatter(name, description);
-            this._content = content;
-        }
-
-        public override AgentSkillFrontmatter Frontmatter { get; }
-
-        public override string Content => this._content;
-
-        public override IReadOnlyList<AgentSkillResource>? Resources => null;
-
-        public override IReadOnlyList<AgentSkillScript>? Scripts => null;
     }
 }

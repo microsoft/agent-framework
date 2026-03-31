@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from typing import Any
@@ -68,6 +69,17 @@ def test_raw_foundry_agent_chat_client_init_with_agent_name() -> None:
     assert client.agent_version == "1.0"
 
 
+def test_raw_foundry_agent_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawFoundryAgentChatClient.__init__)
+
+    assert "default_headers" in signature.parameters
+    assert "instruction_role" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
 def test_raw_foundry_agent_chat_client_get_agent_reference_with_version() -> None:
     """Test agent reference includes version when provided."""
 
@@ -127,6 +139,15 @@ def test_raw_foundry_agent_chat_client_as_agent_preserves_client_type() -> None:
     named_agent = client.as_agent(name="display-name", instructions="You are helpful.")
     assert named_agent.name == "display-name"
     assert named_agent.client.agent_name == "test-agent"
+
+
+def test_raw_foundry_agent_chat_client_as_agent_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawFoundryAgentChatClient.as_agent)
+
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 async def test_raw_foundry_agent_chat_client_prepare_options_validates_tools() -> None:
@@ -210,6 +231,17 @@ def test_foundry_agent_chat_client_init() -> None:
     assert client.agent_name == "test-agent"
 
 
+def test_foundry_agent_chat_client_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(_FoundryAgentChatClient.__init__)
+
+    assert "default_headers" in signature.parameters
+    assert "instruction_role" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
 def test_raw_foundry_agent_init_creates_client() -> None:
     """Test that RawFoundryAgent creates a client internally."""
 
@@ -239,6 +271,28 @@ def test_raw_foundry_agent_init_with_custom_client_type() -> None:
     )
 
     assert isinstance(agent.client, RawFoundryAgentChatClient)
+
+
+def test_raw_foundry_agent_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawFoundryAgent.__init__)
+
+    assert "instructions" in signature.parameters
+    assert "default_options" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_foundry_agent_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(FoundryAgent.__init__)
+
+    assert "instructions" in signature.parameters
+    assert "default_options" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert "additional_properties" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
 
 
 def test_raw_foundry_agent_init_rejects_invalid_client_type() -> None:

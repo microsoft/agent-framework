@@ -1,5 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+import inspect
 import json
 import os
 from typing import Any
@@ -11,6 +12,11 @@ from agent_framework import (
     Content,
     Message,
     SupportsChatGetResponse,
+    SupportsCodeInterpreterTool,
+    SupportsFileSearchTool,
+    SupportsImageGenerationTool,
+    SupportsMCPTool,
+    SupportsWebSearchTool,
     tool,
 )
 from agent_framework.exceptions import ChatClientException, SettingNotFoundError
@@ -20,7 +26,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from pydantic import BaseModel
 from pytest import param
 
-from agent_framework_openai import OpenAIChatCompletionClient
+from agent_framework_openai import OpenAIChatCompletionClient, RawOpenAIChatCompletionClient
 from agent_framework_openai._exceptions import OpenAIContentFilterException
 
 skip_if_openai_integration_tests_disabled = pytest.mark.skipif(
@@ -35,6 +41,41 @@ def test_init(openai_unit_test_env: dict[str, str]) -> None:
 
     assert open_ai_chat_completion.model == openai_unit_test_env["OPENAI_MODEL"]
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
+
+
+def test_get_response_docstring_surfaces_layered_runtime_docs() -> None:
+    docstring = inspect.getdoc(OpenAIChatCompletionClient.get_response)
+
+    assert docstring is not None
+    assert "Get a response from a chat client." in docstring
+    assert "function_invocation_kwargs" in docstring
+    assert "middleware: Optional per-call chat and function middleware." in docstring
+    assert "function_middleware: Optional per-call function middleware." not in docstring
+
+
+def test_get_response_is_defined_on_openai_class() -> None:
+    signature = inspect.signature(OpenAIChatCompletionClient.get_response)
+
+    assert OpenAIChatCompletionClient.get_response.__qualname__ == "OpenAIChatCompletionClient.get_response"
+    assert "middleware" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_init_uses_explicit_parameters() -> None:
+    signature = inspect.signature(RawOpenAIChatCompletionClient.__init__)
+
+    assert "additional_properties" in signature.parameters
+    assert "compaction_strategy" in signature.parameters
+    assert "tokenizer" in signature.parameters
+    assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_supports_web_search_only() -> None:
+    assert not isinstance(OpenAIChatCompletionClient, SupportsCodeInterpreterTool)
+    assert isinstance(OpenAIChatCompletionClient, SupportsWebSearchTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsImageGenerationTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsMCPTool)
+    assert not isinstance(OpenAIChatCompletionClient, SupportsFileSearchTool)
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:

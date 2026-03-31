@@ -341,8 +341,17 @@ internal static class ChatResponseUpdateAGUIExtensions
         };
 
         string? currentMessageId = null;
+        string? streamingMessageId = null;
         await foreach (var chatResponse in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
+            // Generate a fallback MessageId when the provider doesn't supply one.
+            // This ensures all AGUI events have a valid messageId regardless of agent type.
+            if (string.IsNullOrWhiteSpace(chatResponse.MessageId))
+            {
+                streamingMessageId ??= Guid.NewGuid().ToString("N");
+                chatResponse.MessageId = streamingMessageId;
+            }
+
             if (chatResponse is { Contents.Count: > 0 } &&
                 chatResponse.Contents[0] is TextContent &&
                 !string.Equals(currentMessageId, chatResponse.MessageId, StringComparison.Ordinal))

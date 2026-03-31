@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
 
 from agent_framework import (
@@ -15,6 +15,7 @@ from agent_framework import (
     FunctionInvocationLayer,
     load_settings,
 )
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
@@ -132,10 +133,13 @@ class RawFoundryChatClient(  # type: ignore[misc]
         model: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
     ) -> None:
         """Initialize a raw Microsoft Foundry chat client.
 
@@ -149,10 +153,13 @@ class RawFoundryChatClient(  # type: ignore[misc]
             credential: Azure credential or token provider for authentication.
                 Required when using ``project_endpoint`` without a ``project_client``.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
             instruction_role: The role to use for 'instruction' messages.
-            kwargs: Additional keyword arguments.
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
         """
         foundry_settings = load_settings(
             FoundrySettings,
@@ -195,8 +202,11 @@ class RawFoundryChatClient(  # type: ignore[misc]
         super().__init__(
             model=resolved_model,
             async_client=project_client.get_openai_client(),
+            default_headers=default_headers,
             instruction_role=instruction_role,
-            **kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
         )
         self.project_client = project_client
 
@@ -516,12 +526,15 @@ class FoundryChatClient(  # type: ignore[misc]
         model: str | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a Foundry chat client.
 
@@ -533,12 +546,15 @@ class FoundryChatClient(  # type: ignore[misc]
                 Can also be set via environment variable ``FOUNDRY_MODEL``.
             credential: Azure credential or token provider for authentication.
             allow_preview: Enables preview opt-in on internally-created AIProjectClient.
+            default_headers: Additional HTTP headers for requests made through the OpenAI client.
             env_file_path: Path to .env file for settings.
             env_file_encoding: Encoding for .env file.
             instruction_role: The role to use for 'instruction' messages.
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
-            kwargs: Additional keyword arguments.
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -546,10 +562,13 @@ class FoundryChatClient(  # type: ignore[misc]
             model=model,
             credential=credential,
             allow_preview=allow_preview,
+            default_headers=default_headers,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             instruction_role=instruction_role,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
-            **kwargs,
         )

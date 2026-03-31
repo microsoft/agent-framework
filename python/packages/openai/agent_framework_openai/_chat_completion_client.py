@@ -18,6 +18,7 @@ from itertools import chain
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework._clients import BaseChatClient
+from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._docstrings import apply_layered_docstring
 from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMiddlewareLayer
 from agent_framework._settings import SecretString
@@ -193,6 +194,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -210,6 +214,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             default_headers: Additional HTTP headers.
             async_client: Pre-configured OpenAI client.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before the process environment
                 for ``OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -229,6 +236,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncAzureOpenAI | AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
@@ -253,6 +263,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables for ``AZURE_OPENAI_*`` values.
             env_file_encoding: Encoding for the ``.env`` file.
@@ -273,9 +286,11 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         default_headers: Mapping[str, str] | None = None,
         async_client: AsyncOpenAI | None = None,
         instruction_role: str | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
-        **kwargs: Any,
     ) -> None:
         """Initialize a raw OpenAI Chat completion client.
 
@@ -306,11 +321,13 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             async_client: Pre-configured client. Passing ``AsyncAzureOpenAI`` keeps the client on
                 Azure; passing ``AsyncOpenAI`` keeps the client on OpenAI and bypasses env lookup.
             instruction_role: Role for instruction messages (for example ``"system"``).
+            compaction_strategy: Optional per-client compaction override.
+            tokenizer: Optional tokenizer for compaction strategies.
+            additional_properties: Additional properties stored on the client instance.
             env_file_path: Optional ``.env`` file that is checked before process environment
                 variables. The same file is used for both ``OPENAI_*`` and ``AZURE_OPENAI_*``
                 lookups.
             env_file_encoding: Encoding for the ``.env`` file.
-            kwargs: Additional keyword arguments forwarded to ``BaseChatClient``.
 
         Notes:
             Environment resolution and routing precedence are:
@@ -366,7 +383,11 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         if use_azure_client:
             self.OTEL_PROVIDER_NAME = "azure.ai.openai"  # type: ignore[misc]
 
-        super().__init__(**kwargs)
+        super().__init__(
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            additional_properties=additional_properties,
+        )
 
     # region Hosted Tool Factory Methods
 
@@ -427,7 +448,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -437,7 +461,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: OpenAIChatCompletionOptionsT | ChatOptions[None] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -447,7 +474,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[True],
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     @override
@@ -457,7 +487,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: bool = False,
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
-        **kwargs: Any,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
+        function_invocation_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the raw OpenAI chat client."""
         super_get_response = cast(
@@ -468,7 +501,10 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             messages=messages,
             stream=stream,
             options=options,
-            **kwargs,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
         )
 
     @override
@@ -1205,10 +1241,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: ChatOptions[ResponseModelBoundT],
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[ResponseModelBoundT]]: ...
 
     @overload
@@ -1218,10 +1255,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[False] = ...,
         options: OpenAIChatCompletionOptionsT | ChatOptions[None] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]]: ...
 
     @overload
@@ -1231,10 +1269,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: Literal[True],
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[ChatResponseUpdate, ChatResponse[Any]]: ...
 
     @override
@@ -1244,10 +1283,11 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         *,
         stream: bool = False,
         options: OpenAIChatCompletionOptionsT | ChatOptions[Any] | None = None,
+        compaction_strategy: CompactionStrategy | None = None,
+        tokenizer: TokenizerProtocol | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
-        **kwargs: Any,
     ) -> Awaitable[ChatResponse[Any]] | ResponseStream[ChatResponseUpdate, ChatResponse[Any]]:
         """Get a response from the OpenAI chat client with all standard layers enabled."""
         super_get_response = cast(
@@ -1261,9 +1301,10 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             messages=messages,
             stream=stream,
             options=options,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=effective_client_kwargs,
-            **kwargs,
         )
 
 
