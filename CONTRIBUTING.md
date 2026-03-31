@@ -106,13 +106,15 @@ Each language has its own dev setup guide, coding standards, and build scripts:
 - **Python**: [Dev Setup](./python/DEV_SETUP.md) · [Coding Standard](./python/CODING_STANDARD.md) · [README](./python/README.md)
   - From the `./python` directory:
     - Build: `uv run poe build`
-    - Test: `uv run poe test`
+    - Unit tests: `uv run poe test -A -m "not integration"`
+    - Integration tests: `uv run poe test -A -m integration` (requires API keys/endpoints)
     - Format + lint: `uv run poe syntax`
     - All checks: `uv run poe check`
 - **.NET**: [README](./dotnet/README.md) · [Agent Instructions](./dotnet/AGENTS.md)
   - From the `./dotnet` directory:
     - Build: `dotnet build`
-    - Test: `dotnet test`
+    - Unit tests: `dotnet test --filter-query "/*UnitTests*/*/*/*"`
+    - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
 
 ### Documentation Contributions
