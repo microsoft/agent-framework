@@ -92,7 +92,7 @@ We use and recommend the following workflow:
      "issue-123" or "githubhandle-issue".
 4. Make and commit your changes to your branch.
 5. Add new tests corresponding to your change, if applicable.
-6. Run the relevant scripts in [the section below](#development-scripts) to ensure that your build is clean and all tests are passing.
+6. Run the relevant scripts in [the section below](#development-setup) to ensure that your build is clean and all tests are passing.
 7. Create a PR against the repository's **main** branch.
    - State in the description what issue or improvement your change is addressing.
    - Verify that all the Continuous Integration checks are passing.
@@ -104,14 +104,16 @@ We use and recommend the following workflow:
 Each language has its own dev setup guide, coding standards, and build scripts:
 
 - **Python**: [Dev Setup](./python/DEV_SETUP.md) · [Coding Standard](./python/CODING_STANDARD.md) · [README](./python/README.md)
-  - Build: `uv run poe build`
-  - Test: `uv run poe test`
-  - Linting (auto-fix): `uv run poe syntax`
-  - All checks: `uv run poe check`
+  - From the `./python` directory:
+    - Build: `uv run poe build`
+    - Test: `uv run poe test`
+    - Format + lint: `uv run poe syntax`
+    - All checks: `uv run poe check`
 - **.NET**: [README](./dotnet/README.md) · [Agent Instructions](./dotnet/AGENTS.md)
-  - Build: `dotnet build`
-  - Test: `dotnet test`
-  - Linting (auto-fix): `dotnet format`
+  - From the `./dotnet` directory:
+    - Build: `dotnet build`
+    - Test: `dotnet test`
+    - Linting (auto-fix): `dotnet format`
 
 ### Documentation Contributions
 
