@@ -134,7 +134,7 @@ Recommended dependency workflow during connector implementation:
 pip install agent-framework-core          # Core only
 pip install agent-framework-core[all]     # Core + all connectors
 pip install agent-framework               # Same as core[all]
-pip install agent-framework-azure-ai      # Specific connector (pulls in core)
+pip install agent-framework-foundry       # Specific connector (pulls in core)
 ```
 
 ## Maintaining Documentation
@@ -143,3 +143,11 @@ When changing a package, check if its `AGENTS.md` needs updates:
 - Adding/removing/renaming public classes or functions
 - Changing the package's purpose or architecture
 - Modifying import paths or usage patterns
+
+When a package adds, removes, or renames environment variables, update the related documentation in the same
+change:
+- The package's `README.md` for package-level configuration/env var guidance
+- `samples/README.md` if the package is included in `packages/core/pyproject.toml` `[all]` and the env var is
+  part of the consolidated package env-var inventory
+- Any affected sample/package-local `.env.example`, `.env.template`, or sample README files when sample setup
+  changes alongside the package

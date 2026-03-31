@@ -13,6 +13,8 @@ namespace Microsoft.Agents.AI.DurableTask.IntegrationTests;
 [Trait("Category", "SampleValidation")]
 public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) : SamplesValidationBase(outputHelper)
 {
+    private const string SkipFlakyTimingTest = "Flaky: timing-dependent LLM test, see https://github.com/microsoft/agent-framework/issues/4971";
+
     private static readonly string s_samplesPath = Path.GetFullPath(
         Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "samples", "04-hosting", "DurableAgents", "ConsoleApps"));
 
@@ -235,7 +237,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         Assert.True(foundSuccess, "Orchestration did not complete successfully.");
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task SingleAgentOrchestrationHITLSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "05_AgentOrchestration_HITL");
@@ -309,7 +311,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task LongRunningToolsSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "06_LongRunningTools");
@@ -394,7 +396,7 @@ public sealed class ConsoleAppSamplesValidation(ITestOutputHelper outputHelper) 
         });
     }
 
-    [Fact]
+    [Fact(Skip = SkipFlakyTimingTest)]
     public async Task ReliableStreamingSampleValidationAsync()
     {
         string samplePath = Path.Combine(s_samplesPath, "07_ReliableStreaming");

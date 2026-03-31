@@ -20,7 +20,7 @@ internal sealed class HandoffTestEchoAgent(string id, string name, string prefix
         {
             IEnumerable<AITool>? handoffs = chatClientOptions.ChatOptions
                                                              .Tools?
-                                                             .Where(tool => tool.Name?.StartsWith(HandoffsWorkflowBuilder.FunctionPrefix,
+                                                             .Where(tool => tool.Name?.StartsWith(HandoffWorkflowBuilder.FunctionPrefix,
                                                                                                   StringComparison.OrdinalIgnoreCase) is true);
 
             if (handoffs != null)
@@ -58,7 +58,7 @@ internal static class Step12EntryPoint
             .Select(i => new HandoffTestEchoAgent($"{EchoAgentIdPrefix}{i}", $"{EchoAgentNamePrefix}{i}", EchoPrefixForAgent(i)))
             .ToArray();
 
-        return new HandoffsWorkflowBuilder(echoAgents[0])
+        return new HandoffWorkflowBuilder(echoAgents[0])
                    .WithHandoff(echoAgents[0], echoAgents[1])
                    .Build();
     }

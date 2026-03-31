@@ -21,11 +21,11 @@ This folder contains focused middleware samples for `Agent`, chat clients, tools
 
 ## Running the usage tracking sample
 
-The new usage tracking sample uses `OpenAIResponsesClient`, so set the usual OpenAI responses environment variables first:
+The new usage tracking sample uses `OpenAIChatClient`, so set the usual OpenAI responses environment variables first:
 
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
-export OPENAI_RESPONSES_MODEL_ID="gpt-4.1-mini"
+export OPENAI_RESPONSES_MODEL="gpt-4.1-mini"
 ```
 
 Then run:

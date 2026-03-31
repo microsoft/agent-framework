@@ -11,7 +11,7 @@ For more details on the Red Team setup see [the Azure AI Foundry docs](https://l
 A focused sample demonstrating Azure AI's RedTeam functionality to assess the safety and resilience of Agent Framework agents against adversarial attacks.
 
 **What it demonstrates:**
-1. Creating a financial advisor agent inline using `AzureOpenAIChatClient`
+1. Creating a financial advisor agent inline using `FoundryChatClient`
 2. Setting up an async callback to interface the agent with RedTeam evaluator
 3. Running comprehensive evaluations with 11 different attack strategies:
    - Basic: EASY and MODERATE difficulty levels
@@ -47,7 +47,7 @@ AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
 # AZURE_OPENAI_API_KEY is optional if using Azure CLI authentication
 
 # Azure AI Project (for red teaming)
-AZURE_AI_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
+FOUNDRY_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
 ```
 
 See `.env.example` for a template.
@@ -113,7 +113,7 @@ async def main() -> None:
     credential = AzureCliCredential()
 
     # 2. Create agent inline
-    agent = AzureOpenAIChatClient(credential=credential).as_agent(
+    agent = FoundryChatClient(credential=credential).as_agent(
         model="gpt-4o",
         instructions="You are a helpful financial advisor..."
     )
@@ -125,7 +125,7 @@ async def main() -> None:
 
     # 4. Run red team scan with multiple strategies
     red_team = RedTeam(
-        azure_ai_project=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        azure_ai_project=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         credential=credential
     )
     results = await red_team.scan(
@@ -174,7 +174,7 @@ Overall Attack Success Rate: 7.2%
 - [Azure AI Evaluation SDK](https://learn.microsoft.com/azure/ai-foundry/how-to/develop/evaluate-sdk)
 - [Risk and Safety Evaluations](https://learn.microsoft.com/azure/ai-foundry/concepts/evaluation-metrics-built-in#risk-and-safety-evaluators)
 - [Azure AI Red Teaming Notebook](https://github.com/Azure-Samples/azureai-samples/blob/main/scenarios/evaluate/AI_RedTeaming/AI_RedTeaming.ipynb)
-- [PyRIT - Python Risk Identification Toolkit](https://github.com/Azure/PyRIT)
+- [PyRIT - Python Risk Identification Toolkit](https://github.com/microsoft/PyRIT)
 
 ## Troubleshooting
 
