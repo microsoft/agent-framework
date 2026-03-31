@@ -99,15 +99,30 @@ We use and recommend the following workflow:
 8. Wait for feedback or approval of your changes from the code maintainers.
 9. When area owners have signed off, and all checks are green, your PR will be merged.
 
-### Development scripts
+### Development Setup
 
-The scripts below are used to build, test, and lint within the project.
+Each language has its own dev setup guide, coding standards, and build scripts:
 
-- Python: see [python/DEV_SETUP.md](./python/DEV_SETUP.md).
-- .NET:
+- **Python**: [Dev Setup](./python/DEV_SETUP.md) · [Coding Standard](./python/CODING_STANDARD.md) · [README](./python/README.md)
+  - Build: `uv run poe build`
+  - Test: `uv run poe test`
+  - Linting (auto-fix): `uv run poe syntax`
+  - All checks: `uv run poe check`
+- **.NET**: [README](./dotnet/README.md) · [Agent Instructions](./dotnet/AGENTS.md)
   - Build: `dotnet build`
   - Test: `dotnet test`
   - Linting (auto-fix): `dotnet format`
+
+### Documentation Contributions
+
+When contributing documentation changes:
+
+- Ensure all Markdown links are valid. A [link checker](./.github/workflows/markdown-link-check.yml)
+  runs in CI on every PR that modifies `.md` files.
+- Keep documentation host-agnostic where possible, and include examples for
+  both C# and Python when applicable.
+- For docs under `docs/features/durable-agents/`, follow the
+  [writing guidelines](./docs/features/durable-agents/AGENTS.md) in that area.
 
 ### PR - CI Process
 
