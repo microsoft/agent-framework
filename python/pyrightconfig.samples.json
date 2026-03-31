@@ -8,7 +8,8 @@
         "**/_to_delete/**",
         "**/05-end-to-end/**",
         "**/agent_with_foundry_tracing.py",
-        "**/azure_responses_client_with_foundry.py"
+        "**/azure_responses_client_with_foundry.py",
+        "**/context_providers/neo4j_graphrag/**"
     ],
     "typeCheckingMode": "off",
     "reportMissingImports": "error",

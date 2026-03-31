@@ -3,7 +3,6 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.OpenAI;
 using Microsoft.Extensions.AI;
 using Neo4j.AgentFramework.GraphRAG;
 using Neo4j.Driver;
@@ -15,7 +14,7 @@ var neo4jUsername = Environment.GetEnvironmentVariable("NEO4J_USERNAME") ?? "neo
 var neo4jPassword = Environment.GetEnvironmentVariable("NEO4J_PASSWORD") ?? throw new InvalidOperationException("NEO4J_PASSWORD is not set.");
 var fulltextIndex = Environment.GetEnvironmentVariable("NEO4J_FULLTEXT_INDEX_NAME") ?? "search_chunks";
 
-const string retrievalQuery = """
+const string RetrievalQuery = """
     MATCH (node)-[:FROM_DOCUMENT]->(doc:Document)<-[:FILED]-(company:Company)
     OPTIONAL MATCH (company)-[:FACES_RISK]->(risk:RiskFactor)
     WITH node, score, company, doc, collect(DISTINCT risk.name)[0..5] AS risks
@@ -41,7 +40,7 @@ await using var provider = new Neo4jContextProvider(
     {
         IndexName = fulltextIndex,
         IndexType = IndexType.Fulltext,
-        RetrievalQuery = retrievalQuery,
+        RetrievalQuery = RetrievalQuery,
         TopK = 5,
         ContextPrompt = "Use the retrieved Neo4j graph context to answer accurately and call out when context is missing."
     });

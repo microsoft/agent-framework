@@ -9,7 +9,8 @@
         "**/05-end-to-end/**",
         "**/agent_with_foundry_tracing.py",
         "**/azure_responses_client_with_foundry.py",
-        "**/github_copilot/**"
+        "**/github_copilot/**",
+        "**/context_providers/neo4j_graphrag/**"
     ],
     "typeCheckingMode": "off",
     "reportMissingImports": "error",
