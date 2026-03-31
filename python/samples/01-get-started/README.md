@@ -9,6 +9,13 @@ concepts of **Agent Framework** one step at a time.
 pip install agent-framework --pre
 ```
 
+Set the required environment variables:
+
+```bash
+export FOUNDRY_PROJECT_ENDPOINT="https://your-project-endpoint"
+export FOUNDRY_MODEL="gpt-4o"   # optional, defaults to gpt-4o
+```
+
 ## Samples
 
 | # | File | What you'll learn |

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import warnings
 from collections.abc import AsyncIterable, Awaitable, MutableSequence, Sequence
 from typing import Any, Generic
 from unittest.mock import patch
@@ -10,7 +11,13 @@ from uuid import uuid4
 
 from pytest import fixture
 
-from agent_framework import (
+warnings.filterwarnings(
+    "ignore",
+    message=r"\[SKILLS\].*",
+    category=FutureWarning,
+)
+
+from agent_framework import (  # noqa: E402
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
@@ -26,8 +33,8 @@ from agent_framework import (
     SupportsAgentRun,
     tool,
 )
-from agent_framework._clients import OptionsCoT
-from agent_framework.observability import ChatTelemetryLayer
+from agent_framework._clients import OptionsCoT  # noqa: E402
+from agent_framework.observability import ChatTelemetryLayer  # noqa: E402
 
 if sys.version_info >= (3, 12):
     from typing import override  # type: ignore
