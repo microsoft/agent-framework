@@ -160,6 +160,8 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
     bool ISuperStepRunner.HasUnservicedRequests => this.RunContext.HasUnservicedRequests;
     bool ISuperStepRunner.HasUnprocessedMessages => this.RunContext.NextStepHasActions;
+    bool ISuperStepRunner.TryGetResponsePortExecutorId(string portId, out string? executorId)
+        => this.RunContext.TryGetResponsePortExecutorId(portId, out executorId);
 
     public bool IsCheckpointingEnabled => this.RunContext.IsCheckpointingEnabled;
 

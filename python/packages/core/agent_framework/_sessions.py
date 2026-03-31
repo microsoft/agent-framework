@@ -16,7 +16,7 @@ import copy
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from ._types import AgentResponse, Message
 
@@ -92,7 +92,7 @@ def _deserialize_value(value: Any) -> Any:
                 from pydantic import BaseModel
 
                 if issubclass(cls, BaseModel):
-                    data = {k: v for k, v in value.items() if k != "type"}
+                    data: dict[str, Any] = {str(k): v for k, v in value.items() if k != "type"}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                     return cls.model_validate(data)
             except ImportError:
                 pass
@@ -229,8 +229,11 @@ class SessionContext:
             tools: The tools to add.
         """
         for tool in tools:
-            if hasattr(tool, "additional_properties") and isinstance(tool.additional_properties, dict):
-                tool.additional_properties["context_source"] = source_id
+            if hasattr(tool, "additional_properties"):
+                additional_properties_obj = tool.additional_properties
+                if isinstance(additional_properties_obj, dict):
+                    additional_properties = cast(dict[str, Any], additional_properties_obj)
+                    additional_properties["context_source"] = source_id
         self.tools.extend(tools)
 
     def get_messages(
@@ -389,12 +392,16 @@ class BaseHistoryProvider(BaseContextProvider):
         self.store_outputs = store_outputs
 
     @abstractmethod
-    async def get_messages(self, session_id: str | None, **kwargs: Any) -> list[Message]:
+    async def get_messages(
+        self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[Message]:
         """Retrieve stored messages for this session.
 
         Args:
             session_id: The session ID to retrieve messages for.
-            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
+            state: Optional session state for providers that persist in session state.
+                Not used by all providers.
+            **kwargs: Additional subclass-specific extensibility arguments.
 
         Returns:
             List of stored messages.
@@ -402,13 +409,22 @@ class BaseHistoryProvider(BaseContextProvider):
         ...
 
     @abstractmethod
-    async def save_messages(self, session_id: str | None, messages: Sequence[Message], **kwargs: Any) -> None:
+    async def save_messages(
+        self,
+        session_id: str | None,
+        messages: Sequence[Message],
+        *,
+        state: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Persist messages for this session.
 
         Args:
             session_id: The session ID to store messages for.
             messages: The messages to persist.
-            **kwargs: Additional arguments (e.g., ``state`` for in-memory providers).
+            state: Optional session state for providers that persist in session state.
+                Not used by all providers.
+            **kwargs: Additional subclass-specific extensibility arguments.
         """
         ...
 
@@ -544,6 +560,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
         store_context_messages: bool = False,
         store_context_from: set[str] | None = None,
         store_outputs: bool = True,
+        skip_excluded: bool = False,
     ) -> None:
         """Initialize the in-memory history provider.
 
@@ -555,6 +572,11 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
             store_context_messages: Whether to store context from other providers.
             store_context_from: If set, only store context from these source_ids.
             store_outputs: Whether to store response messages.
+            skip_excluded: When True, ``get_messages`` omits messages whose
+                ``additional_properties["_excluded"]`` is truthy. This is
+                useful when a ``CompactionProvider`` marks messages as excluded
+                in stored history and you want the loaded context to reflect
+                those exclusions. Defaults to False (load all messages).
         """
         super().__init__(
             source_id=source_id or self.DEFAULT_SOURCE_ID,
@@ -564,6 +586,7 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
             store_context_from=store_context_from,
             store_outputs=store_outputs,
         )
+        self.skip_excluded = skip_excluded
 
     async def get_messages(
         self, session_id: str | None, *, state: dict[str, Any] | None = None, **kwargs: Any
@@ -571,7 +594,10 @@ class InMemoryHistoryProvider(BaseHistoryProvider):
         """Retrieve messages from session state."""
         if state is None:
             return []
-        return list(state.get("messages", []))
+        messages = list(state.get("messages", []))
+        if self.skip_excluded:
+            messages = [m for m in messages if not m.additional_properties.get("_excluded", False)]
+        return messages
 
     async def save_messages(
         self,

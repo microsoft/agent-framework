@@ -10,6 +10,8 @@ using Azure.AI.Projects;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
+#pragma warning disable CS0618
+[Obsolete("Uses obsolete AIProjectClient.GetAIAgentAsync compatibility extensions while validating chat-client behavior.")]
 public class AzureAIProjectChatClientTests
 {
     /// <summary>
@@ -22,7 +24,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -43,9 +45,12 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+        AIProjectClient projectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await client.GetAIAgentAsync(
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
@@ -71,7 +76,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -92,9 +97,12 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+        AIProjectClient projectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await client.GetAIAgentAsync(
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
@@ -120,7 +128,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -141,9 +149,12 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+        AIProjectClient projectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await client.GetAIAgentAsync(
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
@@ -169,7 +180,7 @@ public class AzureAIProjectChatClientTests
         var requestTriggered = false;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
-            if (request.RequestUri!.PathAndQuery.Contains("openai/responses"))
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
                 requestTriggered = true;
 
@@ -190,9 +201,12 @@ public class AzureAIProjectChatClientTests
         using var httpClient = new HttpClient(httpHandler);
 #pragma warning restore CA5399
 
-        var client = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
+        AIProjectClient projectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await client.GetAIAgentAsync(
+        var agent = await projectClient.GetAIAgentAsync(
             new ChatClientAgentOptions
             {
                 Name = "test-agent",
@@ -208,3 +222,4 @@ public class AzureAIProjectChatClientTests
         Assert.Equal("resp_0888a46cbf2b1ff3006914596e05d08195a77c3f5187b769a7", chatClientSession.ConversationId);
     }
 }
+#pragma warning restore CS0618

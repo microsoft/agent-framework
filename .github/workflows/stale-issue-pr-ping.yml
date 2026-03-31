@@ -1,0 +1,49 @@
+name: Stale issue and PR ping
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Midnight UTC daily
+  workflow_dispatch:
+    inputs:
+      days_threshold:
+        description: 'Days of silence before pinging the author'
+        required: false
+        default: '4'
+      dry_run:
+        description: 'Log what would be pinged without taking action'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: stale-issue-pr-ping
+  cancel-in-progress: true
+
+jobs:
+  ping_stale:
+    name: "Ping stale issues and PRs"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install PyGithub==2.6.0
+
+      - name: Run stale issue/PR ping
+        run: python .github/scripts/stale_issue_pr_ping.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_ACTIONS_PR_WRITE }}
+          TEAM_SLUG: ${{ secrets.DEVELOPER_TEAM }}
+          DAYS_THRESHOLD: ${{ github.event.inputs.days_threshold || '4' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}

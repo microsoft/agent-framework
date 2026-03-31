@@ -133,43 +133,47 @@ class CopilotStudioAgent(BaseAgent):
                 env_file_path=env_file_path,
                 env_file_encoding=env_file_encoding,
             )
+            resolved_environment_id = copilot_studio_settings.get("environmentid")
+            resolved_agent_identifier = copilot_studio_settings.get("schemaname")
+            resolved_client_id = copilot_studio_settings.get("agentappid")
+            resolved_tenant_id = copilot_studio_settings.get("tenantid")
 
             if not settings:
-                if not copilot_studio_settings["environmentid"]:
+                if not resolved_environment_id:
                     raise ValueError(
                         "Copilot Studio environment ID is required. Set via 'environment_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__ENVIRONMENTID' environment variable."
                     )
-                if not copilot_studio_settings["schemaname"]:
+                if not resolved_agent_identifier:
                     raise ValueError(
                         "Copilot Studio agent identifier/schema name is required. Set via 'agent_identifier' parameter "
                         "or 'COPILOTSTUDIOAGENT__SCHEMANAME' environment variable."
                     )
 
                 settings = ConnectionSettings(
-                    environment_id=copilot_studio_settings["environmentid"],
-                    agent_identifier=copilot_studio_settings["schemaname"],
+                    environment_id=resolved_environment_id,
+                    agent_identifier=resolved_agent_identifier,
                     cloud=cloud,
                     copilot_agent_type=agent_type,
                     custom_power_platform_cloud=custom_power_platform_cloud,
                 )
 
             if not token:
-                if not copilot_studio_settings["agentappid"]:
+                if not resolved_client_id:
                     raise ValueError(
                         "Copilot Studio client ID is required. Set via 'client_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__AGENTAPPID' environment variable."
                     )
 
-                if not copilot_studio_settings["tenantid"]:
+                if not resolved_tenant_id:
                     raise ValueError(
                         "Copilot Studio tenant ID is required. Set via 'tenant_id' parameter "
                         "or 'COPILOTSTUDIOAGENT__TENANTID' environment variable."
                     )
 
                 token = acquire_token(
-                    client_id=copilot_studio_settings["agentappid"],
-                    tenant_id=copilot_studio_settings["tenantid"],
+                    client_id=resolved_client_id,
+                    tenant_id=resolved_tenant_id,
                     username=username,
                     token_cache=token_cache,
                     scopes=scopes,
@@ -192,7 +196,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: Literal[False] = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -202,7 +205,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: Literal[True],
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -211,7 +213,6 @@ class CopilotStudioAgent(BaseAgent):
         *,
         stream: bool = False,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -225,22 +226,20 @@ class CopilotStudioAgent(BaseAgent):
         Keyword Args:
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
-            kwargs: Additional keyword arguments.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
             When stream=True: A ResponseStream of AgentResponseUpdate items.
         """
         if stream:
-            return self._run_stream_impl(messages=messages, session=session, **kwargs)
-        return self._run_impl(messages=messages, session=session, **kwargs)
+            return self._run_stream_impl(messages=messages, session=session)
+        return self._run_impl(messages=messages, session=session)
 
     async def _run_impl(
         self,
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> AgentResponse:
         """Non-streaming implementation of run."""
         if not session:
@@ -265,7 +264,6 @@ class CopilotStudioAgent(BaseAgent):
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Streaming implementation of run."""
 

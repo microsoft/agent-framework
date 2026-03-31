@@ -70,6 +70,12 @@ public sealed class OpenTelemetryAgent : DelegatingAIAgent, IDisposable
     /// and outputs, such as message content, function call arguments, and function call results.
     /// The default value can be overridden by setting the <c>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</c>
     /// environment variable to "true". Explicitly setting this property will override the environment variable.
+    /// <para>
+    /// <strong>Security consideration:</strong> When sensitive data capture is enabled, the full text of chat messages —
+    /// including user inputs, LLM responses, function call arguments, and function results — is emitted as telemetry.
+    /// This data may contain PII or other sensitive information. Ensure that your telemetry pipeline is configured
+    /// with appropriate access controls and data retention policies.
+    /// </para>
     /// </remarks>
     public bool EnableSensitiveData
     {

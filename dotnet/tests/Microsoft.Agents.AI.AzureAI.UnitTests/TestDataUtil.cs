@@ -2,7 +2,7 @@
 
 using System.ClientModel.Primitives;
 using System.IO;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
@@ -63,8 +63,8 @@ internal static class TestDataUtil
         json = ApplyInstructions(json, instructions);
         json = ApplyDescription(json, description);
         // Remove the version and id fields to simulate hosted agents without version
-        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",");
-        json = json.Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
+        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",")
+            .Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
         return json;
     }
 
@@ -79,8 +79,8 @@ internal static class TestDataUtil
         json = ApplyInstructions(json, instructions);
         json = ApplyDescription(json, description);
         // Remove the version and id fields to simulate hosted agents without version
-        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",");
-        json = json.Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
+        json = json.Replace("\"version\": \"1\",", "\"version\": \"\",")
+            .Replace("\"id\": \"agent_abc123:1\",", "\"id\": \"\",");
         return json;
     }
 

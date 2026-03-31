@@ -7,16 +7,19 @@ using Microsoft.Agents.AI;
 
 namespace AzureAI.IntegrationTests;
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
+[Obsolete("Use FoundryVersionedAgentRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientAgentRunStreamingPreviousResponseTests() : RunStreamingTests<AIProjectClientFixture>(() => new())
 {
-    [Fact(Skip = "No messages is not supported")]
     public override Task RunWithNoMessageDoesNotFailAsync()
     {
-        return Task.CompletedTask;
+        Assert.Skip("No messages is not supported");
+        return base.RunWithNoMessageDoesNotFailAsync();
     }
 }
 
-public class AIProjectClientAgentRunStreamingConversationTests() : RunTests<AIProjectClientFixture>(() => new())
+[Obsolete("Use FoundryVersionedAgentRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
+public class AIProjectClientAgentRunStreamingConversationTests() : RunStreamingTests<AIProjectClientFixture>(() => new())
 {
     public override Func<Task<AgentRunOptions?>> AgentRunOptionsFactory => async () =>
     {
@@ -24,9 +27,9 @@ public class AIProjectClientAgentRunStreamingConversationTests() : RunTests<AIPr
         return new ChatClientAgentRunOptions(new() { ConversationId = conversationId });
     };
 
-    [Fact(Skip = "No messages is not supported")]
     public override Task RunWithNoMessageDoesNotFailAsync()
     {
-        return Task.CompletedTask;
+        Assert.Skip("No messages is not supported");
+        return base.RunWithNoMessageDoesNotFailAsync();
     }
 }

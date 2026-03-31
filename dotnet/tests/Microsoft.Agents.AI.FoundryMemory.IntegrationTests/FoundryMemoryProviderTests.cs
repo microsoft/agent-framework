@@ -1,9 +1,10 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
+
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
-using Azure.Identity;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 
@@ -29,21 +30,21 @@ public sealed class FoundryMemoryProviderTests : IDisposable
     public FoundryMemoryProviderTests()
     {
         IConfigurationRoot configuration = new ConfigurationBuilder()
-            .AddJsonFile(path: "testsettings.json", optional: true, reloadOnChange: true)
             .AddJsonFile(path: "testsettings.development.json", optional: true, reloadOnChange: true)
             .AddEnvironmentVariables()
             .AddUserSecrets<FoundryMemoryProviderTests>(optional: true)
             .Build();
 
-        var foundrySettings = configuration.GetSection("FoundryMemory").Get<FoundryMemoryConfiguration>();
+        var endpoint = configuration[TestSettings.AzureAIProjectEndpoint];
+        var memoryStoreName = configuration[TestSettings.AzureAIMemoryStoreId];
+        var deploymentName = configuration[TestSettings.AzureAIModelDeploymentName];
 
-        if (foundrySettings is not null &&
-            !string.IsNullOrWhiteSpace(foundrySettings.Endpoint) &&
-            !string.IsNullOrWhiteSpace(foundrySettings.MemoryStoreName))
+        if (!string.IsNullOrWhiteSpace(endpoint) &&
+            !string.IsNullOrWhiteSpace(memoryStoreName))
         {
-            this._client = new AIProjectClient(new Uri(foundrySettings.Endpoint), new AzureCliCredential());
-            this._memoryStoreName = foundrySettings.MemoryStoreName;
-            this._deploymentName = foundrySettings.DeploymentName ?? "gpt-4.1-mini";
+            this._client = new AIProjectClient(new Uri(endpoint), TestAzureCliCredentials.CreateAzureCliCredential());
+            this._memoryStoreName = memoryStoreName;
+            this._deploymentName = deploymentName ?? "gpt-4.1-mini";
         }
     }
 

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import cast
 
 from agent_framework import (
@@ -8,7 +9,7 @@ from agent_framework import (
     AgentResponseUpdate,
     Message,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import GroupChatBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -25,7 +26,9 @@ What it does:
 - Coordinates a researcher and writer agent to solve tasks collaboratively
 
 Prerequisites:
-- OpenAI environment variables configured for OpenAIChatClient
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 ORCHESTRATOR_AGENT_INSTRUCTIONS = """
@@ -39,8 +42,12 @@ Guidelines:
 
 
 async def main() -> None:
-    # Create a chat client using Azure OpenAI and Azure CLI credentials for all agents
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Create a Responses client using Azure OpenAI and Azure CLI credentials for all agents
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     # Orchestrator agent that manages the conversation
     # Note: This agent (and the underlying chat client) must support structured outputs.

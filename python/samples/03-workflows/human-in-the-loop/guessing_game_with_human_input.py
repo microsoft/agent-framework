@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass
 
 from agent_framework import (
+    Agent,
     AgentExecutorRequest,
     AgentExecutorResponse,
     AgentResponseUpdate,
@@ -17,7 +18,7 @@ from agent_framework import (
     handler,
     response_handler,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -42,8 +43,8 @@ Demonstrate:
 - Driving the loop in application code with run and responses parameter.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 - Basic familiarity with WorkflowBuilder, executors, edges, events, and streaming runs.
 """
@@ -102,12 +103,19 @@ class TurnManager(Executor):
         """Handle the agent's guess and request human guidance.
 
         Steps:
-        1) Parse the agent's JSON into GuessOutput for robustness.
+        1) Use .value to access the parsed structured output directly.
         2) Request info with a HumanFeedbackRequest as the payload.
         """
-        # Parse structured model output
-        text = result.agent_response.text
-        last_guess = GuessOutput.model_validate_json(text).guess
+        # Access the parsed structured model output via .value.
+        # Since the agent is configured with response_format=GuessOutput,
+        # .value returns the parsed GuessOutput instance directly.
+        agent_value = result.agent_response.value
+        if agent_value is None:
+            raise RuntimeError(
+                "AgentResponse.value is None. Ensure that the agent is invoked with "
+                "options={'response_format': GuessOutput} so structured output is available."
+            )
+        last_guess = agent_value.guess
 
         # Craft a precise human prompt that defines higher and lower relative to the agent's guess.
         prompt = (
@@ -189,11 +197,12 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 async def main() -> None:
     """Run the human-in-the-loop guessing game workflow."""
     # Create agent and executor
-    guessing_agent = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    guessing_agent = Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="GuessingAgent",
         instructions=(
             "You guess a number between 1 and 10. "

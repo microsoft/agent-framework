@@ -4,7 +4,7 @@ description = "Amazon Bedrock integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
-version = "1.0.0b260219"
+version = "1.0.0b260330"
 license-files = ["LICENSE"]
 urls.homepage = "https://aka.ms/agent-framework"
 urls.source = "https://github.com/microsoft/agent-framework/tree/main/python"
@@ -23,11 +23,10 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-    "agent-framework-core>=1.0.0rc1",
+    "agent-framework-core>=1.0.0rc6",
     "boto3>=1.35.0,<2.0.0",
     "botocore>=1.35.0,<2.0.0",
 ]
-
 
 [tool.uv]
 prerelease = "if-necessary-or-explicit"
@@ -46,6 +45,9 @@ addopts = "-ra -q -r fEX"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = []
+markers = [
+    "integration: marks tests as integration tests that require external services",
+]
 timeout = 120
 
 [tool.ruff]
@@ -58,6 +60,7 @@ omit = [
 
 [tool.pyright]
 extends = "../../pyproject.toml"
+include = ["agent_framework_bedrock"]
 
 [tool.mypy]
 plugins = ['pydantic.mypy']
@@ -81,9 +84,13 @@ exclude_dirs = ["tests"]
 executor.type = "uv"
 include = "../../shared_tasks.toml"
 
-[tool.poe.tasks]
-mypy = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_bedrock"
-test = "pytest --cov=agent_framework_bedrock --cov-report=term-missing:skip-covered tests"
+[tool.poe.tasks.mypy]
+help = "Run MyPy for this package."
+cmd = "mypy --config-file $POE_ROOT/pyproject.toml agent_framework_bedrock"
+
+[tool.poe.tasks.test]
+help = "Run the default unit test suite for this package."
+cmd = 'pytest -m "not integration" --cov=agent_framework_bedrock --cov-report=term-missing:skip-covered tests'
 
 [build-system]
 requires = ["hatchling"]

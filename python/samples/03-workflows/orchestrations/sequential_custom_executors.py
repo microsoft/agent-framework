@@ -1,16 +1,18 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Executor,
     Message,
     WorkflowContext,
     handler,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -32,7 +34,9 @@ Custom executor contract:
 - Emit the updated conversation via ctx.send_message([...])
 
 Prerequisites:
-- Azure OpenAI access configured for AzureOpenAIChatClient (use az login + env vars)
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+- Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
@@ -62,8 +66,13 @@ class Summarizer(Executor):
 
 async def main() -> None:
     # 1) Create a content agent
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
-    content = client.as_agent(
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
+    content = Agent(
+        client=client,
         instructions="Produce a concise paragraph answering the user's request.",
         name="content",
     )

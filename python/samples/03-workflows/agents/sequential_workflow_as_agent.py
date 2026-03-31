@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
-
 import asyncio
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -15,7 +15,7 @@ load_dotenv()
 Sample: Build a sequential workflow orchestration and wrap it as an agent.
 
 The script assembles a sequential conversation flow with `SequentialBuilder`, then
-invokes the entire orchestration through the `workflow.as_agent(...)` interface so
+invokes the entire orchestration through the `Agent(client=workflow,...)` interface so
 other coordinators can reuse the chain as a single participant.
 
 Note on internal adapters:
@@ -26,25 +26,27 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI access configured for AzureOpenAIResponsesClient (use az login + env vars)
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )
@@ -53,7 +55,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Treat the workflow itself as an agent for follow-up invocations
-    agent = workflow.as_agent(name="SequentialWorkflowAgent")
+    agent = workflow.as_agent()
     prompt = "Write a tagline for a budget-friendly eBike."
     agent_response = await agent.run(prompt)
 

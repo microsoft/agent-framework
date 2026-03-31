@@ -1,11 +1,14 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Net;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Agents.AI.DurableTask;
+using Microsoft.Agents.AI.DurableTask.Workflows;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Extensions.Mcp;
 using Microsoft.Azure.Functions.Worker.Http;
+using Microsoft.DurableTask;
 using Microsoft.DurableTask.Client;
 using Microsoft.DurableTask.Worker.Grpc;
 using Microsoft.Extensions.AI;
@@ -21,6 +24,204 @@ internal static class BuiltInFunctions
     internal static readonly string RunAgentHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunAgentHttpAsync)}";
     internal static readonly string RunAgentEntityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeAgentAsync)}";
     internal static readonly string RunAgentMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunMcpToolAsync)}";
+    internal static readonly string RunWorkflowOrchestrationHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestrationHttpTriggerAsync)}";
+    internal static readonly string RunWorkflowOrchestrationFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowOrchestration)}";
+    internal static readonly string InvokeWorkflowActivityFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(InvokeWorkflowActivityAsync)}";
+    internal static readonly string GetWorkflowStatusHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(GetWorkflowStatusAsync)}";
+    internal static readonly string RespondToWorkflowHttpFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RespondToWorkflowAsync)}";
+    internal static readonly string RunWorkflowMcpToolFunctionEntryPoint = $"{typeof(BuiltInFunctions).FullName!}.{nameof(RunWorkflowMcpToolAsync)}";
+
+#pragma warning disable IL3000 // Avoid accessing Assembly file path when publishing as a single file - Azure Functions does not use single-file publishing
+    internal static readonly string ScriptFile = Path.GetFileName(typeof(BuiltInFunctions).Assembly.Location);
+#pragma warning restore IL3000
+
+    /// <summary>
+    /// Starts a workflow orchestration in response to an HTTP request.
+    /// The workflow name is derived from the function name by stripping the <see cref="HttpPrefix"/>.
+    /// Callers can optionally provide a custom run ID via the <c>runId</c> query string parameter
+    /// (e.g., <c>/api/workflows/MyWorkflow/run?runId=my-id</c>). If not provided, one is auto-generated.
+    /// </summary>
+    public static async Task<HttpResponseData> RunWorkflowOrchestrationHttpTriggerAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string workflowName = context.FunctionDefinition.Name.Replace(HttpPrefix, string.Empty);
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+        string? inputMessage = await req.ReadAsStringAsync();
+
+        if (string.IsNullOrEmpty(inputMessage))
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Workflow input cannot be empty.");
+        }
+
+        DurableWorkflowInput<string> orchestrationInput = new() { Input = inputMessage };
+
+        // Allow users to provide a custom run ID via query string; otherwise, auto-generate one.
+        string? instanceId = req.Query["runId"];
+        StartOrchestrationOptions? options = instanceId is not null ? new StartOrchestrationOptions(instanceId) : null;
+        string resolvedInstanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput, options);
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteStringAsync($"Workflow orchestration started for {workflowName}. Orchestration runId: {resolvedInstanceId}");
+        return response;
+    }
+
+    /// <summary>
+    /// Returns the workflow status including any pending HITL requests.
+    /// The run ID is extracted from the route parameter <c>{runId}</c>.
+    /// </summary>
+    public static async Task<HttpResponseData> GetWorkflowStatusAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string? runId = context.BindingContext.BindingData.TryGetValue("runId", out object? value) ? value?.ToString() : null;
+        if (string.IsNullOrEmpty(runId))
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Run ID is required.");
+        }
+
+        OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
+        if (metadata is null)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
+        }
+
+        // Parse HITL inputs the workflow is waiting for from the durable workflow status
+        List<PendingRequestPortStatus>? waitingForInput = null;
+        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus)
+            && liveStatus.PendingEvents.Count > 0)
+        {
+            waitingForInput = liveStatus.PendingEvents;
+        }
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.OK);
+        await response.WriteAsJsonAsync(new
+        {
+            runId,
+            status = metadata.RuntimeStatus.ToString(),
+            waitingForInput = waitingForInput?.Select(p => new { eventName = p.EventName, input = JsonDocument.Parse(p.Input).RootElement })
+        });
+        return response;
+    }
+
+    /// <summary>
+    /// Sends a response to a pending RequestPort, resuming the workflow.
+    /// Expects a JSON body: <c>{ "eventName": "...", "response": { ... } }</c>.
+    /// </summary>
+    public static async Task<HttpResponseData> RespondToWorkflowAsync(
+        [HttpTrigger] HttpRequestData req,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext context)
+    {
+        string? runId = context.BindingContext.BindingData.TryGetValue("runId", out object? value) ? value?.ToString() : null;
+        if (string.IsNullOrEmpty(runId))
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Run ID is required.");
+        }
+
+        WorkflowRespondRequest? request;
+        try
+        {
+            request = await req.ReadFromJsonAsync<WorkflowRespondRequest>(context.CancellationToken);
+        }
+        catch (JsonException)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Request body is not valid JSON.");
+        }
+
+        if (request is null || string.IsNullOrEmpty(request.EventName)
+            || request.Response.ValueKind == JsonValueKind.Undefined)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest, "Body must contain a non-empty 'eventName' and a 'response' property.");
+        }
+
+        // Verify the orchestration exists and is in a valid state
+        OrchestrationMetadata? metadata = await client.GetInstanceAsync(runId, getInputsAndOutputs: true);
+        if (metadata is null)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.NotFound, $"Workflow run '{runId}' not found.");
+        }
+
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Completed
+            or OrchestrationRuntimeStatus.Failed
+            or OrchestrationRuntimeStatus.Terminated)
+        {
+            return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                $"Workflow run '{runId}' is in terminal state '{metadata.RuntimeStatus}'.");
+        }
+
+        // Verify the workflow is waiting for the specified event.
+        // If status can't be parsed (e.g., not yet set during early execution), allow the event through —
+        // Durable Task safely queues it until the orchestration reaches WaitForExternalEvent.
+        bool eventValidated = false;
+        if (DurableWorkflowLiveStatus.TryParse(metadata.SerializedCustomStatus, out DurableWorkflowLiveStatus liveStatus))
+        {
+            if (!liveStatus.PendingEvents.Exists(p => string.Equals(p.EventName, request.EventName, StringComparison.Ordinal)))
+            {
+                return await CreateErrorResponseAsync(req, context, HttpStatusCode.BadRequest,
+                    $"Workflow is not waiting for event '{request.EventName}'.");
+            }
+
+            eventValidated = true;
+        }
+
+        // Raise the external event to unblock the orchestration's WaitForExternalEvent call
+        await client.RaiseEventAsync(runId, request.EventName, request.Response.GetRawText());
+
+        HttpResponseData response = req.CreateResponse(HttpStatusCode.Accepted);
+        await response.WriteAsJsonAsync(new
+        {
+            message = eventValidated
+                ? "Response sent to workflow."
+                : "Response sent to workflow. Event could not be validated against pending requests.",
+            runId,
+            eventName = request.EventName,
+            validated = eventValidated,
+        });
+        return response;
+    }
+
+    /// <summary>
+    /// Executes a workflow activity by looking up the registered executor and delegating to it.
+    /// The executor name is derived from the activity function name via <see cref="WorkflowNamingHelper"/>.
+    /// </summary>
+    public static Task<string> InvokeWorkflowActivityAsync(
+        [ActivityTrigger] string input,
+        [DurableClient] DurableTaskClient durableTaskClient,
+        FunctionContext functionContext)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        ArgumentNullException.ThrowIfNull(durableTaskClient);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
+        string activityFunctionName = functionContext.FunctionDefinition.Name;
+        string executorName = WorkflowNamingHelper.ToWorkflowName(activityFunctionName);
+
+        DurableOptions durableOptions = functionContext.InstanceServices.GetRequiredService<DurableOptions>();
+        if (!durableOptions.Workflows.Executors.TryGetExecutor(executorName, out ExecutorRegistration? registration))
+        {
+            throw new InvalidOperationException($"Executor '{executorName}' not found in workflow options.");
+        }
+
+        return DurableActivityExecutor.ExecuteAsync(registration.Binding, input, functionContext.CancellationToken);
+    }
+
+    /// <summary>
+    /// Runs a workflow orchestration by delegating to <see cref="WorkflowOrchestrator"/>
+    /// via <see cref="GrpcOrchestrationRunner"/>.
+    /// </summary>
+    public static string RunWorkflowOrchestration(
+        string encodedOrchestratorRequest,
+        FunctionContext functionContext)
+    {
+        ArgumentNullException.ThrowIfNull(encodedOrchestratorRequest);
+        ArgumentNullException.ThrowIfNull(functionContext);
+
+        WorkflowOrchestrator orchestrator = new(functionContext.InstanceServices);
+        return GrpcOrchestrationRunner.LoadAndRun(encodedOrchestratorRequest, orchestrator, functionContext.InstanceServices);
+    }
 
     // Exposed as an entity trigger via AgentFunctionsProvider
     public static Task<string> InvokeAgentAsync(
@@ -179,6 +380,55 @@ internal static class BuiltInFunctions
     }
 
     /// <summary>
+    /// Runs a workflow via MCP tool trigger.
+    /// Extracts the <c>input</c> argument, schedules a new orchestration, waits for completion, and returns the output.
+    /// </summary>
+    public static async Task<string?> RunWorkflowMcpToolAsync(
+        [McpToolTrigger("BuiltInWorkflowMcpTool")] ToolInvocationContext context,
+        [DurableClient] DurableTaskClient client,
+        FunctionContext functionContext)
+    {
+        if (context.Arguments is null)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required arguments.");
+        }
+
+        if (!context.Arguments.TryGetValue("input", out object? inputObj) || inputObj is not string input)
+        {
+            throw new ArgumentException("MCP Tool invocation is missing required 'input' argument of type string.");
+        }
+
+        string workflowName = context.Name;
+        string orchestrationFunctionName = WorkflowNamingHelper.ToOrchestrationFunctionName(workflowName);
+
+        DurableWorkflowInput<string> orchestrationInput = new() { Input = input };
+        string instanceId = await client.ScheduleNewOrchestrationInstanceAsync(orchestrationFunctionName, orchestrationInput);
+
+        OrchestrationMetadata? metadata = await client.WaitForInstanceCompletionAsync(
+            instanceId,
+            getInputsAndOutputs: true,
+            cancellation: functionContext.CancellationToken);
+
+        if (metadata is null)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' returned no metadata.");
+        }
+
+        if (metadata.RuntimeStatus is OrchestrationRuntimeStatus.Failed)
+        {
+            string errorMessage = metadata.FailureDetails?.ErrorMessage ?? "Unknown error";
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' failed: {errorMessage}");
+        }
+
+        if (metadata.RuntimeStatus is not OrchestrationRuntimeStatus.Completed)
+        {
+            throw new InvalidOperationException($"Workflow orchestration '{instanceId}' ended with unexpected status '{metadata.RuntimeStatus}'.");
+        }
+
+        return metadata.ReadOutputAs<DurableWorkflowResult>()?.Result;
+    }
+
+    /// <summary>
     /// Creates an error response with the specified status code and error message.
     /// </summary>
     /// <param name="req">The HTTP request data.</param>
@@ -331,6 +581,15 @@ internal static class BuiltInFunctions
     private sealed record AgentRunAcceptedResponse(
         [property: JsonPropertyName("status")] int Status,
         [property: JsonPropertyName("thread_id")] string ThreadId);
+
+    /// <summary>
+    /// Represents a request to respond to a pending RequestPort in a workflow.
+    /// </summary>
+    /// <param name="EventName">The name of the event to raise (the RequestPort ID).</param>
+    /// <param name="Response">The response payload to send to the workflow.</param>
+    private sealed record WorkflowRespondRequest(
+        [property: JsonPropertyName("eventName")] string? EventName,
+        [property: JsonPropertyName("response")] JsonElement Response);
 
     /// <summary>
     /// A service provider that combines the original service provider with an additional DurableTaskClient instance.

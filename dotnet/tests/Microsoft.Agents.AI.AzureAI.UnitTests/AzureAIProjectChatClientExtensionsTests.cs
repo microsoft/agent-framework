@@ -12,19 +12,182 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Moq;
 using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
+#pragma warning disable CS0618
 /// <summary>
 /// Unit tests for the <see cref="AzureAIProjectChatClientExtensions"/> class.
 /// </summary>
+[Obsolete("Includes coverage for obsolete AIProjectClient compatibility extension methods.")]
 public sealed class AzureAIProjectChatClientExtensionsTests
 {
+    #region AsAIAgent(AIProjectClient, model, instructions) Tests
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload throws ArgumentNullException when AIProjectClient is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIProjectClient? client = null;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.AsAIAgent("gpt-4o-mini", "You are helpful."));
+
+        Assert.Equal("aiProjectClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        List<AITool> tools =
+        [
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        ];
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            name: "test-agent",
+            description: "A test agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("A test agent", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<IChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload applies the clientFactory.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        TestChatClient? testChatClient = null;
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            clientFactory: innerClient => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that the options-based non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithOptions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        ChatClientAgentOptions options = new()
+        {
+            Name = "options-agent",
+            Description = "Agent from options",
+            ChatOptions = new ChatOptions
+            {
+                ModelId = "gpt-4o-mini",
+                Instructions = "You are helpful.",
+            },
+        };
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("options-agent", agent.Name);
+        Assert.Equal("Agent from options", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload adds the MEAI user-agent header to Responses API requests.
+    /// </summary>
+    [Fact]
+    public async Task AsAIAgent_WithModelAndInstructions_UserAgentHeaderAddedToResponsesRequestsAsync()
+    {
+        // Arrange
+        bool userAgentFound = false;
+        using HttpHandlerAssert httpHandler = new(request =>
+        {
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
+            {
+                foreach (string value in values)
+                {
+                    if (value.Contains("MEAI"))
+                    {
+                        userAgentFound = true;
+                    }
+                }
+            }
+
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        TestDataUtil.GetOpenAIDefaultResponseJson(),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+        });
+
+#pragma warning disable CA5399
+        using HttpClient httpClient = new(httpHandler);
+#pragma warning restore CA5399
+
+        AIProjectClient aiProjectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        FoundryAgent agent = aiProjectClient.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.");
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
+
+        // Assert
+        Assert.True(userAgentFound, "MEAI user-agent header was not found in any request");
+    }
+
+    #endregion
+
     #region AsAIAgent(AIProjectClient, AgentRecord) Tests
 
     /// <summary>
@@ -198,7 +361,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -216,7 +379,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -369,7 +532,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task GetAIAgentAsync_ByName_WithNonExistentAgent_ThrowsInvalidOperationExceptionAsync()
     {
         // Arrange
-        var mockAgentOperations = new Mock<AIProjectAgentsOperations>();
+        var mockAgentOperations = new Mock<AgentsClient>();
         mockAgentOperations
             .Setup(c => c.GetAgentAsync(It.IsAny<string>(), It.IsAny<RequestOptions>()))
             .ReturnsAsync(ClientResult.FromOptionalValue((AgentRecord)null!, new MockPipelineResponse(200, BinaryData.FromString("null"))));
@@ -408,7 +571,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
         var agentVersion = chatClient.GetService<AgentVersion>();
@@ -457,7 +620,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -467,7 +630,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithModelAndOptions_CreatesValidAgentAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", instructions: "Test instructions");
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", instructions: "Test instructions");
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -475,12 +638,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-model", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("test-agent", agent.Name);
-        Assert.Equal("Test instructions", agent.Instructions);
+        Assert.Equal("Test instructions", agent.GetService<ChatClientAgent>()!.Instructions);
     }
 
     /// <summary>
@@ -490,7 +653,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithModelAndOptions_WithClientFactory_AppliesFactoryCorrectlyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", instructions: "Test instructions");
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", instructions: "Test instructions");
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -499,7 +662,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         TestChatClient? testChatClient = null;
 
         // Act
-        var agent = await client.CreateAIAgentAsync(
+        var agent = await testClient.Client.CreateAIAgentAsync(
             "test-model",
             options,
             clientFactory: (innerClient) => testChatClient = new TestChatClient(innerClient));
@@ -560,16 +723,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithDefinition_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -582,16 +745,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
 
         var definitionResponse = GeneratePromptDefinitionResponse(definition, null);
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -602,16 +765,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definition);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definition);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -628,16 +791,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Create a response definition with the same tool
         var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -667,16 +830,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             definitionResponse.Tools.Add(tool);
         }
 
-        AIProjectClient client = this.CreateTestAgentClient(agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -720,7 +883,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
@@ -782,7 +945,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
         var agentVersion = chatClient.GetService<AgentVersion>();
@@ -803,10 +966,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         var definitionResponse = GeneratePromptDefinitionResponse(new PromptAgentDefinition("test-model") { Instructions = "Test instructions" }, tools);
 
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         // Act
-        var agent = await client.CreateAIAgentAsync(
+        var agent = await testClient.Client.CreateAIAgentAsync(
             "test-agent",
             "test-model",
             "Test instructions",
@@ -814,7 +977,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -831,18 +994,18 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithDefinitionTools_CreatesAgentAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
         definition.Tools.Add(ResponseTool.CreateFunctionTool("async_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -863,7 +1026,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -885,16 +1048,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var sharepointOptions = new SharePointGroundingToolOptions();
         sharepointOptions.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
 
-        var structuredOutputs = new StructuredOutputDefinition("name", "description", BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString()), false);
+        var structuredOutputs = new StructuredOutputDefinition("name", "description", new Dictionary<string, BinaryData> { ["schema"] = BinaryData.FromString(AIJsonUtilities.CreateJsonSchema(new { id = "test" }.GetType()).ToString()) }, false);
 
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolParameters([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolParameters(new BrowserAutomationToolConnectionParameters("id"))));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
         definition.Tools.Add(AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
         definition.Tools.Add((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
         definition.Tools.Add((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenAPIFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
+        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
         definition.Tools.Add((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions));
         definition.Tools.Add((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs));
         definition.Tools.Add((ResponseTool)AgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
@@ -902,16 +1065,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Generate agent definition response with the tools
         var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
 
-        AIProjectClient client = this.CreateTestAgentClient(agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -942,16 +1105,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
         definitionResponse.Tools.Add(functionTool);
 
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -961,7 +1124,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithDeclarativeFunctionFromDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
 
         // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
@@ -974,11 +1137,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -1001,16 +1164,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
         definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -1027,12 +1190,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
 
         var definitionResponse = GeneratePromptDefinitionResponse(definition, null);
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-agent", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-agent", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -1063,7 +1226,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("test-agent", agent.Name);
-        Assert.Equal("Custom instructions", agent.Instructions);
+        Assert.Equal("Custom instructions", agent.GetService<ChatClientAgent>()!.Instructions);
         Assert.Equal("Custom description", agent.Description);
     }
 
@@ -1083,7 +1246,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             new PromptAgentDefinition("test-model") { Instructions = "Test" },
             tools);
 
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
         var options = new ChatClientAgentOptions
         {
@@ -1092,7 +1255,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        var agent = await client.CreateAIAgentAsync("test-model", options);
+        var agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -1278,14 +1441,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithClientFactory_ReceivesCorrectUnderlyingClientAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
         IChatClient? receivedClient = null;
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync(
+        var agent = await testClient.Client.CreateAIAgentAsync(
             "test-agent",
             options,
             clientFactory: (innerClient) =>
@@ -1340,10 +1503,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         const string AgentName = "test-agent";
         const string Model = "test-model";
         const string Instructions = "Test instructions";
-        AIProjectClient client = this.CreateTestAgentClient(AgentName, Instructions);
+        using var testClient = CreateTestAgentClientWithHandler(AgentName, Instructions);
 
         // Act
-        var agent = await client.CreateAIAgentAsync(
+        var agent = await testClient.Client.CreateAIAgentAsync(
             AgentName,
             Model,
             Instructions,
@@ -1352,7 +1515,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal(AgentName, agent.Name);
-        Assert.Equal(Instructions, agent.Instructions);
+        Assert.Equal(Instructions, agent.GetService<ChatClientAgent>()!.Instructions);
         var wrappedClient = agent.GetService<TestChatClient>();
         Assert.NotNull(wrappedClient);
     }
@@ -1367,12 +1530,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
 
         var agentDefinitionResponse = GeneratePromptDefinitionResponse(definition, null);
-        AIProjectClient client = this.CreateTestAgentClient(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
+        using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: agentDefinitionResponse);
 
         var options = new AgentVersionCreationOptions(definition);
 
         // Act
-        var agent = await client.CreateAIAgentAsync(
+        var agent = await testClient.Client.CreateAIAgentAsync(
             "test-agent",
             options,
             clientFactory: (innerClient) => new TestChatClient(innerClient));
@@ -1390,7 +1553,8 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region User-Agent Header Tests
 
     /// <summary>
-    /// Verifies that the user-agent header is added to both synchronous and asynchronous requests made by agent creation methods.
+    /// Verifies that the MEAI user-agent header is added to CreateAIAgentAsync POST requests
+    /// via the protocol method's RequestOptions pipeline policy.
     /// </summary>
     [Fact]
     public async Task CreateAIAgentAsync_UserAgentHeaderAddedToRequestsAsync()
@@ -1398,9 +1562,12 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         using var httpHandler = new HttpHandlerAssert(request =>
         {
             Assert.Equal("POST", request.Method.Method);
-            Assert.Contains("MEAI", request.Headers.UserAgent.ToString());
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentResponseJson(), Encoding.UTF8, "application/json") };
+            // Verify MEAI user-agent header is present on CreateAgentVersion POST request
+            Assert.True(request.Headers.TryGetValues("User-Agent", out var userAgentValues));
+            Assert.Contains(userAgentValues, v => v.Contains("MEAI"));
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentVersionResponseJson(), Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -1940,7 +2107,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithTextResponseFormat_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -1952,11 +2119,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -1966,7 +2133,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithJsonResponseFormatWithoutSchema_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -1978,11 +2145,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -1992,7 +2159,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithJsonResponseFormatWithSchema_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         JsonElement schemaElement = AIJsonUtilities.CreateJsonSchema(typeof(TestSchema));
         var jsonFormat = ChatResponseFormat.ForJsonSchema(schemaElement, "test_schema", "A test schema");
         var options = new ChatClientAgentOptions
@@ -2006,11 +2173,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2020,7 +2187,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithJsonResponseFormatWithSchemaAndStrictMode_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         JsonElement schemaElement = AIJsonUtilities.CreateJsonSchema(typeof(TestSchema));
         var jsonFormat = ChatResponseFormat.ForJsonSchema(schemaElement, "test_schema", "A test schema");
         var additionalProps = new AdditionalPropertiesDictionary
@@ -2039,11 +2206,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2053,7 +2220,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithJsonResponseFormatWithSchemaAndStrictModeFalse_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         JsonElement schemaElement = AIJsonUtilities.CreateJsonSchema(typeof(TestSchema));
         var jsonFormat = ChatResponseFormat.ForJsonSchema(schemaElement, "test_schema", "A test schema");
         var additionalProps = new AdditionalPropertiesDictionary
@@ -2072,11 +2239,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2090,7 +2257,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithRawRepresentationFactory_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -2102,11 +2269,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2116,7 +2283,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithRawRepresentationFactoryReturningNull_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -2128,11 +2295,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2142,7 +2309,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithRawRepresentationFactoryReturningNonCreateResponseOptions_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -2154,11 +2321,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2172,7 +2339,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithDescription_SetsDescriptionAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient(description: "Test description");
+        using var testClient = CreateTestAgentClientWithHandler(description: "Test description");
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -2181,7 +2348,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2195,7 +2362,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithoutDescription_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var options = new ChatClientAgentOptions
         {
             Name = "test-agent",
@@ -2203,7 +2370,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2298,11 +2465,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2325,7 +2492,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2347,7 +2514,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2369,10 +2536,74 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with UseProvidedChatClientAsIs=true skips tool validation
+    /// and does not throw even when server-side function tools exist without matching invocable tools.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithUseProvidedChatClientAsIs_SkipsToolValidationAsync()
+    {
+        // Arrange
+        PromptAgentDefinition definition = new("test-model") { Instructions = "Test" };
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("required_function", BinaryData.FromString("{}"), strictModeEnabled: false));
+
+        AIProjectClient client = this.CreateTestAgentClient(agentDefinitionResponse: definition);
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            ChatOptions = new ChatOptions { Instructions = "Test" },
+            UseProvidedChatClientAsIs = true
+        };
+
+        // Act - should not throw even without tools when UseProvidedChatClientAsIs is true
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
+
+        // Assert
+        Assert.NotNull(agent);
+    }
+
+    /// <summary>
+    /// Verify that GetAIAgentAsync with UseProvidedChatClientAsIs=true still matches provided AIFunction tools
+    /// to server-side function definitions, instead of falling back to the ResponseToolAITool wrapper.
+    /// </summary>
+    [Fact]
+    public async Task GetAIAgentAsync_WithUseProvidedChatClientAsIs_PreservesProvidedToolsAsync()
+    {
+        // Arrange
+        PromptAgentDefinition definition = new("test-model") { Instructions = "Test" };
+        definition.Tools.Add(ResponseTool.CreateFunctionTool("my_function", BinaryData.FromString("{}"), strictModeEnabled: false));
+
+        AIProjectClient client = this.CreateTestAgentClient(agentDefinitionResponse: definition);
+
+        var providedTool = AIFunctionFactory.Create(() => "test", "my_function", "A test function");
+        var options = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            UseProvidedChatClientAsIs = true,
+            ChatOptions = new ChatOptions
+            {
+                Instructions = "Test",
+                Tools = [providedTool]
+            },
+        };
+
+        // Act - UseProvidedChatClientAsIs is true, but provided AIFunctions should still be matched and preserved
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
+
+        // Assert
+        Assert.NotNull(agent);
+
+        // Verify the provided AIFunction was matched and preserved in ChatOptions.Tools (not replaced by AsAITool wrapper)
+        var chatOptions = agent.GetService<ChatOptions>();
+        Assert.NotNull(chatOptions);
+        Assert.NotNull(chatOptions!.Tools);
+        Assert.Contains(chatOptions.Tools, t => t is AIFunction af && af.Name == "my_function");
     }
 
     #endregion
@@ -2394,11 +2625,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         // Verify the agent ID is generated from server-returned name ("agent_abc123") and "latest"
         Assert.Equal("agent_abc123:latest", agent.Id);
     }
@@ -2456,11 +2687,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         // Verify the agent ID is generated from server-returned name ("agent_abc123") and "latest"
         Assert.Equal("agent_abc123:latest", agent.Id);
     }
@@ -2610,11 +2841,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2624,7 +2855,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithHostedToolTypes_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        AIProjectClient client = this.CreateTestAgentClient();
+        using var testClient = CreateTestAgentClientWithHandler();
         var webSearchTool = new HostedWebSearchTool();
 
         var options = new ChatClientAgentOptions
@@ -2638,11 +2869,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2676,11 +2907,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2714,11 +2945,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2772,11 +3003,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentVersion agentVersion = ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson(agentDefinition: definition)))!;
 
         // Act - no tools provided, but requireInvocableTools is false when no tools param is passed
-        ChatClientAgent agent = client.AsAIAgent(agentVersion);
+        FoundryAgent agent = client.AsAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2789,6 +3020,54 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     private FakeAgentClient CreateTestAgentClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
     {
         return new FakeAgentClient(agentName, instructions, description, agentDefinitionResponse);
+    }
+
+    /// <summary>
+    /// Creates a test AIProjectClient backed by an HTTP handler that returns canned responses.
+    /// Used for tests that exercise the protocol-method code path (CreateAgentVersion).
+    /// The returned client must be disposed to clean up the underlying HttpClient/handler.
+    /// </summary>
+    private static DisposableTestClient CreateTestAgentClientWithHandler(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
+    {
+        var responseJson = TestDataUtil.GetAgentVersionResponseJson(agentName, agentDefinitionResponse, instructions, description);
+
+        var httpHandler = new HttpHandlerAssert(_ =>
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseJson, Encoding.UTF8, "application/json") });
+
+#pragma warning disable CA5399
+        var httpClient = new HttpClient(httpHandler);
+#pragma warning restore CA5399
+
+        var client = new AIProjectClient(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        return new DisposableTestClient(client, httpClient, httpHandler);
+    }
+
+    /// <summary>
+    /// Wraps an AIProjectClient and its disposable dependencies for deterministic cleanup.
+    /// </summary>
+    private sealed class DisposableTestClient : IDisposable
+    {
+        private readonly HttpClient _httpClient;
+        private readonly HttpHandlerAssert _httpHandler;
+
+        public DisposableTestClient(AIProjectClient client, HttpClient httpClient, HttpHandlerAssert httpHandler)
+        {
+            this.Client = client;
+            this._httpClient = httpClient;
+            this._httpHandler = httpHandler;
+        }
+
+        public AIProjectClient Client { get; }
+
+        public void Dispose()
+        {
+            this._httpClient.Dispose();
+            this._httpHandler.Dispose();
+        }
     }
 
     /// <summary>
@@ -2904,7 +3183,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         {
             // Handle backward compatibility with bool parameter
             var effectiveVersionMode = useEmptyVersion ? VersionMode.Empty : versionMode;
-            this.Agents = new FakeAIProjectAgentsOperations(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
+            this.Agents = new FakeAgentsClient(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
         }
 
         public override ClientConnection GetConnection(string connectionId)
@@ -2912,9 +3191,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             return new ClientConnection("fake-connection-id", "http://localhost", ClientPipeline.Create(), CredentialKind.None);
         }
 
-        public override AIProjectAgentsOperations Agents { get; }
+        public override AgentsClient Agents { get; }
 
-        private sealed class FakeAIProjectAgentsOperations : AIProjectAgentsOperations
+        private sealed class FakeAgentsClient : AgentsClient
         {
             private readonly string? _agentName;
             private readonly string? _instructions;
@@ -2922,7 +3201,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             private readonly AgentDefinition? _agentDefinition;
             private readonly VersionMode _versionMode;
 
-            public FakeAIProjectAgentsOperations(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
+            public FakeAgentsClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
             {
                 this._agentName = agentName;
                 this._instructions = instructions;
@@ -2975,25 +3254,13 @@ public sealed class AzureAIProjectChatClientExtensionsTests
                 return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
             }
 
-            public override ClientResult CreateAgentVersion(string agentName, BinaryContent content, RequestOptions? options = null)
-            {
-                var responseJson = this.GetAgentVersionResponseJson();
-                return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson)));
-            }
-
-            public override ClientResult<AgentVersion> CreateAgentVersion(string agentName, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
+            public override ClientResult<AgentVersion> CreateAgentVersion(string agentName, AgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentVersionResponseJson();
                 return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
             }
 
-            public override Task<ClientResult> CreateAgentVersionAsync(string agentName, BinaryContent content, RequestOptions? options = null)
-            {
-                var responseJson = this.GetAgentVersionResponseJson();
-                return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson))));
-            }
-
-            public override Task<ClientResult<AgentVersion>> CreateAgentVersionAsync(string agentName, AgentVersionCreationOptions? options = null, CancellationToken cancellationToken = default)
+            public override Task<ClientResult<AgentVersion>> CreateAgentVersionAsync(string agentName, AgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentVersionResponseJson();
                 return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
@@ -3030,17 +3297,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class MockPipelineResponse : PipelineResponse
     {
-        private readonly int _status;
         private readonly MockPipelineResponseHeaders _headers;
 
         public MockPipelineResponse(int status, BinaryData? content = null)
         {
-            this._status = status;
+            this.Status = status;
             this.Content = content ?? BinaryData.Empty;
             this._headers = new MockPipelineResponseHeaders();
         }
 
-        public override int Status => this._status;
+        public override int Status { get; }
 
         public override string ReasonPhrase => "OK";
 
@@ -3101,9 +3367,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// <summary>
     /// Helper method to access internal ChatOptions property via reflection.
     /// </summary>
-    private static ChatOptions? GetAgentChatOptions(ChatClientAgent agent)
+    private static ChatOptions? GetAgentChatOptions(AIAgent agent)
     {
-        if (agent is null)
+        ChatClientAgent? chatClientAgent = agent as ChatClientAgent ?? agent.GetService<ChatClientAgent>();
+        if (chatClientAgent is null)
         {
             return null;
         }
@@ -3114,7 +3381,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Instance);
 
-        return chatOptionsProperty?.GetValue(agent) as ChatOptions;
+        return chatOptionsProperty?.GetValue(chatClientAgent) as ChatOptions;
     }
 
     /// <summary>
@@ -3155,6 +3422,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         }
     }
 }
+#pragma warning restore CS0618
 
 /// <summary>
 /// Provides test data for invalid agent name validation tests.

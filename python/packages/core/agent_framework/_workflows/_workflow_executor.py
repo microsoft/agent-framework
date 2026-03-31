@@ -385,7 +385,7 @@ class WorkflowExecutor(Executor):
 
         try:
             # Get kwargs from parent workflow's State to propagate to subworkflow
-            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY) or {}
+            parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
             # Run the sub-workflow and collect all events, passing parent kwargs
             result = await self.workflow.run(input_data, **parent_kwargs)

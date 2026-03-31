@@ -2,6 +2,9 @@
 
 """Tests for the workflow visualization module."""
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from agent_framework import Executor, WorkflowBuilder, WorkflowContext, WorkflowExecutor, WorkflowViz, handler
@@ -25,7 +28,7 @@ class ListStrTargetExecutor(Executor):
 
 
 @pytest.fixture
-def basic_sub_workflow():
+def basic_sub_workflow() -> dict[str, Any]:
     """Fixture that creates a basic sub-workflow setup for testing."""
     # Create a sub-workflow
     sub_exec1 = MockExecutor(id="sub_exec1")
@@ -98,7 +101,7 @@ def test_workflow_viz_export_dot():
     assert '"executor1" -> "executor2"' in content
 
 
-def test_workflow_viz_export_dot_with_filename(tmp_path):
+def test_workflow_viz_export_dot_with_filename(tmp_path: Path):
     """Test exporting workflow as DOT format with specified filename."""
     executor1 = MockExecutor(id="executor1")
     executor2 = MockExecutor(id="executor2")
@@ -203,7 +206,7 @@ def test_workflow_viz_graphviz_binary_not_found():
         mock_source_class.return_value = mock_source
 
         # Import the ExecutableNotFound exception for the test
-        from graphviz.backend.execute import ExecutableNotFound
+        from graphviz.backend.execute import ExecutableNotFound  # type: ignore[import-not-found]
 
         mock_source.render.side_effect = ExecutableNotFound("failed to execute PosixPath('dot')")
 
@@ -329,7 +332,7 @@ def test_workflow_viz_mermaid_fan_in_edge_group():
     assert "s2 --> t" not in mermaid
 
 
-def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow):
+def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow: dict[str, Any]):
     """Test that WorkflowViz can visualize sub-workflows in DOT format."""
     main_workflow = basic_sub_workflow["main_workflow"]
 
@@ -353,7 +356,7 @@ def test_workflow_viz_sub_workflow_digraph(basic_sub_workflow):
     assert '"workflow_executor_1/sub_exec1" -> "workflow_executor_1/sub_exec2"' in dot_content
 
 
-def test_workflow_viz_sub_workflow_mermaid(basic_sub_workflow):
+def test_workflow_viz_sub_workflow_mermaid(basic_sub_workflow: dict[str, Any]):
     """Test that WorkflowViz can visualize sub-workflows in Mermaid format."""
     main_workflow = basic_sub_workflow["main_workflow"]
 

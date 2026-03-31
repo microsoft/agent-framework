@@ -13,17 +13,18 @@
 import asyncio
 import sys
 from collections.abc import AsyncIterable, Iterator, Sequence
-from typing import cast
 
 from agent_framework import (
+    Agent,
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
-from semantic_kernel.agents import Agent, ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
+from semantic_kernel.agents import Agent as SKAgent
+from semantic_kernel.agents import ChatCompletionAgent, HandoffOrchestration, OrchestrationHandoffs
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import (
@@ -74,7 +75,7 @@ class OrderReturnPlugin:
         return f"Return for order {order_id} has been processed successfully (reason: {reason})."
 
 
-def build_semantic_kernel_agents() -> tuple[list[Agent], OrchestrationHandoffs]:
+def build_semantic_kernel_agents() -> tuple[list[SKAgent], OrchestrationHandoffs]:
     credential = AzureCliCredential()
 
     triage = ChatCompletionAgent(
@@ -189,8 +190,9 @@ async def run_semantic_kernel_example(initial_task: str, scripted_responses: Seq
 ######################################################################
 
 
-def _create_af_agents(client: AzureOpenAIChatClient):
-    triage = client.as_agent(
+def _create_af_agents(client: FoundryChatClient):
+    triage = Agent(
+        client=client,
         name="triage_agent",
         instructions=(
             "You are a customer support triage agent. Route requests:\n"
@@ -199,19 +201,22 @@ def _create_af_agents(client: AzureOpenAIChatClient):
             "- handoff_to_order_return_agent for returns"
         ),
     )
-    refund = client.as_agent(
+    refund = Agent(
+        client=client,
         name="refund_agent",
         instructions=(
             "Handle refunds. Ask for order id and reason. If shipping info is needed, hand off to order_status_agent."
         ),
     )
-    status = client.as_agent(
+    status = Agent(
+        client=client,
         name="order_status_agent",
         instructions=(
             "Provide order status, tracking, and timelines. If billing questions appear, hand off to refund_agent."
         ),
     )
-    returns = client.as_agent(
+    returns = Agent(
+        client=client,
         name="order_return_agent",
         instructions=(
             "Coordinate returns, confirm addresses, and summarize next steps. Hand off to triage_agent if unsure."
@@ -235,13 +240,12 @@ def _collect_handoff_requests(events: list[WorkflowEvent]) -> list[WorkflowEvent
 def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
     for event in events:
         if event.type == "output":
-            data = cast(list[Message], event.data)
-            return data
+            return event.data
     return []
 
 
 async def run_agent_framework_example(initial_task: str, scripted_responses: Sequence[str]) -> str:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(credential=AzureCliCredential())
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (

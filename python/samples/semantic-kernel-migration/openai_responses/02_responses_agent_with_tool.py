@@ -31,7 +31,7 @@ async def run_semantic_kernel() -> None:
     client = OpenAIResponsesAgent.create_client()
     # Plugins advertise callable tools to the Responses agent.
     agent = OpenAIResponsesAgent(
-        ai_model_id=OpenAISettings().responses_model_id,
+        ai_model=OpenAISettings().responses_model_id,
         client=client,
         instructions="Use the add tool when math is required.",
         name="MathExpert",

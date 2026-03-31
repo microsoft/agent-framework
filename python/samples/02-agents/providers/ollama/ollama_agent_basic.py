@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime
 
-from agent_framework import tool
+from agent_framework import Agent, tool
 from agent_framework.ollama import OllamaChatClient
 from dotenv import load_dotenv
 
@@ -36,7 +36,8 @@ async def non_streaming_example() -> None:
     """Example of non-streaming response (get the complete result at once)."""
     print("=== Non-streaming Response Example ===")
 
-    agent = OllamaChatClient().as_agent(
+    agent = Agent(
+        client=OllamaChatClient(),
         name="TimeAgent",
         instructions="You are a helpful time agent answer in one sentence.",
         tools=get_time,
@@ -52,7 +53,8 @@ async def streaming_example() -> None:
     """Example of streaming response (get results as they are generated)."""
     print("=== Streaming Response Example ===")
 
-    agent = OllamaChatClient().as_agent(
+    agent = Agent(
+        client=OllamaChatClient(),
         name="TimeAgent",
         instructions="You are a helpful time agent answer in one sentence.",
         tools=get_time,

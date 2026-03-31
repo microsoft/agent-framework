@@ -9,6 +9,8 @@ using Microsoft.Extensions.AI;
 
 namespace AzureAI.IntegrationTests;
 
+#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
+[Obsolete("Use FoundryVersionedAgentStructuredOutputRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
 public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRunTests<AIProjectClientStructuredOutputFixture<CityInfo>>(() => new AIProjectClientStructuredOutputFixture<CityInfo>())
 {
     private const string NotSupported = "AIProjectClient does not support specifying structured output type at invocation time.";
@@ -66,25 +68,32 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
         Assert.Equal("Paris", response.Result.Name);
     }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithGenericTypeReturnsExpectedResultAsync() =>
-        base.RunWithGenericTypeReturnsExpectedResultAsync();
+    public override Task RunWithGenericTypeReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithGenericTypeReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithResponseFormatReturnsExpectedResultAsync() =>
-        base.RunWithResponseFormatReturnsExpectedResultAsync();
+    public override Task RunWithResponseFormatReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithResponseFormatReturnsExpectedResultAsync();
+    }
 
-    [Fact(Skip = NotSupported)]
-    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync() =>
-        base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    public override Task RunWithPrimitiveTypeReturnsExpectedResultAsync()
+    {
+        Assert.Skip(NotSupported);
+        return base.RunWithPrimitiveTypeReturnsExpectedResultAsync();
+    }
 }
 
 /// <summary>
 /// Represents a fixture for testing AIProjectClient with structured output of type <typeparamref name="T"/> provided at agent initialization.
 /// </summary>
+[Obsolete("Use FoundryVersionedAgentStructuredOutputFixture instead.")]
 public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
 {
-    public override Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         var agentOptions = new ChatClientAgentOptions
         {
@@ -94,6 +103,6 @@ public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
             },
         };
 
-        return this.InitializeAsync(agentOptions);
+        await this.InitializeAsync(agentOptions);
     }
 }

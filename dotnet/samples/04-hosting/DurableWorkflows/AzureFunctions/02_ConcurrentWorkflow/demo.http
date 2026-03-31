@@ -1,0 +1,14 @@
+# Default endpoint address for local testing
+@authority=http://localhost:7071
+
+### Prompt the agent
+POST {{authority}}/api/workflows/ExpertReview/run
+Content-Type: text/plain
+
+What is temperature?
+
+### Start with a custom run ID
+POST {{authority}}/api/workflows/ExpertReview/run?runId=my-review-123
+Content-Type: text/plain
+
+What is gravity?

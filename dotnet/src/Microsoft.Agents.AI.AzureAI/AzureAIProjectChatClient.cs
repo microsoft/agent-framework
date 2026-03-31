@@ -2,8 +2,9 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.OpenAI;
+using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -43,7 +44,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     {
         this._agentClient = aiProjectClient;
         this._agentReference = Throw.IfNull(agentReference);
-        this._metadata = new ChatClientMetadata("azure.ai.agents", defaultModelId: defaultModelId);
+        this._metadata = new ChatClientMetadata("microsoft.foundry", defaultModelId: defaultModelId);
         this._chatOptions = chatOptions;
     }
 
@@ -57,7 +58,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     /// The <see cref="IChatClient"/> provided should be decorated with a <see cref="AzureAIProjectChatClient"/> for proper functionality.
     /// </remarks>
     internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentRecord agentRecord, ChatOptions? chatOptions)
-        : this(aiProjectClient, Throw.IfNull(agentRecord).Versions.Latest, chatOptions)
+        : this(aiProjectClient, Throw.IfNull(agentRecord).GetLatestVersion(), chatOptions)
     {
         this._agentRecord = agentRecord;
     }

@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Compliance.Redaction;
 using Microsoft.Extensions.Logging;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -18,7 +19,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.FoundryMemory;
 
 /// <summary>
-/// Provides an Azure AI Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
+/// Provides a Microsoft Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>
@@ -32,11 +33,12 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private const string DefaultContextPrompt = "## Memories\nConsider the following memories when answering user questions:";
 
     private readonly ProviderSessionState<State> _sessionState;
+    private IReadOnlyList<string>? _stateKeys;
     private readonly string _contextPrompt;
     private readonly string _memoryStoreName;
     private readonly int _maxMemories;
     private readonly int _updateDelay;
-    private readonly bool _enableSensitiveTelemetryData;
+    private readonly Redactor _redactor;
 
     private readonly AIProjectClient _client;
     private readonly ILogger<FoundryMemoryProvider>? _logger;
@@ -47,7 +49,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class.
     /// </summary>
     /// <param name="client">The Azure AI Project client configured for your Foundry project.</param>
-    /// <param name="memoryStoreName">The name of the memory store in Azure AI Foundry.</param>
+    /// <param name="memoryStoreName">The name of the memory store in Microsoft Foundry.</param>
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the scope for memory storage and retrieval.</param>
     /// <param name="options">Provider options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
@@ -59,7 +61,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         Func<AgentSession?, State> stateInitializer,
         FoundryMemoryProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
-        : base(options?.SearchInputMessageFilter, options?.StorageInputMessageFilter)
+        : base(options?.SearchInputMessageFilter, options?.StorageInputRequestMessageFilter, options?.StorageInputResponseMessageFilter)
     {
         Throw.IfNull(client);
         Throw.IfNullOrWhitespace(memoryStoreName);
@@ -78,24 +80,14 @@ public sealed class FoundryMemoryProvider : AIContextProvider
         this._memoryStoreName = memoryStoreName;
         this._maxMemories = effectiveOptions.MaxMemories;
         this._updateDelay = effectiveOptions.UpdateDelay;
-        this._enableSensitiveTelemetryData = effectiveOptions.EnableSensitiveTelemetryData;
+        this._redactor = effectiveOptions.EnableSensitiveTelemetryData ? NullRedactor.Instance : (effectiveOptions.Redactor ?? new ReplacingRedactor("<redacted>"));
     }
 
     /// <inheritdoc />
-    public override string StateKey => this._sessionState.StateKey;
+    public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
-        session =>
-        {
-            State state = stateInitializer(session);
-
-            if (state is null)
-            {
-                throw new InvalidOperationException("State initializer must return a non-null state.");
-            }
-
-            return state;
-        };
+        session => stateInitializer(session) ?? throw new InvalidOperationException("State initializer must return a non-null state.");
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -330,7 +322,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// Waits for all pending memory update operations to complete.
     /// </summary>
     /// <remarks>
-    /// Memory extraction in Azure AI Foundry is asynchronous. This method polls the latest pending update
+    /// Memory extraction in Microsoft Foundry is asynchronous. This method polls the latest pending update
     /// and returns when it has completed, failed, or been superseded. Since updates are processed in order,
     /// completion of the latest update implies all prior updates have also been processed.
     /// </remarks>
@@ -415,7 +407,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     private static bool IsAllowedRole(ChatRole role) =>
         role == ChatRole.User || role == ChatRole.Assistant || role == ChatRole.System;
 
-    private string? SanitizeLogData(string? data) => this._enableSensitiveTelemetryData ? data : "<redacted>";
+    private string SanitizeLogData(string? data) => this._redactor.Redact(data);
 
     /// <summary>
     /// Represents the state of a <see cref="FoundryMemoryProvider"/> stored in the <see cref="AgentSession.StateBag"/>.

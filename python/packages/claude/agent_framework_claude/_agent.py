@@ -7,7 +7,7 @@ import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -27,6 +27,7 @@ from agent_framework import (
     normalize_tools,
 )
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeSDKClient,
@@ -57,7 +58,10 @@ if TYPE_CHECKING:
         PermissionMode,
         SandboxSettings,
         SdkBeta,
+        SdkPluginConfig,
+        SettingSource,
     )
+    from claude_agent_sdk.types import ThinkingConfig
 
 
 logger = logging.getLogger("agent_framework.claude")
@@ -117,9 +121,6 @@ class ClaudeAgentOptions(TypedDict, total=False):
     fallback_model: str
     """Fallback model if primary fails."""
 
-    max_thinking_tokens: int
-    """Maximum tokens for thinking blocks."""
-
     allowed_tools: list[str]
     """Allowlist of tools. If set, Claude can ONLY use tools in this list."""
 
@@ -162,6 +163,18 @@ class ClaudeAgentOptions(TypedDict, total=False):
     betas: list[SdkBeta]
     """Beta features to enable."""
 
+    plugins: list[SdkPluginConfig]
+    """Plugin configurations for custom commands and capabilities."""
+
+    setting_sources: list[SettingSource]
+    """Which Claude settings files to load ("user", "project", "local")."""
+
+    thinking: ThinkingConfig
+    """Extended thinking configuration (adaptive, enabled, or disabled)."""
+
+    effort: Literal["low", "medium", "high", "max"]
+    """Effort level for thinking depth."""
+
 
 OptionsT = TypeVar(
     "OptionsT",
@@ -171,8 +184,11 @@ OptionsT = TypeVar(
 )
 
 
-class ClaudeAgent(BaseAgent, Generic[OptionsT]):
-    """Claude Agent using Claude Code CLI.
+class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
+    """Claude Agent using Claude Code CLI without telemetry layers.
+
+    This is the core Claude agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`ClaudeAgent` which includes telemetry support.
 
     Wraps the Claude Agent SDK to provide agentic capabilities including
     tool use, session management, and streaming responses.
@@ -188,45 +204,13 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            from agent_framework_claude import ClaudeAgent
+            from agent_framework.anthropic import RawClaudeAgent
 
-            async with ClaudeAgent(
+            async with RawClaudeAgent(
                 instructions="You are a helpful assistant.",
             ) as agent:
                 response = await agent.run("Hello!")
                 print(response.text)
-
-        With streaming:
-
-        .. code-block:: python
-
-            async with ClaudeAgent() as agent:
-                async for update in agent.run("Write a poem"):
-                    print(update.text, end="", flush=True)
-
-        With session management:
-
-        .. code-block:: python
-
-            async with ClaudeAgent() as agent:
-                session = agent.create_session()
-                await agent.run("Remember my name is Alice", session=session)
-                response = await agent.run("What's my name?", session=session)
-                # Claude will remember "Alice" from the same session
-
-        With Agent Framework tools:
-
-        .. code-block:: python
-
-            from agent_framework import tool
-
-            @tool
-            def greet(name: str) -> str:
-                \"\"\"Greet someone by name.\"\"\"
-                return f"Hello, {name}!"
-
-            async with ClaudeAgent(tools=[greet]) as agent:
-                response = await agent.run("Greet Alice")
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "anthropic.claude"
@@ -246,7 +230,7 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a ClaudeAgent instance.
+        """Initialize a RawClaudeAgent instance.
 
         Args:
             instructions: System prompt for the agent.
@@ -327,23 +311,19 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         if tools is None:
             return
 
-        # Normalize to sequence
-        if isinstance(tools, str):
-            tools_list: Sequence[Any] = [tools]
-        elif isinstance(tools, Sequence):
-            tools_list = list(tools)
-        else:
-            tools_list = [tools]
-
-        for tool in tools_list:
+        non_builtin_tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] = []
+        if not isinstance(tools, list):
+            tools = [tools]  # type: ignore[assignment, reportUnknownVariableType]
+        for tool in tools:  # type: ignore[reportUnknownVariableType]
             if isinstance(tool, str):
                 self._builtin_tools.append(tool)
             else:
-                # Use normalize_tools for custom tools
-                normalized = normalize_tools(tool)
-                self._custom_tools.extend(normalized)
+                non_builtin_tools.append(tool)  # type: ignore[union-attr, reportUnknownArgumentType]
+        if not non_builtin_tools:
+            return
+        self._custom_tools.extend(normalize_tools(non_builtin_tools))  # type: ignore[reportUnknownVariableType]
 
-    async def __aenter__(self) -> ClaudeAgent[OptionsT]:
+    async def __aenter__(self) -> RawClaudeAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -516,7 +496,16 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
                     result = await func_tool.invoke(arguments=args_instance)
                 else:
                     result = await func_tool.invoke(arguments=args)
-                return {"content": [{"type": "text", "text": str(result)}]}
+                content_blocks: list[dict[str, str]] = []
+                for c in result:
+                    if c.type == "text" and c.text:
+                        content_blocks.append({"type": "text", "text": c.text})
+                    elif c.type in ("data", "uri"):
+                        logger.warning(
+                            "Claude Agent SDK does not support rich content (images, audio) "
+                            "in tool results. Rich content items will be omitted."
+                        )
+                return {"content": content_blocks or [{"type": "text", "text": ""}]}
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
@@ -568,61 +557,19 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
             return ""
         return "\n".join([msg.text or "" for msg in messages])
 
-    @overload
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate]: ...
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose options with ``instructions`` key.
 
-    @overload
-    async def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AgentResponse[Any]: ...
-
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterable[AgentResponseUpdate] | Awaitable[AgentResponse[Any]]:
-        """Run the agent with the given messages.
-
-        Args:
-            messages: The messages to process.
-
-        Keyword Args:
-            stream: If True, returns an async iterable of updates. If False (default),
-                returns an awaitable AgentResponse.
-            session: The conversation session. If session has service_session_id set,
-                the agent will resume that session.
-            options: Runtime options (model, permission_mode can be changed per-request).
-            kwargs: Additional keyword arguments.
-
-        Returns:
-            When stream=True: An ResponseStream for streaming updates.
-            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        Maps ``system_prompt`` to ``instructions`` for compatibility with
+        :class:`AgentTelemetryLayer`, which reads the system prompt from
+        the ``instructions`` key.
         """
-        response = ResponseStream(
-            self._get_stream(messages, session=session, options=options, **kwargs),
-            finalizer=self._finalize_response,
-        )
-        if stream:
-            return response
-        return response.get_final_response()
+        opts = dict(self._default_options)
+        system_prompt = opts.pop("system_prompt", None)
+        if system_prompt is not None:
+            opts["instructions"] = system_prompt
+        return opts
 
     def _finalize_response(self, updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
         """Build AgentResponse and propagate structured_output as value.
@@ -636,13 +583,70 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
         structured_output = getattr(self, "_structured_output", None)
         return AgentResponse.from_updates(updates, value=structured_output)
 
+    @overload
+    def run(  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload
+    def run(  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the agent with the given messages.
+
+        Args:
+            messages: The messages to process.
+
+        Keyword Args:
+            stream: If True, returns an async iterable of updates. If False (default),
+                returns an awaitable AgentResponse.
+            session: The conversation session. If session has service_session_id set,
+                the agent will resume that session.
+            options: Runtime options. Model and permission_mode can be changed per request.
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by ClaudeAgent.
+
+        Returns:
+            When stream=True: An ResponseStream for streaming updates.
+            When stream=False: An Awaitable[AgentResponse] with the complete response.
+        """
+        response = ResponseStream(
+            self._get_stream(messages, session=session, options=options),
+            finalizer=self._finalize_response,
+        )
+
+        if stream:
+            return response
+        return response.get_final_response()
+
     async def _get_stream(
         self,
         messages: AgentRunInputs | None = None,
         *,
         session: AgentSession | None = None,
-        options: OptionsT | MutableMapping[str, Any] | None = None,
-        **kwargs: Any,
+        options: OptionsT | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal streaming implementation."""
         session = session or self.create_session()
@@ -721,3 +725,93 @@ class ClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         # Store structured output for the finalizer
         self._structured_output = structured_output
+
+
+class ClaudeAgent(AgentTelemetryLayer, RawClaudeAgent[OptionsT], Generic[OptionsT]):
+    """Claude Agent with OpenTelemetry instrumentation.
+
+    This is the recommended agent class for most use cases. It includes
+    OpenTelemetry-based telemetry for observability. For a minimal
+    implementation without telemetry, use :class:`RawClaudeAgent`.
+
+    Examples:
+        Basic usage with context manager:
+
+        .. code-block:: python
+
+            from agent_framework.anthropic import ClaudeAgent
+
+            async with ClaudeAgent(
+                instructions="You are a helpful assistant.",
+            ) as agent:
+                response = await agent.run("Hello!")
+                print(response.text)
+    """
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]]: ...
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse[Any]]: ...
+
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        middleware: Sequence[AgentMiddlewareTypes] | None = None,
+        options: OptionsT | None = None,
+        tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
+        compaction_strategy: Any = None,
+        tokenizer: Any = None,
+        function_invocation_kwargs: dict[str, Any] | None = None,
+        client_kwargs: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]:
+        """Run the Claude agent with telemetry enabled."""
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse[Any]] | ResponseStream[AgentResponseUpdate, AgentResponse[Any]]]",
+            super().run,
+        )
+        return super_run(
+            messages=messages,
+            stream=stream,
+            session=session,
+            middleware=middleware,
+            options=options,
+            tools=tools,
+            compaction_strategy=compaction_strategy,
+            tokenizer=tokenizer,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+            **kwargs,
+        )

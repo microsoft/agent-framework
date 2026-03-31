@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
+import os
 from typing import Annotated, cast
 
 from agent_framework import (
@@ -11,7 +12,7 @@ from agent_framework import (
     WorkflowRunState,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -25,8 +26,9 @@ A handoff workflow defines a pattern that assembles agents in a mesh topology, a
 them to transfer control to each other based on the conversation context.
 
 Prerequisites:
-    - `az login` (Azure CLI authentication)
-    - Environment variables configured for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
+    - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 
 Key Concepts:
     - Auto-registered handoff tools: HandoffBuilder automatically creates handoff tools
@@ -58,17 +60,18 @@ def process_return(order_number: Annotated[str, "Order number to process return 
     return f"Return initiated successfully for order {order_number}. You will receive return instructions via email."
 
 
-def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, Agent]:
+def create_agents(client: FoundryChatClient) -> tuple[Agent, Agent, Agent, Agent]:
     """Create and configure the triage and specialist agents.
 
     Args:
-        client: The AzureOpenAIChatClient to use for creating agents.
+        client: The FoundryChatClient to use for creating agents.
 
     Returns:
         Tuple of (triage_agent, refund_agent, order_agent, return_agent)
     """
     # Triage agent: Acts as the frontline dispatcher
-    triage_agent = client.as_agent(
+    triage_agent = Agent(
+        client=client,
         instructions=(
             "You are frontline support triage. Route customer issues to the appropriate specialist agents "
             "based on the problem described."
@@ -77,7 +80,8 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, A
     )
 
     # Refund specialist: Handles refund requests
-    refund_agent = client.as_agent(
+    refund_agent = Agent(
+        client=client,
         instructions="You process refund requests.",
         name="refund_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -85,7 +89,8 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, A
     )
 
     # Order/shipping specialist: Resolves delivery issues
-    order_agent = client.as_agent(
+    order_agent = Agent(
+        client=client,
         instructions="You handle order and shipping inquiries.",
         name="order_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -93,7 +98,8 @@ def create_agents(client: AzureOpenAIChatClient) -> tuple[Agent, Agent, Agent, A
     )
 
     # Return specialist: Handles return requests
-    return_agent = client.as_agent(
+    return_agent = Agent(
+        client=client,
         instructions="You manage product return requests.",
         name="return_agent",
         # In a real application, an agent can have multiple tools; here we keep it simple
@@ -192,8 +198,12 @@ async def main() -> None:
     the demo reproducible and testable. In a production application, you would
     replace the scripted_responses with actual user input collection.
     """
-    # Initialize the Azure OpenAI chat client
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    # Initialize the Azure OpenAI Responses client
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
 
     # Create all agents: triage + specialists
     triage, refund, order, support = create_agents(client)

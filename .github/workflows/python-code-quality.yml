@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -75,7 +75,7 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Run fmt, lint, pyright in parallel across packages
+      - name: Run syntax and pyright across packages
         run: uv run poe check-packages
 
   samples-markdown:
@@ -84,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -104,10 +104,8 @@ jobs:
           os: ${{ runner.os }}
         env:
           UV_CACHE_DIR: /tmp/.uv-cache
-      - name: Run samples lint
-        run: uv run poe samples-lint
-      - name: Run samples syntax check
-        run: uv run poe samples-syntax
+      - name: Run samples checks
+        run: uv run poe check -S
       - name: Run markdown code lint
         run: uv run poe markdown-code-lint
 
@@ -117,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10"]
+        python-version: ["3.11"]
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
@@ -140,4 +138,4 @@ jobs:
       - name: Run Mypy
         env:
           GITHUB_BASE_REF: ${{ github.event.pull_request.base.ref || github.base_ref || 'main' }}
-        run: uv run poe ci-mypy
+        run: uv run python scripts/workspace_poe_tasks.py ci-mypy

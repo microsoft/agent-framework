@@ -22,7 +22,7 @@ from agent_framework import (
     response_handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
@@ -48,8 +48,8 @@ Demonstrates:
 - Streaming AgentRunUpdateEvent updates alongside human-in-the-loop pauses.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -122,11 +122,7 @@ class Coordinator(Executor):
         # Writer agent response; request human feedback.
         # Preserve the full conversation so the final editor
         # can see tool traces and the initial prompt.
-        conversation: list[Message]
-        if draft.full_conversation is not None:
-            conversation = list(draft.full_conversation)
-        else:
-            conversation = list(draft.agent_response.messages)
+        conversation = list(draft.full_conversation)
         draft_text = draft.agent_response.text.strip()
         if not draft_text:
             draft_text = "No draft text was produced."
@@ -175,13 +171,12 @@ class Coordinator(Executor):
 
 def create_writer_agent() -> Agent:
     """Creates a writer agent with tools."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        # This sample has been tested only on `gpt-5.1` and may not work as intended on other models
-        # This sample is known to fail on `gpt-5-mini` reasoning input (GH issue #4059)
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="writer_agent",
         instructions=(
             "You are a marketing writer. Call the available tools before drafting copy so you are precise. "
@@ -189,17 +184,20 @@ def create_writer_agent() -> Agent:
             "produce a 3-sentence draft."
         ),
         tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice="required",
+        default_options={
+            "tool_choice": "required",
+        },
     )
 
 
 def create_final_editor_agent() -> Agent:
     """Creates a final editor agent."""
-    return AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=AzureCliCredential(),
-    ).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="final_editor_agent",
         instructions=(
             "You are an editor who polishes marketing copy after human approval. "

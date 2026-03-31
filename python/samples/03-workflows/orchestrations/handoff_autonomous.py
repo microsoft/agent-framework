@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import cast
 
 from agent_framework import (
@@ -10,7 +11,7 @@ from agent_framework import (
     Message,
     resolve_agent_id,
 )
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -28,8 +29,9 @@ Routing Pattern:
     User -> Coordinator -> Specialist (iterates N times) -> Handoff -> Final Output
 
 Prerequisites:
-    - `az login` (Azure CLI authentication)
-    - Environment variables for AzureOpenAIChatClient (AZURE_OPENAI_ENDPOINT, etc.)
+    - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+    - Azure OpenAI configured for FoundryChatClient with required environment variables.
+    - Authentication via azure-identity. Use AzureCliCredential and run `az login` before executing the sample.
 
 Key Concepts:
     - Autonomous interaction mode: agents iterate until they handoff
@@ -41,10 +43,11 @@ load_dotenv()
 
 
 def create_agents(
-    client: AzureOpenAIChatClient,
+    client: FoundryChatClient,
 ) -> tuple[Agent, Agent, Agent]:
     """Create coordinator and specialists for autonomous iteration."""
-    coordinator = client.as_agent(
+    coordinator = Agent(
+        client=client,
         instructions=(
             "You are a coordinator. You break down a user query into a research task and a summary task. "
             "Assign the two tasks to the appropriate specialists, one after the other."
@@ -52,7 +55,8 @@ def create_agents(
         name="coordinator",
     )
 
-    research_agent = client.as_agent(
+    research_agent = Agent(
+        client=client,
         instructions=(
             "You are a research specialist that explores topics thoroughly using web search. "
             "When given a research task, break it down into multiple aspects and explore each one. "
@@ -64,7 +68,8 @@ def create_agents(
         name="research_agent",
     )
 
-    summary_agent = client.as_agent(
+    summary_agent = Agent(
+        client=client,
         instructions=(
             "You summarize research findings. Provide a concise, well-organized summary. When done, return "
             "control to the coordinator."
@@ -77,7 +82,11 @@ def create_agents(
 
 async def main() -> None:
     """Run an autonomous handoff workflow with specialist iteration enabled."""
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
+        credential=AzureCliCredential(),
+    )
     coordinator, research_agent, summary_agent = create_agents(client)
 
     # Build the workflow with autonomous mode
