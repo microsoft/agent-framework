@@ -19,6 +19,8 @@ For full runnable examples, see the [Neo4j GraphRAG Provider samples](https://gi
 pip install agent-framework-neo4j
 ```
 
+For .NET, see the [.NET Neo4j samples](../../../../../dotnet/samples/02-agents/AgentWithNeo4j/README.md).
+
 ## Prerequisites
 
 ### Required Resources
