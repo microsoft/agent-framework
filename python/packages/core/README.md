@@ -5,7 +5,7 @@ Highlights
 - Flexible Agent Framework: build, orchestrate, and deploy AI agents and multi-agent systems
 - Multi-Agent Orchestration: Group chat, sequential, concurrent, and handoff patterns
 - Plugin Ecosystem: Extend with native functions, OpenAPI, Model Context Protocol (MCP), and more
-- LLM Support: OpenAI, Azure OpenAI, Azure AI, and more
+- LLM Support: OpenAI, Foundry, Anthropic, and more
 - Runtime Support: In-process and distributed agent execution
 - Multimodal: Text, vision, and function calling
 - Cross-Platform: .NET and Python implementations
@@ -16,6 +16,8 @@ Highlights
 pip install agent-framework-core --pre
 # Optional: Add Azure AI Foundry integration
 pip install agent-framework-foundry --pre
+# Optional: Add OpenAI integration
+pip install agent-framework-openai --pre
 ```
 
 Supported Platforms:
@@ -25,35 +27,33 @@ Supported Platforms:
 
 ## 1. Setup API Keys
 
-Set as environment variables, or create a .env file at your project root:
+Depending on the client you want to use, there are various environment variables you can set to configure the chat clients. This can be done in the environment itself, or with a `.env` file in your project root, some examples of environment variables include:
 
 ```bash
+FOUNDRY_PROJECT_ENDPOINT=...
+FOUNDRY_MODEL=...
+...
 OPENAI_API_KEY=sk-...
 OPENAI_CHAT_MODEL=...
 OPENAI_RESPONSES_MODEL=...
 ...
 AZURE_OPENAI_API_KEY=...
 AZURE_OPENAI_ENDPOINT=...
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=...
-...
-FOUNDRY_PROJECT_ENDPOINT=...
-FOUNDRY_MODEL=...
+AZURE_OPENAI_DEPLOYMENT_NAME=...
 ```
 
 You can also override environment variables by explicitly passing configuration parameters to the chat client constructor:
 
 ```python
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatClient
 
-client = AzureOpenAIChatClient(
+client = OpenAIChatClient(
     api_key="",
-    endpoint="",
-    deployment_name="",
-    api_version="",
+    model="",
 )
 ```
 
-See the following [setup guide](../../samples/01-get-started) for more information.
+See the following [getting started samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/01-get-started) for more information.
 
 ## 2. Create a Simple Agent
 
@@ -64,22 +64,19 @@ import asyncio
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
-async def main():
-    agent = Agent(
-        client=OpenAIChatClient(),
-        instructions="""
-        1) A robot may not injure a human being...
-        2) A robot must obey orders given it by human beings...
-        3) A robot must protect its own existence...
+agent = Agent(
+    client=OpenAIChatClient(),
+    instructions="""
+    1) A robot may not injure a human being...
+    2) A robot must obey orders given it by human beings...
+    3) A robot must protect its own existence...
 
-        Give me the TLDR in exactly 5 words.
-        """
-    )
+    Give me the TLDR in exactly 5 words.
+    """
+)
 
-    result = await agent.run("Summarize the Three Laws of Robotics")
-    print(result)
-
-asyncio.run(main())
+result = asyncio.run(agent.run("Summarize the Three Laws of Robotics"))
+print(result)
 # Output: Protect humans, obey, self-preserve, prioritized.
 ```
 
@@ -95,12 +92,10 @@ from agent_framework import Message, Role
 async def main():
     client = OpenAIChatClient()
 
-    messages = [
+    response = await client.get_response([
         Message("system", ["You are a helpful assistant."]),
         Message("user", ["Write a haiku about Agent Framework."])
-    ]
-
-    response = await client.get_response(messages)
+    ])
     print(response.messages[0].text)
 
     """
@@ -122,13 +117,12 @@ Enhance your agent with custom tools and function calling:
 import asyncio
 from typing import Annotated
 from random import randint
-from pydantic import Field
 from agent_framework import Agent
 from agent_framework.openai import OpenAIChatClient
 
 
 def get_weather(
-    location: Annotated[str, Field(description="The location to get the weather for.")],
+    location: Annotated[str, "The location to get the weather for."],
 ) -> str:
     """Get the weather for a given location."""
     conditions = ["sunny", "cloudy", "rainy", "stormy"]
@@ -161,7 +155,7 @@ async def main():
 asyncio.run(main())
 ```
 
-You can explore additional agent samples [here](../../samples/02-agents).
+You can explore additional agent samples [here](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents).
 
 ## 5. Multi-Agent Orchestration
 
@@ -213,14 +207,14 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](../../samples/03-workflows/orchestrations).
+**Note**: Sequential, Concurrent, Group Chat, Handoff, and Magentic orchestrations are available. See examples in [orchestration samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/03-workflows/orchestrations).
 
 ## More Examples & Samples
 
-- [Getting Started with Agents](../../samples/02-agents): Basic agent creation and tool usage
-- [Chat Client Examples](../../samples/02-agents/chat_client): Direct chat client usage patterns
-- [Azure AI Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/azure-ai): Azure AI integration
-- [Workflows Samples](../../samples/03-workflows): Advanced multi-agent patterns
+- [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents): Basic agent creation and tool usage
+- [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/chat_client): Direct chat client usage patterns
+- [Foundry Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/foundry): Foundry integration
+- [Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/03-workflows): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
 
@@ -228,4 +222,4 @@ if __name__ == "__main__":
 - [Python Package Documentation](https://github.com/microsoft/agent-framework/tree/main/python)
 - [.NET Package Documentation](https://github.com/microsoft/agent-framework/tree/main/dotnet)
 - [Design Documents](https://github.com/microsoft/agent-framework/tree/main/docs/design)
-- [Learn Documentation](https://learn.microsoft.com/en-us/agent-framework/user-guide/workflows/orchestrations/overview)
+- [Learn Documentation](https://learn.microsoft.com/agent-framework/)

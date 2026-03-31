@@ -92,15 +92,17 @@ from agent_framework.orchestrations import (
 
 These may appear in event streams (executor_invoked/executor_completed). They're analogous to concurrent's dispatcher and aggregator and can be ignored if you only care about agent activity.
 
-## Why AzureOpenAIResponsesClient?
+## Why FoundryChatClient?
 
-Orchestration samples use `AzureOpenAIResponsesClient` rather than the CRUD-style `AzureAIAgent` client. Orchestrations create agents locally and do not require server-side lifecycle management (create/update/delete). `AzureOpenAIResponsesClient` is a lightweight client that uses the underlying Agent Service V2 (Responses API) for non-CRUD-style agents, which is ideal for orchestration patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
+Orchestration samples use `FoundryChatClient` because they create agents locally and do not require
+server-side lifecycle management. `FoundryChatClient` is a lightweight, project-backed client that fits
+patterns like Sequential, Concurrent, Handoff, GroupChat, and Magentic.
 
 ## Environment Variables
 
-Orchestration samples that use `AzureOpenAIResponsesClient` expect:
+Orchestration samples that use `FoundryChatClient` expect:
 
-- `AZURE_AI_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME` (model deployment name)
+- `FOUNDRY_PROJECT_ENDPOINT` (Azure AI Foundry Agent Service (V2) project endpoint)
+- `FOUNDRY_MODEL` (model deployment name)
 
 These values are passed directly into the client constructor via `os.getenv()` in sample code.

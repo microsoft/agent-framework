@@ -36,11 +36,11 @@ async def run_semantic_kernel() -> None:
 
 async def run_agent_framework() -> None:
     from agent_framework import Agent
-    from agent_framework.openai import OpenAIResponsesClient
+    from agent_framework.openai import OpenAIChatClient
 
-    # AF Agent can swap in an OpenAIResponsesClient directly.
+    # AF Agent can swap in an OpenAIChatClient directly.
     chat_agent = Agent(
-        client=OpenAIResponsesClient(),
+        client=OpenAIChatClient(),
         instructions="Answer in one concise sentence.",
         name="Expert",
     )
