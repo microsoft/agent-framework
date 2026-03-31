@@ -117,17 +117,6 @@ Each language has its own dev setup guide, coding standards, and build scripts:
     - Integration tests: `dotnet test --filter-query "/*IntegrationTests*/*/*/*"` (requires API keys/endpoints)
     - Linting (auto-fix): `dotnet format`
 
-### Documentation Contributions
-
-When contributing documentation changes:
-
-- Ensure all Markdown links are valid. A [link checker](./.github/workflows/markdown-link-check.yml)
-  runs in CI on every PR that modifies `.md` files.
-- Keep documentation host-agnostic where possible, and include examples for
-  both C# and Python when applicable.
-- For docs under `docs/features/durable-agents/`, follow the
-  [writing guidelines](./docs/features/durable-agents/AGENTS.md) in that area.
-
 ### PR - CI Process
 
 The continuous integration (CI) system will automatically perform the required
