@@ -168,9 +168,23 @@ AnthropicOptionsT = TypeVar(
 
 # Translation between framework options keys and Anthropic Messages API
 OPTION_TRANSLATIONS: dict[str, str] = {
+    "model_id": "model",  # backward compat: accept model_id in runtime options
     "stop": "stop_sequences",
     "instructions": "system",
 }
+
+
+def _apply_option_translations(options: dict[str, Any]) -> None:
+    """Translate framework option keys to Anthropic request keys in-place.
+
+    When both the old and new key are present, the new key wins and the old key
+    is discarded to preserve explicit overrides.
+    """
+    for old_key, new_key in OPTION_TRANSLATIONS.items():
+        if old_key not in options or old_key == new_key:
+            continue
+        old_value = options.pop(old_key)
+        options.setdefault(new_key, old_value)
 
 
 # region Role and Finish Reason Maps
@@ -543,9 +557,6 @@ class RawAnthropicClient(
         Returns:
             A dictionary of run options for the Anthropic client.
         """
-        if options.get("model_id") is not None or kwargs.get("model_id") is not None:
-            raise ValueError("Anthropic clients no longer accept `model_id`; use `model` instead.")
-
         # Prepend instructions from options if they exist
         instructions = options.get("instructions")
         if instructions:
@@ -562,10 +573,16 @@ class RawAnthropicClient(
         # Stream mode is controlled explicitly at call sites.
         run_options.pop("stream", None)
 
-        # Translation between options keys and Anthropic Messages API
-        for old_key, new_key in OPTION_TRANSLATIONS.items():
-            if old_key in run_options and old_key != new_key:
-                run_options[new_key] = run_options.pop(old_key)
+        _apply_option_translations(run_options)
+
+        # Filter out framework kwargs that should not be passed to the Anthropic API.
+        # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
+        # and framework kwargs like 'thread' and 'middleware'.
+        filtered_kwargs = {
+            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
+        }
+        _apply_option_translations(filtered_kwargs)
+        run_options.update(filtered_kwargs)
 
         # model
         if not run_options.get("model"):
@@ -608,13 +625,6 @@ class RawAnthropicClient(
             # Add the structured outputs beta flag
             run_options["betas"].add(STRUCTURED_OUTPUTS_BETA_FLAG)
 
-        # Filter out framework kwargs that should not be passed to the Anthropic API.
-        # This includes underscore-prefixed internal objects (like _function_middleware_pipeline)
-        # and framework kwargs like 'thread' and 'middleware'.
-        filtered_kwargs = {
-            k: v for k, v in kwargs.items() if not k.startswith("_") and k not in {"thread", "middleware"}
-        }
-        run_options.update(filtered_kwargs)
         return run_options
 
     def _prepare_betas(self, options: Mapping[str, Any]) -> set[str]:

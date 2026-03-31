@@ -65,6 +65,30 @@ def test_raw_anthropic_foundry_client_creates_sdk_client_from_settings(tmp_path)
     )
 
 
+def test_raw_anthropic_foundry_client_creates_sdk_client_from_base_url_settings(tmp_path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "ANTHROPIC_CHAT_MODEL=claude-foundry-test\n"
+        "ANTHROPIC_FOUNDRY_API_KEY=test-key\n"
+        "ANTHROPIC_FOUNDRY_BASE_URL=https://test-resource.services.ai.azure.com/anthropic/\n"
+    )
+    mock_transport = _create_mock_transport("https://test-resource.services.ai.azure.com/anthropic/")
+
+    with patch(
+        "agent_framework_anthropic._foundry_client.AsyncAnthropicFoundry", return_value=mock_transport
+    ) as factory:
+        client = RawAnthropicFoundryClient(env_file_path=str(env_file))
+
+    assert client.model == "claude-foundry-test"
+    assert client.anthropic_client is mock_transport
+    factory.assert_called_once_with(
+        base_url="https://test-resource.services.ai.azure.com/anthropic/",
+        api_key="test-key",
+        azure_ad_token_provider=None,
+        default_headers={"User-Agent": AGENT_FRAMEWORK_USER_AGENT},
+    )
+
+
 def test_raw_anthropic_foundry_client_requires_resource_or_base_url() -> None:
     with patch("agent_framework_anthropic._foundry_client.load_settings") as mock_load:
         mock_load.return_value = {

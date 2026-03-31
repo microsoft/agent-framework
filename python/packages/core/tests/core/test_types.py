@@ -754,6 +754,14 @@ def test_chat_response():
     assert str(response) == response.text
 
 
+def test_chat_response_accepts_model_alias() -> None:
+    """Test ChatResponse accepts model and exposes it through model_id alias."""
+    response = ChatResponse(messages=Message(role="assistant", text="Hello"), model="claude-test")
+
+    assert response.model == "claude-test"
+    assert response.model_id == "claude-test"
+
+
 class OutputModel(BaseModel):
     response: str
 
@@ -849,6 +857,14 @@ def test_chat_response_update():
     assert response_update.contents[0].text == "I'm doing well, thank you!"
     assert response_update.contents[0].type == "text"
     assert response_update.text == "I'm doing well, thank you!"
+
+
+def test_chat_response_update_accepts_model_alias() -> None:
+    """Test ChatResponseUpdate accepts model and exposes it through model_id alias."""
+    response_update = ChatResponseUpdate(contents=[Content.from_text("Hello")], model="claude-test")
+
+    assert response_update.model == "claude-test"
+    assert response_update.model_id == "claude-test"
 
 
 def test_chat_response_updates_to_chat_response_one():

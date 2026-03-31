@@ -1958,6 +1958,14 @@ def test_merge_options_runtime_model_id_overrides_default_model() -> None:
     assert "model" not in result
 
 
+def test_merge_options_base_with_both_model_and_model_id() -> None:
+    """Test _merge_options drops model_id when base already contains both model and model_id."""
+    result = _merge_options({"model": "preferred-model", "model_id": "legacy-model"}, {})
+
+    assert result["model"] == "preferred-model"
+    assert "model_id" not in result
+
+
 def test_merge_options_tools_combined():
     """Test _merge_options raises when distinct tools share the same name."""
 
