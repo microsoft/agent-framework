@@ -338,44 +338,50 @@ async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -
 @pytest.mark.parametrize("reserved_kwarg", ["session", "stream", "messages"])
 async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str, caplog: "LogCaptureFixture") -> None:
     """_prepare_agent_run_args must remove reserved kwargs and log a warning."""
+    agent = _CountingAgent(id="test_agent", name="TestAgent")
+    executor = AgentExecutor(agent, id="test_exec")
+
     raw: dict[str, Any] = {
         reserved_kwarg: "should-be-stripped",
         "custom_key": "keep-me",
     }
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+        _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
-    assert reserved_kwarg not in run_kwargs
-    assert "custom_key" in run_kwargs
-    assert options is not None
-    assert options["additional_function_arguments"]["custom_key"] == "keep-me"
+    assert reserved_kwarg not in backward_kwargs
+    assert "custom_key" in backward_kwargs
+    assert backward_kwargs["custom_key"] == "keep-me"
     assert any(reserved_kwarg in record.message for record in caplog.records)
 
 
 async def test_prepare_agent_run_args_preserves_non_reserved_kwargs() -> None:
     """Non-reserved workflow kwargs should pass through unchanged."""
+    agent = _CountingAgent(id="test_agent", name="TestAgent")
+    executor = AgentExecutor(agent, id="test_exec")
+
     raw: dict[str, Any] = {"custom_param": "value", "another": 42}
-    run_kwargs, _options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
-    assert run_kwargs["custom_param"] == "value"
-    assert run_kwargs["another"] == 42
+    _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert backward_kwargs["custom_param"] == "value"
+    assert backward_kwargs["another"] == 42
 
 
 async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
     caplog: "LogCaptureFixture",
 ) -> None:
     """All reserved kwargs should be stripped when supplied together, each emitting a warning."""
+    agent = _CountingAgent(id="test_agent", name="TestAgent")
+    executor = AgentExecutor(agent, id="test_exec")
+
     raw: dict[str, Any] = {"session": "x", "stream": True, "messages": [], "custom": 1}
 
     with caplog.at_level(logging.WARNING):
-        run_kwargs, options = AgentExecutor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+        _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
 
-    assert "session" not in run_kwargs
-    assert "stream" not in run_kwargs
-    assert "messages" not in run_kwargs
-    assert run_kwargs["custom"] == 1
-    assert options is not None
-    assert options["additional_function_arguments"]["custom"] == 1
+    assert "session" not in backward_kwargs
+    assert "stream" not in backward_kwargs
+    assert "messages" not in backward_kwargs
+    assert backward_kwargs["custom"] == 1
 
     warned_keys = {r.message.split("'")[1] for r in caplog.records if "reserved" in r.message.lower()}
     assert warned_keys == {"session", "stream", "messages"}
@@ -638,3 +644,129 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
     assert cache[0].text == "cached msg"
     # context_mode should remain as configured in the constructor, not changed by restore
     assert executor._context_mode == "last_agent"  # pyright: ignore[reportPrivateUsage]
+
+
+# ---------------------------------------------------------------------------
+# Per-executor kwargs resolution tests
+# ---------------------------------------------------------------------------
+
+
+from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
+
+
+async def test_resolve_executor_kwargs_returns_global_kwargs() -> None:
+    """_resolve_executor_kwargs with __global__ key returns the global kwargs."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    resolved = {"__global__": {"tool_param": "value"}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result == {"tool_param": "value"}
+
+
+async def test_resolve_executor_kwargs_returns_per_executor_kwargs() -> None:
+    """_resolve_executor_kwargs with matching executor ID returns that executor's kwargs."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    resolved = {"exec_a": {"my_param": 42}, "exec_b": {"other_param": 99}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result == {"my_param": 42}
+
+
+async def test_resolve_executor_kwargs_returns_none_for_unmatched_per_executor() -> None:
+    """_resolve_executor_kwargs returns None when per-executor dict has no matching ID."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_c")
+
+    resolved = {"exec_a": {"my_param": 42}, "exec_b": {"other_param": 99}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_resolve_executor_kwargs_returns_none_for_none_input() -> None:
+    """_resolve_executor_kwargs returns None when input is None."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    result = executor._resolve_executor_kwargs(None)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_resolve_executor_kwargs_prefers_executor_id_over_global() -> None:
+    """_resolve_executor_kwargs prefers executor-specific entry over __global__."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    # Dict has both a per-executor entry and a global entry
+    resolved = {"exec_a": {"specific": True}, GLOBAL_KWARGS_KEY: {"global": True}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result == {"specific": True}
+
+
+async def test_resolve_executor_kwargs_returns_none_for_empty_dict_value() -> None:
+    """_resolve_executor_kwargs returns None when the matched value is an empty dict."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    resolved = {GLOBAL_KWARGS_KEY: {}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result is None
+
+
+async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> None:
+    """_prepare_agent_run_args extracts function_invocation_kwargs from the state dict."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    raw: dict[str, Any] = {
+        "function_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"tool_key": "tool_val"}},
+    }
+    fi_kwargs, client_kwargs, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs == {"tool_key": "tool_val"}
+    assert client_kwargs is None
+    assert "function_invocation_kwargs" not in backward_kwargs
+
+
+async def test_prepare_agent_run_args_extracts_client_invocation_kwargs() -> None:
+    """_prepare_agent_run_args extracts client_invocation_kwargs from the state dict."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    raw: dict[str, Any] = {
+        "client_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"model": "gpt-4"}},
+    }
+    fi_kwargs, client_kwargs, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs is None
+    assert client_kwargs == {"model": "gpt-4"}
+    assert "client_invocation_kwargs" not in backward_kwargs
+
+
+async def test_prepare_agent_run_args_per_executor_resolution() -> None:
+    """_prepare_agent_run_args resolves per-executor function_invocation_kwargs using self.id."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    raw: dict[str, Any] = {
+        "function_invocation_kwargs": {
+            "exec_a": {"my_tool_key": "my_val"},
+            "exec_b": {"other_tool_key": "other_val"},
+        },
+    }
+    fi_kwargs, _, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs == {"my_tool_key": "my_val"}
+
+
+async def test_prepare_agent_run_args_per_executor_no_match() -> None:
+    """_prepare_agent_run_args returns None for function_invocation_kwargs when executor ID not found."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_c")
+
+    raw: dict[str, Any] = {
+        "function_invocation_kwargs": {
+            "exec_a": {"my_tool_key": "my_val"},
+            "exec_b": {"other_tool_key": "other_val"},
+        },
+    }
+    fi_kwargs, _, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs is None

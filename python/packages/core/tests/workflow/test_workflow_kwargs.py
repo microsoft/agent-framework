@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from collections.abc import AsyncIterable, Awaitable
-from typing import Annotated, Any, Literal, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, overload
 
 import pytest
 
@@ -25,6 +25,9 @@ from agent_framework.orchestrations import (
     HandoffBuilder,
     SequentialBuilder,
 )
+
+if TYPE_CHECKING:
+    from _pytest.logging import LogCaptureFixture
 
 # Track kwargs received by tools during test execution
 _received_kwargs: list[dict[str, Any]] = []
@@ -205,50 +208,8 @@ async def test_sequential_run_kwargs_flow() -> None:
     assert agent.captured_kwargs[0].get("custom_data") == {"test": True}
 
 
-async def test_sequential_run_options_does_not_conflict_with_agent_options() -> None:
-    """Test workflow.run(options=...) does not conflict with Agent.run(options=...)."""
-    agent = _OptionsAwareAgent(name="options_agent")
-    workflow = SequentialBuilder(participants=[agent]).build()
-
-    custom_data = {"session_id": "abc123"}
-    user_token = {"user_name": "alice"}
-    provided_options = {
-        "store": False,
-        "additional_function_arguments": {"source": "workflow-options"},
-    }
-
-    async for event in workflow.run(
-        "test message",
-        stream=True,
-        options=provided_options,
-        custom_data=custom_data,
-        user_token=user_token,
-    ):
-        if event.type == "status" and event.state == WorkflowRunState.IDLE:
-            break
-
-    assert len(agent.captured_options) >= 1
-    captured_options: dict[str, Any] | None = agent.captured_options[0]
-    assert captured_options is not None
-    assert captured_options.get("store") is False
-
-    additional_args: Any = captured_options.get("additional_function_arguments")
-    assert isinstance(additional_args, dict)
-    assert additional_args.get("source") == "workflow-options"  # pyright: ignore[reportUnknownMemberType]
-    assert additional_args.get("custom_data") == custom_data  # pyright: ignore[reportUnknownMemberType]
-    assert additional_args.get("user_token") == user_token  # pyright: ignore[reportUnknownMemberType]
-
-    # "options" should be passed once via the dedicated options parameter,
-    # not duplicated in **kwargs.
-    assert len(agent.captured_kwargs) >= 1
-    captured_kwargs = agent.captured_kwargs[0]
-    assert "options" not in captured_kwargs
-    assert captured_kwargs.get("custom_data") == custom_data
-    assert captured_kwargs.get("user_token") == user_token
-
-
 async def test_sequential_run_additional_function_arguments_flattened() -> None:
-    """Test workflow.run(additional_function_arguments=...) maps directly to tool kwargs."""
+    """Test workflow.run(additional_function_arguments=...) passes through as a backward-compat kwarg."""
     agent = _OptionsAwareAgent(name="options_agent")
     workflow = SequentialBuilder(participants=[agent]).build()
 
@@ -263,46 +224,14 @@ async def test_sequential_run_additional_function_arguments_flattened() -> None:
         if event.type == "status" and event.state == WorkflowRunState.IDLE:
             break
 
-    assert len(agent.captured_options) >= 1
-    captured_options: dict[str, Any] | None = agent.captured_options[0]
-    assert captured_options is not None
-
-    additional_args: Any = captured_options.get("additional_function_arguments")
-    assert isinstance(additional_args, dict)
-    assert additional_args.get("custom_data") == custom_data  # pyright: ignore[reportUnknownMemberType]
-    assert additional_args.get("user_token") == user_token  # pyright: ignore[reportUnknownMemberType]
-    assert "additional_function_arguments" not in additional_args
-
+    # additional_function_arguments is passed through as a backward-compat kwarg,
+    # not merged into options.
     assert len(agent.captured_kwargs) >= 1
     captured_kwargs = agent.captured_kwargs[0]
-    assert "additional_function_arguments" not in captured_kwargs
-
-
-async def test_sequential_run_additional_function_arguments_merges_with_options() -> None:
-    """Test workflow additional_function_arguments merges with workflow options."""
-    agent = _OptionsAwareAgent(name="options_agent")
-    workflow = SequentialBuilder(participants=[agent]).build()
-
-    async for event in workflow.run(
-        "test message",
-        stream=True,
-        options={"additional_function_arguments": {"source": "workflow-options"}},
-        additional_function_arguments={"custom_data": {"session_id": "abc123"}},
-        user_token={"user_name": "alice"},
-    ):
-        if event.type == "status" and event.state == WorkflowRunState.IDLE:
-            break
-
-    assert len(agent.captured_options) >= 1
-    captured_options: dict[str, Any] | None = agent.captured_options[0]
-    assert captured_options is not None
-
-    additional_args: Any = captured_options.get("additional_function_arguments")
-    assert isinstance(additional_args, dict)
-    assert additional_args.get("source") == "workflow-options"  # pyright: ignore[reportUnknownMemberType]
-    assert additional_args.get("custom_data") == {"session_id": "abc123"}  # pyright: ignore[reportUnknownMemberType]
-    assert additional_args.get("user_token") == {"user_name": "alice"}  # pyright: ignore[reportUnknownMemberType]
-    assert "additional_function_arguments" not in additional_args
+    assert captured_kwargs.get("additional_function_arguments") == {
+        "custom_data": custom_data,
+        "user_token": user_token,
+    }
 
 
 # endregion
@@ -1176,6 +1105,217 @@ async def test_nested_subworkflow_kwargs_propagation() -> None:
     assert received.get("deep_kwarg") == "should_reach_inner", (
         f"Deeply nested agent should receive 'deep_kwarg'. Got: {received}"
     )
+
+
+# endregion
+
+
+# region Per-Executor Invocation Kwargs Tests
+
+
+async def test_legacy_kwargs_cannot_coexist_with_new_invocation_kwargs() -> None:
+    """Passing both legacy **kwargs and function_invocation_kwargs/client_invocation_kwargs must raise ValueError."""
+    agent = _KwargsCapturingAgent(name="agent1")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    with pytest.raises(ValueError, match="Cannot provide both deprecated kwargs"):
+        await workflow.run(
+            "test",
+            function_invocation_kwargs={"tool_key": "val"},
+            custom_legacy_kwarg="should_conflict",
+        )
+
+    with pytest.raises(ValueError, match="Cannot provide both deprecated kwargs"):
+        await workflow.run(
+            "test",
+            client_invocation_kwargs={"model": "gpt-4"},
+            custom_legacy_kwarg="should_conflict",
+        )
+
+
+async def test_function_and_client_invocation_kwargs_together() -> None:
+    """Both function_invocation_kwargs and client_invocation_kwargs can be provided in the same call."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    fi_kwargs = {"tool_param": "tool_value"}
+    ci_kwargs = {"temperature": 0.7}
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        function_invocation_kwargs=fi_kwargs,
+        client_invocation_kwargs=ci_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Both agents should receive both kwargs
+    for agent in [agent1, agent2]:
+        assert len(agent.captured_kwargs) >= 1
+        assert agent.captured_kwargs[0].get("function_invocation_kwargs") == fi_kwargs
+        assert agent.captured_kwargs[0].get("client_kwargs") == ci_kwargs
+
+
+async def test_global_function_invocation_kwargs_flow_to_all_agents() -> None:
+    """Global function_invocation_kwargs should be received by all agents in a sequential workflow."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    fi_kwargs = {"tool_param": "shared_value"}
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        function_invocation_kwargs=fi_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Both agents should receive function_invocation_kwargs
+    assert len(agent1.captured_kwargs) >= 1
+    assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == fi_kwargs
+    assert len(agent2.captured_kwargs) >= 1
+    assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == fi_kwargs
+
+
+async def test_per_executor_function_invocation_kwargs_routes_to_correct_agent() -> None:
+    """Per-executor function_invocation_kwargs should only be received by the targeted agent."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    # Per-executor: keys match agent names (which are used as executor IDs)
+    fi_kwargs = {
+        "agent1": {"tool_param": "value_for_agent1"},
+        "agent2": {"tool_param": "value_for_agent2"},
+    }
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        function_invocation_kwargs=fi_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    # Each agent should receive only its own kwargs
+    assert len(agent1.captured_kwargs) >= 1
+    assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent1"}
+    assert len(agent2.captured_kwargs) >= 1
+    assert agent2.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "value_for_agent2"}
+
+
+async def test_per_executor_kwargs_unmatched_agent_gets_none() -> None:
+    """An agent not targeted in per-executor kwargs should receive None for that kwarg."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    # Only agent1 is targeted
+    fi_kwargs = {"agent1": {"tool_param": "only_for_agent1"}}
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        function_invocation_kwargs=fi_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent1.captured_kwargs) >= 1
+    assert agent1.captured_kwargs[0].get("function_invocation_kwargs") == {"tool_param": "only_for_agent1"}
+    assert len(agent2.captured_kwargs) >= 1
+    assert agent2.captured_kwargs[0].get("function_invocation_kwargs") is None
+
+
+async def test_global_client_invocation_kwargs_flow_to_all_agents() -> None:
+    """Global client_invocation_kwargs should be received by all agents."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    ci_kwargs = {"temperature": 0.5}
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        client_invocation_kwargs=ci_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent1.captured_kwargs) >= 1
+    assert agent1.captured_kwargs[0].get("client_kwargs") == ci_kwargs
+    assert len(agent2.captured_kwargs) >= 1
+    assert agent2.captured_kwargs[0].get("client_kwargs") == ci_kwargs
+
+
+async def test_per_executor_client_invocation_kwargs_routes_correctly() -> None:
+    """Per-executor client_invocation_kwargs should only be received by the targeted agent."""
+    agent1 = _KwargsCapturingAgent(name="agent1")
+    agent2 = _KwargsCapturingAgent(name="agent2")
+    workflow = SequentialBuilder(participants=[agent1, agent2]).build()
+
+    ci_kwargs = {
+        "agent1": {"temperature": 0.1},
+        "agent2": {"temperature": 0.9},
+    }
+
+    async for event in workflow.run(
+        "test",
+        stream=True,
+        client_invocation_kwargs=ci_kwargs,
+    ):
+        if event.type == "status" and event.state == WorkflowRunState.IDLE:
+            break
+
+    assert len(agent1.captured_kwargs) >= 1
+    assert agent1.captured_kwargs[0].get("client_kwargs") == {"temperature": 0.1}
+    assert len(agent2.captured_kwargs) >= 1
+    assert agent2.captured_kwargs[0].get("client_kwargs") == {"temperature": 0.9}
+
+
+async def test_resolve_invocation_kwargs_logs_per_executor(caplog: "LogCaptureFixture") -> None:
+    """Workflow._resolve_invocation_kwargs logs info when per-executor format is detected."""
+    import logging
+
+    agent = _KwargsCapturingAgent(name="agent1")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    with caplog.at_level(logging.INFO):
+        async for event in workflow.run(
+            "test",
+            stream=True,
+            function_invocation_kwargs={"agent1": {"key": "val"}},
+        ):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
+                break
+
+    per_executor_logs = [r for r in caplog.records if "per-executor" in r.message.lower()]
+    assert len(per_executor_logs) >= 1
+
+
+async def test_resolve_invocation_kwargs_logs_global(caplog: "LogCaptureFixture") -> None:
+    """Workflow._resolve_invocation_kwargs logs info when global format is detected."""
+    import logging
+
+    agent = _KwargsCapturingAgent(name="agent1")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    with caplog.at_level(logging.INFO):
+        async for event in workflow.run(
+            "test",
+            stream=True,
+            function_invocation_kwargs={"tool_key": "tool_val"},
+        ):
+            if event.type == "status" and event.state == WorkflowRunState.IDLE:
+                break
+
+    global_logs = [r for r in caplog.records if "global kwargs" in r.message.lower()]
+    assert len(global_logs) >= 1
 
 
 # endregion
