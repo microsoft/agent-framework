@@ -129,7 +129,7 @@ async def main() -> None:
     # Run workflow with kwargs - these will flow through to tools
     async for event in workflow.run(
         "Please get my user data and then call the users API endpoint.",
-        additional_function_arguments={"custom_data": custom_data, "user_token": user_token},
+        function_invocation_kwargs={"custom_data": custom_data, "user_token": user_token},
         stream=True,
     ):
         if event.type == "output":
@@ -137,7 +137,7 @@ async def main() -> None:
             if isinstance(output_data, list):
                 for item in output_data:
                     if isinstance(item, Message) and item.text:
-                        print(f"\n[Final Answer]: {item.text}")
+                        print(f"\n[{item.author_name}]: {item.text}")
 
     print("\n" + "=" * 70)
     print("Sample Complete")
