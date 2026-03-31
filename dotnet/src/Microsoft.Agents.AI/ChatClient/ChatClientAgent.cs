@@ -139,8 +139,8 @@ public sealed partial class ChatClientAgent : AIAgent
 
         this._logger = (loggerFactory ?? chatClient.GetService<ILoggerFactory>() ?? NullLoggerFactory.Instance).CreateLogger<ChatClientAgent>();
 
-        // Warn if using a custom chat client stack with simulated service stored persistence but no ServiceStoredSimulatingChatClient.
-        this.WarnOnMissingServiceStoredSimulatingClient();
+        // Warn if using a custom chat client stack with simulated service stored persistence but no PerServiceCallChatHistoryPersistingChatClient.
+        this.WarnOnMissingPerServiceCallChatHistoryPersistingChatClient();
     }
 
     /// <summary>
@@ -454,7 +454,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of successfully completed messages.
     /// </summary>
     /// <remarks>
-    /// This method is also called by <see cref="ServiceStoredSimulatingChatClient"/> to persist messages per-service-call.
+    /// This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to persist messages per-service-call.
     /// </remarks>
     internal async Task NotifyProvidersOfNewMessagesAsync(
         ChatClientAgentSession session,
@@ -486,7 +486,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of a failure during a service call.
     /// </summary>
     /// <remarks>
-    /// This method is also called by <see cref="ServiceStoredSimulatingChatClient"/> to report failures per-service-call.
+    /// This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to report failures per-service-call.
     /// </remarks>
     internal async Task NotifyProvidersOfFailureAsync(
         ChatClientAgentSession session,
@@ -701,7 +701,7 @@ public sealed partial class ChatClientAgent : AIAgent
             throw new InvalidOperationException("A session must be provided when continuing a background response with a continuation token.");
         }
 
-        if ((continuationToken is not null || chatOptions?.AllowBackgroundResponses is true) && this.SimulatesServiceStoredChatHistory && this._logger.IsEnabled(LogLevel.Warning))
+        if ((continuationToken is not null || chatOptions?.AllowBackgroundResponses is true) && this.RequiresPerServiceCallChatHistoryPersistence && this._logger.IsEnabled(LogLevel.Warning))
         {
             var warningAgentName = this.GetLoggingAgentName();
             this._logger.LogAgentChatClientBackgroundResponseFallback(this.Id, warningAgentName);
@@ -740,10 +740,10 @@ public sealed partial class ChatClientAgent : AIAgent
         IEnumerable<ChatMessage> inputMessagesForChatClient = inputMessages;
 
         // Populate the session messages only if we are not continuing an existing response as it's not allowed.
-        // When SimulateServiceStoredChatHistory is active, the ServiceStoredSimulatingChatClient
+        // When RequirePerServiceCallChatHistoryPersistence is active, the PerServiceCallChatHistoryPersistingChatClient
         // owns the chat history lifecycle — it loads history before each service call. The agent
         // must not load history itself, as that would result in duplicate messages.
-        if (chatOptions?.ContinuationToken is null && !this.SimulatesServiceStoredChatHistory)
+        if (chatOptions?.ContinuationToken is null && !this.RequiresPerServiceCallChatHistoryPersistence)
         {
             // Add any existing messages from the session to the messages to be sent to the chat client.
             // The ChatHistoryProvider returns the merged result (history + input messages).
@@ -837,14 +837,14 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Updates the session conversation ID at the end of an agent run.
     /// </summary>
     /// <remarks>
-    /// When a <see cref="ServiceStoredSimulatingChatClient"/> handles per-service-call
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
     /// conversation ID updates, this end-of-run update is skipped. When the decorator is
     /// absent, the update is performed here. When <paramref name="forceUpdate"/> is <see langword="true"/>
     /// (continuation token scenarios), the update is always performed.
     /// </remarks>
     private void UpdateSessionConversationIdAtEndOfRun(ChatClientAgentSession session, string? responseConversationId, CancellationToken cancellationToken, bool forceUpdate = false)
     {
-        if (!forceUpdate && this.SimulatesServiceStoredChatHistory)
+        if (!forceUpdate && this.RequiresPerServiceCallChatHistoryPersistence)
         {
             return;
         }
@@ -856,7 +856,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Notifies providers of successfully completed messages at the end of an agent run.
     /// </summary>
     /// <remarks>
-    /// When a <see cref="ServiceStoredSimulatingChatClient"/> handles per-service-call
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
     /// notification, this end-of-run notification is skipped. When no decorator is present,
     /// all messages are persisted.
     /// When <paramref name="forceNotify"/> is <see langword="true"/> (continuation token or
@@ -871,7 +871,7 @@ public sealed partial class ChatClientAgent : AIAgent
         CancellationToken cancellationToken,
         bool forceNotify = false)
     {
-        if (!forceNotify && this.SimulatesServiceStoredChatHistory)
+        if (!forceNotify && this.RequiresPerServiceCallChatHistoryPersistence)
         {
             return Task.CompletedTask;
         }
@@ -883,7 +883,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// Notifies providers of a failure at the end of an agent run.
     /// </summary>
     /// <remarks>
-    /// When a <see cref="ServiceStoredSimulatingChatClient"/> handles per-service-call
+    /// When a <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles per-service-call
     /// notification (including failure), this end-of-run notification is skipped to avoid
     /// duplicate notification. In all other cases, failure is reported at the end of the run.
     /// </remarks>
@@ -894,7 +894,7 @@ public sealed partial class ChatClientAgent : AIAgent
         ChatOptions? chatOptions,
         CancellationToken cancellationToken)
     {
-        if (this.SimulatesServiceStoredChatHistory)
+        if (this.RequiresPerServiceCallChatHistoryPersistence)
         {
             return Task.CompletedTask;
         }
@@ -905,14 +905,14 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <summary>
     /// Gets a value indicating whether the agent is configured to simulate service-stored chat history.
     /// When <see langword="true"/>, end-of-run persistence and history loading are skipped because a
-    /// per-service-call decorator (such as <see cref="ServiceStoredSimulatingChatClient"/> or a
+    /// per-service-call decorator (such as <see cref="PerServiceCallChatHistoryPersistingChatClient"/> or a
     /// user-supplied equivalent) is expected to handle the history lifecycle.
     /// </summary>
-    private bool SimulatesServiceStoredChatHistory
+    private bool RequiresPerServiceCallChatHistoryPersistence
     {
         get
         {
-            return this._agentOptions?.SimulateServiceStoredChatHistory is true;
+            return this._agentOptions?.RequirePerServiceCallChatHistoryPersistence is true;
         }
     }
 
@@ -923,7 +923,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// The base class sets <see cref="AIAgent.CurrentRunContext"/> with the raw session parameter
     /// (which may be null) and restores it after each yield in streaming scenarios. After
     /// <see cref="PrepareSessionAndMessagesAsync"/> resolves or creates a session, we update the
-    /// context so the <see cref="ServiceStoredSimulatingChatClient"/> decorator always has a valid session.
+    /// context so the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> decorator always has a valid session.
     /// The original agent from the context is preserved to maintain the top-of-stack agent in
     /// decorated agent scenarios.
     /// </remarks>
@@ -939,19 +939,19 @@ public sealed partial class ChatClientAgent : AIAgent
     /// <summary>
     /// Checks for potential misconfiguration when using a custom chat client stack and logs warnings.
     /// </summary>
-    private void WarnOnMissingServiceStoredSimulatingClient()
+    private void WarnOnMissingPerServiceCallChatHistoryPersistingChatClient()
     {
         if (this._agentOptions?.UseProvidedChatClientAsIs is not true)
         {
             return;
         }
 
-        if (this._agentOptions?.SimulateServiceStoredChatHistory is not true)
+        if (this._agentOptions?.RequirePerServiceCallChatHistoryPersistence is not true)
         {
             return;
         }
 
-        var persistingClient = this.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
+        var persistingClient = this.ChatClient.GetService<PerServiceCallChatHistoryPersistingChatClient>();
         if (persistingClient is null && this._logger.IsEnabled(LogLevel.Warning))
         {
             var loggingAgentName = this.GetLoggingAgentName();
@@ -998,7 +998,7 @@ public sealed partial class ChatClientAgent : AIAgent
     /// </summary>
     /// <remarks>
     /// This method is used by both the agent (during <see cref="PrepareSessionAndMessagesAsync"/>) and by
-    /// <see cref="ServiceStoredSimulatingChatClient"/> to load history before each service call.
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> to load history before each service call.
     /// </remarks>
     internal async Task<IEnumerable<ChatMessage>> LoadChatHistoryAsync(
         ChatClientAgentSession session,

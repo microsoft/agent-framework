@@ -35,7 +35,7 @@ async def non_streaming_example() -> None:
     print("=== Non-streaming Response Example ===")
 
     agent = Agent(
-        client=AnthropicClient(),
+        client=AnthropicClient(model_id="claude-sonnet-4-5-20250929"),
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,
@@ -52,7 +52,7 @@ async def streaming_example() -> None:
     print("=== Streaming Response Example ===")
 
     agent = Agent(
-        client=AnthropicClient(),
+        client=AnthropicClient(model_id="claude-sonnet-4-5-20250929"),
         name="WeatherAgent",
         instructions="You are a helpful weather agent.",
         tools=get_weather,

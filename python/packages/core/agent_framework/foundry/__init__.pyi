@@ -7,10 +7,13 @@ from agent_framework_foundry import (
     FoundryAgent,
     FoundryChatClient,
     FoundryChatOptions,
+    FoundryEvals,
     FoundryMemoryProvider,
     RawFoundryAgent,
     RawFoundryAgentChatClient,
     RawFoundryChatClient,
+    evaluate_foundry_target,
+    evaluate_traces,
 )
 from agent_framework_foundry_local import (
     FoundryLocalChatOptions,
@@ -22,6 +25,7 @@ __all__ = [
     "FoundryAgent",
     "FoundryChatClient",
     "FoundryChatOptions",
+    "FoundryEvals",
     "FoundryLocalChatOptions",
     "FoundryLocalClient",
     "FoundryLocalSettings",
@@ -29,4 +33,6 @@ __all__ = [
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",
+    "evaluate_foundry_target",
+    "evaluate_traces",
 ]

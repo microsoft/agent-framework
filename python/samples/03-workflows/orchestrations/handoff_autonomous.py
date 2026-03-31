@@ -84,7 +84,7 @@ async def main() -> None:
     """Run an autonomous handoff workflow with specialist iteration enabled."""
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
     coordinator, research_agent, summary_agent = create_agents(client)
