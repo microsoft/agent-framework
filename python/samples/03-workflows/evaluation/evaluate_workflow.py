@@ -39,7 +39,7 @@ async def main() -> None:
     # Build a simple planner -> executor workflow
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
     planner = Agent(client=client, name="planner", instructions="You plan trips. Output a bullet-point plan.")
