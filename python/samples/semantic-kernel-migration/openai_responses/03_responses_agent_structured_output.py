@@ -29,14 +29,17 @@ async def run_semantic_kernel() -> None:
     from semantic_kernel.agents import OpenAIResponsesAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAISettings
 
+    openai_settings = OpenAISettings()
+    assert openai_settings.responses_model_id is not None, "Responses model ID must be set in OpenAISettings"
+
     client = OpenAIResponsesAgent.create_client()
     # response_format requests schema-constrained output from the model.
     agent = OpenAIResponsesAgent(
-        ai_model=OpenAISettings().responses_model_id,
+        ai_model_id=openai_settings.responses_model_id,
         client=client,
         instructions="Return launch briefs as structured JSON.",
         name="ProductMarketer",
-        text=OpenAIResponsesAgent.configure_response_format(ReleaseBrief),
+        text=OpenAIResponsesAgent.configure_response_format(ReleaseBrief),  # type: ignore
     )
     response = await agent.get_response(
         "Draft a launch brief for the Contoso Note app.",
