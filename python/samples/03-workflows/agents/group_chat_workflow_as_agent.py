@@ -72,7 +72,7 @@ async def main() -> None:
     print(f"Input: {task}\n")
 
     try:
-        workflow_agent = Agent(client=workflow, name="GroupChatWorkflowAgent")
+        workflow_agent = workflow.as_agent()
         agent_result = await workflow_agent.run(task)
 
         if agent_result.messages:

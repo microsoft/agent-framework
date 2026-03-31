@@ -164,7 +164,8 @@ async def main() -> None:
         human_response = ReviewResponse(request_id=request_id, feedback="", approved=True)
 
         # Create the function call result object to send back to the agent.
-        human_review_function_result = Content.from_function_result(
+        human_review_function_result = Content(
+            "function_result",
             call_id=human_review_function_call.call_id,  # type: ignore
             result=human_response,
         )

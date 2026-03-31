@@ -184,7 +184,9 @@ def create_writer_agent() -> Agent:
             "produce a 3-sentence draft."
         ),
         tools=[fetch_product_brief, get_brand_voice_profile],
-        tool_choice="required",
+        default_options={
+            "tool_choice": "required",
+        },
     )
 
 

@@ -27,8 +27,10 @@ from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv.main import load_dotenv
 
-# Copyright (c) Microsoft. All rights reserved.
+# Load environment variables from .env file
+load_dotenv()
 
 
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.

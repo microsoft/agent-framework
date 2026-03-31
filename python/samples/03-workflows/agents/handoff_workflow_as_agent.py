@@ -174,21 +174,20 @@ async def main() -> None:
     #   Without this, the default behavior continues requesting user input until max_turns
     #   is reached. Here we use a custom condition that checks if the conversation has ended
     #   naturally (when one of the agents says something like "you're welcome").
-    agent = Agent(
-        client=(
-            HandoffBuilder(
-                name="customer_support_handoff",
-                participants=[triage, refund, order, support],
-                # Custom termination: Check if one of the agents has provided a closing message.
-                # This looks for the last message containing "welcome", which indicates the
-                # conversation has concluded naturally.
-                termination_condition=lambda conversation: (
-                    len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
-                ),
-            )
-            .with_start_agent(triage)
-            .build()
-        ),
+    agent = (
+        HandoffBuilder(
+            name="customer_support_handoff",
+            participants=[triage, refund, order, support],
+            # Custom termination: Check if one of the agents has provided a closing message.
+            # This looks for the last message containing "welcome", which indicates the
+            # conversation has concluded naturally.
+            termination_condition=lambda conversation: (
+                len(conversation) > 0 and "welcome" in conversation[-1].text.lower()
+            ),
+        )
+        .with_start_agent(triage)
+        .build()
+        .as_agent()
     )
 
     # Scripted user responses for reproducible demo
@@ -226,7 +225,7 @@ async def main() -> None:
             responses = {req_id: HandoffAgentUserRequest.create_response(user_response) for req_id in pending_requests}
 
         function_results = [
-            Content.from_function_result(call_id=req_id, result=response) for req_id, response in responses.items()
+            Content("function_result", call_id=req_id, result=response) for req_id, response in responses.items()
         ]
         response = await agent.run(Message("tool", function_results))
         pending_requests = handle_response_and_requests(response)
