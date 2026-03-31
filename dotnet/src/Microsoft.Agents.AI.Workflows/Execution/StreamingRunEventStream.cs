@@ -123,7 +123,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
 
                 // Wait for next input from the consumer
                 // Works for both Idle (no work) and PendingRequests (waiting for responses)
-                await this._inputWaiter.WaitForInputAsync(TimeSpan.FromSeconds(1), linkedSource.Token).ConfigureAwait(false);
+                await this._inputWaiter.WaitForInputAsync(linkedSource.Token).ConfigureAwait(false);
 
                 // When signaled, resume running
                 this._runStatus = RunStatus.Running;
