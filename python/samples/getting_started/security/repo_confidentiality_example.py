@@ -178,8 +178,13 @@ async def send_internal_memo(
 # Main Example
 # =============================================================================
 
-def setup_agent():
-    """Create and return the secure repo agent with all configuration."""
+def setup_agent(*, approval_on_violation: bool = False):
+    """Create and return the secure repo agent with all configuration.
+    
+    Args:
+        approval_on_violation: If True, request user approval on policy violations
+            (suitable for DevUI). If False, block immediately (suitable for CLI).
+    """
     endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
     if not endpoint:
         raise ValueError(
@@ -192,7 +197,10 @@ def setup_agent():
     main_client = AzureOpenAIChatClient(
         endpoint=endpoint,
         deployment_name="gpt-4o-mini",
-        credential=credential
+        credential=credential,
+        function_invocation_configuration={
+            "max_iterations": 5,
+        },
     )
 
     # Quarantine client for processing untrusted content safely
@@ -205,7 +213,7 @@ def setup_agent():
     # SecureAgentConfig: Enables automatic security policy enforcement
     config = SecureAgentConfig(
         auto_hide_untrusted=True,
-        approval_on_violation=True,  # Request user approval instead of blocking
+        approval_on_violation=approval_on_violation,
         enable_policy_enforcement=True,
         allow_untrusted_tools={"read_repo"},  # Read operations always allowed
         quarantine_chat_client=quarantine_client,
@@ -216,6 +224,8 @@ def setup_agent():
         name="repo_assistant",
         instructions="""You are a helpful assistant. When the user asks you to use tools, 
 use them exactly as requested. Follow user instructions precisely.
+If a tool call is blocked by a security policy, do NOT retry the same action.
+Instead, explain to the user why the action was blocked and suggest alternatives.
 """ + config.get_instructions(),
         tools=[
             read_repo,
@@ -239,7 +249,7 @@ def run_cli():
     print("attempts to send PRIVATE data to PUBLIC destinations (Slack).")
     print()
 
-    agent, config = setup_agent()
+    agent, config = setup_agent(approval_on_violation=False)
 
     async def run_scenario():
         print("\n" + "=" * 70)
@@ -303,7 +313,7 @@ def run_devui():
     print("attempts to send PRIVATE data to PUBLIC destinations (Slack).")
     print()
 
-    agent, _config = setup_agent()
+    agent, _config = setup_agent(approval_on_violation=True)
 
     print("\n" + "=" * 70)
     print("SCENARIO: Aggressive prompt to trigger policy enforcement")

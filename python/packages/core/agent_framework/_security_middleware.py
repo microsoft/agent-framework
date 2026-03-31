@@ -524,6 +524,60 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 )
         return None
     
+    # ========== Helper utilities ==========
+    
+    @staticmethod
+    def _ensure_content_list(result: Any) -> list[Content]:
+        """Normalize any result value to ``list[Content]``.
+
+        After ``call_next()``, ``context.result`` is typically ``list[Content]``
+        from ``FunctionTool.invoke()``.  This helper handles legacy cases where
+        middleware or tests set raw strings, dicts, or single ``Content`` items.
+
+        Args:
+            result: The raw result value.
+
+        Returns:
+            A ``list[Content]`` suitable for uniform processing.
+        """
+        import json as _json
+
+        if isinstance(result, list) and all(isinstance(c, Content) for c in result):
+            return result
+        if isinstance(result, Content):
+            return [result]
+        if isinstance(result, str):
+            return [Content.from_text(result)]
+        try:
+            text = _json.dumps(result, default=str)
+        except (TypeError, ValueError):
+            text = str(result)
+        return [Content.from_text(text)]
+
+    def _should_hide(self, label: ContentLabel) -> bool:
+        """Decide whether a Content item with *label* should be hidden.
+
+        An item is hidden when **all three** conditions hold:
+        1. ``auto_hide_untrusted`` is enabled.
+        2. The item's integrity matches the ``hide_threshold`` (UNTRUSTED).
+        3. The conversation context is still TRUSTED (no point hiding if context
+           is already tainted).
+        """
+        return (
+            self.auto_hide_untrusted
+            and label.integrity == self.hide_threshold
+            and self._context_label.integrity == IntegrityLabel.TRUSTED
+        )
+
+    @staticmethod
+    def _is_variable_reference(item: Content) -> bool:
+        """Return True if *item* is a hidden variable-reference placeholder."""
+        return (
+            isinstance(item, Content)
+            and item.type == "text"
+            and bool(item.additional_properties.get("_variable_reference"))
+        )
+
     async def process(
         self,
         context: FunctionInvocationContext,
@@ -622,7 +676,6 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
             
             # If middleware set a function_approval_request (e.g., policy violation approval),
             # skip all result processing and let it pass through unchanged
-            from ._types import Content
             if isinstance(context.result, Content) and context.result.type == "function_approval_request":
                 logger.info(
                     f"Tool '{function_name}' returned function_approval_request - "
@@ -630,89 +683,87 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
                 )
                 return
             
-            # Default result label is the fallback (used when result is None)
-            result_label = fallback_label
-            
-            # Process result for per-item embedded labels (tier 1)
-            if context.result is not None:
-                original_result = context.result
-                
-                # FunctionTool.invoke() returns a JSON string via parse_result().
-                # We need to parse it back into structured data so we can inspect
-                # per-item security labels, then re-serialize after processing.
-                import json as _json
-                _was_string = isinstance(context.result, str)
-                _parsed_result = context.result
-                if _was_string:
-                    try:
-                        _parsed_result = _json.loads(context.result)
-                    except (ValueError, TypeError):
-                        pass  # Not valid JSON — treat as a plain string
-                
-                # Process for per-item embedded labels (tier 1 overrides fallback).
-                # Items with additional_properties.security_label get their embedded
-                # label; items without it get the tiered fallback_label.
-                context.result, result_label = self._process_result_with_embedded_labels(
-                    _parsed_result,
-                    function_name,
-                    fallback_label=fallback_label,
-                )
-                
-                # result_label: the security label of THIS tool call's result (per-call).
-                # Reflects whichever tier was used (embedded > source_integrity > input join).
-                context.metadata["result_label"] = result_label
-                
-                # Attach overall label to result if it's a FunctionResultContent
-                self._attach_label_to_result(context, result_label)
-                
-                # Update context label only if untrusted content actually entered the context
-                # If the entire result was hidden (replaced with VariableReferenceContent),
-                # the untrusted content is NOT in the LLM context, so don't taint INTEGRITY.
-                # However, CONFIDENTIALITY should ALWAYS be updated even for hidden content,
-                # because the data still exists and could be revealed by approving the variable.
-                entire_result_hidden = (
-                    (isinstance(context.result, VariableReferenceContent) or
-                     (isinstance(context.result, dict) and context.result.get("type") == "variable_reference")) and
-                    not isinstance(_parsed_result, VariableReferenceContent)
-                )
-                
-                if entire_result_hidden:
-                    # Result was hidden - integrity stays clean, but confidentiality MUST be updated
-                    # This prevents data exfiltration: even hidden PRIVATE data taints the context
-                    if result_label.confidentiality != self._context_label.confidentiality:
-                        old_conf = self._context_label.confidentiality
-                        # Only update confidentiality, keep integrity clean
-                        hidden_result_label = ContentLabel(
-                            integrity=self._context_label.integrity,  # Keep existing integrity
-                            confidentiality=result_label.confidentiality,  # Update confidentiality
-                        )
-                        self._update_context_label(hidden_result_label)
-                        logger.info(
-                            f"Result from '{function_name}' hidden (integrity clean) but "
-                            f"confidentiality updated: {old_conf.value} -> {result_label.confidentiality.value}"
-                        )
-                    else:
-                        logger.info(
-                            f"Result from '{function_name}' fully hidden - context label unchanged: "
-                            f"{self._context_label.integrity.value}, "
-                            f"{self._context_label.confidentiality.value}"
-                        )
-                else:
-                    # Some content entered context - update context label
-                    self._update_context_label(result_label)
-                    logger.info(
-                        f"Context label after processing '{function_name}': "
-                        f"{self._context_label.integrity.value}, "
-                        f"{self._context_label.confidentiality.value}"
-                    )
-                
-                # Ensure result is JSON-serializable for the LLM API.
-                # VariableReferenceContent objects must be converted to dicts
-                # so they can be serialized in tool result messages.
-                context.result = self._make_serializable(context.result)
+            # Label, hide, and update context label for the tool result
+            self._label_result(context, function_name, fallback_label)
         finally:
             # Clear thread-local reference
             _current_middleware.instance = None
+    
+    def _label_result(
+        self,
+        context: FunctionInvocationContext,
+        function_name: str,
+        fallback_label: ContentLabel,
+    ) -> None:
+        """Label, optionally hide, and update context label for a tool result.
+        
+        Performs all post-call result processing in a single method:
+        
+        1. Normalise ``context.result`` to ``list[Content]``.
+        2. Process per-item embedded labels (tier 1 overrides fallback).
+        3. Store the combined result label in ``context.metadata["result_label"]``.
+        4. Update the conversation-level context label, taking care to skip
+           integrity tainting when the entire result was hidden behind
+           variable references.
+        
+        Args:
+            context: The function invocation context (result is read/written).
+            function_name: Name of the function that produced the result.
+            fallback_label: Tiered fallback label (tier 2 or tier 3).
+        """
+        if context.result is None:
+            context.metadata["result_label"] = fallback_label
+            return
+        
+        original_items = self._ensure_content_list(context.result)
+        
+        # Process items — apply per-item labels + hide untrusted items
+        processed, result_label = self._process_result_with_embedded_labels(
+            original_items,
+            function_name,
+            fallback_label=fallback_label,
+        )
+        
+        context.result = processed
+        context.metadata["result_label"] = result_label
+        
+        # Determine whether the entire result was hidden (all items became
+        # variable references that were NOT variable references before).
+        entire_result_hidden = (
+            all(self._is_variable_reference(item) for item in processed)
+            and not all(self._is_variable_reference(item) for item in original_items)
+        )
+        
+        if entire_result_hidden:
+            # Untrusted content is NOT in the LLM context — don't taint integrity.
+            # However, confidentiality MUST be updated: even hidden PRIVATE data
+            # could be revealed by approving the variable reference.
+            if result_label.confidentiality != self._context_label.confidentiality:
+                old_conf = self._context_label.confidentiality
+                hidden_label = ContentLabel(
+                    integrity=self._context_label.integrity,
+                    confidentiality=result_label.confidentiality,
+                )
+                self._update_context_label(hidden_label)
+                logger.info(
+                    f"Result from '{function_name}' hidden (integrity clean) but "
+                    f"confidentiality updated: {old_conf.value} -> "
+                    f"{result_label.confidentiality.value}"
+                )
+            else:
+                logger.info(
+                    f"Result from '{function_name}' fully hidden - context label "
+                    f"unchanged: {self._context_label.integrity.value}, "
+                    f"{self._context_label.confidentiality.value}"
+                )
+        else:
+            # Some content entered context — update context label fully
+            self._update_context_label(result_label)
+            logger.info(
+                f"Context label after processing '{function_name}': "
+                f"{self._context_label.integrity.value}, "
+                f"{self._context_label.confidentiality.value}"
+            )
     
     def _get_function_confidentiality(self, context: FunctionInvocationContext) -> ConfidentialityLabel:
         """Get confidentiality label from function metadata.
@@ -738,67 +789,13 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         
         return self.default_confidentiality
     
-    def _attach_label_to_result(
-        self,
-        context: FunctionInvocationContext,
-        label: ContentLabel,
-    ) -> None:
-        """Attach security label to function result.
-        
-        Args:
-            context: The function invocation context.
-            label: The security label to attach.
-        """
-        result = context.result
-        
-        # If result is a Content with type="function_result", attach label to additional_properties
-        if isinstance(result, Content) and getattr(result, 'type', None) == 'function_result':
-            if not hasattr(result, "additional_properties") or result.additional_properties is None:
-                result.additional_properties = {}
-            result.additional_properties["security_label"] = label.to_dict()
-            logger.debug(f"Attached label to Content(function_result): {label}")
-        
-        # If result is a dict, attach label directly
-        elif isinstance(result, dict):
-            result["security_label"] = label.to_dict()
-            logger.debug(f"Attached label to dict result: {label}")
-        
-        # Otherwise, store in context metadata
-        else:
-            context.metadata["result_label"] = label
-            logger.debug(f"Stored label in context metadata: {label}")
-    
-    def _make_serializable(self, result: Any) -> str:
-        """Convert the processed result to a JSON string for the LLM API.
-        
-        FunctionTool.invoke() returns a JSON string, and the OpenAI API expects
-        tool message content to be a string. This method converts any
-        VariableReferenceContent objects to dicts, then JSON-serializes
-        the entire result back to a string.
-        """
-        import json as _json
-
-        def _to_plain(obj: Any) -> Any:
-            if isinstance(obj, VariableReferenceContent):
-                return obj.to_dict()
-            elif isinstance(obj, list):
-                return [_to_plain(item) for item in obj]
-            elif isinstance(obj, dict):
-                return {k: _to_plain(v) for k, v in obj.items()}
-            return obj
-
-        plain = _to_plain(result)
-        if isinstance(plain, str):
-            return plain
-        return _json.dumps(plain)
-    
     def _process_result_with_embedded_labels(
         self,
-        result: Any,
+        items: list[Content],
         function_name: str,
         fallback_label: ContentLabel,
-    ) -> tuple[Any, ContentLabel]:
-        """Recursively process result, respecting per-item embedded labels.
+    ) -> tuple[list[Content], ContentLabel]:
+        """Process Content items, respecting per-item embedded labels.
         
         This implements the first tier of the label propagation priority:
         items with embedded labels (``additional_properties.security_label``)
@@ -806,277 +803,145 @@ class LabelTrackingFunctionMiddleware(FunctionMiddleware):
         ``fallback_label``, which is either the tool's ``source_integrity``
         declaration (tier 2) or the join of input argument labels (tier 3).
         
-        Untrusted items are automatically hidden and replaced with VariableReferenceContent.
-        Trusted items pass through unchanged.
+        Each item's own label is attached to its ``additional_properties``
+        during processing, preserving per-item granularity.
+        
+        Untrusted items are automatically hidden and replaced with Content
+        items containing a variable reference.  Trusted items pass through unchanged.
         
         Args:
-            result: The result to process (may be dict, list, or primitive).
+            items: A list of Content items (already normalised by caller via
+                ``_ensure_content_list``).
             function_name: Name of the function that produced the result.
             fallback_label: Label to use when an item has no embedded label.
-                This is determined by the tiered priority in ``process()``:
-                tier 2 (source_integrity) or tier 3 (input labels join).
+        
         Returns:
-            Tuple of (processed_result, combined_label).
-            - processed_result: Result with untrusted items replaced by variable references
-            - combined_label: Most restrictive label from all items
-        
-        Examples:
-            Tool returns list with per-item labels::
-            
-                [
-                    {"id": 1, "body": "safe", "additional_properties": {"security_label": {"integrity": "trusted"}}},
-                    {"id": 2, "body": "unsafe", "additional_properties": {"security_label": {"integrity": "untrusted"}}},
-                ]
-            
-            After processing::
-            
-                [
-                    {"id": 1, "body": "safe", "additional_properties": {"security_label": {"integrity": "trusted"}}},
-                    VariableReferenceContent(variable_id="var_xxx", ...),  # Item 2 hidden
-                ]
+            Tuple of (processed_content_list, combined_label).
+            - processed_content_list: list[Content] with untrusted items replaced
+            - combined_label: Most restrictive label across all items
         """
-        from pydantic import BaseModel
-        
-        # Handle pydantic models (e.g., TextContent from MCP) with additional_properties
-        if isinstance(result, BaseModel) and hasattr(result, "additional_properties"):
-            additional_props = result.additional_properties
-            if additional_props and isinstance(additional_props, dict):
-                # Check for standard security_label
-                label_data = additional_props.get("security_label")
-                if label_data:
-                    try:
-                        item_label = ContentLabel.from_dict(label_data)
-                        # Only hide if context is trusted (untrusted content would taint it)
-                        # If context is already untrusted, no need to hide
-                        if (self.auto_hide_untrusted and 
-                            item_label.integrity == self.hide_threshold and
-                            self._context_label.integrity == IntegrityLabel.TRUSTED):
-                            hidden = self._hide_untrusted_result(result, item_label, function_name)
-                            return hidden, item_label
-                        return result, item_label
-                    except Exception as e:
-                        logger.warning(f"Failed to parse security_label from pydantic model: {e}")
-                
-                # Check for GitHub MCP server labels format
-                github_labels = additional_props.get("labels")
-                if github_labels and isinstance(github_labels, (dict, list)):
-                    try:
-                        if isinstance(github_labels, list) and github_labels:
-                            github_labels = github_labels[0] if isinstance(github_labels[0], dict) else {}
-                        
-                        item_label = _parse_github_mcp_labels(github_labels)
-                        if item_label:
-                            logger.info(
-                                f"Parsed GitHub MCP labels from pydantic model for '{function_name}': "
-                                f"integrity={item_label.integrity.value}, "
-                                f"confidentiality={item_label.confidentiality.value}"
-                            )
-                            # Only hide if context is trusted
-                            if (self.auto_hide_untrusted and 
-                                item_label.integrity == self.hide_threshold and
-                                self._context_label.integrity == IntegrityLabel.TRUSTED):
-                                hidden = self._hide_untrusted_result(result, item_label, function_name)
-                                return hidden, item_label
-                            return result, item_label
-                    except Exception as e:
-                        logger.warning(f"Failed to parse GitHub MCP labels from pydantic model: {e}")
-            
-            # No embedded labels found - use fallback
-            # Only hide if context is trusted
-            if (self.auto_hide_untrusted and 
-                fallback_label.integrity == self.hide_threshold and
-                self._context_label.integrity == IntegrityLabel.TRUSTED):
-                hidden = self._hide_untrusted_result(result, fallback_label, function_name)
-                return hidden, fallback_label
-            return result, fallback_label
-        
-        if isinstance(result, dict):
-            # Check for additional_properties.security_label (consistent with FunctionResultContent)
-            additional_props = result.get("additional_properties")
-            if additional_props and isinstance(additional_props, dict):
-                label_data = additional_props.get("security_label")
-                if label_data:
-                    try:
-                        item_label = ContentLabel.from_dict(label_data)
-                        # This item has an explicit label
-                        # Only hide if context is trusted
-                        if (self.auto_hide_untrusted and 
-                            item_label.integrity == self.hide_threshold and
-                            self._context_label.integrity == IntegrityLabel.TRUSTED):
-                            # Hide this entire item
-                            hidden = self._hide_untrusted_result(result, item_label, function_name)
-                            return hidden, item_label
-                        # Item is trusted or hiding disabled or context already untrusted - return as-is
-                        return result, item_label
-                    except Exception as e:
-                        logger.warning(f"Failed to parse embedded security_label: {e}")
-                
-                # Check for GitHub MCP server labels format: additional_properties.labels
-                # This is per-field labels like {"body": {"integrity": "low", ...}, ...}
-                github_labels = additional_props.get("labels")
-                if github_labels and isinstance(github_labels, (dict, list)):
-                    try:
-                        # Handle list of labels (for list_issues) or dict of labels (for get_issue)
-                        if isinstance(github_labels, list) and github_labels:
-                            # Take the first item's labels as representative for the whole result
-                            github_labels = github_labels[0] if isinstance(github_labels[0], dict) else {}
-                        
-                        item_label = _parse_github_mcp_labels(github_labels)
-                        if item_label:
-                            logger.info(
-                                f"Parsed GitHub MCP labels for '{function_name}': "
-                                f"integrity={item_label.integrity.value}, "
-                                f"confidentiality={item_label.confidentiality.value}"
-                            )
-                            # This item has a label from GitHub MCP
-                            # Only hide if context is trusted
-                            if (self.auto_hide_untrusted and 
-                                item_label.integrity == self.hide_threshold and
-                                self._context_label.integrity == IntegrityLabel.TRUSTED):
-                                # Hide this entire item
-                                hidden = self._hide_untrusted_result(result, item_label, function_name)
-                                return hidden, item_label
-                            # Item is trusted or hiding disabled or context already untrusted - return as-is
-                            return result, item_label
-                    except Exception as e:
-                        logger.warning(f"Failed to parse GitHub MCP labels: {e}")
-            
-            # No embedded label on this dict - recurse into values
-            # But only process list/dict values, not primitives
-            processed = {}
-            child_labels = []
-            has_embedded_labels = False
-            for key, value in result.items():
-                if key == "additional_properties":
-                    # Don't recurse into additional_properties itself
-                    processed[key] = value
-                elif isinstance(value, (dict, list)):
-                    processed_value, child_label = self._process_result_with_embedded_labels(
-                        value, function_name, fallback_label
-                    )
-                    processed[key] = processed_value
-                    child_labels.append(child_label)
-                    # Check if any child had embedded labels (not just fallback)
-                    if isinstance(value, list) and any(
-                        isinstance(v, dict) and v.get("additional_properties", {}).get("security_label")
-                        for v in value
-                    ):
-                        has_embedded_labels = True
-                else:
-                    processed[key] = value
-            
-            # Combine child labels, or use fallback if no children had labels
-            if child_labels:
-                combined = combine_labels(*child_labels)
+        processed: list[Content] = []
+        item_labels: list[ContentLabel] = []
+
+        for item in items:
+            item_label = self._extract_content_label(item, fallback_label)
+            item_labels.append(item_label)
+
+            if self._should_hide(item_label):
+                hidden = self._hide_item(item, item_label, function_name)
+                processed.append(hidden)
             else:
-                combined = fallback_label
-            
-            # If no embedded labels were found anywhere and fallback is UNTRUSTED,
-            # hide the entire dict (backward compatibility with old behavior)
-            # Only hide if context is trusted
-            if not has_embedded_labels and not additional_props:
-                if (self.auto_hide_untrusted and 
-                    combined.integrity == self.hide_threshold and
-                    self._context_label.integrity == IntegrityLabel.TRUSTED):
-                    hidden = self._hide_untrusted_result(result, combined, function_name)
-                    return hidden, combined
-            
-            return processed, combined
-        
-        elif isinstance(result, list):
-            # Check if any items have embedded labels (dict items or pydantic models with additional_properties)
-            has_embedded_labels = False
-            for item in result:
-                if isinstance(item, dict):
-                    additional_props = item.get("additional_properties", {})
-                    if additional_props.get("security_label") or additional_props.get("labels"):
-                        has_embedded_labels = True
-                        break
-                elif hasattr(item, "additional_properties") and item.additional_properties:
-                    # Pydantic model with additional_properties (e.g., TextContent from MCP)
-                    additional_props = item.additional_properties
-                    if additional_props.get("security_label") or additional_props.get("labels"):
-                        has_embedded_labels = True
-                        break
-            
-            if has_embedded_labels:
-                # Process each item independently - some may be hidden, others visible
-                processed = []
-                item_labels = []
-                for i, item in enumerate(result):
-                    processed_item, item_label = self._process_result_with_embedded_labels(
-                        item, function_name, fallback_label
-                    )
-                    processed.append(processed_item)
-                    item_labels.append(item_label)
-                
-                # Combined label is most restrictive across all items
-                combined = combine_labels(*item_labels) if item_labels else fallback_label
-                return processed, combined
-            else:
-                # No embedded labels - if fallback is UNTRUSTED, hide entire list
-                # Only hide if context is trusted
-                if (self.auto_hide_untrusted and 
-                    fallback_label.integrity == self.hide_threshold and
-                    self._context_label.integrity == IntegrityLabel.TRUSTED):
-                    hidden = self._hide_untrusted_result(result, fallback_label, function_name)
-                    return hidden, fallback_label
-                return result, fallback_label
-        
-        else:
-            # Primitive value - no embedded label possible, use fallback
-            # If fallback is UNTRUSTED, hide it
-            # Only hide if context is trusted
-            if (self.auto_hide_untrusted and 
-                fallback_label.integrity == self.hide_threshold and
-                self._context_label.integrity == IntegrityLabel.TRUSTED):
-                hidden = self._hide_untrusted_result(result, fallback_label, function_name)
-                return hidden, fallback_label
-            return result, fallback_label
-    
-    def _hide_untrusted_result(
+                # Attach this item's own label (preserves per-item granularity)
+                item.additional_properties["security_label"] = item_label.to_dict()
+                processed.append(item)
+
+        combined = combine_labels(*item_labels) if item_labels else fallback_label
+        return processed, combined
+
+    def _extract_content_label(
         self,
-        result: Any,
-        label: ContentLabel,
-        function_name: str
-    ) -> VariableReferenceContent:
-        """Replace untrusted result with a variable reference.
+        item: Content,
+        fallback_label: ContentLabel,
+    ) -> ContentLabel:
+        """Extract the security label for a single Content item.
         
-        This method stores the actual content in the variable store and returns
-        a VariableReferenceContent that can be safely added to the LLM context.
+        Checks (in order):
+        1. ``additional_properties.security_label`` (explicit label)
+        2. ``additional_properties.labels`` (GitHub MCP format)
+        3. Falls back to ``fallback_label``
         
         Args:
-            result: The original result to hide.
-            label: The security label for the result.
-            function_name: Name of the function that produced the result.
-        
+            item: The Content item to inspect.
+            fallback_label: The label to use if no embedded label is found.
+            
         Returns:
-            A VariableReferenceContent referencing the stored content.
+            The resolved ContentLabel for this item.
         """
-        # Store the actual content
-        var_id = self._variable_store.store(result, label)
+        additional_props = item.additional_properties or {}
+
+        # Check for standard security_label
+        label_data = additional_props.get("security_label")
+        if label_data and isinstance(label_data, dict):
+            try:
+                return ContentLabel.from_dict(label_data)
+            except Exception as e:
+                logger.warning(f"Failed to parse security_label from Content: {e}")
+
+        # Check for GitHub MCP server labels format
+        github_labels = additional_props.get("labels")
+        if github_labels and isinstance(github_labels, (dict, list)):
+            try:
+                if isinstance(github_labels, list) and github_labels:
+                    github_labels = github_labels[0] if isinstance(github_labels[0], dict) else {}
+                item_label = _parse_github_mcp_labels(github_labels)
+                if item_label:
+                    logger.info(
+                        f"Parsed GitHub MCP labels for Content item: "
+                        f"integrity={item_label.integrity.value}, "
+                        f"confidentiality={item_label.confidentiality.value}"
+                    )
+                    return item_label
+            except Exception as e:
+                logger.warning(f"Failed to parse GitHub MCP labels from Content: {e}")
+
+        # No embedded label — use fallback
+        return fallback_label
+
+    def _hide_item(
+        self,
+        item: Content,
+        label: ContentLabel,
+        function_name: str,
+    ) -> Content:
+        """Replace an untrusted Content item with a variable-reference placeholder.
         
+        The original content is stored in the variable store; the returned
+        ``Content.from_text(...)`` contains the serialised variable reference
+        and can be safely included in the LLM context.
+        
+        Args:
+            item: The original Content item to hide.
+            label: The security label for the item.
+            function_name: Name of the function that produced the item.
+            
+        Returns:
+            A Content item containing the variable reference.
+        """
+        import json as _json
+
+        # Store the actual content (serialize Content to its text representation)
+        if item.type == "text" and item.text is not None:
+            stored_value = item.text
+        else:
+            stored_value = item.to_dict()
+
+        var_id = self._variable_store.store(stored_value, label)
+
         # Store metadata about this variable
         self._variable_metadata[var_id] = {
             "function_name": function_name,
-            "original_type": type(result).__name__,
+            "original_type": item.type,
             "timestamp": datetime.now().isoformat(),
         }
-        
+
         # Create variable reference
         description = f"Result from {function_name}"
         var_ref = VariableReferenceContent(
             variable_id=var_id,
             label=label,
-            description=description
+            description=description,
         )
-        
+
         logger.info(
             f"Auto-hidden untrusted result from '{function_name}' "
             f"as variable {var_id}"
         )
-        
-        return var_ref
+
+        # Return as a Content item so it fits in list[Content]
+        return Content.from_text(
+            _json.dumps(var_ref.to_dict()),
+            additional_properties={"_variable_reference": True, "security_label": label.to_dict()},
+        )
     
     def get_variable_store(self) -> ContentVariableStore:
         """Get the variable store for this middleware instance.

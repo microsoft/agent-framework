@@ -17,6 +17,7 @@ from agent_framework import (
     FunctionInvocationContext,
 )
 from agent_framework._tools import FunctionTool
+from agent_framework._types import Content
 from pydantic import BaseModel
 
 
@@ -300,7 +301,7 @@ class TestLabelTrackingMiddleware:
         )
         
         async def next_fn():
-            context.result = "mock result"
+            context.result = [Content.from_text("mock result")]
         
         await middleware.process(context, next_fn)
         
@@ -333,7 +334,7 @@ class TestLabelTrackingMiddleware:
         )
         
         async def next_fn():
-            context.result = "mock result"
+            context.result = [Content.from_text("mock result")]
         
         await middleware.process(context, next_fn)
         
@@ -351,7 +352,7 @@ class TestLabelTrackingMiddleware:
         )
         
         async def next_fn():
-            context.result = "mock result"
+            context.result = [Content.from_text("mock result")]
         
         await middleware.process(context, next_fn)
         
@@ -394,7 +395,7 @@ class TestLabelTrackingMiddleware:
         )
         
         async def next_fn():
-            context.result = "processed result"
+            context.result = [Content.from_text("processed result")]
         
         await middleware.process(context, next_fn)
         
@@ -437,7 +438,7 @@ class TestLabelTrackingMiddleware:
         context.kwargs = {"var_ref_obj": var_ref}
         
         async def next_fn():
-            context.result = "processed"
+            context.result = [Content.from_text("processed")]
         
         await middleware.process(context, next_fn)
         
@@ -489,11 +490,11 @@ class TestPolicyEnforcementMiddleware:
         context.metadata["context_label"] = label
         
         async def next_fn():
-            context.result = "mock result"
+            context.result = [Content.from_text("mock result")]
         
         await middleware.process(context, next_fn)
         
-        assert context.result == "mock result"
+        assert context.result == [Content.from_text("mock result")]
         assert not getattr(context, "terminate", False)
     
     @pytest.mark.asyncio
@@ -510,7 +511,7 @@ class TestPolicyEnforcementMiddleware:
         context.metadata["context_label"] = label
         
         async def next_fn():
-            context.result = "should not execute"
+            context.result = [Content.from_text("should not execute")]
         
         await middleware.process(context, next_fn)
         
@@ -545,11 +546,11 @@ class TestPolicyEnforcementMiddleware:
         context.metadata["context_label"] = label
         
         async def next_fn():
-            context.result = "allowed result"
+            context.result = [Content.from_text("allowed result")]
         
         await middleware.process(context, next_fn)
         
-        assert context.result == "allowed result"
+        assert context.result == [Content.from_text("allowed result")]
         assert not getattr(context, "terminate", False)
     
     def test_audit_log_recording(self, middleware, mock_function):
@@ -604,13 +605,17 @@ class TestAutomaticHiding:
         # By default, AI-generated calls are UNTRUSTED
         
         async def next_fn():
-            context.result = "sensitive data"
+            context.result = [Content.from_text("sensitive data")]
         
         await middleware_auto_hide.process(context, next_fn)
         
-        # Result is now a JSON string (middleware re-serializes for the LLM API)
-        parsed = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert isinstance(parsed, dict)
+        # Result is now list[Content] with variable reference items
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        item = context.result[0]
+        assert isinstance(item, Content)
+        assert item.additional_properties.get("_variable_reference") is True
+        parsed = json.loads(item.text)
         assert parsed.get("type") == "variable_reference"
         assert parsed["variable_id"].startswith("var_")
         
@@ -644,13 +649,15 @@ class TestAutomaticHiding:
         )
         
         async def next_fn():
-            context.result = "trusted data"
+            context.result = [Content.from_text("trusted data")]
         
         await middleware_auto_hide.process(context, next_fn)
         
-        # Result should remain unchanged (TRUSTED is not hidden)
-        assert context.result == "trusted data"
-        assert not isinstance(context.result, VariableReferenceContent)
+        # Result should remain as list[Content] (TRUSTED is not hidden)
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "trusted data"
+        assert not context.result[0].additional_properties.get("_variable_reference", False)
     
     @pytest.mark.asyncio
     async def test_auto_hide_disabled(self, middleware_no_auto_hide, mock_function):
@@ -662,13 +669,15 @@ class TestAutomaticHiding:
         )
         
         async def next_fn():
-            context.result = "sensitive data"
+            context.result = [Content.from_text("sensitive data")]
         
         await middleware_no_auto_hide.process(context, next_fn)
         
-        # Result should remain unchanged even if UNTRUSTED
-        assert context.result == "sensitive data"
-        assert not isinstance(context.result, VariableReferenceContent)
+        # Result should remain as list[Content] even if UNTRUSTED
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        assert context.result[0].text == "sensitive data"
+        assert not context.result[0].additional_properties.get("_variable_reference", False)
     
     @pytest.mark.asyncio
     async def test_variable_metadata_tracking(self, middleware_auto_hide, mock_function):
@@ -680,12 +689,13 @@ class TestAutomaticHiding:
         )
         
         async def next_fn():
-            context.result = "private data"
+            context.result = [Content.from_text("private data")]
         
         await middleware_auto_hide.process(context, next_fn)
         
         # Check variable metadata
-        parsed = json.loads(context.result) if isinstance(context.result, str) else context.result
+        item = context.result[0]
+        parsed = json.loads(item.text)
         var_id = parsed["variable_id"]
         metadata = middleware_auto_hide.get_variable_metadata(var_id)
         assert metadata is not None
@@ -707,18 +717,18 @@ class TestAutomaticHiding:
         )
         
         async def next_fn1():
-            context1.result = "data1"
+            context1.result = [Content.from_text("data1")]
         
         async def next_fn2():
-            context2.result = "data2"
+            context2.result = [Content.from_text("data2")]
         
         await middleware_auto_hide.process(context1, next_fn1)
         await middleware_auto_hide.process(context2, next_fn2)
         
         variables = middleware_auto_hide.list_variables()
         assert len(variables) == 2
-        parsed1 = json.loads(context1.result) if isinstance(context1.result, str) else context1.result
-        parsed2 = json.loads(context2.result) if isinstance(context2.result, str) else context2.result
+        parsed1 = json.loads(context1.result[0].text)
+        parsed2 = json.loads(context2.result[0].text)
         assert parsed1["variable_id"] in variables
         assert parsed2["variable_id"] in variables
     
@@ -738,7 +748,7 @@ class TestAutomaticHiding:
             current = get_current_middleware()
             assert current is middleware_auto_hide
             
-            context.result = "test"
+            context.result = [Content.from_text("test")]
         
         await middleware_auto_hide.process(context, next_fn)
     
@@ -752,11 +762,12 @@ class TestAutomaticHiding:
         )
         
         async def next_fn():
-            context.result = "hidden content"
+            context.result = [Content.from_text("hidden content")]
         
         await middleware_auto_hide.process(context, next_fn)
         
-        parsed = json.loads(context.result) if isinstance(context.result, str) else context.result
+        item = context.result[0]
+        parsed = json.loads(item.text)
         var_id = parsed["variable_id"]
         
         # Verify we can retrieve the content from the store
@@ -776,7 +787,7 @@ class TestAutomaticHiding:
             )
             
             async def next_fn(data=f"data_{i}"):
-                context.result = data
+                context.result = [Content.from_text(data)]
             
             await middleware_auto_hide.process(context, next_fn)
         
@@ -1072,7 +1083,7 @@ class TestContextLabelTracking:
         )
         
         async def next_fn():
-            context.result = "untrusted result"
+            context.result = [Content.from_text("untrusted result")]
         
         # Initial context should be TRUSTED
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
@@ -1095,7 +1106,7 @@ class TestContextLabelTracking:
         )
         
         async def next_fn():
-            context.result = "untrusted result"
+            context.result = [Content.from_text("untrusted result")]
         
         # Initial context should be TRUSTED
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
@@ -1104,9 +1115,10 @@ class TestContextLabelTracking:
         
         # Context should STILL be TRUSTED because result was hidden
         assert middleware.get_context_label().integrity == IntegrityLabel.TRUSTED
-        # Result should be a serialized variable reference (JSON string)
-        parsed = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert isinstance(parsed, dict)
+        # Result should be list[Content] with variable reference
+        assert isinstance(context.result, list)
+        item = context.result[0]
+        parsed = json.loads(item.text)
         assert parsed.get("type") == "variable_reference"
     
     @pytest.mark.asyncio
@@ -1119,7 +1131,7 @@ class TestContextLabelTracking:
         )
         
         async def next_fn():
-            context.result = "result"
+            context.result = [Content.from_text("result")]
         
         await middleware.process(context, next_fn)
         
@@ -1166,7 +1178,7 @@ class TestContextLabelTracking:
         current_context = None
         
         async def next_fn():
-            current_context.result = "result"
+            current_context.result = [Content.from_text("result")]
         
         # First call: trusted function (TRUSTED)
         context1 = FunctionInvocationContext(
@@ -1854,7 +1866,7 @@ class TestQuarantineClient:
             
             # Check tools=None was passed (critical for isolation)
             assert call_args.kwargs.get("tools") is None
-            assert call_args.kwargs.get("tool_choice") == "none"
+            assert call_args.kwargs.get("client_kwargs", {}).get("tool_choice") == "none"
             
             # Since it's untrusted and auto_hide is True, result should be hidden
             assert result["auto_hidden"] is True
@@ -2037,50 +2049,52 @@ class TestPerItemEmbeddedLabels:
         )
         
         async def next_fn():
-            # Return list with mixed trust items
+            # Return list[Content] with mixed trust items via additional_properties
             context.result = [
-                {
-                    "id": 1,
-                    "content": "trusted content",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "content": "trusted content"}),
+                    additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"}
                     }
-                },
-                {
-                    "id": 2,
-                    "content": "untrusted content with [INJECTION]",
-                    "additional_properties": {
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2, "content": "untrusted content with [INJECTION]"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
-                {
-                    "id": 3,
-                    "content": "another trusted item",
-                    "additional_properties": {
+                ),
+                Content.from_text(
+                    json.dumps({"id": 3, "content": "another trusted item"}),
+                    additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
         
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert isinstance(result, list)
-        assert len(result) == 3
+        assert isinstance(context.result, list)
+        assert len(context.result) == 3
         
         # First item should be visible (trusted)
-        assert isinstance(result[0], dict)
-        assert result[0]["id"] == 1
-        assert result[0]["content"] == "trusted content"
+        item0 = context.result[0]
+        assert isinstance(item0, Content)
+        data0 = json.loads(item0.text)
+        assert data0["id"] == 1
+        assert data0["content"] == "trusted content"
         
-        # Second item should be hidden (untrusted) - replaced with serialized VariableReferenceContent dict
-        assert isinstance(result[1], dict)
-        assert result[1].get("type") == "variable_reference"
-        assert result[1]["security_label"]["integrity"] == "untrusted"
+        # Second item should be hidden (untrusted) - replaced with variable reference
+        item1 = context.result[1]
+        assert isinstance(item1, Content)
+        assert item1.additional_properties.get("_variable_reference") is True
+        parsed1 = json.loads(item1.text)
+        assert parsed1.get("type") == "variable_reference"
+        assert parsed1["security_label"]["integrity"] == "untrusted"
         
         # Third item should be visible (trusted)
-        assert isinstance(result[2], dict)
-        assert result[2]["id"] == 3
+        item2 = context.result[2]
+        data2 = json.loads(item2.text)
+        assert data2["id"] == 3
     
     @pytest.mark.asyncio
     async def test_all_trusted_items_visible(self, middleware, mock_function):
@@ -2093,31 +2107,29 @@ class TestPerItemEmbeddedLabels:
         
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "data": "safe data 1",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "data": "safe data 1"}),
+                    additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"}
                     }
-                },
-                {
-                    "id": 2,
-                    "data": "safe data 2",
-                    "additional_properties": {
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2, "data": "safe data 2"}),
+                    additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
         
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert len(result) == 2
-        # Both should be visible dicts
-        assert isinstance(result[0], dict)
-        assert isinstance(result[1], dict)
-        assert result[0]["data"] == "safe data 1"
-        assert result[1]["data"] == "safe data 2"
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        # Both should be visible Content items
+        data0 = json.loads(context.result[0].text)
+        data1 = json.loads(context.result[1].text)
+        assert data0["data"] == "safe data 1"
+        assert data1["data"] == "safe data 2"
     
     @pytest.mark.asyncio
     async def test_all_untrusted_items_hidden(self, middleware, mock_function):
@@ -2130,29 +2142,30 @@ class TestPerItemEmbeddedLabels:
         
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "data": "unsafe [INJECTION]",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "data": "unsafe [INJECTION]"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
-                {
-                    "id": 2,
-                    "data": "also unsafe",
-                    "additional_properties": {
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2, "data": "also unsafe"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
         
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert len(result) == 2
-        # Both should be serialized VariableReferenceContent dicts
-        assert isinstance(result[0], dict) and result[0].get("type") == "variable_reference"
-        assert isinstance(result[1], dict) and result[1].get("type") == "variable_reference"
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        # Both should be variable reference Content items
+        for item in context.result:
+            assert isinstance(item, Content)
+            assert item.additional_properties.get("_variable_reference") is True
+            parsed = json.loads(item.text)
+            assert parsed.get("type") == "variable_reference"
     
     @pytest.mark.asyncio
     async def test_items_without_labels_use_fallback(self, middleware, mock_function):
@@ -2179,29 +2192,32 @@ class TestPerItemEmbeddedLabels:
         )
         
         async def next_fn():
-            # Items without additional_properties.security_label
+            # Content items without security_label in additional_properties
             context.result = [
-                {"id": 1, "data": "no label here"},
-                {"id": 2, "data": "also no label"},
+                Content.from_text(json.dumps({"id": 1, "data": "no label here"})),
+                Content.from_text(json.dumps({"id": 2, "data": "also no label"})),
             ]
         
         await middleware.process(context, next_fn)
         
-        # Without embedded labels, the entire result is hidden because
+        # Without embedded labels, each item is hidden individually because
         # the fallback label is UNTRUSTED (from tool's default source_integrity)
-        # This is the backward-compatible behavior for tools that don't use per-item labels
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert isinstance(result, dict)
-        assert result.get("type") == "variable_reference"
-        assert result["security_label"]["integrity"] == "untrusted"
+        assert isinstance(context.result, list)
+        assert len(context.result) == 2
+        for item in context.result:
+            assert isinstance(item, Content)
+            assert item.additional_properties.get("_variable_reference") is True
+            parsed = json.loads(item.text)
+            assert parsed.get("type") == "variable_reference"
+            assert parsed["security_label"]["integrity"] == "untrusted"
         
         # The call/result label should be UNTRUSTED
         label = context.metadata.get("result_label")
         assert label.integrity == IntegrityLabel.UNTRUSTED
     
     @pytest.mark.asyncio
-    async def test_nested_dict_with_labeled_items(self, middleware, mock_function):
-        """Test nested structure with labeled items inside a dict."""
+    async def test_nested_json_in_content_item(self, middleware, mock_function):
+        """Test that a Content item containing nested JSON is treated as a single unit."""
         args = mock_function.args_schema()
         context = FunctionInvocationContext(
             function=mock_function,
@@ -2209,38 +2225,33 @@ class TestPerItemEmbeddedLabels:
         )
         
         async def next_fn():
-            context.result = {
+            # A single Content item with nested structure and untrusted label
+            nested_data = {
                 "emails": [
-                    {
-                        "id": 1,
-                        "body": "safe",
-                        "additional_properties": {
-                            "security_label": {"integrity": "trusted", "confidentiality": "public"}
-                        }
-                    },
-                    {
-                        "id": 2,
-                        "body": "unsafe [INJECTION]",
-                        "additional_properties": {
-                            "security_label": {"integrity": "untrusted", "confidentiality": "public"}
-                        }
-                    },
+                    {"id": 1, "body": "safe"},
+                    {"id": 2, "body": "unsafe [INJECTION]"},
                 ],
                 "count": 2,
             }
+            context.result = [
+                Content.from_text(
+                    json.dumps(nested_data),
+                    additional_properties={
+                        "security_label": {"integrity": "untrusted", "confidentiality": "public"}
+                    }
+                ),
+            ]
         
         await middleware.process(context, next_fn)
         
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert "emails" in result
-        assert result["count"] == 2
-        
-        emails = result["emails"]
-        assert len(emails) == 2
-        # First email visible, second hidden
-        assert isinstance(emails[0], dict)
-        assert emails[0]["body"] == "safe"
-        assert isinstance(emails[1], dict) and emails[1].get("type") == "variable_reference"
+        # The entire Content item is hidden as a single variable reference
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        item = context.result[0]
+        assert isinstance(item, Content)
+        assert item.additional_properties.get("_variable_reference") is True
+        parsed = json.loads(item.text)
+        assert parsed.get("type") == "variable_reference"
     
     @pytest.mark.asyncio
     async def test_combined_label_reflects_all_items(self, middleware, mock_function):
@@ -2253,18 +2264,18 @@ class TestPerItemEmbeddedLabels:
         
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1}),
+                    additional_properties={
                         "security_label": {"integrity": "trusted", "confidentiality": "public"}
                     }
-                },
-                {
-                    "id": 2,
-                    "additional_properties": {
+                ),
+                Content.from_text(
+                    json.dumps({"id": 2}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "private"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
@@ -2286,30 +2297,32 @@ class TestPerItemEmbeddedLabels:
         
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "secret": "hidden data",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "secret": "hidden data"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
         
         # Get the variable reference
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        var_ref = result[0]
-        assert isinstance(var_ref, dict)
+        assert isinstance(context.result, list)
+        item = context.result[0]
+        assert isinstance(item, Content)
+        assert item.additional_properties.get("_variable_reference") is True
+        var_ref = json.loads(item.text)
         assert var_ref.get("type") == "variable_reference"
         
         # Retrieve from store
         store = middleware.get_variable_store()
         content, label = store.retrieve(var_ref["variable_id"])
         
-        # Should have the original content
-        assert content["id"] == 1
-        assert content["secret"] == "hidden data"
+        # Should have the original text content (JSON string)
+        original = json.loads(content)
+        assert original["id"] == 1
+        assert original["secret"] == "hidden data"
         assert label.integrity == IntegrityLabel.UNTRUSTED
     
     @pytest.mark.asyncio
@@ -2325,21 +2338,23 @@ class TestPerItemEmbeddedLabels:
         
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "data": "untrusted but visible",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "data": "untrusted but visible"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
         
         await middleware.process(context, next_fn)
         
         # Item should NOT be hidden even though untrusted
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
-        assert isinstance(result[0], dict)
-        assert result[0]["data"] == "untrusted but visible"
+        assert isinstance(context.result, list)
+        assert len(context.result) == 1
+        item = context.result[0]
+        assert isinstance(item, Content)
+        data = json.loads(item.text)
+        assert data["data"] == "untrusted but visible"
 
 
 # ========== Tests for Tiered Label Propagation Priority ==========
@@ -2386,7 +2401,7 @@ class TestTieredLabelPropagation:
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
-            context.result = "plain result with no embedded labels"
+            context.result = [Content.from_text("plain result with no embedded labels")]
 
         await middleware.process(context, next_fn)
 
@@ -2420,13 +2435,12 @@ class TestTieredLabelPropagation:
 
         async def next_fn():
             context.result = [
-                {
-                    "id": 1,
-                    "data": "untrusted external data",
-                    "additional_properties": {
+                Content.from_text(
+                    json.dumps({"id": 1, "data": "untrusted external data"}),
+                    additional_properties={
                         "security_label": {"integrity": "untrusted", "confidentiality": "public"}
                     }
-                },
+                ),
             ]
 
         await middleware.process(context, next_fn)
@@ -2464,15 +2478,19 @@ class TestTieredLabelPropagation:
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
-            context.result = "plain result"
+            context.result = [Content.from_text("plain result")]
 
         await middleware.process(context, next_fn)
 
         # No source_integrity (tier 2 absent), so tier 3: join of input labels
         # Input has untrusted label → result is untrusted
-        result = json.loads(context.result) if isinstance(context.result, str) else context.result
         # Result should be hidden since it's untrusted
-        assert isinstance(result, dict) and result.get("type") == "variable_reference"
+        assert isinstance(context.result, list)
+        item = context.result[0]
+        assert isinstance(item, Content)
+        assert item.additional_properties.get("_variable_reference") is True
+        parsed = json.loads(item.text)
+        assert parsed.get("type") == "variable_reference"
 
     @pytest.mark.asyncio
     async def test_no_labels_anywhere_defaults_untrusted(self, middleware):
@@ -2498,7 +2516,7 @@ class TestTieredLabelPropagation:
         context = FunctionInvocationContext(function=function, arguments=args)
 
         async def next_fn():
-            context.result = "plain result"
+            context.result = [Content.from_text("plain result")]
 
         await middleware.process(context, next_fn)
 

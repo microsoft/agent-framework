@@ -405,8 +405,7 @@ async def quarantined_llm(
             # This ensures the LLM cannot be tricked into calling tools via injection
             response = await quarantine_client.get_response(
                 messages=messages,
-                tools=None,  # CRITICAL: No tools in quarantine
-                tool_choice="none",  # Explicitly disable tool calls
+                client_kwargs={"tool_choice": "none"},  # Explicitly disable tool calls
             )
             
             # Extract the response text
