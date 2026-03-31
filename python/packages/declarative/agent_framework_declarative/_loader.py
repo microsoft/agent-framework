@@ -582,7 +582,7 @@ class AgentFactory:
             default_options=chat_options,  # type: ignore[arg-type]
         )
 
-    async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: Mapping[str, Any]) -> Agent:
+    async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:
         """Create an Agent through a provider object that exposes ``create_agent``.
 
         This remains available as an internal escape hatch for provider-style custom mappings

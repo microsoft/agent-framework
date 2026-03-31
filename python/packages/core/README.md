@@ -213,7 +213,7 @@ if __name__ == "__main__":
 
 - [Getting Started with Agents](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents): Basic agent creation and tool usage
 - [Chat Client Examples](https://github.com/microsoft/agent-framework/tree/main/python/samples/02-agents/chat_client): Direct chat client usage patterns
-- [Foundry Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/foundry: Foundry integration
+- [Foundry Integration](https://github.com/microsoft/agent-framework/tree/main/python/packages/foundry): Foundry integration
 - [Workflows Samples](https://github.com/microsoft/agent-framework/tree/main/python/samples/03-workflows): Advanced multi-agent patterns
 
 ## Agent Framework Documentation
