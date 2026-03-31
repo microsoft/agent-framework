@@ -384,9 +384,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
 
-        session_context = await self._run_before_providers(
-            session=session, input_messages=input_messages, options=opts
-        )
+        session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
         prompt = "\n".join([message.text for message in input_messages])
         if session_context.instructions:
@@ -455,9 +453,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
 
-        session_context = await self._run_before_providers(
-            session=session, input_messages=input_messages, options=opts
-        )
+        session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
 
         prompt = "\n".join([message.text for message in input_messages])
         if session_context.instructions:
