@@ -178,6 +178,76 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Hosting](./dotnet/samples/04-hosting): A2A, Durable Agents, Durable Workflows
 - [End-to-End](./dotnet/samples/05-end-to-end): full applications and demos
 
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Your Application                        │
+└──────────────────┬──────────────────────────┬───────────────────┘
+                   │                          │
+           ┌───────▼───────┐         ┌────────▼────────┐
+           │   AIAgent     │         │    Workflow      │
+           │  (RunAsync)   │         │  (WorkflowBuilder│
+           └───────┬───────┘         │   + Executors)  │
+                   │                 └────────┬────────┘
+           ┌───────▼───────┐                  │
+           │ChatClientAgent│      ┌───────────▼──────────┐
+           │  + Middleware  │      │  Executor Graph      │
+           │  + Tools       │      │  (edges, fan-out,    │
+           │  + Memory      │      │   conditions, etc.)  │
+           └───────┬───────┘      └───────────┬──────────┘
+                   │                          │
+           ┌───────▼──────────────────────────▼──────────┐
+           │              IChatClient                     │
+           │  (Azure OpenAI, OpenAI, Anthropic, etc.)    │
+           └──────────────────────────────────────────────┘
+```
+
+- **`AIAgent`** — abstract base class with `RunAsync` / `RunStreamingAsync`. All agents derive from this.
+- **`ChatClientAgent`** — concrete agent backed by any `IChatClient`. Created via `.AsAIAgent()` extension methods.
+- **`AgentSession`** — conversation state container (history, memory, custom state). Serializable for persistence.
+- **`Workflow`** — graph-based orchestration built with `WorkflowBuilder`. Connects executors via typed edges (direct, fan-out/fan-in, conditional).
+
+### Agent vs. Workflow — When to Use Which
+
+| Scenario | Use an Agent | Use a Workflow |
+|----------|:---:|:---:|
+| Single LLM conversation with tools | ✅ | |
+| Multi-turn chat with memory | ✅ | |
+| Chain multiple agents sequentially | | ✅ |
+| Run agents in parallel (fan-out) | | ✅ |
+| Conditional branching on output | | ✅ |
+| Human-in-the-loop approval steps | | ✅ |
+| Mix deterministic code with LLM calls | | ✅ |
+| Durable/checkpointed orchestration | | ✅ |
+
+**Start with a single agent** — most use cases only need `ChatClientAgent` with tools. Move to workflows when you need to coordinate multiple agents or add deterministic control flow between steps.
+
+- [Get started](./dotnet/samples/01-get-started/) | [Agent samples](./dotnet/samples/02-agents/) | [Workflow samples](./dotnet/samples/03-workflows/)
+
+## Troubleshooting
+
+### Authentication
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `AuthenticationFailedException` | Not signed in to Azure CLI | Run `az login` before starting your app |
+| `ApiKeyCredential` errors | Wrong or missing API key | Verify the key and ensure it's for the correct resource/provider |
+
+> **Tip:** `DefaultAzureCredential` is convenient for development but in production, consider using a specific credential (e.g., `ManagedIdentityCredential`) to avoid latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
+
+### Environment Variables
+
+The framework reads configuration from environment variables. Common required variables:
+
+| Variable | Used by | Purpose |
+|----------|---------|---------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI samples | Your Azure OpenAI resource URL |
+| `AZURE_OPENAI_DEPLOYMENT_NAME` | Azure OpenAI samples | Model deployment name (e.g. `gpt-4o-mini`) |
+| `AZURE_AI_PROJECT_ENDPOINT` | Microsoft Foundry samples | Your Microsoft Foundry project endpoint |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Microsoft Foundry samples | Model deployment name |
+| `OPENAI_API_KEY` | OpenAI (non-Azure) samples | Your OpenAI platform API key |
+
 ## Contributor Resources
 
 - [Contributing Guide](./CONTRIBUTING.md)
