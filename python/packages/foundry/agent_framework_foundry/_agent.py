@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentMiddlewareLayer,
-    BaseContextProvider,
     ChatAndFunctionMiddlewareTypes,
     ChatMiddlewareLayer,
+    ContextProvider,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     FunctionTool,
@@ -50,8 +50,8 @@ else:
 if TYPE_CHECKING:
     from agent_framework import (
         Agent,
-        BaseContextProvider,
         ChatAndFunctionMiddlewareTypes,
+        ContextProvider,
         MiddlewareTypes,
         ToolTypes,
     )
@@ -224,7 +224,7 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         instructions: str | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: FoundryAgentOptionsT | Mapping[str, Any] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
@@ -468,7 +468,7 @@ class RawFoundryAgent(  # type: ignore[misc]
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,
@@ -661,7 +661,7 @@ class FoundryAgent(  # type: ignore[misc]
         project_client: AIProjectClient | None = None,
         allow_preview: bool | None = None,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         client_type: type[RawFoundryAgentChatClient] | None = None,
         env_file_path: str | None = None,

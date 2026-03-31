@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
-    BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     Message,
     ResponseStream,
     WorkflowEvent,
@@ -997,7 +997,7 @@ async def test_context_provider_preserved_during_handoff():
     # Track whether context provider methods were called
     provider_calls: list[str] = []
 
-    class TestContextProvider(BaseContextProvider):
+    class TestContextProvider(ContextProvider):
         """A test context provider that tracks its invocations."""
 
         def __init__(self) -> None:

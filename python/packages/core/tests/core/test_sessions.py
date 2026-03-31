@@ -3,11 +3,15 @@
 import json
 from collections.abc import Sequence
 
+import pytest
+
 from agent_framework import Message
 from agent_framework._sessions import (
     AgentSession,
     BaseContextProvider,
     BaseHistoryProvider,
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
 )
@@ -156,35 +160,52 @@ class TestSessionContext:
 
 
 # ---------------------------------------------------------------------------
-# BaseContextProvider tests
+# ContextProvider tests
 # ---------------------------------------------------------------------------
 
 
-class TestContextProviderBase:
+class TestContextProvider:
     def test_source_id_required(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         assert provider.source_id == "test"
 
     async def test_before_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         # Should not raise
         await provider.before_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
     async def test_after_run_is_noop(self) -> None:
-        provider = BaseContextProvider(source_id="test")
+        provider = ContextProvider(source_id="test")
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
-# BaseHistoryProvider tests
+# Deprecated provider alias tests
 # ---------------------------------------------------------------------------
 
 
-class ConcreteHistoryProvider(BaseHistoryProvider):
+class TestDeprecatedProviderAliases:
+    def test_base_context_provider_warns_and_is_compatible(self) -> None:
+        with pytest.warns(DeprecationWarning, match="BaseContextProvider is deprecated. Use ContextProvider instead."):
+            provider = BaseContextProvider(source_id="test")
+
+        assert isinstance(provider, ContextProvider)
+
+    def test_base_provider_aliases_preserve_subtyping(self) -> None:
+        assert issubclass(BaseContextProvider, ContextProvider)
+        assert issubclass(BaseHistoryProvider, HistoryProvider)
+
+
+# ---------------------------------------------------------------------------
+# HistoryProvider tests
+# ---------------------------------------------------------------------------
+
+
+class ConcreteHistoryProvider(HistoryProvider):
     """Concrete test implementation."""
 
     def __init__(self, source_id: str, stored_messages: list[Message] | None = None, **kwargs) -> None:

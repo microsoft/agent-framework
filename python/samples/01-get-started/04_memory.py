@@ -3,7 +3,7 @@
 import asyncio
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext
+from agent_framework import Agent, AgentSession, ContextProvider, SessionContext
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
@@ -17,7 +17,7 @@ responses — the name persists across turns via the session.
 
 
 # <context_provider>
-class UserMemoryProvider(BaseContextProvider):
+class UserMemoryProvider(ContextProvider):
     """A context provider that remembers user info in session state."""
 
     DEFAULT_SOURCE_ID = "user_memory"

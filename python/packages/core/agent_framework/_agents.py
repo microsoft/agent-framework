@@ -33,8 +33,8 @@ from ._middleware import AgentMiddlewareLayer, FunctionInvocationContext, Middle
 from ._serialization import SerializationMixin
 from ._sessions import (
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
 )
@@ -373,7 +373,7 @@ class BaseAgent(SerializationMixin):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
@@ -393,7 +393,7 @@ class BaseAgent(SerializationMixin):
         self.id = id
         self.name = name
         self.description = description
-        self.context_providers: list[BaseContextProvider] = list(context_providers or [])
+        self.context_providers: list[ContextProvider] = list(context_providers or [])
         self.middleware: list[MiddlewareTypes] | None = (
             cast(list[MiddlewareTypes], middleware) if middleware is not None else None
         )
@@ -656,7 +656,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         description: str | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -1284,9 +1284,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             options=options or {},
         )
 
-        # Run before_run providers (forward order, skip BaseHistoryProvider with load_messages=False)
+        # Run before_run providers (forward order, skip HistoryProvider with load_messages=False)
         for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -1551,7 +1551,7 @@ class Agent(
         description: str | None = None,
         tools: ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None = None,
         default_options: OptionsCoT | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,

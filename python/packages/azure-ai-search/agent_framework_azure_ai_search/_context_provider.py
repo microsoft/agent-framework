@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Azure AI Search context provider using BaseContextProvider.
+"""New-pattern Azure AI Search context provider using ContextProvider.
 
 This module provides ``AzureAISearchContextProvider``, built on the new
-:class:`BaseContextProvider` hooks pattern.
+:class:`ContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentSession,
     Annotation,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     Message,
     SecretString,
     SessionContext,
@@ -154,8 +154,8 @@ class AzureAISearchSettings(TypedDict, total=False):
     api_key: SecretString | None
 
 
-class AzureAISearchContextProvider(BaseContextProvider):
-    """Azure AI Search context provider using the new BaseContextProvider hooks pattern.
+class AzureAISearchContextProvider(ContextProvider):
+    """Azure AI Search context provider using the new ContextProvider hooks pattern.
 
     Retrieves relevant context from Azure AI Search using semantic or agentic search
     modes.

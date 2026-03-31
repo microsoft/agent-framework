@@ -4,8 +4,8 @@
 
 This module provides the core types for the context provider pipeline:
 - SessionContext: Per-invocation state passed through providers
-- BaseContextProvider: Base class for context providers (renamed to ContextProvider in PR2)
-- BaseHistoryProvider: Base class for history storage providers (renamed to HistoryProvider in PR2)
+- ContextProvider: Base class for context providers
+- HistoryProvider: Base class for history storage providers
 - AgentSession: Lightweight session state container
 - InMemoryHistoryProvider: Built-in in-memory history provider
 """
@@ -13,10 +13,16 @@ This module provides the core types for the context provider pipeline:
 from __future__ import annotations
 
 import copy
+import sys
 import uuid
 from abc import abstractmethod
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, cast
+
+if sys.version_info >= (3, 13):
+    from warnings import deprecated  # type: ignore # pragma: no cover
+else:
+    from typing_extensions import deprecated  # type: ignore # pragma: no cover
 
 from ._types import AgentResponse, Message
 
@@ -272,16 +278,11 @@ class SessionContext:
         return result
 
 
-class BaseContextProvider:
-    """Base class for context providers (hooks pattern).
+class ContextProvider:
+    """Base class for context providers.
 
     Context providers participate in the context engineering pipeline,
     adding context before model invocation and processing responses after.
-
-    Note:
-        This class uses a temporary name prefixed with ``_`` to avoid collision
-        with the existing ``ContextProvider`` in ``_memory.py``. It will be
-        renamed to ``ContextProvider`` in PR2 when the old class is removed.
 
     Attributes:
         source_id: Unique identifier for this provider instance (required).
@@ -339,17 +340,13 @@ class BaseContextProvider:
         """
 
 
-class BaseHistoryProvider(BaseContextProvider):
+class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
     A single class configurable for different use cases:
     - Primary memory storage (loads + stores messages)
     - Audit/logging storage (stores only, doesn't load)
     - Evaluation storage (stores only for later analysis)
-
-    Note:
-        This class uses a temporary name prefixed with ``_`` to avoid collision
-        with existing types. It will be renamed to ``HistoryProvider`` in PR2.
 
     Subclasses only need to implement ``get_messages()`` and ``save_messages()``.
     The default ``before_run``/``after_run`` handle loading and storing based on
@@ -467,6 +464,30 @@ class BaseHistoryProvider(BaseContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
+@deprecated(
+    "BaseContextProvider is deprecated. Use ContextProvider instead.",
+    category=DeprecationWarning,
+)
+class BaseContextProvider(ContextProvider):
+    """Deprecated alias for :class:`ContextProvider`.
+
+    .. deprecated::
+        BaseContextProvider is deprecated. Use :class:`ContextProvider` instead.
+    """
+
+
+@deprecated(
+    "BaseHistoryProvider is deprecated. Use HistoryProvider instead.",
+    category=DeprecationWarning,
+)
+class BaseHistoryProvider(HistoryProvider):
+    """Deprecated alias for :class:`HistoryProvider`.
+
+    .. deprecated::
+        BaseHistoryProvider is deprecated. Use :class:`HistoryProvider` instead.
+    """
+
+
 class AgentSession:
     """A conversation session with an agent.
 
@@ -535,7 +556,7 @@ class AgentSession:
         return session
 
 
-class InMemoryHistoryProvider(BaseHistoryProvider):
+class InMemoryHistoryProvider(HistoryProvider):
     """Built-in history provider that stores messages in session.state.
 
     Messages are stored in ``state["messages"]`` as a list of

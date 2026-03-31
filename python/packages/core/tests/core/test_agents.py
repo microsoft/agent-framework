@@ -18,11 +18,11 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
-    BaseContextProvider,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     FunctionTool,
     Message,
     SlidingWindowStrategy,
@@ -586,7 +586,7 @@ async def test_chat_client_agent_author_name_is_used_from_response(
 
 
 # Mock context provider for testing
-class MockContextProvider(BaseContextProvider):
+class MockContextProvider(ContextProvider):
     def __init__(self, messages: list[Message] | None = None) -> None:
         super().__init__(source_id="mock")
         self.context_messages = messages
@@ -1723,7 +1723,7 @@ async def test_agent_create_session_with_context_providers(
 ):
     """Test that create_session works when context_providers are set on the agent."""
 
-    class TestContextProvider(BaseContextProvider):
+    class TestContextProvider(ContextProvider):
         def __init__(self):
             super().__init__(source_id="test")
 
@@ -1798,7 +1798,7 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(
         """A tool provided by context."""
         return text
 
-    class ToolContextProvider(BaseContextProvider):
+    class ToolContextProvider(ContextProvider):
         def __init__(self):
             super().__init__(source_id="tool-context")
 
@@ -1827,7 +1827,7 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 ):
     """Test that context provider instructions are used when agent has no default instructions."""
 
-    class InstructionContextProvider(BaseContextProvider):
+    class InstructionContextProvider(ContextProvider):
         def __init__(self):
             super().__init__(source_id="instruction-context")
 

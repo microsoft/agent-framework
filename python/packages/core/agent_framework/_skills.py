@@ -36,7 +36,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol, runtime_checkable
 
 from ._feature_stage import ExperimentalFeature, experimental
-from ._sessions import BaseContextProvider
+from ._sessions import ContextProvider
 from ._tools import FunctionTool
 
 if TYPE_CHECKING:
@@ -519,7 +519,7 @@ SCRIPT_RUNNER_INSTRUCTIONS: Final[str] = (
 
 
 @experimental(feature_id=ExperimentalFeature.SKILLS)
-class SkillsProvider(BaseContextProvider):
+class SkillsProvider(ContextProvider):
     """Context provider that advertises skills and exposes skill tools.
 
     Supports both **file-based** skills (discovered from ``SKILL.md`` files)
