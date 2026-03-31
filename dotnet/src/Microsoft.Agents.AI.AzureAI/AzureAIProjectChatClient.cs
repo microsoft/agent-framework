@@ -44,7 +44,7 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     {
         this._agentClient = aiProjectClient;
         this._agentReference = Throw.IfNull(agentReference);
-        this._metadata = new ChatClientMetadata("azure.ai.agents", defaultModelId: defaultModelId);
+        this._metadata = new ChatClientMetadata("microsoft.foundry", defaultModelId: defaultModelId);
         this._chatOptions = chatOptions;
     }
 

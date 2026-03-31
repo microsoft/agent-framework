@@ -29,10 +29,11 @@ from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-# Copyright (c) Microsoft. All rights reserved.
-
+# Load environment variables from .env file
+load_dotenv()
 
 # Agent Instructions
 RESEARCH_INSTRUCTIONS = """In order to help begin addressing the user request, please answer the following pre-survey to the best of your ability.
@@ -126,7 +127,7 @@ async def main() -> None:
     # Create Azure OpenAI client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

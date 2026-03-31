@@ -44,7 +44,7 @@ Demonstrates:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for FoundryChatClient with required environment variables.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Run `az login` before executing.
 """
 
@@ -78,11 +78,7 @@ class Coordinator(Executor):
 
         # Writer agent response; request human feedback.
         # Preserve the full conversation so that the final editor has context.
-        conversation: list[Message]
-        if draft.full_conversation is not None:
-            conversation = list(draft.full_conversation)
-        else:
-            conversation = list(draft.agent_response.messages)
+        conversation = list(draft.full_conversation)
 
         prompt = (
             "Review the draft from the writer and provide a short directional note "
@@ -172,18 +168,20 @@ async def main() -> None:
     writer_agent = Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="writer_agent",
         instructions=("You are a marketing writer."),
-        tool_choice="required",
+        default_options={
+            "tool_choice": "required",
+        },
     )
 
     final_editor_agent = Agent(
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="final_editor_agent",

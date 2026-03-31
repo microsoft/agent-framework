@@ -19,7 +19,7 @@ using OpenAI.Responses;
 namespace Microsoft.Agents.AI.FoundryMemory;
 
 /// <summary>
-/// Provides an Azure AI Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
+/// Provides a Microsoft Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories
 /// and retrieves related memories to augment the agent invocation context.
 /// </summary>
 /// <remarks>
@@ -49,7 +49,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// Initializes a new instance of the <see cref="FoundryMemoryProvider"/> class.
     /// </summary>
     /// <param name="client">The Azure AI Project client configured for your Foundry project.</param>
-    /// <param name="memoryStoreName">The name of the memory store in Azure AI Foundry.</param>
+    /// <param name="memoryStoreName">The name of the memory store in Microsoft Foundry.</param>
     /// <param name="stateInitializer">A delegate that initializes the provider state on the first invocation, providing the scope for memory storage and retrieval.</param>
     /// <param name="options">Provider options.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
@@ -87,17 +87,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     public override IReadOnlyList<string> StateKeys => this._stateKeys ??= [this._sessionState.StateKey];
 
     private static Func<AgentSession?, State> ValidateStateInitializer(Func<AgentSession?, State> stateInitializer) =>
-        session =>
-        {
-            State state = stateInitializer(session);
-
-            if (state is null)
-            {
-                throw new InvalidOperationException("State initializer must return a non-null state.");
-            }
-
-            return state;
-        };
+        session => stateInitializer(session) ?? throw new InvalidOperationException("State initializer must return a non-null state.");
 
     /// <inheritdoc />
     protected override async ValueTask<AIContext> ProvideAIContextAsync(InvokingContext context, CancellationToken cancellationToken = default)
@@ -332,7 +322,7 @@ public sealed class FoundryMemoryProvider : AIContextProvider
     /// Waits for all pending memory update operations to complete.
     /// </summary>
     /// <remarks>
-    /// Memory extraction in Azure AI Foundry is asynchronous. This method polls the latest pending update
+    /// Memory extraction in Microsoft Foundry is asynchronous. This method polls the latest pending update
     /// and returns when it has completed, failed, or been superseded. Since updates are processed in order,
     /// completion of the latest update implies all prior updates have also been processed.
     /// </remarks>

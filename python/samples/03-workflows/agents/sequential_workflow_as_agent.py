@@ -27,7 +27,7 @@ Note on internal adapters:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI access configured for FoundryChatClient (use az login + env vars)
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 """
 
 
@@ -35,7 +35,7 @@ async def main() -> None:
     # 1) Create agents
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
@@ -55,7 +55,7 @@ async def main() -> None:
     workflow = SequentialBuilder(participants=[writer, reviewer]).build()
 
     # 3) Treat the workflow itself as an agent for follow-up invocations
-    agent = Agent(client=workflow, name="SequentialWorkflowAgent")
+    agent = workflow.as_agent()
     prompt = "Write a tagline for a budget-friendly eBike."
     agent_response = await agent.run(prompt)
 

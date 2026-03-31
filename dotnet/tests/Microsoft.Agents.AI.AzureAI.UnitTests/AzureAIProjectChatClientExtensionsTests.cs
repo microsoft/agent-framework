@@ -21,11 +21,173 @@ using OpenAI.Responses;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
+#pragma warning disable CS0618
 /// <summary>
 /// Unit tests for the <see cref="AzureAIProjectChatClientExtensions"/> class.
 /// </summary>
+[Obsolete("Includes coverage for obsolete AIProjectClient compatibility extension methods.")]
 public sealed class AzureAIProjectChatClientExtensionsTests
 {
+    #region AsAIAgent(AIProjectClient, model, instructions) Tests
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload throws ArgumentNullException when AIProjectClient is null.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithNullClient_ThrowsArgumentNullException()
+    {
+        // Arrange
+        AIProjectClient? client = null;
+
+        // Act & Assert
+        ArgumentNullException exception = Assert.Throws<ArgumentNullException>(() =>
+            client!.AsAIAgent("gpt-4o-mini", "You are helpful."));
+
+        Assert.Equal("aiProjectClient", exception.ParamName);
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        List<AITool> tools =
+        [
+            AIFunctionFactory.Create(() => "test", "test_function", "A test function")
+        ];
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            name: "test-agent",
+            description: "A test agent",
+            tools: tools);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("test-agent", agent.Name);
+        Assert.Equal("A test agent", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+        Assert.NotNull(agent.GetService<IChatClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload applies the clientFactory.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithModelAndInstructions_WithClientFactory_AppliesFactoryCorrectly()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        TestChatClient? testChatClient = null;
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.",
+            clientFactory: innerClient => testChatClient = new TestChatClient(innerClient));
+
+        // Assert
+        Assert.NotNull(agent);
+        TestChatClient? retrievedTestClient = agent.GetService<TestChatClient>();
+        Assert.NotNull(retrievedTestClient);
+        Assert.Same(testChatClient, retrievedTestClient);
+    }
+
+    /// <summary>
+    /// Verify that the options-based non-versioned AsAIAgent overload creates a valid ChatClientAgent.
+    /// </summary>
+    [Fact]
+    public void AsAIAgent_WithOptions_CreatesChatClientAgent()
+    {
+        // Arrange
+        AIProjectClient client = this.CreateTestAgentClient();
+        ChatClientAgentOptions options = new()
+        {
+            Name = "options-agent",
+            Description = "Agent from options",
+            ChatOptions = new ChatOptions
+            {
+                ModelId = "gpt-4o-mini",
+                Instructions = "You are helpful.",
+            },
+        };
+
+        // Act
+        FoundryAgent agent = client.AsAIAgent(options);
+
+        // Assert
+        Assert.NotNull(agent);
+        Assert.Equal("options-agent", agent.Name);
+        Assert.Equal("Agent from options", agent.Description);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
+    }
+
+    /// <summary>
+    /// Verify that the non-versioned AsAIAgent overload adds the MEAI user-agent header to Responses API requests.
+    /// </summary>
+    [Fact]
+    public async Task AsAIAgent_WithModelAndInstructions_UserAgentHeaderAddedToResponsesRequestsAsync()
+    {
+        // Arrange
+        bool userAgentFound = false;
+        using HttpHandlerAssert httpHandler = new(request =>
+        {
+            if (request.Headers.TryGetValues("User-Agent", out IEnumerable<string>? values))
+            {
+                foreach (string value in values)
+                {
+                    if (value.Contains("MEAI"))
+                    {
+                        userAgentFound = true;
+                    }
+                }
+            }
+
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        TestDataUtil.GetOpenAIDefaultResponseJson(),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json")
+            };
+        });
+
+#pragma warning disable CA5399
+        using HttpClient httpClient = new(httpHandler);
+#pragma warning restore CA5399
+
+        AIProjectClient aiProjectClient = new(
+            new Uri("https://test.openai.azure.com/"),
+            new FakeAuthenticationTokenProvider(),
+            new() { Transport = new HttpClientPipelineTransport(httpClient) });
+
+        FoundryAgent agent = aiProjectClient.AsAIAgent(
+            "gpt-4o-mini",
+            "You are helpful.");
+
+        // Act
+        AgentSession session = await agent.CreateSessionAsync();
+        await agent.RunAsync("Hello", session);
+
+        // Assert
+        Assert.True(userAgentFound, "MEAI user-agent header was not found in any request");
+    }
+
+    #endregion
+
     #region AsAIAgent(AIProjectClient, AgentRecord) Tests
 
     /// <summary>
@@ -199,7 +361,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -217,7 +379,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -409,7 +571,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
         var agentVersion = chatClient.GetService<AgentVersion>();
@@ -458,7 +620,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -481,7 +643,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("test-agent", agent.Name);
-        Assert.Equal("Test instructions", agent.Instructions);
+        Assert.Equal("Test instructions", agent.GetService<ChatClientAgent>()!.Instructions);
     }
 
     /// <summary>
@@ -570,7 +732,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -592,7 +754,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -612,7 +774,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -638,7 +800,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -677,7 +839,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -721,7 +883,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
@@ -783,7 +945,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
         var agentVersion = chatClient.GetService<AgentVersion>();
@@ -815,7 +977,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -843,7 +1005,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -864,7 +1026,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -912,7 +1074,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         var agentVersion = agent.GetService<AgentVersion>();
         Assert.NotNull(agentVersion);
         if (agentVersion.Definition is PromptAgentDefinition promptDef)
@@ -952,7 +1114,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -979,7 +1141,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -1011,7 +1173,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -1064,7 +1226,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal("test-agent", agent.Name);
-        Assert.Equal("Custom instructions", agent.Instructions);
+        Assert.Equal("Custom instructions", agent.GetService<ChatClientAgent>()!.Instructions);
         Assert.Equal("Custom description", agent.Description);
     }
 
@@ -1353,7 +1515,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.Equal(AgentName, agent.Name);
-        Assert.Equal(Instructions, agent.Instructions);
+        Assert.Equal(Instructions, agent.GetService<ChatClientAgent>()!.Instructions);
         var wrappedClient = agent.GetService<TestChatClient>();
         Assert.NotNull(wrappedClient);
     }
@@ -1957,11 +2119,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -1983,11 +2145,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2011,11 +2173,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2044,11 +2206,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2077,11 +2239,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2107,11 +2269,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2133,11 +2295,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2159,11 +2321,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2186,7 +2348,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2208,7 +2370,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2303,11 +2465,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -2330,7 +2492,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2352,7 +2514,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2374,7 +2536,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2400,7 +2562,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act - should not throw even without tools when UseProvidedChatClientAsIs is true
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2432,7 +2594,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act - UseProvidedChatClientAsIs is true, but provided AIFunctions should still be matched and preserved
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
@@ -2463,11 +2625,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         // Verify the agent ID is generated from server-returned name ("agent_abc123") and "latest"
         Assert.Equal("agent_abc123:latest", agent.Id);
     }
@@ -2525,11 +2687,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
         // Verify the agent ID is generated from server-returned name ("agent_abc123") and "latest"
         Assert.Equal("agent_abc123:latest", agent.Id);
     }
@@ -2679,11 +2841,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2707,11 +2869,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
+        FoundryAgent agent = await testClient.Client.CreateAIAgentAsync("test-model", options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2745,11 +2907,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2783,11 +2945,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         };
 
         // Act
-        ChatClientAgent agent = await client.GetAIAgentAsync(options);
+        FoundryAgent agent = await client.GetAIAgentAsync(options);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     /// <summary>
@@ -2841,11 +3003,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         AgentVersion agentVersion = ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson(agentDefinition: definition)))!;
 
         // Act - no tools provided, but requireInvocableTools is false when no tools param is passed
-        ChatClientAgent agent = client.AsAIAgent(agentVersion);
+        FoundryAgent agent = client.AsAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
-        Assert.IsType<ChatClientAgent>(agent);
+        Assert.IsType<FoundryAgent>(agent);
     }
 
     #endregion
@@ -3135,17 +3297,16 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class MockPipelineResponse : PipelineResponse
     {
-        private readonly int _status;
         private readonly MockPipelineResponseHeaders _headers;
 
         public MockPipelineResponse(int status, BinaryData? content = null)
         {
-            this._status = status;
+            this.Status = status;
             this.Content = content ?? BinaryData.Empty;
             this._headers = new MockPipelineResponseHeaders();
         }
 
-        public override int Status => this._status;
+        public override int Status { get; }
 
         public override string ReasonPhrase => "OK";
 
@@ -3206,9 +3367,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// <summary>
     /// Helper method to access internal ChatOptions property via reflection.
     /// </summary>
-    private static ChatOptions? GetAgentChatOptions(ChatClientAgent agent)
+    private static ChatOptions? GetAgentChatOptions(AIAgent agent)
     {
-        if (agent is null)
+        ChatClientAgent? chatClientAgent = agent as ChatClientAgent ?? agent.GetService<ChatClientAgent>();
+        if (chatClientAgent is null)
         {
             return null;
         }
@@ -3219,7 +3381,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             System.Reflection.BindingFlags.NonPublic |
             System.Reflection.BindingFlags.Instance);
 
-        return chatOptionsProperty?.GetValue(agent) as ChatOptions;
+        return chatOptionsProperty?.GetValue(chatClientAgent) as ChatOptions;
     }
 
     /// <summary>
@@ -3260,6 +3422,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         }
     }
 }
+#pragma warning restore CS0618
 
 /// <summary>
 /// Provides test data for invalid agent name validation tests.
