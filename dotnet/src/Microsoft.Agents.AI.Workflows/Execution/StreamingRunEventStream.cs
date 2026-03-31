@@ -234,6 +234,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
                 // Note: PendingRequests is handled by WatchStreamAsync's do-while loop
                 if (completionSignal.Status is RunStatus.Idle or RunStatus.Ended)
                 {
+                    yield return new WorkflowCompletedEvent();
                     yield break;
                 }
 
@@ -249,6 +250,7 @@ internal sealed class StreamingRunEventStream : IRunEventStream
             // RequestHaltEvent signals the end of the event stream
             if (evt is RequestHaltEvent)
             {
+                yield return new WorkflowCompletedEvent(evt.Data);
                 yield break;
             }
 
