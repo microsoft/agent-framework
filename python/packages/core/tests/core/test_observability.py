@@ -223,6 +223,23 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_chat_client_observability_accepts_model_option(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that telemetry also captures the modern model option."""
+    client = mock_chat_client()
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options={"model": "Test"})
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_streaming_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):

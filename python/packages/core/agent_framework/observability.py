@@ -1266,7 +1266,13 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
         model_id = (
-            merged_client_kwargs.get("model_id") or opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+            merged_client_kwargs.get("model")
+            or merged_client_kwargs.get("model_id")
+            or opts.get("model")
+            or opts.get("model_id")
+            or getattr(self, "model", None)
+            or getattr(self, "model_id", None)
+            or "unknown"
         )
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
@@ -1449,7 +1455,13 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = opts.get("model_id") or getattr(self, "model_id", None) or "unknown"
+        model_id = (
+            opts.get("model")
+            or opts.get("model_id")
+            or getattr(self, "model", None)
+            or getattr(self, "model_id", None)
+            or "unknown"
+        )
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(

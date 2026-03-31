@@ -154,6 +154,15 @@ def test_chat_client_agent_type(client: SupportsChatGetResponse) -> None:
     assert isinstance(chat_client_agent, SupportsAgentRun)
 
 
+def test_chat_client_agent_uses_client_model_attribute(chat_client_base) -> None:
+    chat_client_base.model = "claude-model"  # type: ignore[attr-defined]
+
+    agent = Agent(client=chat_client_base)
+
+    assert agent.default_options["model"] == "claude-model"
+    assert "model_id" not in agent.default_options
+
+
 def test_agent_init_docstring_surfaces_raw_agent_constructor_docs() -> None:
     docstring = inspect.getdoc(Agent.__init__)
 

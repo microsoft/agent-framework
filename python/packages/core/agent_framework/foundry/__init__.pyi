@@ -3,6 +3,7 @@
 # Type stubs for the agent_framework.foundry lazy-loading namespace.
 # Install the relevant packages for full type support.
 
+from agent_framework_anthropic import AnthropicFoundryClient, RawAnthropicFoundryClient
 from agent_framework_foundry import (
     FoundryAgent,
     FoundryChatClient,
@@ -22,6 +23,7 @@ from agent_framework_foundry_local import (
 )
 
 __all__ = [
+    "AnthropicFoundryClient",
     "FoundryAgent",
     "FoundryChatClient",
     "FoundryChatOptions",
@@ -30,6 +32,7 @@ __all__ = [
     "FoundryLocalClient",
     "FoundryLocalSettings",
     "FoundryMemoryProvider",
+    "RawAnthropicFoundryClient",
     "RawFoundryAgent",
     "RawFoundryAgentChatClient",
     "RawFoundryChatClient",

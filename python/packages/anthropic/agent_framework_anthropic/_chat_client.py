@@ -31,7 +31,7 @@ from agent_framework._settings import SecretString, load_settings
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from agent_framework._types import _get_data_bytes_as_str  # type: ignore
 from agent_framework.observability import ChatTelemetryLayer
-from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic, AsyncAnthropicBedrock, AsyncAnthropicFoundry, AsyncAnthropicVertex
 from anthropic.types.beta import (
     BetaContentBlock,
     BetaMessage,
@@ -79,6 +79,7 @@ BETA_FLAGS: Final[list[str]] = ["mcp-client-2025-04-04", "code-execution-2025-08
 STRUCTURED_OUTPUTS_BETA_FLAG: Final[str] = "structured-outputs-2025-11-13"
 
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None)
+AnthropicAsyncClient = AsyncAnthropic | AsyncAnthropicBedrock | AsyncAnthropicFoundry | AsyncAnthropicVertex
 
 
 # region Anthropic Chat Options TypedDict
@@ -113,8 +114,6 @@ class AnthropicChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT],
         a default of 1024 will be used.
 
     Keys:
-        model_id: The model to use for the request,
-            translates to ``model`` in Anthropic API.
         temperature: Sampling temperature between 0 and 1.
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum number of tokens to generate (REQUIRED).
@@ -169,7 +168,6 @@ AnthropicOptionsT = TypeVar(
 
 # Translation between framework options keys and Anthropic Messages API
 OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
     "stop": "stop_sequences",
     "instructions": "system",
 }
@@ -204,11 +202,11 @@ class AnthropicSettings(TypedDict, total=False):
 
     Keys:
         api_key: The Anthropic API key.
-        chat_model_id: The Anthropic chat model ID.
+        chat_model: The Anthropic chat model.
     """
 
     api_key: SecretString | None
-    chat_model_id: str | None
+    chat_model: str | None
 
 
 class RawAnthropicClient(
@@ -236,8 +234,8 @@ class RawAnthropicClient(
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
-        anthropic_client: AsyncAnthropic | None = None,
+        model: str | None = None,
+        anthropic_client: AnthropicAsyncClient | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
@@ -247,7 +245,7 @@ class RawAnthropicClient(
 
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
-            model_id: The ID of the model to use.
+            model: The model to use.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
@@ -265,11 +263,11 @@ class RawAnthropicClient(
 
                 # Using environment variables
                 # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-                # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
+                # ANTHROPIC_CHAT_MODEL=claude-sonnet-4-5-20250929
 
                 # Or passing parameters directly
                 client = RawAnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
                 )
 
@@ -283,7 +281,7 @@ class RawAnthropicClient(
                     api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
                 )
                 client = RawAnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-5-20250929",
                     anthropic_client=anthropic_client,
                 )
 
@@ -296,7 +294,7 @@ class RawAnthropicClient(
                     my_custom_option: str
 
 
-                client: RawAnthropicClient[MyOptions] = RawAnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                client: RawAnthropicClient[MyOptions] = RawAnthropicClient(model="claude-sonnet-4-5-20250929")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
 
         """
@@ -304,13 +302,13 @@ class RawAnthropicClient(
             AnthropicSettings,
             env_prefix="ANTHROPIC_",
             api_key=api_key,
-            chat_model_id=model_id,
+            chat_model=model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
         api_key_secret = anthropic_settings.get("api_key")
-        model_id_setting = anthropic_settings.get("chat_model_id")
+        model_setting = anthropic_settings.get("chat_model")
 
         if anthropic_client is None:
             if api_key_secret is None:
@@ -332,7 +330,7 @@ class RawAnthropicClient(
         # Initialize instance variables
         self.anthropic_client = anthropic_client
         self.additional_beta_flags = additional_beta_flags or []
-        self.model_id = model_id_setting
+        self.model = model_setting
         # streaming requires tracking the last function call ID, name, and content type
         self._last_call_id_name: tuple[str, str] | None = None
         self._last_call_content_type: str | None = None
@@ -513,7 +511,7 @@ class RawAnthropicClient(
         if stream:
             # Streaming mode
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):
+                async for chunk in await self.anthropic_client.beta.messages.create(**run_options, stream=True):  # type: ignore[misc]
                     parsed_chunk = self._process_stream_event(chunk)
                     if parsed_chunk:
                         yield parsed_chunk
@@ -522,7 +520,7 @@ class RawAnthropicClient(
 
         # Non-streaming mode
         async def _get_response() -> ChatResponse:
-            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)
+            message = await self.anthropic_client.beta.messages.create(**run_options, stream=False)  # type: ignore[misc]
             return self._process_message(message, options)
 
         return _get_response()
@@ -545,6 +543,9 @@ class RawAnthropicClient(
         Returns:
             A dictionary of run options for the Anthropic client.
         """
+        if options.get("model_id") is not None or kwargs.get("model_id") is not None:
+            raise ValueError("Anthropic clients no longer accept `model_id`; use `model` instead.")
+
         # Prepend instructions from options if they exist
         instructions = options.get("instructions")
         if instructions:
@@ -566,11 +567,11 @@ class RawAnthropicClient(
             if old_key in run_options and old_key != new_key:
                 run_options[new_key] = run_options.pop(old_key)
 
-        # model id
+        # model
         if not run_options.get("model"):
-            if not self.model_id:
-                raise ValueError("model_id must be a non-empty string")
-            run_options["model"] = self.model_id
+            if not self.model:
+                raise ValueError("model must be a non-empty string")
+            run_options["model"] = self.model
 
         # max_tokens - Anthropic requires this, default if not provided
         if not run_options.get("max_tokens"):
@@ -918,7 +919,7 @@ class RawAnthropicClient(
                 )
             ],
             usage_details=self._parse_usage_from_anthropic(message.usage),
-            model_id=message.model,
+            model=message.model,
             finish_reason=FINISH_REASON_MAP.get(message.stop_reason) if message.stop_reason else None,
             response_format=options.get("response_format"),
             raw_representation=message,
@@ -946,7 +947,7 @@ class RawAnthropicClient(
                         *self._parse_contents_from_anthropic(event.message.content),
                         *usage_details,
                     ],
-                    model_id=event.message.model,
+                    model=event.message.model,
                     finish_reason=FINISH_REASON_MAP.get(event.message.stop_reason)
                     if event.message.stop_reason
                     else None,
@@ -1396,8 +1397,8 @@ class AnthropicClient(
         self,
         *,
         api_key: str | None = None,
-        model_id: str | None = None,
-        anthropic_client: AsyncAnthropic | None = None,
+        model: str | None = None,
+        anthropic_client: AnthropicAsyncClient | None = None,
         additional_beta_flags: list[str] | None = None,
         additional_properties: dict[str, Any] | None = None,
         middleware: Sequence[ChatAndFunctionMiddlewareTypes] | None = None,
@@ -1409,7 +1410,7 @@ class AnthropicClient(
 
         Keyword Args:
             api_key: The Anthropic API key to use for authentication.
-            model_id: The ID of the model to use.
+            model: The model to use.
             anthropic_client: An existing Anthropic client to use. If not provided, one will be created.
                 This can be used to further configure the client before passing it in.
                 For instance if you need to set a different base_url for testing or private deployments.
@@ -1428,11 +1429,11 @@ class AnthropicClient(
 
                 # Using environment variables
                 # Set ANTHROPIC_API_KEY=your_anthropic_api_key
-                # ANTHROPIC_CHAT_MODEL_ID=claude-sonnet-4-5-20250929
+                # ANTHROPIC_CHAT_MODEL=claude-sonnet-4-5-20250929
 
                 # Or passing parameters directly
                 client = AnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-5-20250929",
                     api_key="your_anthropic_api_key",
                 )
 
@@ -1446,7 +1447,7 @@ class AnthropicClient(
                     api_key="your_anthropic_api_key", base_url="https://custom-anthropic-endpoint.com"
                 )
                 client = AnthropicClient(
-                    model_id="claude-sonnet-4-5-20250929",
+                    model="claude-sonnet-4-5-20250929",
                     anthropic_client=anthropic_client,
                 )
 
@@ -1459,12 +1460,12 @@ class AnthropicClient(
                     my_custom_option: str
 
 
-                client: AnthropicClient[MyOptions] = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+                client: AnthropicClient[MyOptions] = AnthropicClient(model="claude-sonnet-4-5-20250929")
                 response = await client.get_response("Hello", options={"my_custom_option": "value"})
         """
         super().__init__(
             api_key=api_key,
-            model_id=model_id,
+            model=model,
             anthropic_client=anthropic_client,
             additional_beta_flags=additional_beta_flags,
             additional_properties=additional_properties,

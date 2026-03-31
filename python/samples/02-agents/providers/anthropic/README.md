@@ -28,7 +28,7 @@ This folder contains examples demonstrating how to use Anthropic's Claude models
 ### Anthropic Client
 
 - `ANTHROPIC_API_KEY`: Your Anthropic API key (get one from [Anthropic Console](https://console.anthropic.com/))
-- `ANTHROPIC_CHAT_MODEL_ID`: The Claude model to use (e.g., `claude-haiku-4-5`, `claude-sonnet-4-5-20250929`)
+- `ANTHROPIC_CHAT_MODEL`: The Claude model to use (e.g., `claude-haiku-4-5`, `claude-sonnet-4-5-20250929`)
 
 ### Foundry
 

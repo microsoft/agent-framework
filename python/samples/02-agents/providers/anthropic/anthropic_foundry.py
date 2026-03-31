@@ -2,8 +2,7 @@
 import asyncio
 
 from agent_framework import Agent
-from agent_framework.anthropic import AnthropicClient
-from anthropic import AsyncAnthropicFoundry
+from agent_framework.foundry import AnthropicFoundryClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -34,7 +33,7 @@ To use the Foundry integration ensure you have the following environment variabl
 
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
-    client = AnthropicClient(anthropic_client=AsyncAnthropicFoundry())
+    client = AnthropicFoundryClient()
 
     # Create MCP tool configuration using instance method
     mcp_tool = client.get_mcp_tool(

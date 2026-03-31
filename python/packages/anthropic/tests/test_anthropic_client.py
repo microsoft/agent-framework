@@ -40,7 +40,7 @@ skip_if_anthropic_integration_tests_disabled = pytest.mark.skipif(
 
 def create_test_anthropic_client(
     mock_anthropic_client: MagicMock,
-    model_id: str | None = None,
+    model: str | None = None,
     anthropic_settings: AnthropicSettings | None = None,
 ) -> AnthropicClient:
     """Helper function to create AnthropicClient instances for testing, bypassing normal validation."""
@@ -51,7 +51,7 @@ def create_test_anthropic_client(
             AnthropicSettings,
             env_prefix="ANTHROPIC_",
             api_key="test-api-key-12345",
-            chat_model_id="claude-3-5-sonnet-20241022",
+            chat_model="claude-3-5-sonnet-20241022",
         )
 
     # Create client instance directly
@@ -59,7 +59,7 @@ def create_test_anthropic_client(
 
     # Set attributes directly
     client.anthropic_client = mock_anthropic_client
-    client.model_id = model_id or anthropic_settings["chat_model_id"]
+    client.model = model or anthropic_settings["chat_model"]
     client._last_call_id_name = None
     client._tool_name_aliases = {}
     client.additional_properties = {}
@@ -83,7 +83,7 @@ def test_anthropic_settings_init(anthropic_unit_test_env: dict[str, str]) -> Non
 
     assert settings["api_key"] is not None
     assert settings["api_key"].get_secret_value() == anthropic_unit_test_env["ANTHROPIC_API_KEY"]
-    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 def test_anthropic_settings_init_with_explicit_values() -> None:
@@ -92,12 +92,12 @@ def test_anthropic_settings_init_with_explicit_values() -> None:
         AnthropicSettings,
         env_prefix="ANTHROPIC_",
         api_key="custom-api-key",
-        chat_model_id="claude-3-opus-20240229",
+        chat_model="claude-3-opus-20240229",
     )
 
     assert settings["api_key"] is not None
     assert settings["api_key"].get_secret_value() == "custom-api-key"
-    assert settings["chat_model_id"] == "claude-3-opus-20240229"
+    assert settings["chat_model"] == "claude-3-opus-20240229"
 
 
 @pytest.mark.parametrize("exclude_list", [["ANTHROPIC_API_KEY"]], indirect=True)
@@ -107,7 +107,7 @@ def test_anthropic_settings_missing_api_key(
     """Test AnthropicSettings when API key is missing."""
     settings = load_settings(AnthropicSettings, env_prefix="ANTHROPIC_")
     assert settings["api_key"] is None
-    assert settings["chat_model_id"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert settings["chat_model"] == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 # Client Initialization Tests
@@ -115,10 +115,10 @@ def test_anthropic_settings_missing_api_key(
 
 def test_anthropic_client_init_with_client(mock_anthropic_client: MagicMock) -> None:
     """Test AnthropicClient initialization with existing anthropic_client."""
-    client = create_test_anthropic_client(mock_anthropic_client, model_id="claude-3-5-sonnet-20241022")
+    client = create_test_anthropic_client(mock_anthropic_client, model="claude-3-5-sonnet-20241022")
 
     assert client.anthropic_client is mock_anthropic_client
-    assert client.model_id == "claude-3-5-sonnet-20241022"
+    assert client.model == "claude-3-5-sonnet-20241022"
     assert isinstance(client, SupportsChatGetResponse)
 
 
@@ -141,11 +141,11 @@ def test_anthropic_client_init_auto_create_client(
     """Test AnthropicClient initialization with auto-created anthropic_client."""
     client = AnthropicClient(
         api_key=anthropic_unit_test_env["ANTHROPIC_API_KEY"],
-        model_id=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"],
+        model=anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"],
     )
 
     assert client.anthropic_client is not None
-    assert client.model_id == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL_ID"]
+    assert client.model == anthropic_unit_test_env["ANTHROPIC_CHAT_MODEL"]
 
 
 def test_anthropic_client_init_missing_api_key() -> None:
@@ -153,7 +153,7 @@ def test_anthropic_client_init_missing_api_key() -> None:
     with patch("agent_framework_anthropic._chat_client.load_settings") as mock_load:
         mock_load.return_value = {
             "api_key": None,
-            "chat_model_id": "claude-3-5-sonnet-20241022",
+            "chat_model": "claude-3-5-sonnet-20241022",
         }
 
         with pytest.raises(ValueError, match="Anthropic API key is required"):
@@ -740,7 +740,7 @@ async def test_prepare_options_basic(mock_anthropic_client: MagicMock) -> None:
 
     run_options = client._prepare_options(messages, chat_options)
 
-    assert run_options["model"] == client.model_id
+    assert run_options["model"] == client.model
     assert run_options["max_tokens"] == 100
     assert run_options["temperature"] == 0.7
     assert "messages" in run_options
@@ -980,7 +980,7 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     response = client._process_message(mock_message, {})
 
     assert response.response_id == "msg_123"
-    assert response.model_id == "claude-3-5-sonnet-20241022"
+    assert response.model == "claude-3-5-sonnet-20241022"
     assert len(response.messages) == 1
     assert response.messages[0].role == "assistant"
     assert len(response.messages[0].contents) == 1
@@ -2036,10 +2036,10 @@ def test_prepare_options_with_instructions(mock_anthropic_client: MagicMock) -> 
     assert result["max_tokens"] == 1024
 
 
-def test_prepare_options_missing_model_id(mock_anthropic_client: MagicMock) -> None:
-    """Test prepare_options raises error when model_id is missing."""
+def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options raises error when model is missing."""
     client = create_test_anthropic_client(mock_anthropic_client)
-    client.model_id = ""  # Set empty model_id
+    client.model = ""  # Set empty model
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
     options = {}
@@ -2048,7 +2048,17 @@ def test_prepare_options_missing_model_id(mock_anthropic_client: MagicMock) -> N
         client._prepare_options(messages, options)
         raise AssertionError("Expected ValueError")
     except ValueError as e:
-        assert "model_id must be a non-empty string" in str(e)
+        assert "model must be a non-empty string" in str(e)
+
+
+def test_prepare_options_rejects_model_id_option(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options rejects the removed model_id option."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    messages = [Message(role="user", contents=[Content.from_text("Hello")])]
+
+    with pytest.raises(ValueError, match="Anthropic clients no longer accept `model_id`; use `model` instead\\."):
+        client._prepare_options(messages, {"model_id": "claude-3-5-sonnet-20241022"})
 
 
 def test_prepare_options_with_user_metadata(mock_anthropic_client: MagicMock) -> None:

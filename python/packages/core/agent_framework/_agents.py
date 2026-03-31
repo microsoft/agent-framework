@@ -736,9 +736,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
+        model = opts.pop("model", None) or getattr(self.client, "model", None)
+        model_id = None if model is not None else (opts.pop("model_id", None) or getattr(self.client, "model_id", None))
+
         # Build chat options dict
         self.default_options: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None) or (getattr(self.client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "conversation_id": opts.pop("conversation_id", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
@@ -758,6 +760,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "user": opts.pop("user", None),
             **opts,  # Remaining options are provider-specific
         }
+        if model is not None:
+            self.default_options["model"] = model
+        elif model_id is not None:
+            self.default_options["model_id"] = model_id
         # Remove None values from chat_options
         self.default_options = {k: v for k, v in self.default_options.items() if v is not None}
         self._async_exit_stack = AsyncExitStack()
@@ -1243,9 +1249,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
+        model = opts.pop("model", None)
+        model_id = None if model is not None else opts.pop("model_id", None)
+
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None),
             "conversation_id": active_session.service_session_id
             if active_session
             else opts.pop("conversation_id", None),
@@ -1266,6 +1274,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "user": opts.pop("user", None),
             **opts,  # Remaining options are provider-specific
         }
+        if model is not None:
+            run_opts["model"] = model
+        elif model_id is not None:
+            run_opts["model_id"] = model_id
         # Remove None values and merge with chat_options
         run_opts = {k: v for k, v in run_opts.items() if v is not None}
         co = _merge_options(chat_options, run_opts)

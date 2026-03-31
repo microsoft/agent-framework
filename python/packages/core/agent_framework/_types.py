@@ -3136,6 +3136,7 @@ class _ChatOptionsBase(TypedDict, total=False):
     """
 
     # Model selection
+    model: str
     model_id: str
 
     # Generation parameters
