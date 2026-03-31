@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, cast
 
 from agent_framework import Agent, Content
 from agent_framework.anthropic import AnthropicChatOptions, AnthropicClient
@@ -28,11 +27,9 @@ This sample demonstrates using Anthropic with:
 async def main() -> None:
     """Example of streaming response (get results as they are generated)."""
     client = AnthropicClient[AnthropicChatOptions](additional_beta_flags=["skills-2025-10-02"])
-    beta_api = cast(Any, client.anthropic_client.beta)
 
     # List Anthropic-managed Skills
-    # The current Anthropic SDK stubs do not expose the beta skills/files endpoints yet.
-    skills = await beta_api.skills.list(source="anthropic", betas=["skills-2025-10-02"])
+    skills = await client.anthropic_client.beta.skills.list(source="anthropic", betas=["skills-2025-10-02"])  # type: ignore
     for skill in skills.data:
         print(f"{skill.source}: {skill.id} (version: {skill.latest_version})")
 
@@ -84,7 +81,9 @@ async def main() -> None:
         # Since I'm using the pptx skill, the files will be PowerPoint presentations
         print("Generated files:")
         for idx, file in enumerate(files):
-            file_content = await beta_api.files.download(file_id=file.file_id, betas=["files-api-2025-04-14"])
+            file_content = await client.anthropic_client.beta.files.download(  # type: ignore
+                file_id=file.file_id, betas=["files-api-2025-04-14"]
+            )
             with open(Path(__file__).parent / f"python_programming-{idx}.pptx", "wb") as f:
                 await file_content.write_to_file(f.name)
             print(f"File {idx}: python_programming-{idx}.pptx saved to disk.")
