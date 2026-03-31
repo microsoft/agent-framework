@@ -9,9 +9,10 @@ Redis context provider. It covers three scenarios:
    - Use application_id, agent_id, and user_id to share memories across
      all operations/sessions.
 
-2) Agent-scoped memory with custom vectorizer
-   - Use a custom vectorizer with the provider for hybrid vector search.
-     Memories are scoped by application_id, user_id, and agent_id.
+2) Hybrid vector search
+   - Use a custom OpenAI vectorizer with the provider for hybrid vector search.
+     Demonstrates combining full-text and semantic search for richer context
+     retrieval.
 
 3) Multiple agents with isolated memory
    - Use different agent_id values to keep memories separated for different
@@ -99,13 +100,13 @@ async def example_global_memory_scope() -> None:
     await provider.redis_index.delete()
 
 
-async def example_agent_scoped_memory() -> None:
-    """Example 2: Agent-scoped memory with custom vectorizer.
+async def example_hybrid_vector_search() -> None:
+    """Example 2: Hybrid vector search with custom vectorizer.
 
-    Demonstrates using a custom OpenAI vectorizer for hybrid vector search.
-    Memories are scoped by application_id, user_id, and agent_id.
+    Demonstrates using a custom OpenAI vectorizer for hybrid vector search,
+    combining full-text and semantic search for richer context retrieval.
     """
-    print("2. Agent-Scoped Memory with Vectorizer Example:")
+    print("2. Hybrid Vector Search Example:")
     print("-" * 40)
 
     client = create_chat_client()
@@ -131,36 +132,33 @@ async def example_agent_scoped_memory() -> None:
 
     agent = Agent(
         client=client,
-        name="ScopedMemoryAssistant",
-        instructions="You are an assistant with agent-scoped memory.",
+        name="HybridSearchAssistant",
+        instructions="You are an assistant with hybrid vector search for richer context retrieval.",
         context_providers=[provider],
     )
 
-    # Create a specific session for this scoped provider
-    dedicated_session = agent.create_session()
-
-    # Store some information in the dedicated session
+    # Store some information
     query = "Remember that for this conversation, I'm working on a Python project about data analysis."
-    print(f"User (dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Test memory retrieval in the same dedicated session
+    # Test memory retrieval via hybrid search
     query = "What project am I working on?"
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
-    # Store more information in the same session
+    # Store more information
     query = "Also remember that I prefer using pandas and matplotlib for this project."
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
     # Test comprehensive memory retrieval
     query = "What do you know about my current project and preferences?"
-    print(f"User (same dedicated session): {query}")
-    result = await agent.run(query, session=dedicated_session)
+    print(f"User: {query}")
+    result = await agent.run(query)
     print(f"Agent: {result}\n")
 
     # Clean up the Redis index
@@ -249,7 +247,7 @@ async def example_multiple_agents() -> None:
 async def main() -> None:
     print("=== Redis Memory Scoping Examples ===\n")
     await example_global_memory_scope()
-    await example_agent_scoped_memory()
+    await example_hybrid_vector_search()
     await example_multiple_agents()
 
 
