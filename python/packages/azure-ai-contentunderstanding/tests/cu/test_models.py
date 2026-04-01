@@ -5,24 +5,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 from agent_framework_azure_ai_contentunderstanding._models import (
-    AnalysisSection,
     DocumentEntry,
     DocumentStatus,
     FileSearchConfig,
 )
-
-
-class TestAnalysisSection:
-    def test_values(self) -> None:
-        assert AnalysisSection.MARKDOWN == "markdown"
-        assert AnalysisSection.FIELDS == "fields"
-
-    def test_is_string(self) -> None:
-        assert isinstance(AnalysisSection.MARKDOWN, str)
-        assert isinstance(AnalysisSection.FIELDS, str)
-
-    def test_members(self) -> None:
-        assert len(AnalysisSection) == 2
 
 
 class TestDocumentEntry:

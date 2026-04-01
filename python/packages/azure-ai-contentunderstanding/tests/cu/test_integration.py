@@ -25,9 +25,7 @@ skip_if_cu_integration_tests_disabled = pytest.mark.skipif(
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Shared sample asset — same PDF used by samples and integration tests
-INVOICE_PDF_PATH = (
-    Path(__file__).resolve().parents[2] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
-)
+INVOICE_PDF_PATH = Path(__file__).resolve().parents[2] / "samples" / "shared" / "sample_assets" / "invoice.pdf"
 
 
 @pytest.mark.flaky
@@ -121,8 +119,7 @@ async def test_before_run_e2e() -> None:
 
 # Raw GitHub URL for a public invoice PDF from the CU samples repo
 _INVOICE_PDF_URL = (
-    "https://raw.githubusercontent.com/Azure-Samples/"
-    "azure-ai-content-understanding-assets/main/document/invoice.pdf"
+    "https://raw.githubusercontent.com/Azure-Samples/azure-ai-content-understanding-assets/main/document/invoice.pdf"
 )
 
 

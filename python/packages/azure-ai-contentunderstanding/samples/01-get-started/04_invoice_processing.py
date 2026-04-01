@@ -20,7 +20,6 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
 from agent_framework_azure_ai_contentunderstanding import (
-    AnalysisSection,
     ContentUnderstandingContextProvider,
 )
 
@@ -56,8 +55,8 @@ async def main() -> None:
         analyzer_id="prebuilt-documentSearch",  # default for all files
         max_wait=None,  # wait until CU analysis finishes
         output_sections=[
-            AnalysisSection.MARKDOWN,
-            AnalysisSection.FIELDS,
+            "markdown",
+            "fields",
         ],
     )
 

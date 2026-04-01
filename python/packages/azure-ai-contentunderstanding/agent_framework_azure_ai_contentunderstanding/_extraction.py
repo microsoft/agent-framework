@@ -86,9 +86,9 @@ def extract_sections(
 
     # --- Single-segment: flat output (documents, images, short audio) ---
     if not is_multi_segment:
-        if AnalysisSection.MARKDOWN in output_sections and contents[0].markdown:
+        if "markdown" in output_sections and contents[0].markdown:
             extracted["markdown"] = contents[0].markdown
-        if AnalysisSection.FIELDS in output_sections and contents[0].fields:
+        if "fields" in output_sections and contents[0].fields:
             fields: dict[str, object] = {}
             for name, field in contents[0].fields.items():
                 entry_dict: dict[str, object] = {
@@ -129,12 +129,12 @@ def extract_sections(
             seg["end_time_s"] = round(e / 1000, 1)
 
         # Per-segment markdown
-        if AnalysisSection.MARKDOWN in output_sections and content.markdown:
+        if "markdown" in output_sections and content.markdown:
             seg["markdown"] = content.markdown
             md_parts.append(content.markdown)
 
         # Per-segment fields
-        if AnalysisSection.FIELDS in output_sections and content.fields:
+        if "fields" in output_sections and content.fields:
             seg_fields: dict[str, object] = {}
             for name, field in content.fields.items():
                 seg_entry: dict[str, object] = {
@@ -179,17 +179,11 @@ def extract_field_value(field: Any) -> object:
 
     # Object fields -> recursively resolve nested sub-fields
     if field_type == "object" and raw is not None and isinstance(raw, dict):
-        return {
-            str(k): flatten_field(v)
-            for k, v in cast(dict[str, Any], raw).items()
-        }
+        return {str(k): flatten_field(v) for k, v in cast(dict[str, Any], raw).items()}
 
     # Array fields -> list of flattened items (each with value + optional confidence)
     if field_type == "array" and raw is not None and isinstance(raw, list):
-        return [
-            flatten_field(item)
-            for item in cast(list[Any], raw)
-        ]
+        return [flatten_field(item) for item in cast(list[Any], raw)]
 
     # Scalar fields (string, number, date, etc.) -- .value returns native Python type
     return raw

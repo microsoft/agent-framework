@@ -87,8 +87,7 @@ async def main() -> None:
                 role="user",
                 contents=[
                     Content.from_text(
-                        "What is this document about? "
-                        "Who is the vendor, and what is the total amount due?"
+                        "What is this document about? Who is the vendor, and what is the total amount due?"
                     ),
                     Content.from_data(
                         pdf_bytes,

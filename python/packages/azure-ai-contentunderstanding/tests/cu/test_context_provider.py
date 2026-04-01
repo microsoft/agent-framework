@@ -14,7 +14,6 @@ from agent_framework._sessions import AgentSession
 from azure.ai.contentunderstanding.models import AnalysisResult
 
 from agent_framework_azure_ai_contentunderstanding import (
-    AnalysisSection,
     ContentUnderstandingContextProvider,
     DocumentStatus,
 )
@@ -97,7 +96,7 @@ class TestInit:
         )
         assert provider.analyzer_id is None
         assert provider.max_wait == 5.0
-        assert provider.output_sections == [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
+        assert provider.output_sections == ["markdown", "fields"]
         assert provider.source_id == "azure_ai_contentunderstanding"
 
     def test_custom_values(self) -> None:
@@ -106,12 +105,12 @@ class TestInit:
             credential=AsyncMock(),
             analyzer_id="prebuilt-invoice",
             max_wait=10.0,
-            output_sections=[AnalysisSection.MARKDOWN],
+            output_sections=["markdown"],
             source_id="custom_cu",
         )
         assert provider.analyzer_id == "prebuilt-invoice"
         assert provider.max_wait == 10.0
-        assert provider.output_sections == [AnalysisSection.MARKDOWN]
+        assert provider.output_sections == ["markdown"]
         assert provider.source_id == "custom_cu"
 
     def test_max_wait_none(self) -> None:
@@ -511,14 +510,14 @@ class TestOutputFiltering:
         assert "Contoso" in str(result["markdown"])
 
     def test_markdown_only(self, pdf_analysis_result: AnalysisResult) -> None:
-        provider = _make_provider(output_sections=[AnalysisSection.MARKDOWN])
+        provider = _make_provider(output_sections=["markdown"])
         result = provider._extract_sections(pdf_analysis_result)
 
         assert "markdown" in result
         assert "fields" not in result
 
     def test_fields_only(self, invoice_analysis_result: AnalysisResult) -> None:
-        provider = _make_provider(output_sections=[AnalysisSection.FIELDS])
+        provider = _make_provider(output_sections=["fields"])
         result = provider._extract_sections(invoice_analysis_result)
 
         assert "markdown" not in result
@@ -1192,8 +1191,16 @@ class TestFormatResult:
         walkthrough_pos = formatted.index("Feature walkthrough")
         host_only_pos = formatted.index('"count": 1')
         host_engineer_pos = formatted.index('"count": 2')
-        assert (seg1_pos < contoso_pos < intro_pos < host_only_pos
-                < seg2_pos < monitoring_pos < walkthrough_pos < host_engineer_pos)
+        assert (
+            seg1_pos
+            < contoso_pos
+            < intro_pos
+            < host_only_pos
+            < seg2_pos
+            < monitoring_pos
+            < walkthrough_pos
+            < host_engineer_pos
+        )
 
     def test_format_single_segment_no_segments_key(self) -> None:
         """Single-segment results should NOT have segments key — flat format."""
@@ -1245,8 +1252,9 @@ class TestFormatResult:
         vendor_pos = formatted.index("Contoso")
         address_pos = formatted.index("ShippingAddress")
         street_pos = formatted.index("123 Main St")
-        assert (header_pos < content_header_pos < markdown_pos
-                < fields_header_pos < vendor_pos < address_pos < street_pos)
+        assert (
+            header_pos < content_header_pos < markdown_pos < fields_header_pos < vendor_pos < address_pos < street_pos
+        )
 
 
 class TestSupportedMediaTypes:
@@ -1863,9 +1871,7 @@ class TestAnalyzerAutoDetectionE2E:
         state: dict[str, Any] = {}
         session = AgentSession()
 
-        await provider.before_run(
-            agent=_make_mock_agent(), session=session, context=context, state=state
-        )
+        await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
         # Per-file override should win
         assert state["documents"]["invoice.pdf"]["analyzer_id"] == "prebuilt-invoice"

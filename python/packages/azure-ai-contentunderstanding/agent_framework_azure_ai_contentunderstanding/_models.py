@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from ._file_search import FileSearchBackend, FoundryFileSearchBackend, OpenAIFileSearchBackend
 
@@ -25,14 +25,12 @@ class DocumentStatus(str, Enum):
     """Analysis or upload failed."""
 
 
-class AnalysisSection(str, Enum):
-    """Selects which sections of the CU output to pass to the LLM."""
+AnalysisSection = Literal["markdown", "fields"]
+"""Which sections of the CU output to pass to the LLM.
 
-    MARKDOWN = "markdown"
-    """Full document text with tables as HTML, reading order preserved."""
-
-    FIELDS = "fields"
-    """Extracted typed fields with confidence scores (when available)."""
+- ``"markdown"``: Full document text with tables as HTML, reading order preserved.
+- ``"fields"``: Extracted typed fields with confidence scores (when available).
+"""
 
 
 class DocumentEntry(TypedDict):

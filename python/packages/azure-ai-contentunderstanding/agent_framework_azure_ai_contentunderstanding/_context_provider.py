@@ -101,7 +101,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         max_wait: Max seconds to wait for analysis before deferring to background.
             ``None`` waits until complete.
         output_sections: Which CU output sections to pass to LLM.
-            Defaults to ``[AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]``.
+            Defaults to ``["markdown", "fields"]``.
         file_search: Optional configuration for uploading CU-extracted markdown to
             a vector store for token-efficient RAG retrieval. When provided, full
             content injection is replaced by ``file_search`` tool registration.
@@ -141,7 +141,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         Example::
 
             Content.from_data(
-                pdf_bytes, "application/pdf",
+                pdf_bytes,
+                "application/pdf",
                 additional_properties={
                     "filename": "invoice.pdf",
                     "analyzer_id": "prebuilt-invoice",
@@ -192,7 +193,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self._credential = credential
         self.analyzer_id = analyzer_id
         self.max_wait = max_wait
-        self.output_sections = output_sections or [AnalysisSection.MARKDOWN, AnalysisSection.FIELDS]
+        self.output_sections: list[AnalysisSection] = output_sections or ["markdown", "fields"]
         self.file_search = file_search
         self._client = ContentUnderstandingClient(
             self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
