@@ -1780,7 +1780,7 @@ class TestGitHubCopilotAgentContextProviders:
                 context: Any,
                 state: dict[str, Any],
             ) -> None:
-                pass
+                self.after_run_called = True
 
             async def get_messages(self, *, session_id: str, **kwargs: Any) -> list[Message]:
                 return []
@@ -1800,6 +1800,9 @@ class TestGitHubCopilotAgentContextProviders:
 
         assert not skipped_provider.before_run_called
         assert active_provider.before_run_called
+        # after_run should still be called even when load_messages=False
+        assert skipped_provider.after_run_called
+        assert active_provider.after_run_called
 
     async def test_streaming_after_run_response_has_updates(
         self,

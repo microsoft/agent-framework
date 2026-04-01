@@ -361,7 +361,10 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 sess = ctx_holder.get("session")
                 if session_context is not None and sess is not None:
                     session_context._response = response
-                    await self._run_after_providers(session=sess, context=session_context)
+                    try:
+                        await self._run_after_providers(session=sess, context=session_context)
+                    except Exception:
+                        logger.exception("Error running after_run providers in streaming result hook")
 
             def _finalize(updates: Sequence[AgentResponseUpdate]) -> AgentResponse:
                 return AgentResponse.from_updates(updates)
@@ -390,10 +393,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         opts: dict[str, Any] = dict(options) if options else {}
         timeout = opts.get("timeout") or self._settings.get("timeout") or DEFAULT_TIMEOUT_SECONDS
 
-        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
         input_messages = normalize_messages(messages)
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
+
+        # NOTE: session is created after providers run so that future provider-contributed
+        # tools/config could be folded into runtime_options before session creation.
+        copilot_session = await self._get_or_create_session(session, streaming=False, runtime_options=opts)
 
         # Build the prompt from the full set of messages in the session context,
         # so that any context/history provider-injected messages are included.
@@ -466,10 +472,13 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         opts: dict[str, Any] = dict(options) if options else {}
 
-        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
         input_messages = normalize_messages(messages)
 
         session_context = await self._run_before_providers(session=session, input_messages=input_messages, options=opts)
+
+        # NOTE: session is created after providers run so that future provider-contributed
+        # tools/config could be folded into runtime_options before session creation.
+        copilot_session = await self._get_or_create_session(session, streaming=True, runtime_options=opts)
 
         if _ctx_holder is not None:
             _ctx_holder["session_context"] = session_context
