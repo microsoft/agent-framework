@@ -79,11 +79,11 @@ def test_supports_web_search_only() -> None:
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model_id")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
 
     open_ai_chat_completion = OpenAIChatCompletionClient()
 
-    assert open_ai_chat_completion.model == "test_chat_model_id"
+    assert open_ai_chat_completion.model == "test_chat_model"
 
 
 def test_init_validation_fail() -> None:
@@ -92,12 +92,12 @@ def test_init_validation_fail() -> None:
         OpenAIChatCompletionClient(api_key="34523", model={"test": "dict"})  # type: ignore
 
 
-def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    model_id = "test_model_id"
-    open_ai_chat_completion = OpenAIChatCompletionClient(model=model_id)
+    model = "test_model"
+    open_ai_chat_completion = OpenAIChatCompletionClient(model=model)
 
-    assert open_ai_chat_completion.model == model_id
+    assert open_ai_chat_completion.model == model
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
 
@@ -141,18 +141,18 @@ def test_init_base_url_from_settings_env() -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
-def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_model(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    model_id = "test_model_id"
+    model = "test_model"
 
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient(
-            model=model_id,
+            model=model,
         )
 
 
@@ -1178,10 +1178,10 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert message.contents[0].text == "I cannot provide that information."
 
 
-def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that prepare_options raises error when model_id is not set."""
+def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that prepare_options raises error when model is not set."""
     client = OpenAIChatCompletionClient()
-    client.model = None  # Remove model_id
+    client.model = None  # Remove model
 
     messages = [Message(role="user", text="test")]
 

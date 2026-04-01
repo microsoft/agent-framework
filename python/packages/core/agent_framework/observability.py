@@ -1265,21 +1265,13 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = (
-            merged_client_kwargs.get("model")
-            or merged_client_kwargs.get("model_id")
-            or opts.get("model")
-            or opts.get("model_id")
-            or getattr(self, "model", None)
-            or getattr(self, "model_id", None)
-            or "unknown"
-        )
+        model = merged_client_kwargs.get("model") or opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.CHAT_COMPLETION_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
             **merged_client_kwargs,
         )
@@ -1455,19 +1447,13 @@ class EmbeddingTelemetryLayer(Generic[EmbeddingInputT, EmbeddingT, EmbeddingOpti
 
         opts: dict[str, Any] = options or {}  # type: ignore[assignment]
         provider_name = str(getattr(self, "otel_provider_name", "unknown"))
-        model_id = (
-            opts.get("model")
-            or opts.get("model_id")
-            or getattr(self, "model", None)
-            or getattr(self, "model_id", None)
-            or "unknown"
-        )
+        model = opts.get("model") or getattr(self, "model", None) or "unknown"
         service_url_func = getattr(self, "service_url", None)
         service_url = str(service_url_func() if callable(service_url_func) else "unknown")
         attributes = _get_span_attributes(
             operation_name=OtelAttr.EMBEDDING_OPERATION,
             provider_name=provider_name,
-            model=model_id,
+            model=model,
             service_url=service_url,
         )
 
@@ -1878,8 +1864,7 @@ OTEL_ATTR_MAP: dict[str | tuple[str, ...], tuple[str, Callable[[Any], Any] | Non
     "agent_id": (OtelAttr.AGENT_ID, None, False, None),
     "agent_name": (OtelAttr.AGENT_NAME, None, False, None),
     "agent_description": (OtelAttr.AGENT_DESCRIPTION, None, False, None),
-    # Multiple source keys - checks model_id in options, then model in kwargs, then model_id in kwargs
-    ("model_id", "model"): (OtelAttr.REQUEST_MODEL, None, True, None),
+    "model": (OtelAttr.REQUEST_MODEL, None, True, None),
     # Tools with validation - returns None if no valid tools
     "tools": (
         OtelAttr.TOOL_DEFINITIONS,
@@ -2066,8 +2051,8 @@ def _get_response_attributes(
         )
     if finish_reason:
         attributes[OtelAttr.FINISH_REASONS] = json.dumps([finish_reason])
-    if model_id := getattr(response, "model_id", None):
-        attributes[OtelAttr.RESPONSE_MODEL] = model_id
+    if model := getattr(response, "model", None):
+        attributes[OtelAttr.RESPONSE_MODEL] = model
     if capture_usage and (usage := response.usage_details):
         input_tokens = usage.get("input_token_count")
         if input_tokens:

@@ -592,7 +592,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tools: The tools to use for the request.
             default_options: A TypedDict containing chat options. When using a typed client like
                 ``OpenAIChatClient``, this enables IDE autocomplete for provider-specific options
-                including temperature, max_tokens, model_id, tool_choice, and more.
+                including temperature, max_tokens, model, tool_choice, and more.
                 Note: response_format typing does not flow into run outputs when set via default_options,
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
@@ -617,7 +617,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 from agent_framework.openai import OpenAIChatClient
 
                 # Create a client
-                client = OpenAIChatClient(model_id="gpt-4")
+                client = OpenAIChatClient(model="gpt-4")
 
                 # Create an agent using the convenience method
                 agent = client.as_agent(

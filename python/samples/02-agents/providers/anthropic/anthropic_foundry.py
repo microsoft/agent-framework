@@ -26,7 +26,7 @@ To use the Foundry integration ensure you have the following environment variabl
 - ANTHROPIC_FOUNDRY_BASE_URL
     Optional alternative to ANTHROPIC_FOUNDRY_RESOURCE. Should be something like
     https://<your-resource-name>.services.ai.azure.com/anthropic/
-- ANTHROPIC_CHAT_MODEL_ID
+- ANTHROPIC_CHAT_MODEL
     Should be something like claude-haiku-4-5
 """
 

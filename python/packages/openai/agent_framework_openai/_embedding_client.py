@@ -123,8 +123,8 @@ class RawOpenAIEmbeddingClient(
 
         Keyword Args:
             model: Embedding deployment name. When not provided, the constructor reads
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
             credential: Azure credential or token provider for Entra auth.
@@ -150,7 +150,6 @@ class RawOpenAIEmbeddingClient(
         self,
         *,
         model: str | None = None,
-        model_id: str | None = None,
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
@@ -168,9 +167,8 @@ class RawOpenAIEmbeddingClient(
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``
-                and then ``AZURE_OPENAI_DEPLOYMENT_NAME``.
-            model_id: Deprecated alias for ``model``.
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
+                and then ``AZURE_OPENAI_MODEL``.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,
@@ -207,15 +205,9 @@ class RawOpenAIEmbeddingClient(
             OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
             ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
         """
-        if model_id is not None and model is None:
-            import warnings
-
-            warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
-            model = model_id
-
         settings, client, use_azure_client = load_openai_service_settings(
             model=model,
             api_key=api_key,
@@ -230,11 +222,11 @@ class RawOpenAIEmbeddingClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             openai_model_fields=("embedding_model", "model"),
-            azure_deployment_fields=("embedding_deployment_name", "deployment_name"),
+            azure_model_fields=("embedding_model", "model"),
         )
 
         self.client = client
-        resolved_model = settings.get("model") or settings.get("deployment_name")
+        resolved_model = settings.get("model")
         self.model: str | None = resolved_model.strip() if isinstance(resolved_model, str) and resolved_model else None
 
         # Store configuration for serialization
@@ -279,8 +271,7 @@ class RawOpenAIEmbeddingClient(
             return GeneratedEmbeddings([], options=options)  # type: ignore
 
         opts: dict[str, Any] = options or {}  # type: ignore
-        # backward compat: accept model_id in options
-        model = opts.get("model") or opts.get("model_id") or self.model
+        model = opts.get("model") or self.model
         if not model:
             raise ValueError("model is required")
 
@@ -385,8 +376,8 @@ class OpenAIEmbeddingClient(
 
         Keyword Args:
             model: Embedding deployment name. When not provided, the constructor reads
-                ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                ``AZURE_OPENAI_EMBEDDING_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
             credential: Azure credential or token provider for Entra auth.
@@ -429,8 +420,8 @@ class OpenAIEmbeddingClient(
         Keyword Args:
             model: Embedding model or Azure OpenAI deployment name. When not provided, the
                 constructor reads ``OPENAI_EMBEDDING_MODEL`` and then ``OPENAI_MODEL``
-                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``
-                and then ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                for OpenAI. For Azure it first checks ``AZURE_OPENAI_EMBEDDING_MODEL``
+                and then ``AZURE_OPENAI_MODEL``.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key auth.
                 A callable token provider is also accepted for backwards compatibility,
@@ -467,8 +458,8 @@ class OpenAIEmbeddingClient(
             OpenAI reads ``OPENAI_API_KEY``, ``OPENAI_EMBEDDING_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure reads
             ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_EMBEDDING_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
             .. code-block:: python

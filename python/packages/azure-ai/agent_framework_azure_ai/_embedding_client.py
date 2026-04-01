@@ -44,7 +44,7 @@ class AzureAIInferenceEmbeddingOptions(EmbeddingGenerationOptions, total=False):
             from agent_framework_azure_ai import AzureAIInferenceEmbeddingOptions
 
             options: AzureAIInferenceEmbeddingOptions = {
-                "model_id": "text-embedding-3-small",
+                "model": "text-embedding-3-small",
                 "dimensions": 1536,
                 "input_type": "document",
                 "encoding_format": "float",
@@ -54,8 +54,8 @@ class AzureAIInferenceEmbeddingOptions(EmbeddingGenerationOptions, total=False):
     input_type: str
     """Input type hint for the model. Common values: ``"text"``, ``"query"``, ``"document"``."""
 
-    image_model_id: str
-    """Override model for image embeddings. Falls back to the client's ``image_model_id``."""
+    image_model: str
+    """Override model for image embeddings. Falls back to the client's ``image_model``."""
 
     encoding_format: str
     """Output encoding format.
@@ -81,8 +81,8 @@ class AzureAIInferenceEmbeddingSettings(TypedDict, total=False):
 
     endpoint: str | None
     api_key: str | None
-    embedding_model_id: str | None
-    image_embedding_model_id: str | None
+    embedding_model: str | None
+    image_embedding_model: str | None
 
 
 class RawAzureAIInferenceEmbeddingClient(
@@ -97,11 +97,11 @@ class RawAzureAIInferenceEmbeddingClient(
     are reassembled in the original input order.
 
     Keyword Args:
-        model_id: The text embedding model deployment name (e.g. "text-embedding-3-small").
-            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID.
-        image_model_id: The image embedding model deployment name (e.g. "Cohere-embed-v3-english").
-            Can also be set via environment variable AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID.
-            Falls back to ``model_id`` if not provided.
+        model: The text embedding model (e.g. "text-embedding-3-small").
+            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL.
+        image_model: The image embedding model (e.g. "Cohere-embed-v3-english").
+            Can also be set via environment variable AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL.
+            Falls back to ``model`` if not provided.
         endpoint: The Azure AI Inference endpoint URL.
             Can also be set via environment variable AZURE_AI_INFERENCE_ENDPOINT.
         api_key: API key for authentication.
@@ -117,8 +117,8 @@ class RawAzureAIInferenceEmbeddingClient(
     def __init__(
         self,
         *,
-        model_id: str | None = None,
-        image_model_id: str | None = None,
+        model: str | None = None,
+        image_model: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
         text_client: EmbeddingsClient | None = None,
@@ -132,17 +132,17 @@ class RawAzureAIInferenceEmbeddingClient(
         settings = load_settings(
             AzureAIInferenceEmbeddingSettings,
             env_prefix="AZURE_AI_INFERENCE_",
-            required_fields=["endpoint", "embedding_model_id"],
+            required_fields=["endpoint", "embedding_model"],
             endpoint=endpoint,
             api_key=api_key,
-            embedding_model_id=model_id,
-            image_embedding_model_id=image_model_id,
+            embedding_model=model,
+            image_embedding_model=image_model,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
 
-        self.model_id = settings["embedding_model_id"]  # type: ignore[reportTypedDictNotRequiredAccess]
-        self.image_model_id: str = settings.get("image_embedding_model_id") or self.model_id  # type: ignore[assignment]
+        self.model = settings["embedding_model"]  # type: ignore[reportTypedDictNotRequiredAccess]
+        self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
         resolved_endpoint = settings["endpoint"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
         if credential is None and settings.get("api_key"):
@@ -202,7 +202,7 @@ class RawAzureAIInferenceEmbeddingClient(
             Generated embeddings with usage metadata.
 
         Raises:
-            ValueError: If model_id is not provided or an unsupported content type is encountered.
+            ValueError: If model is not provided or an unsupported content type is encountered.
         """
         if not values:
             return GeneratedEmbeddings([], options=options)  # type: ignore[reportReturnType]
@@ -254,8 +254,8 @@ class RawAzureAIInferenceEmbeddingClient(
 
         # Embed text inputs.
         if text_items:
-            if not (text_model := opts.get("model_id") or self.model_id):
-                raise ValueError("An model_id is required, either in the client or options, for text inputs.")
+            if not (text_model := opts.get("model") or self.model):
+                raise ValueError("A model is required, either in the client or options, for text inputs.")
             text_inputs = [t for _, t in text_items]
             response = await self._text_client.embed(
                 input=text_inputs,
@@ -268,7 +268,7 @@ class RawAzureAIInferenceEmbeddingClient(
                 embeddings[original_idx] = Embedding(
                     vector=vector,
                     dimensions=len(vector),
-                    model_id=response.model or text_model,
+                    model=response.model or text_model,
                 )
             if response.usage:
                 usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
@@ -280,8 +280,8 @@ class RawAzureAIInferenceEmbeddingClient(
 
         # Embed image inputs.
         if image_items:
-            if not (image_model := opts.get("image_model_id") or self.image_model_id):
-                raise ValueError("An image_model_id is required, either in the client or options, for image inputs.")
+            if not (image_model := opts.get("image_model") or self.image_model):
+                raise ValueError("An image_model is required, either in the client or options, for image inputs.")
             image_inputs = [img for _, img in image_items]
             response = await self._image_client.embed(
                 input=image_inputs,
@@ -294,7 +294,7 @@ class RawAzureAIInferenceEmbeddingClient(
                 embeddings[original_idx] = Embedding(
                     vector=image_vector,
                     dimensions=len(image_vector),
-                    model_id=response.model or image_model,
+                    model=response.model or image_model,
                 )
             if response.usage:
                 usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
@@ -322,11 +322,11 @@ class AzureAIInferenceEmbeddingClient(
     ``Content.from_data()``.
 
     Keyword Args:
-        model_id: The text embedding model deployment name (e.g. "text-embedding-3-small").
-            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID.
-        image_model_id: The image embedding model deployment name
+        model: The text embedding model (e.g. "text-embedding-3-small").
+            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL.
+        image_model: The image embedding model
             (e.g. "Cohere-embed-v3-english"). Can also be set via environment variable
-            AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID. Falls back to ``model_id``.
+            AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL. Falls back to ``model``.
         endpoint: The Azure AI Inference endpoint URL.
             Can also be set via environment variable AZURE_AI_INFERENCE_ENDPOINT.
         api_key: API key for authentication.
@@ -346,8 +346,8 @@ class AzureAIInferenceEmbeddingClient(
             # Using environment variables
             # Set AZURE_AI_INFERENCE_ENDPOINT=https://your-endpoint.inference.ai.azure.com
             # Set AZURE_AI_INFERENCE_API_KEY=your-key
-            # Set AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID=text-embedding-3-small
-            # Set AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID=Cohere-embed-v3-english
+            # Set AZURE_AI_INFERENCE_EMBEDDING_MODEL=text-embedding-3-small
+            # Set AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL=Cohere-embed-v3-english
             client = AzureAIInferenceEmbeddingClient()
 
             # Text embeddings
@@ -368,8 +368,8 @@ class AzureAIInferenceEmbeddingClient(
     def __init__(
         self,
         *,
-        model_id: str | None = None,
-        image_model_id: str | None = None,
+        model: str | None = None,
+        image_model: str | None = None,
         endpoint: str | None = None,
         api_key: str | None = None,
         text_client: EmbeddingsClient | None = None,
@@ -382,8 +382,8 @@ class AzureAIInferenceEmbeddingClient(
     ) -> None:
         """Initialize an Azure AI Inference embedding client."""
         super().__init__(
-            model_id=model_id,
-            image_model_id=image_model_id,
+            model=model,
+            image_model=image_model,
             endpoint=endpoint,
             api_key=api_key,
             text_client=text_client,

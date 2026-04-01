@@ -94,7 +94,7 @@ workflow_name/
 | Sample | What it demonstrates | Required keys / auth |
 | ------ | -------------------- | -------------------- |
 | [**workflow_declarative/**](workflow_declarative/) | A YAML-defined workflow loaded through `WorkflowFactory`, with nested age-based branching and no model client code. | None |
-| [**workflow_with_agents/**](workflow_with_agents/) | A content review workflow that uses agents as executors and routes based on structured review output (`Writer -> Reviewer -> Editor/Publisher -> Summarizer`). | `AZURE_OPENAI_ENDPOINT`, plus `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` or `AZURE_OPENAI_DEPLOYMENT_NAME`; Azure CLI auth via `az login`; `AZURE_OPENAI_API_VERSION` is optional |
+| [**workflow_with_agents/**](workflow_with_agents/) | A content review workflow that uses agents as executors and routes based on structured review output (`Writer -> Reviewer -> Editor/Publisher -> Summarizer`). | `AZURE_OPENAI_ENDPOINT`, plus `AZURE_OPENAI_RESPONSES_MODEL` or `AZURE_OPENAI_MODEL`; Azure CLI auth via `az login`; `AZURE_OPENAI_API_VERSION` is optional |
 | [**workflow_spam/**](workflow_spam/) | A multi-step spam detection workflow with human-in-the-loop approval, branching for spam vs. legitimate messages, and a final reporting step. | None |
 | [**workflow_fanout/**](workflow_fanout/) | A larger fan-out/fan-in data processing workflow with parallel validation, multiple transformations, QA, aggregation, and demo failure toggles. | None |
 
@@ -130,8 +130,8 @@ export FOUNDRY_MODEL="gpt-4o"
 
 # Azure OpenAI workflow_with_agents sample
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
-export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="gpt-4o"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o"
+export AZURE_OPENAI_RESPONSES_MODEL="gpt-4o"
+export AZURE_OPENAI_MODEL="gpt-4o"
 
 az login
 ```

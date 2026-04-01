@@ -26,7 +26,7 @@ from agent_framework_ollama import OllamaChatClient
 # region Service Setup
 
 skip_if_azure_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("OLLAMA_MODEL_ID", "") in ("", "test-model"),
+    os.getenv("OLLAMA_MODEL", "") in ("", "test-model"),
     reason="No real Ollama chat model provided; skipping integration tests.",
 )
 
@@ -55,7 +55,7 @@ def ollama_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):  #
     if override_env_param_dict is None:
         override_env_param_dict = {}
 
-    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_MODEL_ID": "test"}
+    env_vars = {"OLLAMA_HOST": "http://localhost:12345", "OLLAMA_MODEL": "test"}
 
     env_vars.update(override_env_param_dict)  # type: ignore
 
@@ -156,7 +156,7 @@ def test_init(ollama_unit_test_env: dict[str, str]) -> None:
 
     assert ollama_chat_client.client is not None
     assert isinstance(ollama_chat_client.client, AsyncClient)
-    assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
+    assert ollama_chat_client.model == ollama_unit_test_env["OLLAMA_MODEL"]
     assert isinstance(ollama_chat_client, BaseChatClient)
 
 
@@ -165,27 +165,27 @@ def test_init_client(ollama_unit_test_env: dict[str, str]) -> None:
     test_client = MagicMock(spec=AsyncClient)
     # Mock underlying HTTP client's base_url
     test_client._client = MagicMock()
-    test_client._client.base_url = ollama_unit_test_env["OLLAMA_MODEL_ID"]
+    test_client._client.base_url = ollama_unit_test_env["OLLAMA_MODEL"]
     ollama_chat_client = OllamaChatClient(client=test_client)
 
     assert ollama_chat_client.client is test_client
-    assert ollama_chat_client.model_id == ollama_unit_test_env["OLLAMA_MODEL_ID"]
+    assert ollama_chat_client.model == ollama_unit_test_env["OLLAMA_MODEL"]
     assert isinstance(ollama_chat_client, BaseChatClient)
 
 
-@pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL_ID"]], indirect=True)
+@pytest.mark.parametrize("exclude_list", [["OLLAMA_MODEL"]], indirect=True)
 def test_with_invalid_settings(ollama_unit_test_env: dict[str, str]) -> None:
-    with pytest.raises(SettingNotFoundError, match="Required setting 'model_id'"):
+    with pytest.raises(SettingNotFoundError, match="Required setting 'model'"):
         OllamaChatClient(
             host="http://localhost:12345",
-            model_id=None,
+            model=None,
         )
 
 
 def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
     settings = {
         "host": ollama_unit_test_env["OLLAMA_HOST"],
-        "model_id": ollama_unit_test_env["OLLAMA_MODEL_ID"],
+        "model": ollama_unit_test_env["OLLAMA_MODEL"],
     }
 
     ollama_chat_client = OllamaChatClient.from_dict(settings)
@@ -193,7 +193,7 @@ def test_serialize(ollama_unit_test_env: dict[str, str]) -> None:
 
     assert isinstance(serialized, dict)
     assert serialized["host"] == ollama_unit_test_env["OLLAMA_HOST"]
-    assert serialized["model_id"] == ollama_unit_test_env["OLLAMA_MODEL_ID"]
+    assert serialized["model"] == ollama_unit_test_env["OLLAMA_MODEL"]
 
 
 def test_chat_middleware(ollama_unit_test_env: dict[str, str]) -> None:
@@ -225,7 +225,7 @@ def test_additional_properties(ollama_unit_test_env: dict[str, str]) -> None:
 async def test_empty_messages() -> None:
     ollama_chat_client = OllamaChatClient(
         host="http://localhost:12345",
-        model_id="test-model",
+        model="test-model",
     )
     with pytest.raises(ChatClientInvalidRequestException):
         await ollama_chat_client.get_response(messages=[])

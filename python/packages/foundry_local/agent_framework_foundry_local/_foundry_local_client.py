@@ -60,7 +60,7 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
 
     Keys:
         # Inherited from ChatOptions (supported via OpenAI-compatible API):
-        model_id: The model identifier or alias (e.g., 'phi-4-mini').
+        model: The model identifier or alias (e.g., 'phi-4-mini').
         temperature: Sampling temperature (0-2).
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum tokens to generate.
@@ -103,11 +103,6 @@ class FoundryLocalChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModel
     store: None  # type: ignore[misc]
     """Not applicable for local inference."""
 
-
-FOUNDRY_LOCAL_OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",
-}
-"""Maps ChatOptions keys to OpenAI API parameter names (for compatibility)."""
 
 FoundryLocalChatOptionsT = TypeVar(
     "FoundryLocalChatOptionsT",
@@ -295,8 +290,8 @@ class FoundryLocalClient(
                 # will take a long time as the model is loaded then.
                 # Alternatively, you could call the `download_model` and `load_model` methods
                 # on the `manager` property manually.
-                client.manager.download_model(alias_or_model_id="phi-4-mini", device=DeviceType.CPU)
-                client.manager.load_model(alias_or_model_id="phi-4-mini", device=DeviceType.CPU)
+                client.manager.download_model(alias_or_model="phi-4-mini", device=DeviceType.CPU)
+                client.manager.load_model(alias_or_model="phi-4-mini", device=DeviceType.CPU)
 
                 # You can also use the CLI:
                 `foundry model load phi-4-mini --device Auto`
@@ -329,7 +324,7 @@ class FoundryLocalClient(
 
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
         model_info = manager.get_model_info(
-            alias_or_model_id=model_setting,
+            alias_or_model=model_setting,
             device=device,
         )
         if model_info is None:
@@ -340,8 +335,8 @@ class FoundryLocalClient(
             )
             raise ValueError(message)
         if prepare_model:
-            manager.download_model(alias_or_model_id=model_info.id, device=device)
-            manager.load_model(alias_or_model_id=model_info.id, device=device)
+            manager.download_model(alias_or_model=model_info.id, device=device)
+            manager.load_model(alias_or_model=model_info.id, device=device)
 
         super().__init__(
             model=model_info.id,

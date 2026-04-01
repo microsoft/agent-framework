@@ -1131,7 +1131,7 @@ model:
             "CustomProvider.Chat": {
                 "package": "agent_framework.openai",
                 "name": "OpenAIChatClient",
-                "model_id_field": "model_id",
+                "model_field": "model",
             },
         }
 

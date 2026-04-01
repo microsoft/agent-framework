@@ -51,7 +51,7 @@ Depending on the selected client, set the appropriate environment variables:
 
 **For Azure OpenAI clients (`azure_openai_responses` and `azure_openai_chat_completion`):**
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME`: The Azure OpenAI deployment used by the sample
+- `AZURE_OPENAI_MODEL`: The Azure OpenAI deployment used by the sample
 - `AZURE_OPENAI_API_VERSION` (optional): Azure OpenAI API version override
 - `AZURE_OPENAI_API_KEY` (optional): Azure OpenAI API key if you are not using `AzureCliCredential`
 
@@ -66,13 +66,13 @@ Depending on the selected client, set the appropriate environment variables:
 
 **For Anthropic client (`anthropic`):**
 - `ANTHROPIC_API_KEY`: Your Anthropic API key
-- `ANTHROPIC_CHAT_MODEL_ID`: The Anthropic model ID (for example, `claude-sonnet-4-5`)
+- `ANTHROPIC_CHAT_MODEL`: The Anthropic model to use (for example, `claude-sonnet-4-5`)
 
 **For Ollama client (`ollama`):**
 - `OLLAMA_HOST`: Ollama server URL (defaults to `http://localhost:11434` if unset)
-- `OLLAMA_MODEL_ID`: Ollama model name (for example, `mistral`, `qwen2.5:8b`)
+- `OLLAMA_MODEL`: Ollama model name (for example, `mistral`, `qwen2.5:8b`)
 
 **For Bedrock client (`bedrock`):**
-- `BEDROCK_CHAT_MODEL_ID`: Bedrock model ID (for example, `anthropic.claude-3-5-sonnet-20240620-v1:0`)
+- `BEDROCK_CHAT_MODEL`: Bedrock model ID (for example, `anthropic.claude-3-5-sonnet-20240620-v1:0`)
 - `BEDROCK_REGION`: AWS region (defaults to `us-east-1` if unset)
 - AWS credentials via standard environment variables (for example, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)

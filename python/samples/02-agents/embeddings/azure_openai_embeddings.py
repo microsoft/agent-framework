@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 Prerequisites:
     Set the following environment variables or add them to a local ``.env`` file:
     - ``AZURE_OPENAI_ENDPOINT``: Your Azure OpenAI endpoint URL
-    - ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME``: The embedding deployment name
+    - ``AZURE_OPENAI_EMBEDDING_MODEL``: The embedding deployment name
     - ``AZURE_OPENAI_API_VERSION``: Optional API version override
 
     Sign in with ``az login`` before running the sample.
@@ -27,7 +27,7 @@ async def main() -> None:
     """Generate embeddings with Azure OpenAI."""
     async with AzureCliCredential() as credential:
         client = OpenAIEmbeddingClient(
-            model=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME"),
+            model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             credential=credential,

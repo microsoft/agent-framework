@@ -21,7 +21,7 @@ Key architectural points:
 - Mixed agent/executor fan-outs execute concurrently
 
 Prerequisites:
-- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_DEPLOYMENT_NAME`
+- Configure `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_MODEL`
 - Sign in with Azure CLI (`az login`) for `AzureCliCredential`
 - Ensure Azurite and the Durable Task Scheduler emulator are running
 """
@@ -362,7 +362,7 @@ def _create_workflow() -> Workflow:
     credential = AzureCliCredential()
 
     chat_client = OpenAIChatCompletionClient(
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+        model=os.environ["AZURE_OPENAI_MODEL"],
         api_key=get_bearer_token_provider(credential, "https://cognitiveservices.azure.com/.default"),
     )
 

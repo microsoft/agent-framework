@@ -151,11 +151,11 @@ def test_openai_chat_client_tool_methods_return_dict() -> None:
 
 
 def test_init_prefers_openai_responses_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model_id")
+    monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model")
 
     openai_responses_client = OpenAIChatClient()
 
-    assert openai_responses_client.model == "test_responses_model_id"
+    assert openai_responses_client.model == "test_responses_model"
 
 
 def test_init_validation_fail() -> None:
@@ -164,12 +164,12 @@ def test_init_validation_fail() -> None:
         OpenAIChatClient(api_key="34523", model={"test": "dict"})  # type: ignore
 
 
-def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    model_id = "test_model_id"
-    openai_responses_client = OpenAIChatClient(model=model_id)
+    model = "test_model"
+    openai_responses_client = OpenAIChatClient(model=model)
 
-    assert openai_responses_client.model == model_id
+    assert openai_responses_client.model == model
     assert isinstance(openai_responses_client, SupportsChatGetResponse)
 
 
@@ -191,18 +191,18 @@ def test_init_with_default_header(openai_unit_test_env: dict[str, str]) -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
-def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_model(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError):
         OpenAIChatClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    model_id = "test_model_id"
+    model = "test_model"
 
     with pytest.raises(SettingNotFoundError):
         OpenAIChatClient(
-            model=model_id,
+            model=model,
         )
 
 

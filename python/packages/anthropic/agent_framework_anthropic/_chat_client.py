@@ -168,7 +168,6 @@ AnthropicOptionsT = TypeVar(
 
 # Translation between framework options keys and Anthropic Messages API
 OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",  # backward compat: accept model_id in runtime options
     "stop": "stop_sequences",
     "instructions": "system",
 }

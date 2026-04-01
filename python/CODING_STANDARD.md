@@ -480,7 +480,7 @@ A more complete example with keyword arguments and code samples:
 
 ```python
 def create_client(
-    model_id: str | None = None,
+    model: str | None = None,
     *,
     timeout: float | None = None,
     env_file_path: str | None = None,
@@ -489,7 +489,7 @@ def create_client(
     """Create a new client with the specified configuration.
 
     Args:
-        model_id: The model ID to use. If not provided,
+        model: The model ID to use. If not provided,
             it will be loaded from settings.
 
     Keyword Args:
@@ -501,14 +501,14 @@ def create_client(
         A configured client instance.
 
     Raises:
-        ValueError: If the model_id is invalid.
+        ValueError: If the model is invalid.
 
     Examples:
 
         .. code-block:: python
 
             # Create a client with default settings:
-            client = create_client(model_id="gpt-4o")
+            client = create_client(model="gpt-4o")
 
             # Or load from environment:
             client = create_client(env_file_path=".env")

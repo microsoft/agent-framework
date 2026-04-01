@@ -2051,25 +2051,25 @@ def test_prepare_options_missing_model(mock_anthropic_client: MagicMock) -> None
         assert "model must be a non-empty string" in str(e)
 
 
-def test_prepare_options_translates_model_id_option(mock_anthropic_client: MagicMock) -> None:
-    """Test prepare_options translates model_id to model for runtime option compatibility."""
+def test_prepare_options_translates_model_option(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options translates model to model for runtime option compatibility."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
 
-    result = client._prepare_options(messages, {"model_id": "claude-3-5-sonnet-20241022"})
+    result = client._prepare_options(messages, {"model": "claude-3-5-sonnet-20241022"})
 
     assert result["model"] == "claude-3-5-sonnet-20241022"
     assert "model_id" not in result
 
 
-def test_prepare_options_translates_model_id_kwarg(mock_anthropic_client: MagicMock) -> None:
-    """Test prepare_options translates model_id passed as a direct keyword argument."""
+def test_prepare_options_translates_model_kwarg(mock_anthropic_client: MagicMock) -> None:
+    """Test prepare_options translates model passed as a direct keyword argument."""
     client = create_test_anthropic_client(mock_anthropic_client)
 
     messages = [Message(role="user", contents=[Content.from_text("Hello")])]
 
-    result = client._prepare_options(messages, {}, model_id="claude-3-5-sonnet-20241022")
+    result = client._prepare_options(messages, {}, model="claude-3-5-sonnet-20241022")
 
     assert result["model"] == "claude-3-5-sonnet-20241022"
     assert "model_id" not in result

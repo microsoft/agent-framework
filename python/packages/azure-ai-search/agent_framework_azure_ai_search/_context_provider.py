@@ -403,8 +403,7 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -432,11 +431,8 @@ class AzureAISearchContextProvider(ContextProvider):
             embedding_function: Async function to generate embeddings or a SupportsGetEmbeddings instance.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base.
-            model_deployment_name: Model deployment name in Azure OpenAI.
-            model_name: The underlying model name.
-            knowledge_base_name: Name of an existing Knowledge Base to use. In agentic mode,
-                providing this explicitly selects the Knowledge Base-backed setup and ignores any
-                environment-provided index name.
+            model: Model name to use for Azure OpenAI vectorization.
+            knowledge_base_name: Name of an existing Knowledge Base to use.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
@@ -483,10 +479,8 @@ class AzureAISearchContextProvider(ContextProvider):
         if ignored_agentic_field is not None:
             settings[ignored_agentic_field] = None
 
-        if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
-            raise ValueError(
-                "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
-            )
+        if mode == "agentic" and settings.get("index_name") and not model:
+            raise ValueError("model is required for agentic mode when creating Knowledge Base from index.")
 
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
         if credential:
@@ -512,8 +506,7 @@ class AzureAISearchContextProvider(ContextProvider):
         self.context_prompt = context_prompt or self._DEFAULT_SEARCH_CONTEXT_PROMPT
 
         self.azure_openai_resource_url = azure_openai_resource_url
-        self.azure_openai_deployment_name = model_deployment_name
-        self.model_name = model_name or model_deployment_name
+        self.azure_openai_model = model
         self.knowledge_base_name = settings.get("knowledge_base_name")
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
@@ -762,8 +755,8 @@ class AzureAISearchContextProvider(ContextProvider):
             raise ValueError("Index client is required when creating Knowledge Base from index")
         if not self.azure_openai_resource_url:
             raise ValueError("azure_openai_resource_url is required when creating Knowledge Base from index")
-        if not self.azure_openai_deployment_name:
-            raise ValueError("model_deployment_name is required when creating Knowledge Base from index")
+        if not self.azure_openai_model:
+            raise ValueError("model is required when creating Knowledge Base from index")
         if not self.index_name:
             raise ValueError("index_name is required when creating Knowledge Base from index")
 
@@ -782,8 +775,8 @@ class AzureAISearchContextProvider(ContextProvider):
 
         aoai_params = AzureOpenAIVectorizerParameters(
             resource_url=self.azure_openai_resource_url,
-            deployment_name=self.azure_openai_deployment_name,
-            model_name=self.model_name,
+            deployment_name=self.azure_openai_model,
+            model_name=self.azure_openai_model,
             api_key=self.azure_openai_api_key,
         )
 

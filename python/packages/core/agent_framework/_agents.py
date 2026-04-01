@@ -100,19 +100,11 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         A new merged options dict.
     """
     result = dict(base)
-    if result.get("model") is not None and result.get("model_id") is not None:
-        result.pop("model_id", None)
 
     for key, value in override.items():
         if value is None:
             continue
-        if key == "model":
-            result.pop("model_id", None)
-            result["model"] = value
-        elif key == "model_id":
-            result.pop("model", None)
-            result["model_id"] = value
-        elif key == "tools" and (result.get("tools") or value):
+        if key == "tools" and (result.get("tools") or value):
             base_tools = normalize_tools(result.get("tools"))
             override_tools = normalize_tools(value)
             result["tools"] = _append_unique_tools(
@@ -605,7 +597,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             from agent_framework.openai import OpenAIChatClient
 
             # Create a basic chat agent
-            client = OpenAIChatClient(model_id="gpt-4")
+            client = OpenAIChatClient(model="gpt-4")
             agent = Agent(client=client, name="assistant", description="A helpful assistant")
 
             # Run the agent with a simple message
@@ -643,7 +635,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             from agent_framework import Agent
             from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 
-            client = OpenAIChatClient(model_id="gpt-4o")
+            client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
                 name="reasoning-agent",
@@ -746,9 +738,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
         model = opts.pop("model", None) or getattr(self.client, "model", None)
-        model_id = opts.pop("model_id", None)
-        if model is None:
-            model_id = model_id or getattr(self.client, "model_id", None)
 
         # Build chat options dict
         self.default_options: dict[str, Any] = {
@@ -773,8 +762,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         }
         if model is not None:
             self.default_options["model"] = model
-        elif model_id is not None:
-            self.default_options["model_id"] = model_id
         # Remove None values from chat_options
         self.default_options = {k: v for k, v in self.default_options.items() if v is not None}
         self._async_exit_stack = AsyncExitStack()
@@ -931,7 +918,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             tools: The tools to use for this specific run (merged with default tools).
             options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
-                provider-specific options including temperature, max_tokens, model_id,
+                provider-specific options including temperature, max_tokens, model,
                 tool_choice, and provider-specific options like reasoning_effort.
             compaction_strategy: Optional per-run compaction override passed to
                 ``client.get_response()``. When omitted, the agent-level override
@@ -1261,9 +1248,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
         model = opts.pop("model", None)
-        model_id = opts.pop("model_id", None)
-        if model is not None:
-            model_id = None
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
@@ -1289,8 +1273,6 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         }
         if model is not None:
             run_opts["model"] = model
-        elif model_id is not None:
-            run_opts["model_id"] = model_id
         # Remove None values and merge with chat_options
         run_opts = {k: v for k, v in run_opts.items() if v is not None}
         co = _merge_options(chat_options, run_opts)

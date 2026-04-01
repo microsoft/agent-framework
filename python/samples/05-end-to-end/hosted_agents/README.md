@@ -76,7 +76,7 @@ Example `.env` for Azure OpenAI samples:
 
 ```dotenv
 AZURE_OPENAI_ENDPOINT=https://<your-openai-resource>.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4.1
+AZURE_OPENAI_MODEL=gpt-4.1
 ```
 
 Example `.env` for Foundry project samples:

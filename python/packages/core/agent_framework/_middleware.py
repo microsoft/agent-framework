@@ -294,7 +294,7 @@ class ChatContext:
                 async def process(self, context: ChatContext, call_next):
                     print(f"Chat client: {context.chat_client.__class__.__name__}")
                     print(f"Messages: {len(context.messages)}")
-                    print(f"Model: {context.options.get('model_id')}")
+                    print(f"Model: {context.options.get('model')}")
 
                     # Store metadata
                     context.metadata["input_tokens"] = self.count_tokens(context.messages)
