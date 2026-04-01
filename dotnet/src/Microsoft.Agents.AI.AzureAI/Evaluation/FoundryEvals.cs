@@ -100,7 +100,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     /// Default conversation splitter for multi-turn conversations.
     /// </param>
     /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
-    /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 180).</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
     /// <param name="evaluators">Evaluator names to use.</param>
     public FoundryEvals(
         AIProjectClient projectClient,
@@ -111,6 +111,8 @@ public sealed class FoundryEvals : IAgentEvaluator
         params string[] evaluators)
         : this(projectClient, model, splitter, evaluators)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(pollIntervalSeconds, 0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(timeoutSeconds, 0);
         this._pollIntervalSeconds = pollIntervalSeconds;
         this._timeoutSeconds = timeoutSeconds;
     }
@@ -343,71 +345,107 @@ public sealed class FoundryEvals : IAgentEvaluator
         CancellationToken cancellationToken)
     {
         var results = new List<EvaluationResult>();
+        string? afterCursor = null;
 
-        var response = await this._evaluationClient.GetEvaluationRunOutputItemsAsync(
-            evalId,
-            runId,
-            limit: null,
-            order: null,
-            after: null,
-            outputItemStatus: null,
-            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
-
-        using var doc = JsonDocument.Parse(response.GetRawResponse().Content);
-        if (doc.RootElement.TryGetProperty("data", out var dataArray))
+        while (true)
         {
-            foreach (var outputItem in dataArray.EnumerateArray())
+            var response = await this._evaluationClient.GetEvaluationRunOutputItemsAsync(
+                evalId,
+                runId,
+                limit: 100,
+                order: null,
+                after: afterCursor,
+                outputItemStatus: null,
+                new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+            using var doc = JsonDocument.Parse(response.GetRawResponse().Content);
+
+            if (doc.RootElement.TryGetProperty("data", out var dataArray))
             {
-                var evalResult = new EvaluationResult();
-
-                if (outputItem.TryGetProperty("results", out var itemResults))
+                foreach (var outputItem in dataArray.EnumerateArray())
                 {
-                    foreach (var r in itemResults.EnumerateArray())
-                    {
-                        var metricName = r.TryGetProperty("name", out var nameProp)
-                            ? nameProp.GetString() ?? "unknown"
-                            : "unknown";
-
-                        bool? passed = r.TryGetProperty("passed", out var passedProp) && passedProp.ValueKind == JsonValueKind.True
-                            ? true
-                            : r.TryGetProperty("passed", out var passedProp2) && passedProp2.ValueKind == JsonValueKind.False
-                                ? false
-                                : null;
-
-                        double? score = r.TryGetProperty("score", out var scoreProp) && scoreProp.ValueKind == JsonValueKind.Number
-                            ? scoreProp.GetDouble()
-                            : null;
-
-                        EvaluationMetricInterpretation? interpretation = passed.HasValue
-                            ? new EvaluationMetricInterpretation
-                            {
-                                Rating = passed.Value ? EvaluationRating.Good : EvaluationRating.Unacceptable,
-                                Failed = !passed.Value,
-                            }
-                            : null;
-
-                        if (score.HasValue)
-                        {
-                            evalResult.Metrics[metricName] = new NumericMetric(metricName, score.Value)
-                            {
-                                Interpretation = interpretation,
-                            };
-                        }
-                        else
-                        {
-                            evalResult.Metrics[metricName] = new BooleanMetric(metricName, passed ?? false)
-                            {
-                                Interpretation = interpretation,
-                            };
-                        }
-                    }
+                    results.Add(ParseOutputItem(outputItem));
                 }
+            }
 
-                results.Add(evalResult);
+            // Check for more pages
+            bool hasMore = doc.RootElement.TryGetProperty("has_more", out var hasMoreProp)
+                && hasMoreProp.ValueKind == JsonValueKind.True;
+
+            if (!hasMore)
+            {
+                break;
+            }
+
+            // Get cursor for next page — use last_id or last item's id
+            if (doc.RootElement.TryGetProperty("last_id", out var lastIdProp))
+            {
+                afterCursor = lastIdProp.GetString();
+            }
+            else if (doc.RootElement.TryGetProperty("data", out var data2) && data2.GetArrayLength() > 0)
+            {
+                var lastItem = data2[data2.GetArrayLength() - 1];
+                afterCursor = lastItem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+            }
+
+            if (afterCursor is null)
+            {
+                break;
             }
         }
 
         return results;
+    }
+
+    private static EvaluationResult ParseOutputItem(JsonElement outputItem)
+    {
+        var evalResult = new EvaluationResult();
+
+        if (outputItem.TryGetProperty("results", out var itemResults))
+        {
+            foreach (var r in itemResults.EnumerateArray())
+            {
+                var metricName = r.TryGetProperty("name", out var nameProp)
+                    ? nameProp.GetString() ?? "unknown"
+                    : "unknown";
+
+                bool? passed = null;
+                if (r.TryGetProperty("passed", out var passedProp)
+                    && passedProp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    passed = passedProp.ValueKind == JsonValueKind.True;
+                }
+
+                double? score = r.TryGetProperty("score", out var scoreProp) && scoreProp.ValueKind == JsonValueKind.Number
+                    ? scoreProp.GetDouble()
+                    : null;
+
+                EvaluationMetricInterpretation? interpretation = passed.HasValue
+                    ? new EvaluationMetricInterpretation
+                    {
+                        Rating = passed.Value ? EvaluationRating.Good : EvaluationRating.Unacceptable,
+                        Failed = !passed.Value,
+                    }
+                    : null;
+
+                if (score.HasValue)
+                {
+                    evalResult.Metrics[metricName] = new NumericMetric(metricName, score.Value)
+                    {
+                        Interpretation = interpretation,
+                    };
+                }
+                else
+                {
+                    evalResult.Metrics[metricName] = new BooleanMetric(metricName, passed ?? false)
+                    {
+                        Interpretation = interpretation,
+                    };
+                }
+            }
+        }
+
+        return evalResult;
     }
 
     private static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)
@@ -420,6 +458,10 @@ public sealed class FoundryEvals : IAgentEvaluator
         var filtered = Array.FindAll(evaluators, e =>
             !FoundryEvalConverter.ToolEvaluators.Contains(FoundryEvalConverter.ResolveEvaluator(e)));
 
-        return filtered.Length > 0 ? filtered : evaluators;
+        return filtered.Length > 0
+            ? filtered
+            : throw new ArgumentException(
+                "All configured evaluators require tool definitions, but no tool calls were found in the eval items. "
+                + $"Tool evaluators: {string.Join(", ", evaluators)}. Either add tool call content to your EvalItems or remove tool-type evaluators.");
     }
 }

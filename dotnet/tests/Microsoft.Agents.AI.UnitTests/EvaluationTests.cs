@@ -1113,4 +1113,399 @@ public sealed class EvaluationTests
         Assert.Equal("builtin.intent_resolution", AzureAI.FoundryEvalConverter.ResolveEvaluator("intent_resolution"));
         Assert.Equal("builtin.tool_call_accuracy", AzureAI.FoundryEvalConverter.ResolveEvaluator("tool_call_accuracy"));
     }
+
+    // ---------------------------------------------------------------
+    // EvalChecks tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void NonEmpty_PassesForNonEmptyResponse()
+    {
+        var check = EvalChecks.NonEmpty();
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void NonEmpty_FailsForEmptyResponse()
+    {
+        var check = EvalChecks.NonEmpty();
+        var item = new EvalItem(query: "hello", response: string.Empty);
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void NonEmpty_FailsForWhitespaceResponse()
+    {
+        var check = EvalChecks.NonEmpty();
+        var item = new EvalItem(query: "hello", response: "   ");
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ContainsExpected_PassesWhenResponseContainsExpected()
+    {
+        var check = EvalChecks.ContainsExpected();
+        var item = new EvalItem(query: "What is 2+2?", response: "The answer is 4.")
+        {
+            ExpectedOutput = "4",
+        };
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ContainsExpected_FailsWhenResponseMissesExpected()
+    {
+        var check = EvalChecks.ContainsExpected();
+        var item = new EvalItem(query: "What is 2+2?", response: "I don't know.")
+        {
+            ExpectedOutput = "4",
+        };
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ContainsExpected_SkipsWhenNoExpectedOutput()
+    {
+        var check = EvalChecks.ContainsExpected();
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.True(result.Passed);
+        Assert.Contains("skipped", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ContainsExpected_CaseSensitive_FailsOnCaseMismatch()
+    {
+        var check = EvalChecks.ContainsExpected(caseSensitive: true);
+        var item = new EvalItem(query: "q", response: "HELLO")
+        {
+            ExpectedOutput = "hello",
+        };
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ContainsExpected_CaseInsensitive_PassesOnCaseMismatch()
+    {
+        var check = EvalChecks.ContainsExpected(caseSensitive: false);
+        var item = new EvalItem(query: "q", response: "HELLO")
+        {
+            ExpectedOutput = "hello",
+        };
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void HasImageContent_PassesWhenConversationContainsImage()
+    {
+        var check = EvalChecks.HasImageContent();
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User,
+                [
+                    new TextContent("Describe this"),
+                    new UriContent(new Uri("https://example.com/img.png"), "image/png"),
+                ]),
+                new(ChatRole.Assistant, "It's an image."),
+            ]);
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void HasImageContent_FailsWhenNoImageInConversation()
+    {
+        var check = EvalChecks.HasImageContent();
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallsPresent_PassesWhenConversationHasToolCalls()
+    {
+        var check = EvalChecks.ToolCallsPresent();
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User, "What's the weather?"),
+                new(ChatRole.Assistant,
+                [
+                    new FunctionCallContent("c1", "get_weather", new Dictionary<string, object?> { ["location"] = "Seattle" }),
+                ]),
+                new(ChatRole.Tool,
+                [
+                    new FunctionResultContent("c1", "72F sunny"),
+                ]),
+                new(ChatRole.Assistant, "It's 72F and sunny."),
+            ]);
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallsPresent_FailsWhenNoToolCalls()
+    {
+        var check = EvalChecks.ToolCallsPresent();
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.ConvertMessage tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void ConvertMessage_PlainText_ProducesTextContent()
+    {
+        var msg = new ChatMessage(ChatRole.User, "Hello world");
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        Assert.Equal("user", output[0]["role"]);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Single(content);
+        Assert.Equal("text", content[0]["type"]);
+        Assert.Equal("Hello world", content[0]["text"]);
+    }
+
+    [Fact]
+    public void ConvertMessage_ImageUri_ProducesInputImage()
+    {
+        var msg = new ChatMessage(ChatRole.User,
+        [
+            new UriContent(new Uri("https://example.com/img.png"), "image/png"),
+        ]);
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Single(content);
+        Assert.Equal("input_image", content[0]["type"]);
+    }
+
+    [Fact]
+    public void ConvertMessage_FunctionCall_ProducesToolCallContent()
+    {
+        var msg = new ChatMessage(ChatRole.Assistant,
+        [
+            new FunctionCallContent("c1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" }),
+        ]);
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Single(content);
+        Assert.Equal("tool_call", content[0]["type"]);
+        Assert.Equal("c1", content[0]["tool_call_id"]);
+        Assert.Equal("get_weather", content[0]["name"]);
+    }
+
+    [Fact]
+    public void ConvertMessage_FunctionCallWithoutArguments_OmitsArguments()
+    {
+        var msg = new ChatMessage(ChatRole.Assistant,
+        [
+            new FunctionCallContent("c1", "list_items"),
+        ]);
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.DoesNotContain("arguments", content[0].Keys);
+    }
+
+    [Fact]
+    public void ConvertMessage_FunctionResults_FanOutToSeparateMessages()
+    {
+        var msg = new ChatMessage(ChatRole.Tool,
+        [
+            new FunctionResultContent("c1", "72F sunny"),
+            new FunctionResultContent("c2", "Paris 68F"),
+        ]);
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Equal(2, output.Count);
+        Assert.All(output, m => Assert.Equal("tool", m["role"]));
+        Assert.Equal("c1", output[0]["tool_call_id"]);
+        Assert.Equal("c2", output[1]["tool_call_id"]);
+    }
+
+    [Fact]
+    public void ConvertMessage_EmptyContent_ProducesEmptyTextFallback()
+    {
+        var msg = new ChatMessage(ChatRole.Assistant, Array.Empty<AIContent>());
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Single(content);
+        Assert.Equal("text", content[0]["type"]);
+        Assert.Equal(string.Empty, content[0]["text"]);
+    }
+
+    [Fact]
+    public void ConvertMessage_MixedContent_ProducesAllContentTypes()
+    {
+        var msg = new ChatMessage(ChatRole.User,
+        [
+            new TextContent("Describe this"),
+            new UriContent(new Uri("https://example.com/img.png"), "image/png"),
+        ]);
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Equal(2, content.Count);
+        Assert.Equal("text", content[0]["type"]);
+        Assert.Equal("input_image", content[1]["type"]);
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.ConvertEvalItem tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void ConvertEvalItem_BasicItem_HasQueryAndResponse()
+    {
+        var item = new EvalItem(query: "What is AI?", response: "Artificial Intelligence.");
+        var dict = AzureAI.FoundryEvalConverter.ConvertEvalItem(item);
+
+        Assert.Equal("What is AI?", dict["query"]);
+        Assert.Equal("Artificial Intelligence.", dict["response"]);
+        Assert.True(dict.ContainsKey("query_messages"));
+        Assert.True(dict.ContainsKey("response_messages"));
+    }
+
+    [Fact]
+    public void ConvertEvalItem_WithContext_IncludesContextField()
+    {
+        var item = new EvalItem(query: "q", response: "r")
+        {
+            Context = "Some grounding context",
+        };
+        var dict = AzureAI.FoundryEvalConverter.ConvertEvalItem(item);
+
+        Assert.Equal("Some grounding context", dict["context"]);
+    }
+
+    [Fact]
+    public void ConvertEvalItem_WithoutContext_OmitsContextField()
+    {
+        var item = new EvalItem(query: "q", response: "r");
+        var dict = AzureAI.FoundryEvalConverter.ConvertEvalItem(item);
+
+        Assert.False(dict.ContainsKey("context"));
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.BuildTestingCriteria tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void BuildTestingCriteria_QualityEvaluator_UsesStringDataMapping()
+    {
+        var criteria = AzureAI.FoundryEvalConverter.BuildTestingCriteria(
+            ["relevance"], "gpt-4o-mini", includeDataMapping: true);
+
+        Assert.Single(criteria);
+        var entry = criteria[0];
+        Assert.Equal("azure_ai_evaluator", entry["type"]);
+        Assert.Equal("builtin.relevance", entry["evaluator_name"]);
+
+        var mapping = (Dictionary<string, string>)entry["data_mapping"];
+        Assert.Equal("{{item.query}}", mapping["query"]);
+        Assert.Equal("{{item.response}}", mapping["response"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_AgentEvaluator_UsesConversationArrayMapping()
+    {
+        var criteria = AzureAI.FoundryEvalConverter.BuildTestingCriteria(
+            ["intent_resolution"], "gpt-4o-mini", includeDataMapping: true);
+
+        Assert.Single(criteria);
+        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        Assert.Equal("{{item.query_messages}}", mapping["query"]);
+        Assert.Equal("{{item.response_messages}}", mapping["response"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_ToolEvaluator_IncludesToolDefinitions()
+    {
+        var criteria = AzureAI.FoundryEvalConverter.BuildTestingCriteria(
+            ["tool_call_accuracy"], "gpt-4o-mini", includeDataMapping: true);
+
+        Assert.Single(criteria);
+        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        Assert.True(mapping.ContainsKey("tool_definitions"));
+        Assert.Equal("{{item.tool_definitions}}", mapping["tool_definitions"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_GroundednessEvaluator_IncludesContext()
+    {
+        var criteria = AzureAI.FoundryEvalConverter.BuildTestingCriteria(
+            ["groundedness"], "gpt-4o-mini", includeDataMapping: true);
+
+        Assert.Single(criteria);
+        var mapping = (Dictionary<string, string>)criteria[0]["data_mapping"];
+        Assert.True(mapping.ContainsKey("context"));
+        Assert.Equal("{{item.context}}", mapping["context"]);
+    }
+
+    [Fact]
+    public void BuildTestingCriteria_WithoutDataMapping_OmitsMappingField()
+    {
+        var criteria = AzureAI.FoundryEvalConverter.BuildTestingCriteria(
+            ["relevance"], "gpt-4o-mini", includeDataMapping: false);
+
+        Assert.Single(criteria);
+        Assert.False(criteria[0].ContainsKey("data_mapping"));
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.BuildItemSchema tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void BuildItemSchema_Default_HasQueryResponseAndConversationFields()
+    {
+        var schema = AzureAI.FoundryEvalConverter.BuildItemSchema();
+        var properties = (Dictionary<string, object>)schema["properties"];
+
+        Assert.True(properties.ContainsKey("query"));
+        Assert.True(properties.ContainsKey("response"));
+        Assert.True(properties.ContainsKey("query_messages"));
+        Assert.True(properties.ContainsKey("response_messages"));
+        Assert.False(properties.ContainsKey("context"));
+        Assert.False(properties.ContainsKey("tool_definitions"));
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithContext_IncludesContextProperty()
+    {
+        var schema = AzureAI.FoundryEvalConverter.BuildItemSchema(hasContext: true);
+        var properties = (Dictionary<string, object>)schema["properties"];
+
+        Assert.True(properties.ContainsKey("context"));
+    }
+
+    [Fact]
+    public void BuildItemSchema_WithTools_IncludesToolDefinitionsProperty()
+    {
+        var schema = AzureAI.FoundryEvalConverter.BuildItemSchema(hasTools: true);
+        var properties = (Dictionary<string, object>)schema["properties"];
+
+        Assert.True(properties.ContainsKey("tool_definitions"));
+    }
 }
