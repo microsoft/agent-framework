@@ -24,7 +24,7 @@ Azure AI Inference embedding client with the Cohere-embed-v3-english model.
 Images are passed as ``Content`` objects created with ``Content.from_data()``.
 
 Prerequisites:
-    Deploy a embedding model in Azure AI Inference that supports image inputs, such as Cohere-embed-v3-english.
+    Deploy an embedding model in Azure AI Inference that supports image inputs, such as Cohere-embed-v3-english.
 
     The details page for that model, has a target URI and a Key, which should be set in environment variables or a .env
     file as follows, the target URI should append the `/models` path:
@@ -77,7 +77,7 @@ if __name__ == "__main__":
 
 
 """
-Sample output (using Cohere-embed-v3-english):
+Sample output (using deployment: Cohere-embed-v3-english, which is Cohere's "embed-english-v3.0-image" model):
 Image embedding dimensions: 1024
 First 5 values: [0.029159546, -0.007926941, -0.0032978058, -0.0030403137, -0.012786865]
 Model: embed-english-v3.0-image
