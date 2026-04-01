@@ -50,9 +50,11 @@ class UserInfoMemory(ContextProvider):
                 # Use the chat client to extract structured information
                 result = await self._chat_client.get_response(
                     messages=request_messages,  # type: ignore
-                    instructions="Extract the user's name and age from the message if present. "
-                    "If not present return nulls.",
-                    options={"response_format": UserInfo},
+                    options={
+                        "instructions": "Extract the user's name and age from the message if present. "
+                        "If not present return nulls.",
+                        "response_format": UserInfo,
+                    },
                 )
 
                 # Update user info with extracted data
