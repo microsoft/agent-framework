@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-mem0 --pre
+pip install agent-framework-mem0
 ```
 
 ## Memory Context Provider

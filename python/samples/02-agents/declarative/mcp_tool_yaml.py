@@ -18,7 +18,7 @@ Authentication Options:
   (no secrets passed in API calls - connection name references pre-configured auth)
 
 Prerequisites:
-- `pip install agent-framework-openai agent-framework-declarative --pre`
+- `pip install agent-framework-openai agent-framework-declarative`
 - For OpenAI example: Set OPENAI_API_KEY and GITHUB_PAT environment variables
 - For Azure AI example: Set up a Foundry connection in your Azure AI project
 """

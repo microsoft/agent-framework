@@ -3,7 +3,7 @@
 Please install this package as the extra for `agent-framework`:
 
 ```bash
-pip install agent-framework-ollama --pre
+pip install agent-framework-ollama
 ```
 
 and see the [README](https://github.com/microsoft/agent-framework/tree/main/python/README.md) for more information.

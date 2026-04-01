@@ -26,7 +26,7 @@ Start with `01-get-started/` and work through the numbered files:
 ## Prerequisites
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
 ### Environment Variables

@@ -5,7 +5,7 @@ Orchestration patterns for Microsoft Agent Framework. This package provides high
 ## Installation
 
 ```bash
-pip install agent-framework-orchestrations --pre
+pip install agent-framework-orchestrations
 ```
 
 ## Orchestration Patterns

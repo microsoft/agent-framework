@@ -3,7 +3,7 @@
 Install the provider package:
 
 ```bash
-pip install agent-framework-bedrock --pre
+pip install agent-framework-bedrock
 ```
 
 ## Bedrock Integration

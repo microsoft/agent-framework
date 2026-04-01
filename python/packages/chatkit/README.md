@@ -15,7 +15,7 @@ Specifically, it mirrors the [Agent SDK integration](https://github.com/openai/c
 ## Installation
 
 ```bash
-pip install agent-framework-chatkit --pre
+pip install agent-framework-chatkit
 ```
 
 This will install `agent-framework-core` and `openai-chatkit` as dependencies.

@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-declarative --pre
+pip install agent-framework-declarative
 ```
 
 ## Declarative features

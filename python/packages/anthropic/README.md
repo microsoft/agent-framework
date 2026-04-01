@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-anthropic --pre
+pip install agent-framework-anthropic
 ```
 
 ## Anthropic Integration

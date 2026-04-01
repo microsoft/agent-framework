@@ -13,11 +13,11 @@ Highlights
 ## Quick Install
 
 ```bash
-pip install agent-framework-core --pre
+pip install agent-framework-core
 # Optional: Add Azure AI Foundry integration
-pip install agent-framework-foundry --pre
+pip install agent-framework-foundry
 # Optional: Add OpenAI integration
-pip install agent-framework-openai --pre
+pip install agent-framework-openai
 ```
 
 Supported Platforms:

@@ -5,7 +5,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-azurefunctions --pre
+pip install agent-framework-azurefunctions
 ```
 
 ## Durable Agent Extension

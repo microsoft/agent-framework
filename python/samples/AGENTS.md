@@ -102,10 +102,10 @@ code here
 ## Package install
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
-The `--pre` flag is needed during preview. `openai` is a core dependency.
+`openai` is a core dependency.
 
 ## Current API notes
 

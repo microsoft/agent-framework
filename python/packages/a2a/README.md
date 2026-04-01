@@ -3,7 +3,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-a2a --pre
+pip install agent-framework-a2a
 ```
 
 ## A2A Agent Integration

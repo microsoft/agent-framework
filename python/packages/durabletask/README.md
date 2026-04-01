@@ -5,7 +5,7 @@
 Please install this package via pip:
 
 ```bash
-pip install agent-framework-durabletask --pre
+pip install agent-framework-durabletask
 ```
 
 ## Durable Task Integration
