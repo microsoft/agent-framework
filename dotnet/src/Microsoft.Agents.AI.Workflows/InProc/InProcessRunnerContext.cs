@@ -382,11 +382,13 @@ internal sealed class InProcessRunnerContext : IRunnerContext
         }
     }
 
-    internal ValueTask<RunnerStateData> ExportStateAsync()
+    internal ValueTask<RunnerStateData> ExportStateAsync(StepContext? queuedMessagesOverride = null)
     {
         this.CheckEnded();
 
-        Dictionary<string, List<PortableMessageEnvelope>> queuedMessages = this._nextStep.ExportMessages();
+        StepContext queuedMessagesSource = queuedMessagesOverride ?? this._nextStep;
+        Dictionary<string, List<PortableMessageEnvelope>> queuedMessages = queuedMessagesSource.ExportMessages();
+
         RunnerStateData result = new(instantiatedExecutors: [.. this._executors.Keys],
                                      queuedMessages,
                                      outstandingRequests: [.. this._externalRequests.Values]);
