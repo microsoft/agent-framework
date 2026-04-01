@@ -60,7 +60,7 @@ def mock_image_client() -> AsyncMock:
 def raw_client(mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> RawAzureAIInferenceEmbeddingClient[Any]:
     """Create a RawAzureAIInferenceEmbeddingClient with mocked SDK clients."""
     return RawAzureAIInferenceEmbeddingClient(
-        model_id="test-model",
+        model="test-model",
         endpoint="https://test.inference.ai.azure.com",
         api_key="test-key",
         text_client=mock_text_client,
@@ -72,7 +72,7 @@ def raw_client(mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> Raw
 def client(mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> AzureAIInferenceEmbeddingClient[Any]:
     """Create an AzureAIInferenceEmbeddingClient with mocked SDK clients."""
     return AzureAIInferenceEmbeddingClient(
-        model_id="test-model",
+        model="test-model",
         endpoint="https://test.inference.ai.azure.com",
         api_key="test-key",
         text_client=mock_text_client,
@@ -162,8 +162,8 @@ class TestRawAzureAIInferenceEmbeddingClient:
     async def test_model_override_in_options(
         self, raw_client: RawAzureAIInferenceEmbeddingClient[Any], mock_text_client: AsyncMock
     ) -> None:
-        """model_id in options overrides the default."""
-        options: AzureAIInferenceEmbeddingOptions = {"model_id": "custom-model"}
+        """model in options overrides the default."""
+        options: AzureAIInferenceEmbeddingOptions = {"model": "custom-model"}
         await raw_client.get_embeddings(["hello"], options=options)
 
         call_kwargs = mock_text_client.embed.call_args
@@ -196,55 +196,55 @@ class TestRawAzureAIInferenceEmbeddingClient:
                 {
                     "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
                     "AZURE_AI_INFERENCE_API_KEY": "env-key",
-                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "env-model",
+                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL": "env-model",
                 },
             ),
             patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"),
             patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"),
         ):
             client = RawAzureAIInferenceEmbeddingClient()
-            assert client.model_id == "env-model"
-            assert client.image_model_id == "env-model"  # falls back to model_id
+            assert client.model == "env-model"
+            assert client.image_model == "env-model"  # falls back to model
 
-    def test_image_model_id_from_env(self) -> None:
-        """image_model_id is loaded from its own environment variable."""
+    def test_image_model_from_env(self) -> None:
+        """image_model is loaded from its own environment variable."""
         with (
             patch.dict(
                 os.environ,
                 {
                     "AZURE_AI_INFERENCE_ENDPOINT": "https://env.inference.ai.azure.com",
                     "AZURE_AI_INFERENCE_API_KEY": "env-key",
-                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID": "text-model",
-                    "AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID": "image-model",
+                    "AZURE_AI_INFERENCE_EMBEDDING_MODEL": "text-model",
+                    "AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL": "image-model",
                 },
             ),
             patch("agent_framework_azure_ai._embedding_client.EmbeddingsClient"),
             patch("agent_framework_azure_ai._embedding_client.ImageEmbeddingsClient"),
         ):
             client = RawAzureAIInferenceEmbeddingClient()
-            assert client.model_id == "text-model"
-            assert client.image_model_id == "image-model"
+            assert client.model == "text-model"
+            assert client.image_model == "image-model"
 
-    def test_image_model_id_explicit(self, mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> None:
-        """image_model_id can be set explicitly."""
+    def test_image_model_explicit(self, mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> None:
+        """image_model can be set explicitly."""
         client = RawAzureAIInferenceEmbeddingClient(
-            model_id="text-model",
-            image_model_id="image-model",
+            model="text-model",
+            image_model="image-model",
             endpoint="https://test.inference.ai.azure.com",
             api_key="test-key",
             text_client=mock_text_client,
             image_client=mock_image_client,
         )
-        assert client.model_id == "text-model"
-        assert client.image_model_id == "image-model"
+        assert client.model == "text-model"
+        assert client.image_model == "image-model"
 
-    async def test_image_model_id_sent_to_image_client(
+    async def test_image_model_sent_to_image_client(
         self, mock_text_client: AsyncMock, mock_image_client: AsyncMock
     ) -> None:
-        """image_model_id is passed to the image client embed call."""
+        """image_model is passed to the image client embed call."""
         client = RawAzureAIInferenceEmbeddingClient(
-            model_id="text-model",
-            image_model_id="image-model",
+            model="text-model",
+            image_model="image-model",
             endpoint="https://test.inference.ai.azure.com",
             api_key="test-key",
             text_client=mock_text_client,
@@ -274,7 +274,7 @@ class TestAzureAIInferenceEmbeddingClient:
     async def test_otel_provider_name_override(self, mock_text_client: AsyncMock, mock_image_client: AsyncMock) -> None:
         """OTEL provider name can be overridden."""
         client = AzureAIInferenceEmbeddingClient(
-            model_id="test-model",
+            model="test-model",
             endpoint="https://test.inference.ai.azure.com",
             api_key="test-key",
             text_client=mock_text_client,
@@ -291,7 +291,7 @@ def _integration_tests_enabled() -> bool:
     return bool(
         os.environ.get("AZURE_AI_INFERENCE_ENDPOINT")
         and os.environ.get("AZURE_AI_INFERENCE_API_KEY")
-        and os.environ.get("AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID")
+        and os.environ.get("AZURE_AI_INFERENCE_EMBEDDING_MODEL")
     )
 
 
@@ -313,4 +313,4 @@ class TestAzureAIInferenceEmbeddingIntegration:
         result = await client.get_embeddings(["Hello, world!"])
         assert len(result) == 1
         assert len(result[0].vector) > 0
-        assert result[0].model_id is not None
+        assert result[0].model is not None

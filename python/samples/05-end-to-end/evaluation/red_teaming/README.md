@@ -43,7 +43,7 @@ Create a `.env` file in this directory or set these environment variables:
 ```bash
 # Azure OpenAI (for the agent being tested)
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+AZURE_OPENAI_MODEL=gpt-4o
 # AZURE_OPENAI_API_KEY is optional if using Azure CLI authentication
 
 # Azure AI Project (for red teaming)

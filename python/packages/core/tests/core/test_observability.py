@@ -191,9 +191,7 @@ def mock_chat_client():
                 yield ChatResponseUpdate(contents=[Content.from_text(" world")], role="assistant", finish_reason="stop")
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                response_format = options.get("response_format")
-                output_format_type = response_format if isinstance(response_format, type) else None
-                return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+                return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
             return ResponseStream(_stream(), finalizer=_finalize)
 
@@ -207,7 +205,7 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
-    response = await client.get_response(messages=messages, options={"model_id": "Test"})
+    response = await client.get_response(messages=messages, options={"model": "Test"})
     assert response is not None
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
@@ -223,6 +221,23 @@ async def test_chat_client_observability(mock_chat_client, span_exporter: InMemo
 
 
 @pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
+async def test_chat_client_observability_accepts_model_option(
+    mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
+):
+    """Test that telemetry also captures the modern model option."""
+    client = mock_chat_client()
+
+    messages = [Message(role="user", text="Test message")]
+    span_exporter.clear()
+    response = await client.get_response(messages=messages, options={"model": "Test"})
+    assert response is not None
+    spans = span_exporter.get_finished_spans()
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.attributes[OtelAttr.REQUEST_MODEL] == "Test"
+
+
+@pytest.mark.parametrize("enable_sensitive_data", [True, False], indirect=True)
 async def test_chat_client_streaming_observability(
     mock_chat_client, span_exporter: InMemorySpanExporter, enable_sensitive_data
 ):
@@ -232,7 +247,7 @@ async def test_chat_client_streaming_observability(
     span_exporter.clear()
     # Collect all yielded updates
     updates = []
-    stream = client.get_response(stream=True, messages=messages, options={"model_id": "Test"})
+    stream = client.get_response(stream=True, messages=messages, options={"model": "Test"})
     async for update in stream:
         updates.append(update)
     await stream.get_final_response()
@@ -260,7 +275,7 @@ async def test_chat_client_observability_with_instructions(
     client = mock_chat_client()
 
     messages = [Message(role="user", text="Test message")]
-    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    options = {"model": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
 
@@ -289,7 +304,7 @@ async def test_chat_client_streaming_observability_with_instructions(
 
     client = mock_chat_client()
     messages = [Message(role="user", text="Test")]
-    options = {"model_id": "Test", "instructions": "You are a helpful assistant."}
+    options = {"model": "Test", "instructions": "You are a helpful assistant."}
     span_exporter.clear()
 
     updates = []
@@ -318,7 +333,7 @@ async def test_chat_client_observability_without_instructions(
     client = mock_chat_client()
 
     messages = [Message(role="user", text="Test message")]
-    options = {"model_id": "Test"}  # No instructions
+    options = {"model": "Test"}  # No instructions
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
 
@@ -339,7 +354,7 @@ async def test_chat_client_observability_with_empty_instructions(
     client = mock_chat_client()
 
     messages = [Message(role="user", text="Test message")]
-    options = {"model_id": "Test", "instructions": ""}  # Empty string
+    options = {"model": "Test", "instructions": ""}  # Empty string
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
 
@@ -362,7 +377,7 @@ async def test_chat_client_observability_with_list_instructions(
     client = mock_chat_client()
 
     messages = [Message(role="user", text="Test message")]
-    options = {"model_id": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
+    options = {"model": "Test", "instructions": ["Instruction 1", "Instruction 2"]}
     span_exporter.clear()
     response = await client.get_response(messages=messages, options=options)
 
@@ -379,8 +394,8 @@ async def test_chat_client_observability_with_list_instructions(
     assert system_instructions[1]["content"] == "Instruction 2"
 
 
-async def test_chat_client_without_model_id_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
-    """Test telemetry shouldn't fail when the model_id is not provided for unknown reason."""
+async def test_chat_client_without_model_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
+    """Test telemetry shouldn't fail when the model is not provided for unknown reason."""
     client = mock_chat_client()
     messages = [Message(role="user", text="Test")]
     span_exporter.clear()
@@ -396,10 +411,8 @@ async def test_chat_client_without_model_id_observability(mock_chat_client, span
     assert span.attributes[OtelAttr.REQUEST_MODEL] == "unknown"
 
 
-async def test_chat_client_streaming_without_model_id_observability(
-    mock_chat_client, span_exporter: InMemorySpanExporter
-):
-    """Test streaming telemetry shouldn't fail when the model_id is not provided for unknown reason."""
+async def test_chat_client_streaming_without_model_observability(mock_chat_client, span_exporter: InMemorySpanExporter):
+    """Test streaming telemetry shouldn't fail when the model is not provided for unknown reason."""
     client = mock_chat_client()
     messages = [Message(role="user", text="Test")]
     span_exporter.clear()
@@ -441,7 +454,7 @@ def mock_chat_agent():
             self.id = "test_agent_id"
             self.name = "test_agent"
             self.description = "Test agent description"
-            self.default_options: dict[str, Any] = {"model_id": "TestModel"}
+            self.default_options: dict[str, Any] = {"model": "TestModel"}
 
         def run(self, messages=None, *, session=None, stream=False, **kwargs):
             if stream:
@@ -1540,7 +1553,7 @@ async def test_chat_client_observability_exception(mock_chat_client, span_export
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Test error"):
-        await client.get_response(messages=messages, options={"model_id": "Test"})
+        await client.get_response(messages=messages, options={"model": "Test"})
 
     spans = span_exporter.get_finished_spans()
     assert len(spans) == 1
@@ -1570,7 +1583,7 @@ async def test_chat_client_streaming_observability_exception(mock_chat_client, s
 
     span_exporter.clear()
     with pytest.raises(ValueError, match="Streaming error"):
-        async for _ in client.get_response(messages=messages, stream=True, options={"model_id": "Test"}):
+        async for _ in client.get_response(messages=messages, stream=True, options={"model": "Test"}):
             pass
 
     spans = span_exporter.get_finished_spans()
@@ -1651,8 +1664,8 @@ def test_get_response_attributes_with_finish_reason():
     assert OtelAttr.FINISH_REASONS in result
 
 
-def test_get_response_attributes_with_model_id():
-    """Test _get_response_attributes includes model_id."""
+def test_get_response_attributes_with_model():
+    """Test _get_response_attributes includes model."""
     from unittest.mock import Mock
 
     from agent_framework.observability import _get_response_attributes
@@ -1662,7 +1675,7 @@ def test_get_response_attributes_with_model_id():
     response.finish_reason = None
     response.raw_representation = None
     response.usage_details = None
-    response.model_id = "gpt-4"
+    response.model = "gpt-4"
 
     attrs = {}
     result = _get_response_attributes(attrs, response)
@@ -2075,7 +2088,7 @@ async def test_capture_messages_with_finish_reason(mock_chat_client, span_export
     messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, options={"model_id": "Test"})
+    response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
     assert response.finish_reason == "stop"
@@ -2165,7 +2178,7 @@ async def test_chat_client_when_disabled(mock_chat_client, span_exporter: InMemo
     messages = [Message(role="user", text="Test")]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, options={"model_id": "Test"})
+    response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -2181,7 +2194,7 @@ async def test_chat_client_streaming_when_disabled(mock_chat_client, span_export
 
     span_exporter.clear()
     updates = []
-    async for update in client.get_response(messages=messages, stream=True, options={"model_id": "Test"}):
+    async for update in client.get_response(messages=messages, stream=True, options={"model": "Test"}):
         updates.append(update)
 
     assert len(updates) == 2  # Still works functionally
@@ -2501,7 +2514,7 @@ async def test_layer_ordering_span_sequence_with_function_calling(span_exporter:
         def __init__(self):
             super().__init__()
             self.call_count = 0
-            self.model_id = "test-model"
+            self.model = "test-model"
 
         def service_url(self):
             return "https://test.example.com"
@@ -2608,7 +2621,7 @@ async def test_agent_and_chat_spans_do_not_duplicate_response_telemetry(
         id="nested_agent_id",
         name="nested_agent",
         description="Nested telemetry agent",
-        default_options={"model_id": "NestedModel"},
+        default_options={"model": "NestedModel"},
     )
 
     span_exporter.clear()
@@ -2661,7 +2674,7 @@ async def test_capture_messages_preserves_non_ascii_characters(mock_chat_client,
     messages = [Message(role="user", text=japanese_text)]
 
     span_exporter.clear()
-    response = await client.get_response(messages=messages, options={"model_id": "Test"})
+    response = await client.get_response(messages=messages, options={"model": "Test"})
 
     assert response is not None
     spans = span_exporter.get_finished_spans()
@@ -2825,7 +2838,7 @@ async def test_agent_instructions_from_default_options(
     import json
 
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel", "instructions": "Default system instructions."}
+    agent.default_options = {"model": "TestModel", "instructions": "Default system instructions."}
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
@@ -2851,7 +2864,7 @@ async def test_agent_instructions_from_options_override(
     import json
 
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel"}  # No default instructions
+    agent.default_options = {"model": "TestModel"}  # No default instructions
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
@@ -2876,7 +2889,7 @@ async def test_agent_instructions_merged_from_default_and_options(
     import json
 
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+    agent.default_options = {"model": "TestModel", "instructions": "Default instructions."}
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
@@ -2903,7 +2916,7 @@ async def test_agent_streaming_instructions_from_default_options(
     import json
 
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel", "instructions": "Default streaming instructions."}
+    agent.default_options = {"model": "TestModel", "instructions": "Default streaming instructions."}
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
@@ -2932,7 +2945,7 @@ async def test_agent_streaming_instructions_merged_from_default_and_options(
     import json
 
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel", "instructions": "Default instructions."}
+    agent.default_options = {"model": "TestModel", "instructions": "Default instructions."}
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()
@@ -2960,7 +2973,7 @@ async def test_agent_no_instructions_in_default_or_options(
 ):
     """Test that system_instructions is not set when neither default_options nor options have instructions."""
     agent = mock_chat_agent()
-    agent.default_options = {"model_id": "TestModel"}  # No instructions
+    agent.default_options = {"model": "TestModel"}  # No instructions
 
     messages = [Message(role="user", text="Test message")]
     span_exporter.clear()

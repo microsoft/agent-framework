@@ -56,16 +56,16 @@ These variables are used when the client is configured for Azure OpenAI:
 | `AZURE_OPENAI_BASE_URL` | Full Azure OpenAI base URL (`.../openai/v1`) |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
 | `AZURE_OPENAI_API_VERSION` | Azure OpenAI API version |
-| `AZURE_OPENAI_DEPLOYMENT_NAME` | Generic fallback deployment |
-| `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` | Preferred deployment for `OpenAIChatClient` |
-| `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` | Preferred deployment for `OpenAIChatCompletionClient` |
-| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` | Preferred deployment for `OpenAIEmbeddingClient` |
+| `AZURE_OPENAI_MODEL` | Generic fallback deployment |
+| `AZURE_OPENAI_RESPONSES_MODEL` | Preferred deployment for `OpenAIChatClient` |
+| `AZURE_OPENAI_CHAT_MODEL` | Preferred deployment for `OpenAIChatCompletionClient` |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | Preferred deployment for `OpenAIEmbeddingClient` |
 
 Deployment lookup order:
 
-- `OpenAIChatClient`: `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` -> `AZURE_OPENAI_DEPLOYMENT_NAME`
-- `OpenAIChatCompletionClient`: `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` -> `AZURE_OPENAI_DEPLOYMENT_NAME`
-- `OpenAIEmbeddingClient`: `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` -> `AZURE_OPENAI_DEPLOYMENT_NAME`
+- `OpenAIChatClient`: `AZURE_OPENAI_RESPONSES_MODEL` -> `AZURE_OPENAI_MODEL`
+- `OpenAIChatCompletionClient`: `AZURE_OPENAI_CHAT_MODEL` -> `AZURE_OPENAI_MODEL`
+- `OpenAIEmbeddingClient`: `AZURE_OPENAI_EMBEDDING_MODEL` -> `AZURE_OPENAI_MODEL`
 
 When both OpenAI and Azure environment variables are present, the generic clients prefer OpenAI
 when `OPENAI_API_KEY` is configured. To use Azure explicitly, pass `azure_endpoint` or

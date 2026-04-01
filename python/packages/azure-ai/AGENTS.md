@@ -18,7 +18,7 @@ from agent_framework_azure_ai import AzureAIInferenceEmbeddingClient
 client = AzureAIInferenceEmbeddingClient(
     endpoint="https://<resource>.inference.ai.azure.com",
     api_key="...",
-    model_id="text-embedding-3-large",
+    model="text-embedding-3-large",
 )
 result = await client.get_embeddings(["Hello"])
 ```

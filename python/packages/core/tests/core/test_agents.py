@@ -154,6 +154,24 @@ def test_chat_client_agent_type(client: SupportsChatGetResponse) -> None:
     assert isinstance(chat_client_agent, SupportsAgentRun)
 
 
+def test_chat_client_agent_uses_client_model_attribute(chat_client_base) -> None:
+    chat_client_base.model = "claude-model"  # type: ignore[attr-defined]
+
+    agent = Agent(client=chat_client_base)
+
+    assert agent.default_options["model"] == "claude-model"
+    assert "model_id" not in agent.default_options
+
+
+def test_chat_client_agent_prefers_default_model_over_client_model(chat_client_base) -> None:
+    chat_client_base.model = "legacy-model"  # type: ignore[attr-defined]
+
+    agent = Agent(client=chat_client_base, default_options={"model": "claude-model"})
+
+    assert agent.default_options["model"] == "claude-model"
+    assert "model_id" not in agent.default_options
+
+
 def test_agent_init_docstring_surfaces_raw_agent_constructor_docs() -> None:
     docstring = inspect.getdoc(Agent.__init__)
 
@@ -281,6 +299,56 @@ async def test_chat_client_agent_streaming_response_format_from_run_options(
     assert result.value is not None
     assert isinstance(result.value, Greeting)
     assert result.value.greeting == "Hi"
+
+
+async def test_chat_client_agent_response_format_dict_from_default_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value should parse JSON dicts from default_options response_format."""
+    json_text = json.dumps({"greeting": "Hello"})
+    client.responses.append(ChatResponse(messages=Message(role="assistant", text=json_text)))  # type: ignore[attr-defined]
+
+    agent = Agent(
+        client=client,
+        default_options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+    result = await agent.run("Hello")
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, dict)
+    assert result.value["greeting"] == "Hello"
+
+
+async def test_chat_client_agent_streaming_response_format_dict_from_run_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Agent streaming should preserve mapping response_format and parse the final value as a dict."""
+    json_text = json.dumps({"greeting": "Hi"})
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text(json_text)],
+                role="assistant",
+                finish_reason="stop",
+            )
+        ]
+    )
+
+    agent = Agent(client=client)
+    stream = agent.run(
+        "Hello",
+        stream=True,
+        options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, dict)
+    assert result.value["greeting"] == "Hi"
 
 
 async def test_chat_client_agent_create_session(
@@ -1924,6 +1992,20 @@ def test_merge_options_none_values_ignored():
 
     assert result["key1"] == "value1"  # None didn't override
     assert result["key2"] == "value2"
+
+
+def test_merge_options_runtime_model_overrides_default_model() -> None:
+    """Test _merge_options lets a runtime model override a default model."""
+    result = _merge_options({"model": "default-model"}, {"model": "runtime-model"})
+
+    assert result["model"] == "runtime-model"
+
+
+def test_merge_options_preserves_base_model_without_override() -> None:
+    """Test _merge_options preserves the base model when there is no override."""
+    result = _merge_options({"model": "preferred-model"}, {})
+
+    assert result["model"] == "preferred-model"
 
 
 def test_merge_options_tools_combined():

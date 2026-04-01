@@ -31,9 +31,9 @@ Prerequisites:
     - AZURE_AI_INFERENCE_ENDPOINT: Your Azure AI model inference endpoint URL, for instance:
         https://<apim-instance>.azure-api.net/<foundry-instance>/models
     - AZURE_AI_INFERENCE_API_KEY: Your API key
-    - AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID: The text embedding model name
+    - AZURE_AI_INFERENCE_EMBEDDING_MODEL: The text embedding model name
       (e.g. "text-embedding-3-small")
-    - AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID: The image embedding model name
+    - AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL: The image embedding model name
       (e.g. "Cohere-embed-v3-english")
 """
 
@@ -49,7 +49,7 @@ async def main() -> None:
         result = await client.get_embeddings([image_content])
         print(f"Image embedding dimensions: {result[0].dimensions}")
         print(f"First 5 values: {result[0].vector[:5]}")
-        print(f"Model: {result[0].model_id}")
+        print(f"Model: {result[0].model}")
         print(f"Usage: {result.usage}")
         print()
 

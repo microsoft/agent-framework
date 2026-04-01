@@ -32,8 +32,8 @@ Set the following environment variables before running the examples:
 **For Azure OpenAI:**
 
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
-- `AZURE_OPENAI_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses model deployment
+- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI chat model deployment
+- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI responses model deployment
 
 Optionally for Azure OpenAI:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)

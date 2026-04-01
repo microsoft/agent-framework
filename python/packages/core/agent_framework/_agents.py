@@ -100,6 +100,7 @@ def _merge_options(base: dict[str, Any], override: dict[str, Any]) -> dict[str, 
         A new merged options dict.
     """
     result = dict(base)
+
     for key, value in override.items():
         if value is None:
             continue
@@ -596,7 +597,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             from agent_framework.openai import OpenAIChatClient
 
             # Create a basic chat agent
-            client = OpenAIChatClient(model_id="gpt-4")
+            client = OpenAIChatClient(model="gpt-4")
             agent = Agent(client=client, name="assistant", description="A helpful assistant")
 
             # Run the agent with a simple message
@@ -634,7 +635,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             from agent_framework import Agent
             from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 
-            client = OpenAIChatClient(model_id="gpt-4o")
+            client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
                 name="reasoning-agent",
@@ -692,7 +693,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
                 service-managed conversation instead.
             default_options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
-                provider-specific options including temperature, max_tokens, model_id,
+                provider-specific options including temperature, max_tokens, model,
                 tool_choice, and provider-specific options like reasoning_effort.
                 You can also create your own TypedDict for custom chat clients.
                 Note: response_format typing does not flow into run outputs when set via default_options.
@@ -736,9 +737,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         self.mcp_tools: list[MCPTool] = [tool for tool in normalized_tools if isinstance(tool, MCPTool)]
         agent_tools = [tool for tool in normalized_tools if not isinstance(tool, MCPTool)]
 
+        model = opts.pop("model", None) or getattr(self.client, "model", None)
+
         # Build chat options dict
         self.default_options: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None) or (getattr(self.client, "model_id", None)),
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "conversation_id": opts.pop("conversation_id", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
@@ -758,6 +760,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "user": opts.pop("user", None),
             **opts,  # Remaining options are provider-specific
         }
+        if model is not None:
+            self.default_options["model"] = model
         # Remove None values from chat_options
         self.default_options = {k: v for k, v in self.default_options.items() if v is not None}
         self._async_exit_stack = AsyncExitStack()
@@ -914,7 +918,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             tools: The tools to use for this specific run (merged with default tools).
             options: A TypedDict containing chat options. When using a typed agent like
                 ``Agent[OpenAIChatOptions]``, this enables IDE autocomplete for
-                provider-specific options including temperature, max_tokens, model_id,
+                provider-specific options including temperature, max_tokens, model,
                 tool_choice, and provider-specific options like reasoning_effort.
             compaction_strategy: Optional per-run compaction override passed to
                 ``client.get_response()``. When omitted, the agent-level override
@@ -1022,20 +1026,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             session_context=context["session_context"],
             suppress_response_id=context["suppress_response_id"],
         )
-
-        response_format = context["chat_options"].get("response_format")
-        if not (
-            response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
-        ):
-            response_format = None
-
         return AgentResponse(
             messages=response.messages,
             response_id=None if context["suppress_response_id"] else response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
             value=response.value,
-            response_format=response_format,
+            response_format=context["chat_options"].get("response_format"),
             continuation_token=response.continuation_token,
             raw_representation=response,
             additional_properties=response.additional_properties,
@@ -1121,10 +1118,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
-        output_format_type = response_format if isinstance(response_format, type) else None
         return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
             updates,
-            output_format_type=output_format_type,
+            output_format_type=response_format,
         )
 
     @staticmethod
@@ -1243,9 +1239,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
+        model = opts.pop("model", None)
+
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "model_id": opts.pop("model_id", None),
             "conversation_id": active_session.service_session_id
             if active_session
             else opts.pop("conversation_id", None),
@@ -1266,6 +1263,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             "user": opts.pop("user", None),
             **opts,  # Remaining options are provider-specific
         }
+        if model is not None:
+            run_opts["model"] = model
         # Remove None values and merge with chat_options
         run_opts = {k: v for k, v in run_opts.items() if v is not None}
         co = _merge_options(chat_options, run_opts)

@@ -32,7 +32,7 @@ Prerequisites:
    - AZURE_SEARCH_INDEX_NAME: Your search index name
    - FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry project endpoint
    - FOUNDRY_MODEL: Your model deployment name (e.g., "gpt-4o")
-   - AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: (Optional) Your Azure OpenAI embedding deployment for hybrid search
+   - AZURE_OPENAI_EMBEDDING_MODEL: (Optional) Your Azure OpenAI embedding deployment for hybrid search
    - AZURE_OPENAI_ENDPOINT: (Optional) Your Azure OpenAI resource URL, required if using Azure OpenAI embeddings
 """
 
@@ -56,7 +56,7 @@ async def main() -> None:
     project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model_deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o")
     openai_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-    embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME")
+    embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_MODEL")
 
     embedding_client = None
     if openai_endpoint and embedding_deployment:

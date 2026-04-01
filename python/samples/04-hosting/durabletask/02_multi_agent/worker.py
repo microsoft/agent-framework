@@ -7,7 +7,7 @@ with their own specialized tools. This demonstrates how to host multiple agents
 with different capabilities in a single worker process.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT_NAME
+- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_MODEL
 - Sign in with Azure CLI for AzureCliCredential authentication
 - Start a Durable Task Scheduler (e.g., using Docker)
 """

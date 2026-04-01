@@ -431,7 +431,7 @@ class SerializationMixin:
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 
