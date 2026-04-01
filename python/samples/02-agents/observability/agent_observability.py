@@ -22,7 +22,9 @@ same observability setup function.
 
 Pre-requisites:
 - A Foundry project
-- A local OpenTelemetry Collector instance to receive the traces and metrics.
+- An observability backend to receive traces and metrics (for example, a local or remote
+  OpenTelemetry Collector, another OTLP-compatible backend, or console exporters enabled
+  via environment variables).
 """
 
 
