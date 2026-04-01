@@ -16,7 +16,7 @@ namespace WorkflowFoundryAgentSample;
 /// <remarks>
 /// Pre-requisites:
 /// - Foundational samples should be completed first.
-/// - An Microsoft Foundry project endpoint and model id.
+/// - A Microsoft Foundry project endpoint and model ID.
 /// </remarks>
 public static class Program
 {
