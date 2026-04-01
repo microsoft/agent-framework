@@ -16,7 +16,7 @@ using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 using OpenAI.Responses;
 
-namespace Microsoft.Agents.AI.FoundryMemory;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Provides a Microsoft Foundry Memory backed <see cref="AIContextProvider"/> that persists conversation messages as memories

@@ -1,15 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
-
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 
-namespace Microsoft.Agents.AI.FoundryMemory.IntegrationTests;
+namespace AzureAI.IntegrationTests.Memory;
 
 /// <summary>
 /// Integration tests for <see cref="FoundryMemoryProvider"/> against a configured Azure AI Foundry Memory service.

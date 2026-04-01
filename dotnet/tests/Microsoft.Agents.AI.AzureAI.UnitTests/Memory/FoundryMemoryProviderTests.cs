@@ -1,8 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using Microsoft.Agents.AI.AzureAI;
 
-namespace Microsoft.Agents.AI.FoundryMemory.UnitTests;
+namespace Microsoft.Agents.AI.AzureAI.UnitTests.Memory;
 
 /// <summary>
 /// Tests for <see cref="FoundryMemoryProvider"/> constructor validation.

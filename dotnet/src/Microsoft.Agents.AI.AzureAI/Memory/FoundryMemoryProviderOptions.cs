@@ -2,14 +2,17 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Compliance.Redaction;
+using Microsoft.Shared.DiagnosticIds;
 
-namespace Microsoft.Agents.AI.FoundryMemory;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Options for configuring the <see cref="FoundryMemoryProvider"/>.
 /// </summary>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryMemoryProviderOptions
 {
     /// <summary>

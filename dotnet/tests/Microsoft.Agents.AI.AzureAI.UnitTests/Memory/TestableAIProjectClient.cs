@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Azure.Core;
 
-namespace Microsoft.Agents.AI.FoundryMemory.UnitTests;
+namespace Microsoft.Agents.AI.AzureAI.UnitTests.Memory;
 
 /// <summary>
 /// Creates a testable AIProjectClient with a mock HTTP handler.

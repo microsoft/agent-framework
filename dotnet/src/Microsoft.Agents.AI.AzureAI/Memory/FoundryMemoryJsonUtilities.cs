@@ -3,7 +3,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Microsoft.Agents.AI.FoundryMemory;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Provides JSON serialization utilities for the Foundry Memory provider.

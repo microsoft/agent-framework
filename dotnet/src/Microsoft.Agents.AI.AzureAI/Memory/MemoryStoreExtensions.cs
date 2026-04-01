@@ -5,12 +5,12 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
 
-namespace Microsoft.Agents.AI.FoundryMemory;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Internal extension methods for <see cref="AIProjectClient"/> to provide MemoryStores helper operations.
 /// </summary>
-internal static class AIProjectClientExtensions
+internal static class MemoryStoreExtensions
 {
     /// <summary>
     /// Creates a memory store if it doesn't already exist.

@@ -1,9 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
-namespace Microsoft.Agents.AI.FoundryMemory;
+namespace Microsoft.Agents.AI.AzureAI;
 
 /// <summary>
 /// Allows scoping of memories for the <see cref="FoundryMemoryProvider"/>.
@@ -13,6 +15,7 @@ namespace Microsoft.Agents.AI.FoundryMemory;
 /// Common patterns include using a user ID, team ID, or other unique identifier
 /// to partition memories across different contexts.
 /// </remarks>
+[Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
 public sealed class FoundryMemoryProviderScope
 {
     /// <summary>
