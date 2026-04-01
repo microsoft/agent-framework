@@ -972,4 +972,54 @@ async def test_resolve_invocation_kwargs_logs_global(caplog: "LogCaptureFixture"
     assert len(global_logs) >= 1
 
 
+async def test_empty_function_invocation_kwargs_clears_previous() -> None:
+    """Passing function_invocation_kwargs={} should clear previously stored kwargs on a new run."""
+    agent = _KwargsCapturingAgent(name="clearing_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    # First run: provide kwargs
+    await workflow.run(
+        "first",
+        function_invocation_kwargs={"key": "value"},
+    )
+
+    assert len(agent.captured_kwargs) >= 1
+    assert agent.captured_kwargs[0].get("function_invocation_kwargs") == {"key": "value"}
+
+    # Second run: pass empty dict to explicitly clear
+    await workflow.run(
+        "second",
+        function_invocation_kwargs={},
+    )
+
+    # Agent should receive None because the empty dict resolves to an empty
+    # __global__ entry which is treated as "no kwargs" for each executor.
+    assert len(agent.captured_kwargs) >= 2
+    assert agent.captured_kwargs[-1].get("function_invocation_kwargs") is None
+
+
+async def test_empty_client_kwargs_clears_previous() -> None:
+    """Passing client_kwargs={} should clear previously stored kwargs on a new run."""
+    agent = _KwargsCapturingAgent(name="clearing_agent")
+    workflow = SequentialBuilder(participants=[agent]).build()
+
+    # First run: provide kwargs
+    await workflow.run(
+        "first",
+        client_kwargs={"temperature": 0.5},
+    )
+
+    assert len(agent.captured_kwargs) >= 1
+    assert agent.captured_kwargs[0].get("client_kwargs") == {"temperature": 0.5}
+
+    # Second run: pass empty dict to explicitly clear
+    await workflow.run(
+        "second",
+        client_kwargs={},
+    )
+
+    assert len(agent.captured_kwargs) >= 2
+    assert agent.captured_kwargs[-1].get("client_kwargs") is None
+
+
 # endregion

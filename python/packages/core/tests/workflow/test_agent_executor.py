@@ -584,11 +584,11 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
 
 
 async def test_resolve_executor_kwargs_returns_global_kwargs() -> None:
-    """_resolve_executor_kwargs with __global__ key returns the global kwargs."""
+    """_resolve_executor_kwargs with the global kwargs key returns the global kwargs."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
-    resolved = {"__global__": {"tool_param": "value"}}
+    resolved = {GLOBAL_KWARGS_KEY: {"tool_param": "value"}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
     assert result == {"tool_param": "value"}
 
@@ -697,3 +697,15 @@ async def test_prepare_agent_run_args_per_executor_no_match() -> None:
     }
     fi_kwargs, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs is None
+
+
+async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_global() -> None:
+    """An explicit empty per-executor dict should not fall through to global kwargs."""
+    agent = _CountingAgent(id="a", name="A")
+    executor = AgentExecutor(agent, id="exec_a")
+
+    # Per-executor entry for exec_a is empty, but global has values.
+    # The empty dict should be honoured (no fallback to global).
+    resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}
+    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
+    assert result is None

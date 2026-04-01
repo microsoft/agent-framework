@@ -461,7 +461,14 @@ class AgentExecutor(Executor):
         """
         if not isinstance(resolved, dict):
             return None
-        executor_kwargs = resolved.get(self.id) or resolved.get(GLOBAL_KWARGS_KEY)
+        # Use explicit key-presence checks so that an empty per-executor dict is
+        # honoured (e.g. to clear kwargs) instead of falling through to global.
+        if self.id in resolved:
+            executor_kwargs = resolved[self.id]
+        elif GLOBAL_KWARGS_KEY in resolved:
+            executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
+        else:
+            return None
         if isinstance(executor_kwargs, dict):
-            return cast(dict[str, Any], executor_kwargs) or None
+            return dict(executor_kwargs) or None
         return None
