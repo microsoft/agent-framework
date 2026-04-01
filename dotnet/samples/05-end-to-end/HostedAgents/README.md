@@ -46,7 +46,7 @@ See each sample's README for the specific variables required.
 
 ## Microsoft Foundry Setup (for samples that use Foundry)
 
-Some samples (`AgentWithLocalTools`, `FoundrySingleAgent`, `FoundryMultiAgent`) connect to an Microsoft Foundry project. If you're using these samples, you'll need additional setup.
+Some samples (`AgentWithLocalTools`, `FoundrySingleAgent`, `FoundryMultiAgent`) connect to a Microsoft Foundry project. If you're using these samples, you'll need additional setup.
 
 ### Azure AI Developer Role
 

@@ -15,7 +15,7 @@ Key features:
 Before running this sample, ensure you have:
 
 1. .NET 10 SDK installed
-2. An Microsoft Foundry Project with a chat model deployed (e.g., gpt-4o-mini)
+2. A Microsoft Foundry Project with a chat model deployed (e.g., gpt-4o-mini)
 3. Azure CLI installed and authenticated (`az login`)
 
 ## Environment Variables
