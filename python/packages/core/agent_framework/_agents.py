@@ -439,6 +439,52 @@ class BaseAgent(SerializationMixin):
         """
         return AgentSession(session_id=session_id, service_session_id=service_session_id)
 
+    async def _run_before_providers(
+        self,
+        *,
+        session: AgentSession | None,
+        input_messages: list[Message] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> SessionContext:
+        """Run before_run on all context providers and return the session context.
+
+        Creates a SessionContext and invokes ``before_run`` on each provider in
+        forward order.  ``BaseHistoryProvider`` instances with
+        ``load_messages=False`` are skipped.
+
+        Keyword Args:
+            session: The conversation session (None for stateless invocation).
+            input_messages: The normalized input messages.
+            options: Runtime options dict.
+
+        Returns:
+            The SessionContext with provider context populated.
+        """
+        provider_session = session
+        if provider_session is None and self.context_providers:
+            provider_session = AgentSession()
+
+        session_context = SessionContext(
+            session_id=provider_session.session_id if provider_session else None,
+            service_session_id=provider_session.service_session_id if provider_session else None,
+            input_messages=input_messages or [],
+            options=options or {},
+        )
+
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when context providers are configured.")
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=provider_session,
+                context=session_context,
+                state=provider_session.state.setdefault(provider.source_id, {}),
+            )
+
+        return session_context
+
     async def _run_after_providers(
         self,
         *,
@@ -1273,29 +1319,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         else:
             chat_options = {}
 
-        provider_session = session
-        if provider_session is None and self.context_providers:
-            provider_session = AgentSession()
-
-        session_context = SessionContext(
-            session_id=provider_session.session_id if provider_session else None,
-            service_session_id=provider_session.service_session_id if provider_session else None,
-            input_messages=input_messages or [],
-            options=options or {},
+        session_context = await self._run_before_providers(
+            session=session, input_messages=input_messages, options=options,
         )
-
-        # Run before_run providers (forward order, skip BaseHistoryProvider with load_messages=False)
-        for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
-                continue
-            if provider_session is None:
-                raise RuntimeError("Provider session must be available when context providers are configured.")
-            await provider.before_run(
-                agent=self,  # type: ignore[arg-type]
-                session=provider_session,
-                context=session_context,
-                state=provider_session.state.setdefault(provider.source_id, {}),
-            )
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:

@@ -2085,3 +2085,79 @@ async def test_as_tool_raises_on_user_input_request(client: SupportsChatGetRespo
     assert len(exc_info.value.contents) == 1
     assert exc_info.value.contents[0].type == "oauth_consent_request"
     assert exc_info.value.contents[0].consent_link == "https://login.microsoftonline.com/consent"
+
+
+async def test_base_agent_run_before_providers_creates_session_context(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that BaseAgent._run_before_providers creates a SessionContext and calls providers."""
+    mock_provider = MockContextProvider(messages=[Message(role="system", text="Injected context")])
+    agent = Agent(client=client, context_providers=[mock_provider])
+    session = agent.create_session()
+
+    session_context = await agent._run_before_providers(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", text="Hello")],
+        options={"temperature": 0.5},
+    )
+
+    assert mock_provider.before_run_called
+    assert session_context.session_id == session.session_id
+    messages = session_context.get_messages(include_input=True)
+    assert len(messages) == 2
+    assert messages[0].text == "Injected context"
+    assert messages[1].text == "Hello"
+    assert session_context.options.get("temperature") == 0.5
+
+
+async def test_base_agent_run_before_providers_creates_session_when_none(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that _run_before_providers creates a session when None is passed with providers."""
+    mock_provider = MockContextProvider()
+    agent = Agent(client=client, context_providers=[mock_provider])
+
+    session_context = await agent._run_before_providers(  # type: ignore[reportPrivateUsage]
+        session=None,
+        input_messages=[Message(role="user", text="Hello")],
+    )
+
+    assert mock_provider.before_run_called
+    assert session_context.session_id is not None
+
+
+async def test_base_agent_run_before_providers_skips_history_provider_load_false(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Test that _run_before_providers skips BaseHistoryProvider with load_messages=False."""
+    from agent_framework import BaseHistoryProvider
+
+    class StubHistoryProvider(BaseHistoryProvider):
+        def __init__(self, *, load_messages: bool = True) -> None:
+            super().__init__(source_id=f"stub-{load_messages}", load_messages=load_messages)
+            self.before_run_called = False
+
+        async def before_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            self.before_run_called = True
+
+        async def after_run(self, *, agent: Any, session: Any, context: Any, state: Any) -> None:
+            pass
+
+        async def get_messages(self, session_id: Any, **kwargs: Any) -> list[Message]:
+            return []
+
+        async def save_messages(self, session_id: Any, messages: Any, **kwargs: Any) -> None:
+            pass
+
+    skipped = StubHistoryProvider(load_messages=False)
+    active = StubHistoryProvider(load_messages=True)
+    agent = Agent(client=client, context_providers=[skipped, active])
+    session = agent.create_session()
+
+    await agent._run_before_providers(  # type: ignore[reportPrivateUsage]
+        session=session,
+        input_messages=[Message(role="user", text="Hello")],
+    )
+
+    assert not skipped.before_run_called
+    assert active.before_run_called
