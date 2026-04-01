@@ -485,6 +485,46 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
         assert response.model == "test-model"
 
 
+async def test_response_format_dict_parse_path() -> None:
+    """Test get_response response_format parsing path for runtime JSON schema mappings."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = '{"answer": "Parsed"}'
+    mock_message_content.annotations = []
+    mock_message_content.logprobs = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+    mock_response.output = [mock_message_item]
+
+    with patch.object(client.client.responses, "create", return_value=mock_response):
+        response = await client.get_response(
+            messages=[Message(role="user", text="Test message")],
+            options={"response_format": response_format},
+        )
+
+    assert response.response_id == "response_123"
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Parsed"
+
+
 async def test_bad_request_error_non_content_filter() -> None:
     """Test get_response BadRequestError without content_filter."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -3297,12 +3337,10 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                # Runtime JSON schema
-                assert response.value is None, "No structured output, can't parse any json."
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
-                assert "seattle" in response_value["location"].lower()
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
+                assert "seattle" in response.value["location"].lower()
 
 
 @pytest.mark.timeout(300)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from functools import wraps
 from pathlib import Path
@@ -322,11 +321,10 @@ async def test_integration_options(
                         assert isinstance(response.value, OutputStruct)
                         assert "seattle" in response.value.location.lower()
                     else:
-                        assert response.value is None
-                        response_value = json.loads(response.text)
-                        assert isinstance(response_value, dict)
-                        assert "location" in response_value
-                        assert "seattle" in response_value["location"].lower()
+                        assert response.value is not None
+                        assert isinstance(response.value, dict)
+                        assert "location" in response.value
+                        assert "seattle" in response.value["location"].lower()
 
 
 @pytest.mark.flaky

@@ -249,6 +249,33 @@ async def test_cmc(
 
 
 @patch.object(AsyncClient, "chat", new_callable=AsyncMock)
+async def test_cmc_response_format_dict(
+    mock_chat: AsyncMock,
+    ollama_unit_test_env: dict[str, str],
+    chat_history: list[Message],
+) -> None:
+    mock_chat.return_value = OllamaChatResponse(
+        message=OllamaMessage(content='{"answer": "test"}', role="assistant"),
+        model="test",
+        eval_count=1,
+        prompt_eval_count=1,
+        created_at="2024-01-01T00:00:00Z",
+    )
+    chat_history.append(Message(text="hello world", role="system"))
+    chat_history.append(Message(text="hello world", role="user"))
+
+    ollama_client = OllamaChatClient()
+    result = await ollama_client.get_response(
+        messages=chat_history,
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert result.value is not None
+    assert isinstance(result.value, dict)
+    assert result.value["answer"] == "test"
+
+
+@patch.object(AsyncClient, "chat", new_callable=AsyncMock)
 async def test_cmc_reasoning(
     mock_chat: AsyncMock,
     ollama_unit_test_env: dict[str, str],

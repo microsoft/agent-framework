@@ -382,7 +382,10 @@ class OllamaChatClient(
             except Exception as ex:
                 raise ChatClientException(f"Ollama chat request failed : {ex}", ex) from ex
 
-            return self._parse_response_from_ollama(response)
+            return self._parse_response_from_ollama(
+                response,
+                response_format=validated_options.get("response_format"),
+            )
 
         return _get_response()
 
@@ -536,7 +539,12 @@ class OllamaChatClient(
             created_at=response.created_at,
         )
 
-    def _parse_response_from_ollama(self, response: OllamaChatResponse) -> ChatResponse:
+    def _parse_response_from_ollama(
+        self,
+        response: OllamaChatResponse,
+        *,
+        response_format: Any | None = None,
+    ) -> ChatResponse:
         contents = self._parse_contents_from_ollama(response)
 
         return ChatResponse(
@@ -547,6 +555,7 @@ class OllamaChatClient(
                 input_token_count=response.prompt_eval_count,
                 output_token_count=response.eval_count,
             ),
+            response_format=response_format,
         )
 
     def _parse_tool_calls_from_ollama(self, tool_calls: Sequence[OllamaMessage.ToolCall]) -> list[Content]:

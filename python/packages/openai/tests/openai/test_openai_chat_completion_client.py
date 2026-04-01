@@ -1421,6 +1421,31 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     assert prepared_options["response_format"] == custom_format
 
 
+def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
+    """Chat completions should parse dict response_format values into response.value."""
+    client = OpenAIChatCompletionClient()
+    response = client._parse_response_from_openai(
+        ChatCompletion(
+            id="test-response",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4o-mini",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content='{"answer": "Hello"}'),
+                    finish_reason="stop",
+                )
+            ],
+        ),
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Hello"
+
+
 def test_multiple_function_calls_in_single_message(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1635,12 +1660,10 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                # Runtime JSON schema
-                assert response.value is None, "No structured output, can't parse any json."
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
-                assert "seattle" in response_value["location"].lower()
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
+                assert "seattle" in response.value["location"].lower()
 
 
 @pytest.mark.flaky

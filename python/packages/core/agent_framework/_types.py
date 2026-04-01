@@ -299,6 +299,7 @@ ToolModeT = TypeVar("ToolModeT", bound="ToolMode")
 AgentResponseT = TypeVar("AgentResponseT", bound="AgentResponse")
 ResponseModelT = TypeVar("ResponseModelT", bound=BaseModel | None, default=None, covariant=True)
 ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
+StructuredResponseFormat = type[BaseModel] | Mapping[str, Any] | None
 
 CreatedAtT = str  # Use a datetimeoffset type? Or a more specific type like datetime.datetime?
 
@@ -1949,6 +1950,17 @@ class ContinuationToken(TypedDict):
 # endregion
 
 
+def _parse_structured_response_value(text: str, response_format: Any | None) -> Any | None:
+    if response_format is None:
+        return None
+    if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+        return response_format.model_validate_json(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Response text is not valid JSON: {exc}") from exc
+
+
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """Represents the response to a chat request.
 
@@ -2014,7 +2026,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         finish_reason: FinishReasonLiteral | FinishReason | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: StructuredResponseFormat = None,
         continuation_token: ContinuationToken | None = None,
         additional_properties: dict[str, Any] | None = None,
         raw_representation: Any | None = None,
@@ -2058,7 +2070,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         self.finish_reason = finish_reason
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._response_format: StructuredResponseFormat = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
@@ -2093,6 +2105,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponse[Any]],
         updates: Sequence[ChatResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[ChatResponse[Any]],
+        updates: Sequence[ChatResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> ChatResponse[Any]: ...
 
@@ -2101,7 +2122,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponseT],
         updates: Sequence[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2124,10 +2145,10 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: A sequence of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2148,6 +2169,15 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponse[Any]],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> ChatResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[ChatResponse[Any]],
+        updates: AsyncIterable[ChatResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> ChatResponse[Any]: ...
 
@@ -2156,7 +2186,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[ChatResponseT],
         updates: AsyncIterable[ChatResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> ChatResponseT:
         """Joins multiple updates into a single ChatResponse.
 
@@ -2175,10 +2205,10 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: An async iterable of ChatResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
-        response_format = output_format_type if isinstance(output_format_type, type) else None
-        msg = cls(messages=[], response_format=response_format)
+        msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:
             _process_update(msg, update)
         _finalize_response(msg)
@@ -2198,15 +2228,12 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2397,7 +2424,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         created_at: CreatedAtT | None = None,
         usage_details: UsageDetails | None = None,
         value: ResponseModelT | None = None,
-        response_format: type[BaseModel] | None = None,
+        response_format: StructuredResponseFormat = None,
         continuation_token: ContinuationToken | None = None,
         raw_representation: Any | None = None,
         additional_properties: dict[str, Any] | None = None,
@@ -2438,7 +2465,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         self.created_at = created_at
         self.usage_details = usage_details
         self._value: ResponseModelT | None = value
-        self._response_format: type[BaseModel] | None = response_format
+        self._response_format: type[BaseModel] | Mapping[str, Any] | None = response_format
         self._value_parsed: bool = value is not None
         self.additional_properties = (
             _restore_compaction_annotation_in_additional_properties(additional_properties) or {}
@@ -2460,15 +2487,12 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
 
         Raises:
             ValidationError: If the response text doesn't match the expected schema.
+            ValueError: If the response text is not valid JSON for a non-Pydantic structured format.
         """
         if self._value_parsed:
             return self._value
-        if (
-            self._response_format is not None
-            and isinstance(self._response_format, type)
-            and issubclass(self._response_format, BaseModel)
-        ):
-            self._value = cast(ResponseModelT, self._response_format.model_validate_json(self.text))
+        if self._response_format is not None:
+            self._value = cast(ResponseModelT, _parse_structured_response_value(self.text, self._response_format))
             self._value_parsed = True
         return self._value
 
@@ -2498,6 +2522,16 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponse[Any]],
         updates: Sequence[AgentResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+        value: Any | None = None,
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    def from_updates(
+        cls: type[AgentResponse[Any]],
+        updates: Sequence[AgentResponseUpdate],
+        *,
         output_format_type: None = None,
         value: Any | None = None,
     ) -> AgentResponse[Any]: ...
@@ -2507,7 +2541,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponseT],
         updates: Sequence[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
         value: Any | None = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
@@ -2516,7 +2550,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: A sequence of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data.
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
             value: Optional pre-parsed structured output value to set directly on the response.
         """
         msg = cls(messages=[], response_format=output_format_type, value=value)
@@ -2540,6 +2575,15 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponse[Any]],
         updates: AsyncIterable[AgentResponseUpdate],
         *,
+        output_format_type: Mapping[str, Any],
+    ) -> AgentResponse[Any]: ...
+
+    @overload
+    @classmethod
+    async def from_update_generator(
+        cls: type[AgentResponse[Any]],
+        updates: AsyncIterable[AgentResponseUpdate],
+        *,
         output_format_type: None = None,
     ) -> AgentResponse[Any]: ...
 
@@ -2548,7 +2592,7 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
         cls: type[AgentResponseT],
         updates: AsyncIterable[AgentResponseUpdate],
         *,
-        output_format_type: type[BaseModel] | None = None,
+        output_format_type: StructuredResponseFormat = None,
     ) -> AgentResponseT:
         """Joins multiple updates into a single AgentResponse.
 
@@ -2556,7 +2600,8 @@ class AgentResponse(SerializationMixin, Generic[ResponseModelT]):
             updates: An async iterable of AgentResponseUpdate objects to combine.
 
         Keyword Args:
-            output_format_type: Optional Pydantic model type to parse the response text into structured data
+            output_format_type: Optional Pydantic model type or JSON schema mapping used to parse the
+                response text into structured data.
         """
         msg = cls(messages=[], response_format=output_format_type)
         async for update in updates:

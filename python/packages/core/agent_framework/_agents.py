@@ -1026,20 +1026,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             session_context=context["session_context"],
             suppress_response_id=context["suppress_response_id"],
         )
-
-        response_format = context["chat_options"].get("response_format")
-        if not (
-            response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel)
-        ):
-            response_format = None
-
         return AgentResponse(
             messages=response.messages,
             response_id=None if context["suppress_response_id"] else response.response_id,
             created_at=response.created_at,
             usage_details=response.usage_details,
             value=response.value,
-            response_format=response_format,
+            response_format=context["chat_options"].get("response_format"),
             continuation_token=response.continuation_token,
             raw_representation=response,
             additional_properties=response.additional_properties,
@@ -1125,10 +1118,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
-        output_format_type = response_format if isinstance(response_format, type) else None
         return AgentResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
             updates,
-            output_format_type=output_format_type,
+            output_format_type=response_format,
         )
 
     @staticmethod

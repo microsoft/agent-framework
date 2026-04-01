@@ -992,6 +992,27 @@ def test_process_message_basic(mock_anthropic_client: MagicMock) -> None:
     assert response.usage_details["output_token_count"] == 5
 
 
+def test_process_message_with_dict_response_format(mock_anthropic_client: MagicMock) -> None:
+    """_process_message should preserve dict response_format values for response.value parsing."""
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    mock_message = MagicMock(spec=BetaMessage)
+    mock_message.id = "msg_123"
+    mock_message.model = "claude-3-5-sonnet-20241022"
+    mock_message.content = [BetaTextBlock(type="text", text='{"greeting": "Hello"}')]
+    mock_message.usage = BetaUsage(input_tokens=10, output_tokens=5)
+    mock_message.stop_reason = "end_turn"
+
+    response = client._process_message(
+        mock_message,
+        options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["greeting"] == "Hello"
+
+
 def test_process_message_with_tool_use(mock_anthropic_client: MagicMock) -> None:
     """Test _process_message with tool use."""
     client = create_test_anthropic_client(mock_anthropic_client)

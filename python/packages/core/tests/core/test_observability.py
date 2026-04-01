@@ -191,9 +191,7 @@ def mock_chat_client():
                 yield ChatResponseUpdate(contents=[Content.from_text(" world")], role="assistant", finish_reason="stop")
 
             def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse:
-                response_format = options.get("response_format")
-                output_format_type = response_format if isinstance(response_format, type) else None
-                return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+                return ChatResponse.from_updates(updates, output_format_type=options.get("response_format"))
 
             return ResponseStream(_stream(), finalizer=_finalize)
 

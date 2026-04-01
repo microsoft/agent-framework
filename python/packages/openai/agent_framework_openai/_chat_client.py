@@ -1912,9 +1912,7 @@ class RawOpenAIChatClient(  # type: ignore[misc]
             args["usage_details"] = usage_details
         if structured_response:
             args["value"] = structured_response
-        elif (response_format := options.get("response_format")) and isinstance(response_format, type):
-            # Only pass response_format to ChatResponse if it's a Pydantic model type,
-            # not a runtime JSON schema dict
+        elif response_format := options.get("response_format"):
             args["response_format"] = response_format
         # Set continuation_token when background operation is still in progress
         if response.status and response.status in ("in_progress", "queued"):

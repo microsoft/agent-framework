@@ -14,11 +14,8 @@ async def main():
     # get the path
     current_path = Path(__file__).parent
     yaml_path = current_path.parent.parent.parent.parent / "agent-samples" / "openai" / "OpenAIResponses.yaml"
-    # load the yaml from the path
-    with yaml_path.open("r") as f:
-        yaml_str = f.read()
     # create the agent from the yaml
-    agent = AgentFactory(safe_mode=False).create_agent_from_yaml(yaml_str)
+    agent = AgentFactory(safe_mode=False).create_agent_from_yaml_path(yaml_path)
     # use the agent
     response = await agent.run("Why is the sky blue, answer in Dutch?")
     # Use response.value with try/except for safe parsing

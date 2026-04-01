@@ -2327,7 +2327,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             return _get_response()
 
         response_format = mutable_options.get("response_format") if mutable_options else None
-        output_format_type: type[BaseModel] | None = response_format if isinstance(response_format, type) else None
         stream_result_hooks: list[Callable[[ChatResponse], Any]] = []
 
         async def _stream() -> AsyncIterable[ChatResponseUpdate]:
@@ -2485,6 +2484,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()
             # We don't need to run them again here
-            return ChatResponse.from_updates(updates, output_format_type=output_format_type)
+            return ChatResponse.from_updates(updates, output_format_type=response_format)
 
         return ResponseStream(_stream(), finalizer=_finalize)

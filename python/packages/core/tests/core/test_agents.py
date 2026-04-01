@@ -301,6 +301,56 @@ async def test_chat_client_agent_streaming_response_format_from_run_options(
     assert result.value.greeting == "Hi"
 
 
+async def test_chat_client_agent_response_format_dict_from_default_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """AgentResponse.value should parse JSON dicts from default_options response_format."""
+    json_text = json.dumps({"greeting": "Hello"})
+    client.responses.append(ChatResponse(messages=Message(role="assistant", text=json_text)))  # type: ignore[attr-defined]
+
+    agent = Agent(
+        client=client,
+        default_options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+    result = await agent.run("Hello")
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, dict)
+    assert result.value["greeting"] == "Hello"
+
+
+async def test_chat_client_agent_streaming_response_format_dict_from_run_options(
+    client: SupportsChatGetResponse,
+) -> None:
+    """Agent streaming should preserve mapping response_format and parse the final value as a dict."""
+    json_text = json.dumps({"greeting": "Hi"})
+    client.streaming_responses.append(  # type: ignore[attr-defined]
+        [
+            ChatResponseUpdate(
+                contents=[Content.from_text(json_text)],
+                role="assistant",
+                finish_reason="stop",
+            )
+        ]
+    )
+
+    agent = Agent(client=client)
+    stream = agent.run(
+        "Hello",
+        stream=True,
+        options={"response_format": {"type": "object", "properties": {"greeting": {"type": "string"}}}},
+    )
+    async for _ in stream:
+        pass
+    result = await stream.get_final_response()
+
+    assert result.text == json_text
+    assert result.value is not None
+    assert isinstance(result.value, dict)
+    assert result.value["greeting"] == "Hi"
+
+
 async def test_chat_client_agent_create_session(
     client: SupportsChatGetResponse,
 ) -> None:

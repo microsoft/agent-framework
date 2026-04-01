@@ -345,10 +345,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> ChatResponse[Any]:
         """Finalize response updates into a single ChatResponse."""
-        output_format_type = response_format if isinstance(response_format, type) else None
         return ChatResponse.from_updates(  # pyright: ignore[reportUnknownVariableType]
             updates,
-            output_format_type=output_format_type,
+            output_format_type=response_format,
         )
 
     def _build_response_stream(

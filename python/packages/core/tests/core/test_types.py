@@ -800,6 +800,19 @@ def test_chat_response_with_format_init():
     assert response.value.response == "Hello"
 
 
+def test_chat_response_with_mapping_response_format() -> None:
+    """ChatResponse.value should parse JSON when response_format is a mapping."""
+    message = Message(role="assistant", text='{"response": "Hello"}')
+    response = ChatResponse(
+        messages=message,
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
+
+
 def test_chat_response_value_raises_on_invalid_schema():
     """Test that value property raises ValidationError with field constraint details."""
 
@@ -1002,6 +1015,22 @@ async def test_chat_response_from_async_generator_output_format_in_method():
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
+
+
+async def test_chat_response_from_async_generator_mapping_response_format() -> None:
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
+
+    resp = await ChatResponse.from_update_generator(
+        gen(),
+        output_format_type={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert isinstance(resp.value, dict)
+    assert resp.value["response"] == "Hello"
 
 
 # region ToolMode
