@@ -584,7 +584,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 continue
 
             try:
-                poller = await self._client.begin_analyze(  # type: ignore[reportUnknownVariableType]
+                poller = await self._client.begin_analyze(  # type: ignore[call-overload, reportUnknownVariableType]
                     token_info["analyzer_id"],
                     continuation_token=token_info["continuation_token"],  # pyright: ignore[reportCallIssue]
                 )
@@ -597,8 +597,8 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 # on resolution turns the resumed poller needs a network round-trip
                 # to fetch the result.  If the analysis is still running after 10s,
                 # the token is kept and retried on the next turn.
-                _MIN_RESOLUTION_TIMEOUT = 10.0
-                resolution_timeout = max(self.max_wait or _MIN_RESOLUTION_TIMEOUT, _MIN_RESOLUTION_TIMEOUT)
+                MIN_RESOLUTION_TIMEOUT = 10.0
+                resolution_timeout = max(self.max_wait or MIN_RESOLUTION_TIMEOUT, MIN_RESOLUTION_TIMEOUT)
                 try:
                     result: AnalysisResult = await asyncio.wait_for(
                         poller.result(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
