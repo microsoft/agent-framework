@@ -56,6 +56,7 @@ Console.WriteLine();
 for (int i = 0; i < results.Items.Count; i++)
 {
     Console.WriteLine($"Query: {queries[i]}");
+    Console.WriteLine($"Response: {results.InputItems?[i].Response?.Substring(0, Math.Min(50, results.InputItems[i].Response.Length)) ?? "N/A"}...");
     foreach (var metric in results.Items[i].Metrics)
     {
         string status = metric.Value.Interpretation?.Failed == true ? "FAIL" : "PASS";

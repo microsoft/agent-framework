@@ -9,20 +9,17 @@ using Microsoft.Agents.AI;
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
 
-// WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
-// In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
-// latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+// Create a math tutor agent.
+AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+    .AsAIAgent(
+        model: deploymentName,
+        instructions: "You are a math tutor. Answer concisely with the numeric result.",
+        name: "MathTutor");
 
 // Combine built-in checks.
 LocalEvaluator localEvaluator = new(
     EvalChecks.ContainsExpected(),   // response must contain the expected answer
     EvalChecks.NonEmpty());          // response must not be empty
-
-AIAgent agent = projectClient.AsAIAgent(
-    model: deploymentName,
-    instructions: "You are a math tutor. Answer concisely with the numeric result.",
-    name: "MathTutor");
 
 // Queries and expected outputs.
 string[] queries = ["What is 2 + 2?", "What is the square root of 144?"];
@@ -43,6 +40,7 @@ Console.WriteLine();
 for (int i = 0; i < results.Items.Count; i++)
 {
     Console.WriteLine($"Query: {queries[i]}  |  Expected: {expectedOutputs[i]}");
+    Console.WriteLine($"Response: {results.InputItems?[i].Response?.Substring(0, Math.Min(50, results.InputItems[i].Response.Length)) ?? "N/A"}");
     foreach (var metric in results.Items[i].Metrics)
     {
         string status = metric.Value.Interpretation?.Failed == true ? "FAIL" : "PASS";
