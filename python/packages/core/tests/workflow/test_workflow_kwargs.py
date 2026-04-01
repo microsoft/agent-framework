@@ -995,7 +995,7 @@ async def test_empty_function_invocation_kwargs_clears_previous() -> None:
     # Agent should receive None because the empty dict resolves to an empty
     # __global__ entry which is treated as "no kwargs" for each executor.
     assert len(agent.captured_kwargs) >= 2
-    assert agent.captured_kwargs[-1].get("function_invocation_kwargs") is None
+    assert agent.captured_kwargs[-1].get("function_invocation_kwargs") == {}
 
 
 async def test_empty_client_kwargs_clears_previous() -> None:
@@ -1019,7 +1019,7 @@ async def test_empty_client_kwargs_clears_previous() -> None:
     )
 
     assert len(agent.captured_kwargs) >= 2
-    assert agent.captured_kwargs[-1].get("client_kwargs") is None
+    assert agent.captured_kwargs[-1].get("client_kwargs") == {}
 
 
 # endregion

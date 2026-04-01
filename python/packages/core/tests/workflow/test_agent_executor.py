@@ -633,16 +633,6 @@ async def test_resolve_executor_kwargs_prefers_executor_id_over_global() -> None
     assert result == {"specific": True}
 
 
-async def test_resolve_executor_kwargs_returns_none_for_empty_dict_value() -> None:
-    """_resolve_executor_kwargs returns None when the matched value is an empty dict."""
-    agent = _CountingAgent(id="a", name="A")
-    executor = AgentExecutor(agent, id="exec_a")
-
-    resolved = {GLOBAL_KWARGS_KEY: {}}
-    result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result is None
-
-
 async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> None:
     """_prepare_agent_run_args extracts function_invocation_kwargs from the state dict."""
     agent = _CountingAgent(id="a", name="A")
@@ -708,4 +698,4 @@ async def test_resolve_executor_kwargs_empty_per_executor_does_not_fallback_to_g
     # The empty dict should be honoured (no fallback to global).
     resolved = {"exec_a": {}, GLOBAL_KWARGS_KEY: {"global_key": "global_val"}}
     result = executor._resolve_executor_kwargs(resolved)  # pyright: ignore[reportPrivateUsage]
-    assert result is None
+    assert result == {}

@@ -470,4 +470,13 @@ class AgentExecutor(Executor):
         else:
             return None
 
-        return executor_kwargs
+        if not isinstance(executor_kwargs, dict):
+            logger.warning(
+                "Executor %s expected a dict for its kwargs, but got %s. Ignoring.",
+                self.id,
+                type(executor_kwargs),  # type: ignore
+            )
+
+            return None
+
+        return executor_kwargs  # type: ignore
