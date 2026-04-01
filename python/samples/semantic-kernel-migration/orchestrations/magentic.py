@@ -47,7 +47,7 @@ PROMPT = (
 ######################################################################
 
 
-async def build_semantic_kernel_agents() -> list[Agent]:
+async def build_semantic_kernel_agents() -> list[ChatCompletionAgent | OpenAIAssistantAgent]:
     research_agent = ChatCompletionAgent(
         name="ResearchAgent",
         description="A helpful assistant with access to web search. Ask it to perform web searches.",
@@ -74,7 +74,7 @@ async def build_semantic_kernel_agents() -> list[Agent]:
         definition=definition,
     )
 
-    return [research_agent, coder_agent]  # type: ignore
+    return [research_agent, coder_agent]
 
 
 def sk_agent_response_callback(
@@ -185,7 +185,7 @@ async def run_agent_framework_example(prompt: str) -> str | None:
     if output_messages:
         return output_messages[-1].text
 
-    return ""
+    return None
 
 
 def _print_agent_framework_output(result: str | None) -> None:
