@@ -142,7 +142,7 @@ async def main() -> None:
         print(f"Agent: {response}\n")
 
     # Explicitly delete the vector store created for this sample
-    await openai_client.beta.vector_stores.delete(vector_store.id)
+    await openai_client.vector_stores.delete(vector_store.id)
     await openai_client.close()
     print("Done. Vector store deleted and client closed.")
 
