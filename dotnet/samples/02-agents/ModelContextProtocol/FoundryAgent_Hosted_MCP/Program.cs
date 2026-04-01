@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a simple AI agent with Azure Foundry Agents as the backend, that uses a Hosted MCP Tool.
-// In this case the Azure Foundry Agents service will invoke any MCP tools as required. MCP tools are not invoked by the Agent Framework.
+// This sample shows how to create and use a simple AI agent with Microsoft Foundry Agents as the backend, that uses a Hosted MCP Tool.
+// In this case the Microsoft Foundry Agents service will invoke any MCP tools as required. MCP tools are not invoked by the Agent Framework.
 // The sample first shows how to use MCP tools with auto approval, and then how to set up a tool that requires approval before it can be invoked and how to approve such a tool.
 
 using Azure.AI.Projects;

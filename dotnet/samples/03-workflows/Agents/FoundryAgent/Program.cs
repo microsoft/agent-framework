@@ -11,12 +11,12 @@ using Microsoft.Extensions.AI;
 namespace WorkflowFoundryAgentSample;
 
 /// <summary>
-/// This sample shows how to use Azure Foundry Agents within a workflow.
+/// This sample shows how to use Microsoft Foundry Agents within a workflow.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
 /// - Foundational samples should be completed first.
-/// - An Azure Foundry project endpoint and model id.
+/// - An Microsoft Foundry project endpoint and model id.
 /// </remarks>
 public static class Program
 {

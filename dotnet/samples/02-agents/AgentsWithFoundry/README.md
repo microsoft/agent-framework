@@ -1,6 +1,6 @@
 ﻿# Getting started with Foundry Agents
 
-These samples demonstrate how to use Azure AI Foundry with Agent Framework.
+These samples demonstrate how to use Microsoft Foundry with Agent Framework.
 
 ## Quick start
 
