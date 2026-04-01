@@ -28,6 +28,7 @@ from agent_framework import (
     HistoryProvider,
     InMemoryHistoryProvider,
     Message,
+    ResponseStream,
     SessionContext,
     SlidingWindowStrategy,
     SupportsAgentRun,
@@ -588,6 +589,119 @@ async def test_per_service_call_persistence_uses_real_service_storage_when_clien
     assert "get_call_count" not in provider_state
     assert "save_call_count" not in provider_state
     assert session.service_session_id == "resp_service_managed"
+
+
+async def test_service_storage_updates_session_handle_per_service_call_before_non_streaming_failure(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+    first_response = ChatResponse(
+        messages=Message(
+            role="assistant",
+            contents=[
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="lookup_weather",
+                    arguments='{"location": "Seattle"}',
+                )
+            ],
+        ),
+        conversation_id="resp_call_1",
+        response_id="resp_call_1",
+    )
+    mock_get_non_streaming_response = AsyncMock(
+        side_effect=[first_response, RuntimeError("service down")],
+    )
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with (
+        patch.object(chat_client_base, "_get_non_streaming_response", new=mock_get_non_streaming_response),
+        pytest.raises(RuntimeError, match="service down"),
+    ):
+        await agent.run("What's the weather in Seattle?", session=session)
+
+    assert mock_get_non_streaming_response.await_count == 2
+    assert session.service_session_id == "resp_call_1"
+
+
+async def test_service_storage_updates_session_handle_per_service_call_before_streaming_failure(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    provider = _RecordingHistoryProvider()
+
+    @tool(name="lookup_weather", approval_mode="never_require")
+    def lookup_weather(location: str) -> str:
+        return f"Weather in {location}: sunny"
+
+    chat_client_base.STORES_BY_DEFAULT = True  # type: ignore[attr-defined]
+
+    session = AgentSession()
+    session.state[provider.source_id] = {"messages": []}
+
+    async def _first_stream_updates() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(
+            contents=[
+                Content.from_function_call(
+                    call_id="call_1",
+                    name="lookup_weather",
+                    arguments='{"location": "Seattle"}',
+                )
+            ],
+            role="assistant",
+            finish_reason="stop",
+        )
+
+    def _finalize_first_stream(_updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
+        return ChatResponse(
+            messages=Message(
+                role="assistant",
+                contents=[
+                    Content.from_function_call(
+                        call_id="call_1",
+                        name="lookup_weather",
+                        arguments='{"location": "Seattle"}',
+                    )
+                ],
+            ),
+            conversation_id="resp_call_1",
+            response_id="resp_call_1",
+        )
+
+    first_stream = ResponseStream(_first_stream_updates(), finalizer=_finalize_first_stream)
+    mock_get_streaming_response = MagicMock(side_effect=[first_stream, RuntimeError("service down")])
+
+    agent = Agent(
+        client=chat_client_base,
+        tools=[lookup_weather],
+        context_providers=[provider],
+        require_per_service_call_history_persistence=True,
+    )
+
+    with (
+        patch.object(chat_client_base, "_get_streaming_response", new=mock_get_streaming_response),
+        pytest.raises(RuntimeError, match="service down"),
+    ):
+        stream = agent.run("What's the weather in Seattle?", session=session, stream=True)
+        async for _ in stream:
+            pass
+
+    assert mock_get_streaming_response.call_count == 2
+    assert session.service_session_id == "resp_call_1"
 
 
 async def test_chat_agent_without_per_service_call_persistence_preserves_response_id(
