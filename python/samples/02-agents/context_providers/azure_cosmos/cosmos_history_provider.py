@@ -4,11 +4,10 @@
 import asyncio
 import os
 
+from agent_framework.azure_cosmos import CosmosHistoryProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-from agent_framework_azure_cosmos import CosmosHistoryProvider
 
 # Load environment variables from .env file.
 load_dotenv()

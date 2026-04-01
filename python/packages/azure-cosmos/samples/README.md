@@ -1,20 +1,5 @@
 # Azure Cosmos DB Package Samples
 
-This folder contains samples for `agent-framework-azure-cosmos`.
+Samples for `agent-framework-azure-cosmos` have moved to the root samples directory:
 
-| File | Description |
-| --- | --- |
-| [`cosmos_history_provider.py`](cosmos_history_provider.py) | Demonstrates an Agent using `CosmosHistoryProvider` with `FoundryChatClient` (configured against an Azure AI Foundry project endpoint), provider-configured container name, and `session_id` partitioning. |
-
-## Prerequisites
-
-- `AZURE_COSMOS_ENDPOINT`
-- `AZURE_COSMOS_DATABASE_NAME`
-- `AZURE_COSMOS_CONTAINER_NAME`
-- `AZURE_COSMOS_KEY` (or equivalent credential flow)
-
-## Run
-
-```bash
-uv run --directory packages/azure-cosmos python samples/cosmos_history_provider.py
-```
+[`samples/02-agents/context_providers/azure_cosmos/`](../../../samples/02-agents/context_providers/azure_cosmos/)

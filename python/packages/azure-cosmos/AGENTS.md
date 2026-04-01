@@ -21,7 +21,17 @@ provider = CosmosHistoryProvider(
 
 Container name is configured on the provider. `session_id` is used as the partition key.
 
-## Import Path
+## Import Paths
+
+Lazy-loading namespace (recommended):
+
+```python
+from agent_framework.azure_cosmos import CosmosHistoryProvider
+```
+
+Also available via the Azure umbrella namespace (`from agent_framework.azure import CosmosHistoryProvider`).
+
+Direct package import:
 
 ```python
 from agent_framework_azure_cosmos import CosmosHistoryProvider

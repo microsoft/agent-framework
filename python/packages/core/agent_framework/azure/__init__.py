@@ -14,6 +14,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "AgentResponseCallbackProtocol": ("agent_framework_durabletask", "agent-framework-durabletask"),
     "AzureAISearchContextProvider": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
     "AzureAISearchSettings": ("agent_framework_azure_ai_search", "agent-framework-azure-ai-search"),
+    "CosmosHistoryProvider": ("agent_framework_azure_cosmos", "agent-framework-azure-cosmos"),
     "AzureAISettings": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAIInferenceEmbeddingClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
     "AzureAIInferenceEmbeddingOptions": ("agent_framework_azure_ai", "agent-framework-azure-ai"),

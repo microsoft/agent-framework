@@ -35,4 +35,4 @@ Container naming behavior:
 - Container name is configured on the provider (`container_name` or `AZURE_COSMOS_CONTAINER_NAME`)
 - `session_id` is used as the Cosmos partition key for reads/writes
 
-See `samples/cosmos_history_provider.py` for a runnable package-local example.
+See [`samples/02-agents/context_providers/azure_cosmos/`](../../samples/02-agents/context_providers/azure_cosmos/) for runnable examples.
