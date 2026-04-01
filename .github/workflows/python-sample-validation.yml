@@ -610,14 +610,19 @@ jobs:
     env:
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT || vars.AZURE_AI_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # Azure OpenAI configuration
+      # Azure OpenAI configuration for AF
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
       AZURE_OPENAI_MODEL: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      # OpenAI configuration
+      # Azure OpenAI configuration for SK
+      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME }}
+      # OpenAI key
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
+      # OpenAI configuration for AF
       OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
       OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      # OpenAI configuration for SK
+      OPENAI_CHAT_MODEL_ID: ${{ vars.OPENAI__CHATMODELID }}
       # Copilot Studio
       COPILOTSTUDIOAGENT__ENVIRONMENTID: ${{ secrets.COPILOTSTUDIOAGENT__ENVIRONMENTID }}
       COPILOTSTUDIOAGENT__SCHEMANAME: ${{ secrets.COPILOTSTUDIOAGENT__SCHEMANAME }}
