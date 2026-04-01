@@ -2,7 +2,7 @@
 
 [Neo4j Agent Memory](https://github.com/neo4j-labs/agent-memory) ([PyPI](https://pypi.org/project/neo4j-agent-memory/) · [Documentation](https://neo4j-agent-memory.vercel.app/)) is a graph-native memory system for AI agents that stores conversations, builds knowledge graphs from interactions, and lets agents learn from their own reasoning — all backed by Neo4j.
 
-This is a **read-write memory provider** — it grows over time as the agent interacts with users. For read-only retrieval from an existing knowledge base, see the [Neo4j GraphRAG Provider](../neo4j_graphrag/README.md). For help choosing between the two, see the [Neo4j Context Providers overview](../neo4j/README.md).
+This is a **read-write memory provider** — it grows over time as the agent interacts with users. For read-only retrieval from an existing knowledge base, see the [Neo4j GraphRAG Provider](../../../../05-end-to-end/neo4j_graphrag/README.md). For help choosing between the two, see the [Neo4j Context Providers overview](../neo4j/README.md).
 
 ## Examples
 
