@@ -5,7 +5,7 @@ import os
 from contextlib import suppress
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, SessionContext, SupportsChatGetResponse
+from agent_framework import Agent, AgentSession, ContextProvider, SessionContext, SupportsChatGetResponse
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -20,7 +20,7 @@ class UserInfo(BaseModel):
     age: int | None = None
 
 
-class UserInfoMemory(BaseContextProvider):
+class UserInfoMemory(ContextProvider):
     DEFAULT_SOURCE_ID = "user_info_memory"
 
     def __init__(self, source_id: str = DEFAULT_SOURCE_ID, *, client: SupportsChatGetResponse, **kwargs: Any):

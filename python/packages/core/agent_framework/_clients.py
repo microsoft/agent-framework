@@ -572,6 +572,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         default_options: OptionsCoT | Mapping[str, Any] | None = None,
         context_providers: Sequence[Any] | None = None,
         middleware: Sequence[MiddlewareTypes] | None = None,
+        require_per_service_call_history_persistence: bool = False,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
@@ -596,6 +597,10 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                 and dict literals are accepted without specialized option typing.
             context_providers: Context providers to include during agent invocation.
             middleware: List of middleware to intercept agent and function invocations.
+            require_per_service_call_history_persistence: Whether to require per-service-call
+                chat history persistence. When enabled, history providers are invoked around
+                each model call instead of once per ``run()`` when the service is not already
+                storing history.
             function_invocation_configuration: Optional function invocation configuration override.
             compaction_strategy: Optional agent-level compaction override. When omitted,
                 client-level compaction defaults remain in effect for each call.
@@ -636,6 +641,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             "default_options": cast(Any, default_options),
             "context_providers": context_providers,
             "middleware": middleware,
+            "require_per_service_call_history_persistence": require_per_service_call_history_persistence,
             "compaction_strategy": compaction_strategy,
             "tokenizer": tokenizer,
             "additional_properties": dict(additional_properties) if additional_properties is not None else None,

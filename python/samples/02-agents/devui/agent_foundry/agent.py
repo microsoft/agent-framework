@@ -53,7 +53,7 @@ agent = Agent(
     name="FoundryWeatherAgent",
     client=FoundryChatClient(
         project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
-        model_model=os.environ.get("FOUNDRY_MODEL"),
+        model=os.environ.get("FOUNDRY_MODEL"),
         credential=AzureCliCredential(),
     ),
     instructions="""

@@ -7,7 +7,7 @@ This sample demonstrates a simple Weather Forecast Agent built with the Python M
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) for fast dependency management
 - [devtunnel](https://learn.microsoft.com/azure/developer/dev-tunnels/get-started?tabs=windows)
-- [Microsoft 365 Agents Toolkit](https://github.com/OfficeDev/microsoft-365-agents-toolkit) for playground/testing
+- `agentsplayground` for playground/testing
 - Access to OpenAI or Azure OpenAI with a model like `gpt-4o-mini`
 
 ## Configuration

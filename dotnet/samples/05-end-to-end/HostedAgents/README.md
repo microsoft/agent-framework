@@ -20,7 +20,7 @@ Before running any sample, ensure you have:
 
 1. **.NET 10 SDK** or later — [Download](https://dotnet.microsoft.com/download/dotnet/10.0)
 2. **Azure CLI** installed — [Install guide](https://learn.microsoft.com/cli/azure/install-azure-cli)
-3. **Azure OpenAI** or **Azure AI Foundry project** with a chat model deployed (e.g., `gpt-4o-mini`)
+3. **Azure OpenAI** or **Microsoft Foundry project** with a chat model deployed (e.g., `gpt-4o-mini`)
 
 ### Authenticate with Azure CLI
 
@@ -39,14 +39,14 @@ Most samples require one or more of these environment variables:
 |----------|---------|-------------|
 | `AZURE_OPENAI_ENDPOINT` | Most samples | Your Azure OpenAI resource endpoint URL |
 | `AZURE_OPENAI_DEPLOYMENT_NAME` | Most samples | Chat model deployment name (defaults to `gpt-4o-mini`) |
-| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Azure AI Foundry project endpoint |
+| `AZURE_AI_PROJECT_ENDPOINT` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Microsoft Foundry project endpoint |
 | `MODEL_DEPLOYMENT_NAME` | AgentWithLocalTools, FoundryMultiAgent, FoundrySingleAgent | Chat model deployment name (defaults to `gpt-4o-mini`) |
 
 See each sample's README for the specific variables required.
 
-## Azure AI Foundry Setup (for samples that use Foundry)
+## Microsoft Foundry Setup (for samples that use Foundry)
 
-Some samples (`AgentWithLocalTools`, `FoundrySingleAgent`, `FoundryMultiAgent`) connect to an Azure AI Foundry project. If you're using these samples, you'll need additional setup.
+Some samples (`AgentWithLocalTools`, `FoundrySingleAgent`, `FoundryMultiAgent`) connect to a Microsoft Foundry project. If you're using these samples, you'll need additional setup.
 
 ### Azure AI Developer Role
 
@@ -61,7 +61,7 @@ az role assignment create `
 
 > **Note**: You need **Owner** or **User Access Administrator** permissions on the resource to assign roles. If you don't have this, you may need to request JIT (Just-In-Time) elevated access via [Azure PIM](https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade/~/aadmigratedresource).
 
-For more details on permissions, see [Azure AI Foundry Permissions](https://aka.ms/FoundryPermissions).
+For more details on permissions, see [Microsoft Foundry Permissions](https://aka.ms/FoundryPermissions).
 
 ## Running a Sample
 

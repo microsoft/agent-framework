@@ -1688,6 +1688,34 @@ def _update_conversation_id(
         options["conversation_id"] = conversation_id
 
 
+def _update_continuation_state(
+    kwargs: dict[str, Any],
+    response: ChatResponse[Any],
+    *,
+    session: AgentSession | None,
+    options: dict[str, Any] | None = None,
+) -> None:
+    """Update in-flight and persisted continuation state from a response."""
+    conversation_id = response.conversation_id
+    if conversation_id is None:
+        return
+
+    _update_conversation_id(kwargs, conversation_id, options)
+    if (
+        session is not None
+        and not response.has_internal_conversation_id()
+        and session.service_session_id != conversation_id
+    ):
+        session.service_session_id = conversation_id
+
+
+def _clear_internal_conversation_id(response: ChatResponse[Any]) -> ChatResponse[Any]:
+    if response.has_internal_conversation_id():
+        response.conversation_id = None
+        response.clear_internal_conversation_id()
+    return response
+
+
 def _extract_tools(
     options: dict[str, Any] | None,
 ) -> ToolTypes | Callable[..., Any] | Sequence[ToolTypes | Callable[..., Any]] | None:
@@ -2206,9 +2234,14 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                         ),
                     )
                     aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                    _update_continuation_state(
+                        filtered_kwargs,
+                        response,
+                        session=invocation_session,
+                        options=mutable_options,
+                    )
 
                     if response.conversation_id is not None:
-                        _update_conversation_id(filtered_kwargs, response.conversation_id, mutable_options)
                         prepped_messages = []
 
                     result = await _process_function_requests(
@@ -2223,7 +2256,7 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     )
                     if result.get("action") == "return":
                         response.usage_details = aggregated_usage
-                        return response
+                        return _clear_internal_conversation_id(response)
                     total_function_calls += result.get("function_call_count", 0)
                     if result.get("action") == "stop":
                         # Error threshold reached: force a final non-tool turn so
@@ -2279,11 +2312,17 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     ),
                 )
                 aggregated_usage = add_usage_details(aggregated_usage, response.usage_details)
+                _update_continuation_state(
+                    filtered_kwargs,
+                    response,
+                    session=invocation_session,
+                    options=mutable_options,
+                )
                 response.usage_details = aggregated_usage
                 if fcc_messages:
                     for msg in reversed(fcc_messages):
                         response.messages.insert(0, msg)
-                return response
+                return _clear_internal_conversation_id(response)
 
             return _get_response()
 
@@ -2343,6 +2382,12 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                 # Get the finalized response from the inner stream
                 # This triggers the inner stream's finalizer and result hooks
                 response = await inner_stream.get_final_response()
+                _update_continuation_state(
+                    filtered_kwargs,
+                    response,
+                    session=invocation_session,
+                    options=mutable_options,
+                )
 
                 if not any(
                     item.type in ("function_call", "function_approval_request")
@@ -2352,7 +2397,6 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
                     return
 
                 if response.conversation_id is not None:
-                    _update_conversation_id(filtered_kwargs, response.conversation_id, mutable_options)
                     prepped_messages = []
 
                 result = await _process_function_requests(
@@ -2430,7 +2474,13 @@ class FunctionInvocationLayer(Generic[OptionsCoT]):
             async for update in final_inner_stream:
                 yield update
             # Finalize the inner stream to trigger its hooks
-            await final_inner_stream.get_final_response()
+            final_response = await final_inner_stream.get_final_response()
+            _update_continuation_state(
+                filtered_kwargs,
+                final_response,
+                session=invocation_session,
+                options=mutable_options,
+            )
 
         def _finalize(updates: Sequence[ChatResponseUpdate]) -> ChatResponse[Any]:
             # Note: stream_result_hooks are already run via inner stream's get_final_response()

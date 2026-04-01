@@ -35,9 +35,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
-    BaseHistoryProvider,
     Content,
     ContinuationToken,
+    HistoryProvider,
     Message,
     ResponseStream,
     SessionContext,
@@ -353,7 +353,7 @@ class A2AAgent(AgentTelemetryLayer, BaseAgent):
 
         # Run before_run providers (forward order)
         for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             if session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")

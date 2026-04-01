@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 from .._agents import BaseAgent
 from .._sessions import (
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
 )
@@ -86,7 +86,7 @@ class WorkflowAgent(BaseAgent):
         id: str | None = None,
         name: str | None = None,
         description: str | None = None,
-        context_providers: Sequence[BaseContextProvider] | None = None,
+        context_providers: Sequence[ContextProvider] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the WorkflowAgent.
@@ -249,7 +249,7 @@ class WorkflowAgent(BaseAgent):
             options={},
         )
         for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
@@ -314,7 +314,7 @@ class WorkflowAgent(BaseAgent):
             options={},
         )
         for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             if provider_session is None:
                 raise RuntimeError("Provider session must be available when context providers are configured.")
