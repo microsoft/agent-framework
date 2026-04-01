@@ -16,9 +16,9 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
     Content,
+    ContextProvider,
+    HistoryProvider,
     Message,
 )
 from agent_framework.exceptions import AgentException
@@ -1371,7 +1371,7 @@ class TestGitHubCopilotAgentPermissions:
         assert "on_permission_request" not in config
 
 
-class SpyContextProvider(BaseContextProvider):
+class SpyContextProvider(ContextProvider):
     """A context provider that records whether its hooks are called."""
 
     def __init__(self) -> None:
@@ -1579,7 +1579,7 @@ class TestGitHubCopilotAgentContextProviders:
         """Test that context messages added by providers via extend_messages are included in the prompt."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
-        class MessageInjectingProvider(BaseContextProvider):
+        class MessageInjectingProvider(ContextProvider):
             def __init__(self) -> None:
                 super().__init__(source_id="msg-injector")
 
@@ -1629,7 +1629,7 @@ class TestGitHubCopilotAgentContextProviders:
 
         mock_session.on = mock_on
 
-        class MessageInjectingProvider(BaseContextProvider):
+        class MessageInjectingProvider(ContextProvider):
             def __init__(self) -> None:
                 super().__init__(source_id="msg-injector")
 
@@ -1716,7 +1716,7 @@ class TestGitHubCopilotAgentContextProviders:
         mock_session.send_and_wait.return_value = assistant_message_event
         call_order: list[str] = []
 
-        class OrderedProvider(BaseContextProvider):
+        class OrderedProvider(ContextProvider):
             def __init__(self, name: str) -> None:
                 super().__init__(source_id=name)
                 self.name = name
@@ -1754,10 +1754,10 @@ class TestGitHubCopilotAgentContextProviders:
         mock_session: MagicMock,
         assistant_message_event: SessionEvent,
     ) -> None:
-        """Test that BaseHistoryProvider with load_messages=False is skipped in before_run."""
+        """Test that HistoryProvider with load_messages=False is skipped in before_run."""
         mock_session.send_and_wait.return_value = assistant_message_event
 
-        class StubHistoryProvider(BaseHistoryProvider):
+        class StubHistoryProvider(HistoryProvider):
             def __init__(self, *, load_messages: bool = True) -> None:
                 super().__init__(source_id="stub-history", load_messages=load_messages)
                 self.before_run_called = False
@@ -1865,7 +1865,7 @@ class TestGitHubCopilotAgentContextProviders:
         mock_session.send_and_wait.return_value = assistant_message_event
         observed_options: dict[str, Any] = {}
 
-        class OptionsObserverProvider(BaseContextProvider):
+        class OptionsObserverProvider(ContextProvider):
             def __init__(self) -> None:
                 super().__init__(source_id="options-observer")
 

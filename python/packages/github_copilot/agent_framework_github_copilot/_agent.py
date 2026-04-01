@@ -15,9 +15,9 @@ from agent_framework import (
     AgentResponseUpdate,
     AgentSession,
     BaseAgent,
-    BaseHistoryProvider,
     Content,
     ContextProvider,
+    HistoryProvider,
     Message,
     ResponseStream,
     SessionContext,
@@ -560,7 +560,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         """Run before_run on all context providers and return the session context.
 
         Creates a SessionContext and invokes ``before_run`` on each provider in
-        forward order.  ``BaseHistoryProvider`` instances with
+        forward order.  ``HistoryProvider`` instances with
         ``load_messages=False`` are skipped.
 
         Keyword Args:
@@ -579,7 +579,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         )
 
         for provider in self.context_providers:
-            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+            if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
             await provider.before_run(
                 agent=self,  # type: ignore[arg-type]
