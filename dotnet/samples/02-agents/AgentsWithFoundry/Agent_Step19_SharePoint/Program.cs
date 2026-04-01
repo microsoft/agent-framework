@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use SharePoint Grounding Tool with a ChatClientAgent.
 

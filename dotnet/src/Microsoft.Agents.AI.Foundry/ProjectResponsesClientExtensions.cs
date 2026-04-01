@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;

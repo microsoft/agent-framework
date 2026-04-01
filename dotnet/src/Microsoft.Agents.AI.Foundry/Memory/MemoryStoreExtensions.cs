@@ -1,6 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.ClientModel;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.Projects;
 
 namespace Microsoft.Agents.AI.Foundry;

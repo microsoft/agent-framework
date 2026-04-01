@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use the Memory Search Tool with AI Agents.
 // The Memory Search Tool enables agents to recall information from previous conversations,

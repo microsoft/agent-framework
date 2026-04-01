@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to create and use AI agents with Microsoft Foundry Agents as the backend.
 

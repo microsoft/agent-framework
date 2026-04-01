@@ -1,7 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.ClientModel;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI;

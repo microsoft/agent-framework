@@ -22,7 +22,7 @@
   <PropertyGroup>
     <!-- NuGet Package Settings -->
     <Title>Microsoft Agent Framework Declarative Workflows Foundry</Title>
-    <Description>Provides Microsoft Agent Framework support for declarative workflows for Azure AI Foundry Agents.</Description>
+    <Description>Provides Microsoft Agent Framework support for declarative workflows for Microsoft Foundry Agents.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the built in RAG capabilities that the Foundry service provides when using AI Agents provided by Foundry.
 
