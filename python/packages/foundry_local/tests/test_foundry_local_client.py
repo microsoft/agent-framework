@@ -157,15 +157,15 @@ def test_foundry_local_client_init_with_device(mock_foundry_local_manager: Magic
         FoundryLocalClient(model="test-model-id", device=DeviceType.CPU)
 
         mock_foundry_local_manager.get_model_info.assert_called_once_with(
-            alias_or_model="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model="test-model-id",
+            "test-model-id",
             device=DeviceType.CPU,
         )
 
@@ -207,10 +207,10 @@ def test_foundry_local_client_init_calls_download_and_load(mock_foundry_local_ma
         FoundryLocalClient(model="test-model-id")
 
         mock_foundry_local_manager.download_model.assert_called_once_with(
-            alias_or_model="test-model-id",
+            "test-model-id",
             device=None,
         )
         mock_foundry_local_manager.load_model.assert_called_once_with(
-            alias_or_model="test-model-id",
+            "test-model-id",
             device=None,
         )

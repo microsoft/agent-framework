@@ -23,7 +23,7 @@ from agent_framework._settings import load_settings
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_completion_client import RawOpenAIChatCompletionClient
 from foundry_local import FoundryLocalManager
-from foundry_local.models import DeviceType
+from foundry_local.models import DeviceType, FoundryModelInfo
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
@@ -290,8 +290,8 @@ class FoundryLocalClient(
                 # will take a long time as the model is loaded then.
                 # Alternatively, you could call the `download_model` and `load_model` methods
                 # on the `manager` property manually.
-                client.manager.download_model(alias_or_model="phi-4-mini", device=DeviceType.CPU)
-                client.manager.load_model(alias_or_model="phi-4-mini", device=DeviceType.CPU)
+                client.manager.download_model("phi-4-mini", device=DeviceType.CPU)
+                client.manager.load_model("phi-4-mini", device=DeviceType.CPU)
 
                 # You can also use the CLI:
                 `foundry model load phi-4-mini --device Auto`
@@ -323,8 +323,8 @@ class FoundryLocalClient(
         model_setting: str = settings["model"]  # type: ignore[assignment]  # pyright: ignore[reportTypedDictNotRequiredAccess]
 
         manager = FoundryLocalManager(bootstrap=bootstrap, timeout=timeout)
-        model_info = manager.get_model_info(
-            alias_or_model=model_setting,
+        model_info: FoundryModelInfo | None = manager.get_model_info(
+            model_setting,
             device=device,
         )
         if model_info is None:
@@ -335,8 +335,8 @@ class FoundryLocalClient(
             )
             raise ValueError(message)
         if prepare_model:
-            manager.download_model(alias_or_model=model_info.id, device=device)
-            manager.load_model(alias_or_model=model_info.id, device=device)
+            manager.download_model(model_info.id, device=device)
+            manager.load_model(model_info.id, device=device)
 
         super().__init__(
             model=model_info.id,
