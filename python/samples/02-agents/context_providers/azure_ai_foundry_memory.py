@@ -80,8 +80,6 @@ async def main() -> None:
         memory_provider = FoundryMemoryProvider(
             project_client=project_client,
             memory_store_name=memory_store.name,
-            scope="user_123",  # Scope memories to a specific user, if not set, the session_id
-            # will be used as scope, which means memories are only shared within the same session
             update_delay=0,  # Do not wait to update memories after each interaction (for demo purposes)
             # In production, consider setting a delay to batch updates and reduce costs
         )
@@ -99,6 +97,9 @@ async def main() -> None:
                 # note that we will use the service side storage, nor load messsages from the history provider,
                 # but we include it to demonstrate that it can be used alongside the Foundry provider for other use cases.
                 session = agent.create_session()
+                # Set user identity on the session so the memory provider can scope memories per user
+                # Maybe set the user_id when creating the session instead in the future if that fits better with the API design.
+                session.state["user_id"] = "user_123"
 
                 # First interaction - establish some preferences
                 print("=== First conversation ===")
