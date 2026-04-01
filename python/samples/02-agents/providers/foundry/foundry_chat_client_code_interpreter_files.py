@@ -10,9 +10,6 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Foundry Chat Client with Code Interpreter and Files Example
 
@@ -23,6 +20,9 @@ Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
     FOUNDRY_MODEL            — Model deployment name (e.g. "gpt-4o")
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Helper functions
 
@@ -82,22 +82,23 @@ async def main() -> None:
 
     temp_file_path, file_id = await create_sample_file_and_upload(openai_client)
 
-    # Create code interpreter tool with file access
-    code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])
+    try:
+        # Create code interpreter tool with file access
+        code_interpreter_tool = client.get_code_interpreter_tool(file_ids=[file_id])
 
-    agent = Agent(
-        client=client,
-        instructions="You are a helpful assistant that can analyze data files using Python code.",
-        tools=[code_interpreter_tool],
-    )
+        agent = Agent(
+            client=client,
+            instructions="You are a helpful assistant that can analyze data files using Python code.",
+            tools=[code_interpreter_tool],
+        )
 
-    # Test the code interpreter with the uploaded file
-    query = "Analyze the employee data in the uploaded CSV file. Calculate average salary by department."
-    print(f"User: {query}")
-    result = await agent.run(query)
-    print(f"Agent: {result.text}")
-
-    await cleanup_files(openai_client, temp_file_path, file_id)
+        # Test the code interpreter with the uploaded file
+        query = "Analyze the employee data in the uploaded CSV file. Calculate average salary by department."
+        print(f"User: {query}")
+        result = await agent.run(query)
+        print(f"Agent: {result.text}")
+    finally:
+        await cleanup_files(openai_client, temp_file_path, file_id)
 
 
 if __name__ == "__main__":

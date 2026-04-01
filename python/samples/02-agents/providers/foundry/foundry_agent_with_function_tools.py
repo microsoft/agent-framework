@@ -10,9 +10,6 @@ from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import Field
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Foundry Agent with Local Function Tools
 
@@ -28,6 +25,9 @@ Environment variables:
     FOUNDRY_AGENT_NAME       — Name of the agent in Foundry
     FOUNDRY_AGENT_VERSION    — Version of the agent
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 @tool(approval_mode="never_require")

@@ -7,9 +7,6 @@ from agent_framework.foundry import FoundryAgent
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
 """
 Foundry Agent — Connect to a HostedAgent (no version needed)
 
@@ -20,6 +17,9 @@ Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the hosted agent
 """
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 async def main() -> None:
