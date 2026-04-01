@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from azure.ai.contentunderstanding.models import AnalysisResult
@@ -80,18 +80,22 @@ def make_mock_poller(result: AnalysisResult) -> AsyncMock:
     """Create a mock poller that returns the given result immediately."""
     poller = AsyncMock()
     poller.result = AsyncMock(return_value=result)
+    poller.continuation_token = MagicMock(return_value="mock_continuation_token")
+    poller.done = MagicMock(return_value=True)
     return poller
 
 
-def make_slow_poller(result: AnalysisResult, delay: float = 10.0) -> AsyncMock:
+def make_slow_poller(result: AnalysisResult, delay: float = 10.0) -> MagicMock:
     """Create a mock poller that simulates a timeout then eventually returns."""
-    poller = AsyncMock()
+    poller = MagicMock()
 
     async def slow_result() -> AnalysisResult:
         await asyncio.sleep(delay)
         return result
 
     poller.result = slow_result
+    poller.continuation_token = MagicMock(return_value="mock_slow_continuation_token")
+    poller.done = MagicMock(return_value=False)
     return poller
 
 

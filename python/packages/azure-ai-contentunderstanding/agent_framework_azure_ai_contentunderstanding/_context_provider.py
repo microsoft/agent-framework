@@ -198,12 +198,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         self._client = ContentUnderstandingClient(
             self._endpoint, self._credential, user_agent=AGENT_FRAMEWORK_USER_AGENT
         )
-        # Global copies of background tasks and uploaded file IDs — used only
-        # by close() for best-effort cleanup.  The authoritative per-session
-        # copies live in state["_pending_tasks"] / state["_uploaded_file_ids"]
-        # (populated in before_run).  These global lists may contain entries
-        # from multiple sessions; that is intentional for cleanup.
-        self._all_pending_tasks: list[asyncio.Task[AnalysisResult]] = []
+        # Global list of uploaded file IDs — used only by close() for
+        # best-effort cleanup.  The authoritative per-session copy lives in
+        # state["_uploaded_file_ids"] (populated in before_run).  This global
+        # list may contain entries from multiple sessions; that is intentional
+        # for cleanup.
         self._all_uploaded_file_ids: list[str] = []
 
     async def __aenter__(self) -> Self:
@@ -220,20 +219,11 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         await self.close()
 
     async def close(self) -> None:
-        """Close the underlying CU client and cancel pending tasks.
+        """Close the underlying CU client and clean up resources.
 
         Uses global tracking lists for best-effort cleanup across all
         sessions that used this provider instance.
         """
-        tasks_to_cancel: list[asyncio.Task[AnalysisResult]] = []
-        for task in self._all_pending_tasks:
-            if not task.done():
-                task.cancel()
-                tasks_to_cancel.append(task)
-        self._all_pending_tasks.clear()
-        # Await cancelled tasks so they don't outlive the client
-        if tasks_to_cancel:
-            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
         # Clean up uploaded files; the vector store itself is caller-managed.
         if self.file_search and self._all_uploaded_file_ids:
             await self._cleanup_uploaded_files()
@@ -254,11 +244,15 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         documents: dict[str, DocumentEntry] = state.setdefault("documents", {})
 
         # Per-session mutable state — isolated per session to prevent cross-session leakage.
-        pending_tasks: dict[str, asyncio.Task[AnalysisResult]] = state.setdefault("_pending_tasks", {})
+        # _pending_tokens stores serializable continuation tokens (not asyncio.Task objects)
+        # so that state can be persisted to disk/storage by the framework.
+        # Structure: {doc_key: {"continuation_token": <opaque Azure SDK string>,
+        #                       "analyzer_id": <CU analyzer used for this file>}}
+        pending_tokens: dict[str, dict[str, str]] = state.setdefault("_pending_tokens", {})
         pending_uploads: list[tuple[str, DocumentEntry]] = state.setdefault("_pending_uploads", [])
 
-        # 1. Resolve pending background tasks
-        self._resolve_pending_tasks(pending_tasks, pending_uploads, documents, context)
+        # 1. Resolve pending background analyses via continuation tokens
+        await self._resolve_pending_tokens(pending_tokens, pending_uploads, documents, context)
 
         # 1b. Upload any documents that completed in the background (file_search mode)
         if pending_uploads:
@@ -316,7 +310,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
                 continue
             file_start_times[doc_key] = time.monotonic()
-            doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context, pending_tasks)
+            doc_entry = await self._analyze_file(doc_key, content_item, binary_data, context, pending_tokens)
             if doc_entry:
                 documents[doc_key] = doc_entry
                 accepted_keys.add(doc_key)
@@ -446,7 +440,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
         content: Content,
         binary_data: bytes | None,
         context: SessionContext,
-        pending_tasks: dict[str, asyncio.Task[AnalysisResult]] | None = None,
+        pending_tokens: dict[str, dict[str, str]] | None = None,
     ) -> DocumentEntry | None:
         """Analyze a single file via CU with timeout handling.
 
@@ -493,10 +487,16 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
             try:
                 result = await asyncio.wait_for(poller.result(), timeout=self.max_wait)
             except asyncio.TimeoutError:
-                task = asyncio.create_task(self._background_poll(poller))
-                if pending_tasks is not None:
-                    pending_tasks[doc_key] = task
-                self._all_pending_tasks.append(task)
+                # Save continuation token for resuming on next before_run().
+                # Continuation tokens are serializable strings, so state can
+                # be persisted to disk/storage without issues.
+                token = poller.continuation_token()
+                logger.info("Analysis of '%s' timed out; deferring to background via continuation token.", filename)
+                if pending_tokens is not None:
+                    pending_tokens[doc_key] = {
+                        "continuation_token": token,
+                        "analyzer_id": resolved_analyzer,
+                    }
                 context.extend_instructions(
                     self.source_id,
                     f"Document '{filename}' is being analyzed. Ask about it again in a moment.",
@@ -549,56 +549,78 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 error=str(e),
             )
 
-    async def _background_poll(self, poller: Any) -> AnalysisResult:
-        """Poll a CU operation in the background until completion."""
-        return await poller.result()  # type: ignore[no-any-return]
-
     # ------------------------------------------------------------------
-    # Pending Task Resolution
+    # Pending Token Resolution
     # ------------------------------------------------------------------
 
-    def _resolve_pending_tasks(
+    async def _resolve_pending_tokens(
         self,
-        pending_tasks: dict[str, asyncio.Task[AnalysisResult]],
+        pending_tokens: dict[str, dict[str, str]],
         pending_uploads: list[tuple[str, DocumentEntry]],
         documents: dict[str, DocumentEntry],
         context: SessionContext,
     ) -> None:
-        """Check for completed background CU analysis tasks and update document state.
+        """Resume pending CU analyses using serializable continuation tokens.
 
-        When a file's CU analysis exceeds ``max_wait``, it is deferred to a background
-        ``asyncio.Task``. This method checks all pending tasks on the next ``before_run()``
-        call: completed tasks have their results extracted and status set to ``READY``;
-        failed tasks are marked ``FAILED`` with an error message.
+        When a file's CU analysis exceeds ``max_wait``, a continuation token
+        (an opaque string from the Azure SDK) is saved in ``state`` instead of
+        an ``asyncio.Task``.  This keeps state fully serializable — it can be
+        persisted to disk/storage by the framework.
 
-        In file_search mode, completed documents are queued in ``_pending_uploads``
-        for vector store upload (handled in step 1b of ``before_run``).
+        On the next ``before_run()`` call, this method resumes each pending
+        operation by passing the token back to ``begin_analyze()``.  If the
+        server-side operation has completed, the result is available
+        immediately; otherwise the token is kept for the next turn.
         """
+        if not pending_tokens:
+            return
+        logger.info("Resolving %d pending analysis token(s).", len(pending_tokens))
         completed_keys: list[str] = []
 
-        for doc_key, task in pending_tasks.items():
-            if not task.done():
-                continue
-
-            completed_keys.append(doc_key)
+        for doc_key, token_info in pending_tokens.items():
             entry = documents.get(doc_key)
             if not entry:
+                completed_keys.append(doc_key)
                 continue
 
             try:
-                result = task.result()
-                extracted = self._extract_sections(result)
+                poller = await self._client.begin_analyze(  # type: ignore[reportUnknownVariableType]
+                    token_info["analyzer_id"],
+                    continuation_token=token_info["continuation_token"],  # pyright: ignore[reportCallIssue]
+                )
+                # Use wait_for to avoid blocking before_run indefinitely.
+                # poller.done() always returns False for resumed pollers (stale
+                # cached status), so we call poller.result() which polls the server.
+                #
+                # Timeout: at least 10s regardless of max_wait.  The upload-turn
+                # max_wait can be very short (e.g. 5s) for responsiveness, but
+                # on resolution turns the resumed poller needs a network round-trip
+                # to fetch the result.  If the analysis is still running after 10s,
+                # the token is kept and retried on the next turn.
+                _MIN_RESOLUTION_TIMEOUT = 10.0
+                resolution_timeout = max(self.max_wait or _MIN_RESOLUTION_TIMEOUT, _MIN_RESOLUTION_TIMEOUT)
+                try:
+                    result: AnalysisResult = await asyncio.wait_for(
+                        poller.result(),  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+                        timeout=resolution_timeout,
+                    )  # pyright: ignore[reportUnknownVariableType]
+                except asyncio.TimeoutError:
+                    # Still running — update token and keep for next turn
+                    new_token: str = poller.continuation_token()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+                    token_info["continuation_token"] = new_token
+                    logger.info("Analysis for '%s' still running; keeping token for next turn.", doc_key)
+                    continue
+
+                completed_keys.append(doc_key)
+                extracted = self._extract_sections(result)  # pyright: ignore[reportUnknownArgumentType]
                 entry["status"] = DocumentStatus.READY
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
                 entry["result"] = extracted
                 entry["error"] = None
-                # analysis_duration_s stays None for background tasks (indeterminate)
                 logger.info("Background analysis of '%s' completed.", entry["filename"])
 
                 # Inject newly ready content
                 if self.file_search:
-                    # Upload to vector store — do NOT inject markdown into messages
-                    # (this is a sync context; schedule the upload as a task)
                     pending_uploads.append((doc_key, entry))
                 else:
                     context.extend_messages(
@@ -619,6 +641,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
 
             except Exception as e:
+                completed_keys.append(doc_key)
                 logger.warning("Background analysis of '%s' failed: %s", entry.get("filename", doc_key), e)
                 entry["status"] = DocumentStatus.FAILED
                 entry["analyzed_at"] = datetime.now(tz=timezone.utc).isoformat()
@@ -629,7 +652,7 @@ class ContentUnderstandingContextProvider(BaseContextProvider):
                 )
 
         for key in completed_keys:
-            del pending_tasks[key]
+            del pending_tokens[key]
 
     # ------------------------------------------------------------------
     # Output Extraction & Formatting (delegates to _extraction module)

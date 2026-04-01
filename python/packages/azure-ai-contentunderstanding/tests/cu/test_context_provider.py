@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import contextlib
 import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -33,15 +32,16 @@ def _make_mock_poller(result: AnalysisResult) -> AsyncMock:
     return poller
 
 
-def _make_slow_poller(result: AnalysisResult, delay: float = 10.0) -> AsyncMock:
+def _make_slow_poller(result: AnalysisResult, delay: float = 10.0) -> MagicMock:
     """Create a mock poller that simulates a timeout then eventually returns."""
-    poller = AsyncMock()
+    poller = MagicMock()
 
     async def slow_result() -> AnalysisResult:
         await asyncio.sleep(delay)
         return result
 
     poller.result = slow_result
+    poller.continuation_token = MagicMock(return_value="mock_slow_continuation_token")
     return poller
 
 
@@ -144,11 +144,20 @@ class TestInit:
 
     def test_missing_endpoint_raises(self) -> None:
         """Missing endpoint (no kwarg, no env var) raises an error."""
+        # Clear env var to ensure load_settings raises
+        import os
+
         import pytest as _pytest
         from agent_framework.exceptions import SettingNotFoundError
 
-        with _pytest.raises(SettingNotFoundError, match="endpoint"):
-            ContentUnderstandingContextProvider(credential=AsyncMock())
+        env_key = "AZURE_CONTENTUNDERSTANDING_ENDPOINT"
+        old_val = os.environ.pop(env_key, None)
+        try:
+            with _pytest.raises(SettingNotFoundError, match="endpoint"):
+                ContentUnderstandingContextProvider(credential=AsyncMock())
+        finally:
+            if old_val is not None:
+                os.environ[env_key] = old_val
 
     def test_missing_credential_raises(self) -> None:
         """Missing credential raises ValueError."""
@@ -316,15 +325,13 @@ class TestBeforeRunTimeout:
         await provider.before_run(agent=_make_mock_agent(), session=session, context=context, state=state)
 
         assert state["documents"]["big_doc.pdf"]["status"] == DocumentStatus.ANALYZING
-        assert "big_doc.pdf" in state.get("_pending_tasks", {})
+        assert "big_doc.pdf" in state.get("_pending_tokens", {})
+        token_info = state["_pending_tokens"]["big_doc.pdf"]
+        assert "continuation_token" in token_info
+        assert "analyzer_id" in token_info
 
         # Instructions should mention analyzing
         assert any("being analyzed" in instr for instr in context.instructions)
-
-        # Clean up the background task
-        state["_pending_tasks"]["big_doc.pdf"].cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await state["_pending_tasks"]["big_doc.pdf"]
 
 
 class TestBeforeRunPendingResolution:
@@ -333,17 +340,16 @@ class TestBeforeRunPendingResolution:
         mock_cu_client: AsyncMock,
         pdf_analysis_result: AnalysisResult,
     ) -> None:
+        # Mock begin_analyze to return a completed poller when called with continuation_token
+        mock_poller = _make_mock_poller(pdf_analysis_result)
+        mock_poller.done = MagicMock(return_value=True)
+        mock_cu_client.begin_analyze = AsyncMock(return_value=mock_poller)
         provider = _make_provider(mock_client=mock_cu_client)
 
-        # Simulate a completed background task
-        async def return_result() -> AnalysisResult:
-            return pdf_analysis_result
-
-        task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
-        await asyncio.sleep(0.01)  # Let task complete
-
         state: dict[str, Any] = {
-            "_pending_tasks": {"report.pdf": task},
+            "_pending_tokens": {
+                "report.pdf": {"continuation_token": "tok_123", "analyzer_id": "prebuilt-documentSearch"}
+            },
             "documents": {
                 "report.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -367,7 +373,7 @@ class TestBeforeRunPendingResolution:
 
         assert state["documents"]["report.pdf"]["status"] == DocumentStatus.READY
         assert state["documents"]["report.pdf"]["result"] is not None
-        assert "report.pdf" not in state.get("_pending_tasks", {})
+        assert "report.pdf" not in state.get("_pending_tokens", {})
 
 
 class TestBeforeRunPendingFailure:
@@ -375,16 +381,14 @@ class TestBeforeRunPendingFailure:
         self,
         mock_cu_client: AsyncMock,
     ) -> None:
+        # Mock begin_analyze to raise when resuming from continuation token
+        mock_cu_client.begin_analyze = AsyncMock(side_effect=RuntimeError("CU service unavailable"))
         provider = _make_provider(mock_client=mock_cu_client)
 
-        async def failing_task() -> AnalysisResult:
-            raise RuntimeError("CU service unavailable")
-
-        task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(failing_task())
-        await asyncio.sleep(0.01)  # Let task fail
-
         state: dict[str, Any] = {
-            "_pending_tasks": {"bad_doc.pdf": task},
+            "_pending_tokens": {
+                "bad_doc.pdf": {"continuation_token": "tok_fail", "analyzer_id": "prebuilt-documentSearch"}
+            },
             "documents": {
                 "bad_doc.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -1565,15 +1569,15 @@ class TestFileSearchIntegration:
             file_search=config,
         )
 
-        # Simulate a completed background task
-        async def return_result() -> AnalysisResult:
-            return pdf_analysis_result
-
-        task: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
-        await asyncio.sleep(0.01)
+        # Simulate a completed background analysis via continuation token
+        mock_poller = _make_mock_poller(pdf_analysis_result)
+        mock_poller.done = MagicMock(return_value=True)
+        mock_cu_client.begin_analyze = AsyncMock(return_value=mock_poller)
 
         state: dict[str, Any] = {
-            "_pending_tasks": {"report.pdf": task},
+            "_pending_tokens": {
+                "report.pdf": {"continuation_token": "tok_fs", "analyzer_id": "prebuilt-documentSearch"}
+            },
             "documents": {
                 "report.pdf": {
                     "status": DocumentStatus.ANALYZING,
@@ -1612,25 +1616,14 @@ class TestFileSearchIntegration:
 
 
 class TestCloseCancel:
-    async def test_close_cancels_pending_tasks(self) -> None:
-        """close() should cancel any pending background analysis tasks."""
+    async def test_close_cleans_up(self) -> None:
+        """close() should close the CU client."""
         provider = _make_provider(mock_client=AsyncMock())
-
-        # Simulate a long-running pending task
-        async def slow() -> None:
-            await asyncio.sleep(100)
-
-        task = asyncio.create_task(slow())
-        provider._all_pending_tasks.append(task)
 
         await provider.close()
 
-        # Allow the cancellation to propagate
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-        assert task.cancelled()
-        assert len(provider._all_pending_tasks) == 0
+        # Client should be closed (no tasks to cancel — tokens are just strings)
+        provider._client.close.assert_called_once()
 
 
 class TestSessionIsolation:
@@ -1657,25 +1650,19 @@ class TestSessionIsolation:
         context_a = _make_context([msg_a])
         await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_a, state=state_a)
 
-        # Session A should have a pending task
-        assert "report.pdf" in state_a.get("_pending_tasks", {})
+        # Session A should have a pending token
+        assert "report.pdf" in state_a.get("_pending_tokens", {})
 
-        # Session B: separate state, no pending tasks
+        # Session B: separate state, no pending tokens
         state_b: dict[str, Any] = {}
         msg_b = Message(role="user", contents=[Content.from_text("Hello")])
         context_b = _make_context([msg_b])
         await provider.before_run(agent=_make_mock_agent(), session=AgentSession(), context=context_b, state=state_b)
 
-        # Session B must NOT see session A's pending task
-        assert "_pending_tasks" not in state_b or "report.pdf" not in state_b.get("_pending_tasks", {})
+        # Session B must NOT see session A's pending token
+        assert "_pending_tokens" not in state_b or "report.pdf" not in state_b.get("_pending_tokens", {})
         # Session B must NOT have session A's documents
         assert "report.pdf" not in state_b.get("documents", {})
-
-        # Clean up
-        for task in state_a.get("_pending_tasks", {}).values():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
 
     async def test_completed_task_resolves_in_correct_session(
         self,
@@ -1685,15 +1672,15 @@ class TestSessionIsolation:
         """A completed background task should only inject content into its own session."""
         provider = _make_provider(mock_client=mock_cu_client)
 
-        # Simulate completed task in session A
-        async def return_result() -> AnalysisResult:
-            return pdf_analysis_result
-
-        task_a: asyncio.Task[AnalysisResult] = asyncio.ensure_future(return_result())
-        await asyncio.sleep(0.01)
+        # Simulate completed analysis in session A via continuation token
+        mock_poller = _make_mock_poller(pdf_analysis_result)
+        mock_poller.done = MagicMock(return_value=True)
+        mock_cu_client.begin_analyze = AsyncMock(return_value=mock_poller)
 
         state_a: dict[str, Any] = {
-            "_pending_tasks": {"report.pdf": task_a},
+            "_pending_tokens": {
+                "report.pdf": {"continuation_token": "tok_a", "analyzer_id": "prebuilt-documentSearch"}
+            },
             "documents": {
                 "report.pdf": {
                     "status": DocumentStatus.ANALYZING,
