@@ -11,11 +11,21 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, overload
 
-from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Annotation, Content, Message, SupportsGetEmbeddings
-from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
-from agent_framework._settings import SecretString, load_settings
+from agent_framework import (
+    AGENT_FRAMEWORK_USER_AGENT,
+    AgentSession,
+    Annotation,
+    BaseContextProvider,
+    Content,
+    Message,
+    SecretString,
+    SessionContext,
+    SupportsGetEmbeddings,
+    load_settings,
+)
+from agent_framework.exceptions import SettingNotFoundError
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 from azure.core.exceptions import ResourceNotFoundError
@@ -111,6 +121,9 @@ except ImportError:
     _agentic_retrieval_available = False
 
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+EmbeddingFunction = Callable[[str], Awaitable[list[float]]] | SupportsGetEmbeddings[str, list[float], Any]
+KnowledgeBaseOutputModeLiteral = Literal["extractive_data", "answer_synthesis"]
+RetrievalReasoningEffortLiteral = Literal["minimal", "medium", "low"]
 
 logger = logging.getLogger("agent_framework.azure_ai_search")
 
@@ -151,6 +164,230 @@ class AzureAISearchContextProvider(BaseContextProvider):
     _DEFAULT_SEARCH_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
     DEFAULT_SOURCE_ID: ClassVar[str] = "azure_ai_search"
 
+    @overload
+    def __init__(
+        self,
+        source_id: str = DEFAULT_SOURCE_ID,
+        endpoint: str | None = None,
+        index_name: str | None = None,
+        api_key: str | AzureKeyCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
+        *,
+        mode: Literal["semantic"] = "semantic",
+        top_k: int = 5,
+        semantic_configuration_name: str | None = None,
+        vector_field_name: str | None = None,
+        embedding_function: EmbeddingFunction | None = None,
+        context_prompt: str | None = None,
+        azure_openai_resource_url: str | None = None,
+        model_deployment_name: str | None = None,
+        model_name: str | None = None,
+        knowledge_base_name: None = None,
+        retrieval_instructions: str | None = None,
+        azure_openai_api_key: str | None = None,
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize a semantic Azure AI Search context provider.
+
+        Keyword Args:
+            source_id: Unique identifier for this provider instance.
+            endpoint: Azure AI Search endpoint URL.
+            index_name: Name of the search index to query.
+            api_key: API key for authentication.
+            credential: Azure credential for managed identity authentication.
+            mode: Must be ``"semantic"`` for this overload.
+            top_k: Maximum number of documents to retrieve.
+            semantic_configuration_name: Name of the semantic configuration in the index.
+            vector_field_name: Name of the vector field in the index.
+            embedding_function: Embedding provider used for vector search.
+            context_prompt: Custom prompt to prepend to retrieved context.
+            azure_openai_resource_url: Unused in semantic mode.
+            model_deployment_name: Unused in semantic mode.
+            model_name: Unused in semantic mode.
+            knowledge_base_name: Must be ``None`` for this overload.
+            retrieval_instructions: Unused in semantic mode.
+            azure_openai_api_key: Unused in semantic mode.
+            knowledge_base_output_mode: Unused in semantic mode.
+            retrieval_reasoning_effort: Unused in semantic mode.
+            agentic_message_history_count: Unused in semantic mode.
+            env_file_path: Optional ``.env`` file checked before process environment variables.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        source_id: str = DEFAULT_SOURCE_ID,
+        endpoint: str | None = None,
+        index_name: str | None = None,
+        api_key: str | AzureKeyCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
+        *,
+        mode: Literal["agentic"],
+        top_k: int = 5,
+        semantic_configuration_name: str | None = None,
+        vector_field_name: str | None = None,
+        embedding_function: EmbeddingFunction | None = None,
+        context_prompt: str | None = None,
+        azure_openai_resource_url: str,
+        model_deployment_name: str,
+        model_name: str | None = None,
+        knowledge_base_name: None = None,
+        retrieval_instructions: str | None = None,
+        azure_openai_api_key: str | None = None,
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an agentic provider that creates a Knowledge Base from an index.
+
+        Keyword Args:
+            source_id: Unique identifier for this provider instance.
+            endpoint: Azure AI Search endpoint URL.
+            index_name: Name of the search index used to create the Knowledge Base.
+            api_key: API key for authentication.
+            credential: Azure credential for managed identity authentication.
+            mode: Must be ``"agentic"`` for this overload.
+            top_k: Maximum number of documents to retrieve.
+            semantic_configuration_name: Semantic configuration name used by hybrid search operations.
+            vector_field_name: Vector field name used by hybrid search operations.
+            embedding_function: Embedding provider used for vector search.
+            context_prompt: Custom prompt to prepend to retrieved context.
+            azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base creation.
+            model_deployment_name: Azure OpenAI deployment used by the generated Knowledge Base.
+            model_name: Underlying model name for the Knowledge Base model configuration.
+            knowledge_base_name: Must be ``None`` for this overload.
+            retrieval_instructions: Custom instructions for Knowledge Base retrieval.
+            azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
+            knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
+            retrieval_reasoning_effort: Reasoning effort for query planning.
+            agentic_message_history_count: Number of recent messages included in retrieval.
+            env_file_path: Optional ``.env`` file checked before process environment variables.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        source_id: str = DEFAULT_SOURCE_ID,
+        endpoint: str | None = None,
+        index_name: None = None,
+        api_key: str | AzureKeyCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
+        *,
+        mode: Literal["agentic"],
+        top_k: int = 5,
+        semantic_configuration_name: str | None = None,
+        vector_field_name: str | None = None,
+        embedding_function: EmbeddingFunction | None = None,
+        context_prompt: str | None = None,
+        azure_openai_resource_url: str | None = None,
+        model_deployment_name: str | None = None,
+        model_name: str | None = None,
+        knowledge_base_name: str,
+        retrieval_instructions: str | None = None,
+        azure_openai_api_key: str | None = None,
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an agentic provider that connects to an existing Knowledge Base.
+
+        Keyword Args:
+            source_id: Unique identifier for this provider instance.
+            endpoint: Azure AI Search endpoint URL.
+            index_name: Must be ``None`` for this overload.
+            knowledge_base_name: Name of the existing Knowledge Base to use.
+            api_key: API key for authentication.
+            credential: Azure credential for managed identity authentication.
+            mode: Must be ``"agentic"`` for this overload.
+            top_k: Maximum number of documents to retrieve.
+            semantic_configuration_name: Semantic configuration name used by hybrid search operations.
+            vector_field_name: Vector field name used by hybrid search operations.
+            embedding_function: Embedding provider used for vector search.
+            context_prompt: Custom prompt to prepend to retrieved context.
+            azure_openai_resource_url: Unused when connecting to an existing Knowledge Base.
+            model_deployment_name: Unused when connecting to an existing Knowledge Base.
+            model_name: Unused when connecting to an existing Knowledge Base.
+            retrieval_instructions: Custom instructions for Knowledge Base retrieval.
+            azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
+            knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
+            retrieval_reasoning_effort: Reasoning effort for query planning.
+            agentic_message_history_count: Number of recent messages included in retrieval.
+            env_file_path: Optional ``.env`` file checked before process environment variables.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
+    @overload
+    def __init__(
+        self,
+        source_id: str = DEFAULT_SOURCE_ID,
+        endpoint: str | None = None,
+        index_name: None = None,
+        api_key: str | AzureKeyCredential | None = None,
+        credential: AzureCredentialTypes | None = None,
+        *,
+        mode: Literal["agentic"],
+        top_k: int = 5,
+        semantic_configuration_name: str | None = None,
+        vector_field_name: str | None = None,
+        embedding_function: EmbeddingFunction | None = None,
+        context_prompt: str | None = None,
+        azure_openai_resource_url: str | None = None,
+        model_deployment_name: str | None = None,
+        model_name: str | None = None,
+        knowledge_base_name: None = None,
+        retrieval_instructions: str | None = None,
+        azure_openai_api_key: str | None = None,
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
+        agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
+        env_file_path: str | None = None,
+        env_file_encoding: str | None = None,
+    ) -> None:
+        """Initialize an agentic provider using environment-resolved setup.
+
+        This overload is for agentic initialization where ``index_name`` or
+        ``knowledge_base_name`` is supplied by ``env_file_path`` or the
+        ``AZURE_SEARCH_*`` environment variables.
+
+        Keyword Args:
+            source_id: Unique identifier for this provider instance.
+            endpoint: Azure AI Search endpoint URL.
+            index_name: Resolved from ``env_file_path`` or ``AZURE_SEARCH_INDEX_NAME``.
+            api_key: API key for authentication.
+            credential: Azure credential for managed identity authentication.
+            mode: Must be ``"agentic"`` for this overload.
+            top_k: Maximum number of documents to retrieve.
+            semantic_configuration_name: Semantic configuration name used by hybrid search operations.
+            vector_field_name: Vector field name used by hybrid search operations.
+            embedding_function: Embedding provider used for vector search.
+            context_prompt: Custom prompt to prepend to retrieved context.
+            azure_openai_resource_url: Azure OpenAI resource URL when creating a Knowledge Base from an index.
+            model_deployment_name: Azure OpenAI deployment when creating a Knowledge Base from an index.
+            model_name: Underlying model name for Knowledge Base model configuration.
+            knowledge_base_name: Resolved from ``env_file_path`` or ``AZURE_SEARCH_KNOWLEDGE_BASE_NAME``.
+            retrieval_instructions: Custom instructions for Knowledge Base retrieval.
+            azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
+            knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
+            retrieval_reasoning_effort: Reasoning effort for query planning.
+            agentic_message_history_count: Number of recent messages included in retrieval.
+            env_file_path: Optional ``.env`` file checked before process environment variables.
+            env_file_encoding: Encoding for the ``.env`` file.
+        """
+        ...
+
     def __init__(
         self,
         source_id: str = DEFAULT_SOURCE_ID,
@@ -163,9 +400,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         top_k: int = 5,
         semantic_configuration_name: str | None = None,
         vector_field_name: str | None = None,
-        embedding_function: Callable[[str], Awaitable[list[float]]]
-        | SupportsGetEmbeddings[str, list[float], Any]
-        | None = None,
+        embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
         model_deployment_name: str | None = None,
@@ -173,8 +408,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
-        knowledge_base_output_mode: Literal["extractive_data", "answer_synthesis"] = "extractive_data",
-        retrieval_reasoning_effort: Literal["minimal", "medium", "low"] = "minimal",
+        knowledge_base_output_mode: KnowledgeBaseOutputModeLiteral = "extractive_data",
+        retrieval_reasoning_effort: RetrievalReasoningEffortLiteral = "minimal",
         agentic_message_history_count: int = _DEFAULT_AGENTIC_MESSAGE_HISTORY_COUNT,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -184,7 +419,9 @@ class AzureAISearchContextProvider(BaseContextProvider):
         Args:
             source_id: Unique identifier for this provider instance.
             endpoint: Azure AI Search endpoint URL.
-            index_name: Name of the search index to query.
+            index_name: Name of the search index to query. In agentic mode, providing this
+                explicitly selects the index-backed setup and ignores any environment-provided
+                knowledge base name.
             api_key: API key for authentication.
             credential: Azure credential for managed identity authentication.
                 Accepts a TokenCredential, AsyncTokenCredential, or a callable token provider.
@@ -197,7 +434,9 @@ class AzureAISearchContextProvider(BaseContextProvider):
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base.
             model_deployment_name: Model deployment name in Azure OpenAI.
             model_name: The underlying model name.
-            knowledge_base_name: Name of an existing Knowledge Base to use.
+            knowledge_base_name: Name of an existing Knowledge Base to use. In agentic mode,
+                providing this explicitly selects the Knowledge Base-backed setup and ignores any
+                environment-provided index name.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
@@ -208,12 +447,26 @@ class AzureAISearchContextProvider(BaseContextProvider):
         """
         super().__init__(source_id)
 
-        # Determine which fields are required based on mode
-        required: list[str | tuple[str, ...]] = ["endpoint"]
+        required: list[str | tuple[str, ...]]
+        ignored_agentic_field: Literal["index_name", "knowledge_base_name"] | None = None
+        explicit_index_name = index_name is not None
+        explicit_knowledge_base_name = knowledge_base_name is not None
+
         if mode == "semantic":
-            required.append("index_name")
-        elif mode == "agentic":
-            required.append(("index_name", "knowledge_base_name"))
+            required = ["endpoint", "index_name"]
+        elif explicit_index_name and explicit_knowledge_base_name:
+            raise SettingNotFoundError(
+                "Only one of 'index_name', 'knowledge_base_name' may be provided, "
+                "but multiple were set: 'index_name', 'knowledge_base_name'."
+            )
+        elif explicit_index_name:
+            required = ["endpoint", "index_name"]
+            ignored_agentic_field = "knowledge_base_name"
+        elif explicit_knowledge_base_name:
+            required = ["endpoint", "knowledge_base_name"]
+            ignored_agentic_field = "index_name"
+        else:
+            required = ["endpoint", ("index_name", "knowledge_base_name")]
 
         # Load settings from environment/file
         settings = load_settings(
@@ -227,6 +480,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        if ignored_agentic_field is not None:
+            settings[ignored_agentic_field] = None
 
         if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
             raise ValueError(
