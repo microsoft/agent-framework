@@ -231,8 +231,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         streaming and non-streaming responses.
 
         For full-featured clients with middleware, telemetry, and function invocation support,
-        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
-        which compose these layers correctly.
+        use public client classes such as ``OpenAIChatClient`` which compose these layers correctly.
 
     Examples:
         .. code-block:: python
@@ -809,22 +808,21 @@ class SupportsFileSearchTool(Protocol):
 
 # region SupportsGetEmbeddings Protocol
 
-# Contravariant TypeVars for the Protocol
+# TypeVars for the Protocol
 EmbeddingInputContraT = TypeVar(
     "EmbeddingInputContraT",
     default="str",
     contravariant=True,
 )
-EmbeddingOptionsContraT = TypeVar(
-    "EmbeddingOptionsContraT",
+EmbeddingProtocolOptionsT = TypeVar(
+    "EmbeddingProtocolOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
     default="EmbeddingGenerationOptions",
-    contravariant=True,
 )
 
 
 @runtime_checkable
-class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingOptionsContraT]):
+class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, EmbeddingProtocolOptionsT]):
     """Protocol for an embedding client that can generate embeddings.
 
     This protocol enables duck-typing for embedding generation. Any class that
@@ -851,8 +849,8 @@ class SupportsGetEmbeddings(Protocol[EmbeddingInputContraT, EmbeddingT, Embeddin
         self,
         values: Sequence[EmbeddingInputContraT],
         *,
-        options: EmbeddingOptionsContraT | None = None,
-    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT]]:
+        options: EmbeddingProtocolOptionsT | None = None,
+    ) -> Awaitable[GeneratedEmbeddings[EmbeddingT, EmbeddingProtocolOptionsT]]:
         """Generate embeddings for the given values.
 
         Args:

@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from typing import cast
 
 from agent_framework import Agent, Message
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -76,7 +76,7 @@ async def sk_agent_response_callback(
 
 
 async def run_agent_framework_example(prompt: str) -> list[Message]:
-    client = AzureOpenAIChatClient(credential=AzureCliCredential())
+    client = OpenAIChatCompletionClient(credential=AzureCliCredential())
 
     writer = Agent(client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),

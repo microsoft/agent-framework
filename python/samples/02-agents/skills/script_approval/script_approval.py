@@ -2,6 +2,11 @@
 
 import asyncio
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
 from agent_framework import Agent, Skill, SkillsProvider

@@ -7,6 +7,7 @@
   <Folder Name="/Samples/">
     <File Path="samples/AGENTS.md" />
     <File Path="samples/README.md" />
+    <Project Path="eng/verify-samples/verify-samples.csproj" />
   </Folder>
   <Folder Name="/Samples/01-get-started/">
     <Project Path="samples/01-get-started/01_hello_agent/01_hello_agent.csproj" />
@@ -175,6 +176,7 @@
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step02_CustomVectorStoreRAG/AgentWithRAG_Step02_CustomVectorStoreRAG.csproj" />
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step03_CustomRAGDataSource/AgentWithRAG_Step03_CustomRAGDataSource.csproj" />
     <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step04_FoundryServiceRAG/AgentWithRAG_Step04_FoundryServiceRAG.csproj" />
+    <Project Path="samples/02-agents/AgentWithRAG/AgentWithRAG_Step05_Neo4jGraphRAG/AgentWithRAG_Step05_Neo4jGraphRAG.csproj" />
   </Folder>
   <Folder Name="/Samples/02-agents/ModelContextProtocol/">
     <File Path="samples/02-agents/ModelContextProtocol/README.md" />

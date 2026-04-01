@@ -192,7 +192,7 @@ The package follows a flat import structure:
 - **Connectors**: Import from `agent_framework.<vendor/platform>`
   ```python
   from agent_framework.openai import OpenAIChatClient
-  from agent_framework.azure import AzureOpenAIChatClient
+  from agent_framework.foundry import FoundryChatClient
   ```
 
 ## Exception Hierarchy
@@ -428,6 +428,10 @@ Each file should have a single first line containing: # Copyright (c) Microsoft.
 
 We follow the [Google Docstring](https://github.com/google/styleguide/blob/gh-pages/pyguide.md#383-functions-and-methods) style guide for functions and methods.
 They are currently not checked for private functions (functions starting with '_').
+
+When a change adds, removes, or renames a sample-facing environment variable in repo-level samples or
+package-local sample docs for a package included by `agent-framework-core[all]`, update the consolidated
+inventory in `samples/README.md` in the same change.
 
 They should contain:
 

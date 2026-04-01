@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from agent_framework import (
-    Agent,
     AgentResponse,
     Executor,
     Message,
@@ -41,7 +40,7 @@ Key Concepts Demonstrated:
 
 Prerequisites:
 - FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for FoundryChatClient.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, WorkflowContext, and event handling.
 - Understanding of how agent messages are generated, reviewed, and re-submitted.
 """
@@ -198,7 +197,7 @@ async def main() -> None:
         id="worker",
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
@@ -206,13 +205,13 @@ async def main() -> None:
         id="reviewer",
         client=FoundryChatClient(
             project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-            model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
 
-    agent = Agent(
-        client=(WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build()),
+    agent = (
+        WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build().as_agent()
     )
 
     print("Running workflow agent with user query...")
