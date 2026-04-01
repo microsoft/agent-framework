@@ -22,31 +22,29 @@ This sample demonstrates how to run the same prompt flow against different built
 chat clients using a single `get_client` factory.
 
 Select one of these client names:
-- openai_responses
+- openai_chat
 - openai_chat_completion
 - anthropic
 - ollama
 - bedrock
-- azure_openai_responses
+- azure_openai_chat
 - azure_openai_chat_completion
 - foundry_chat
 """
 
 ClientName = Literal[
-    "openai_responses",
+    "openai_chat",
     "openai_chat_completion",
     "anthropic",
     "ollama",
     "bedrock",
-    "azure_openai_responses",
+    "azure_openai_chat",
     "azure_openai_chat_completion",
     "foundry_chat",
 ]
 
 
 # NOTE: approval_mode="never_require" is for sample brevity.
-# Use "always_require" in production; see samples/02-agents/tools/function_tool_with_approval.py
-# and samples/02-agents/tools/function_tool_with_approval_and_sessions.py.
 @tool(approval_mode="never_require")
 def get_weather(
     location: Annotated[str, Field(description="The location to get the weather for.")],
@@ -62,7 +60,7 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     from agent_framework.anthropic import AnthropicClient
     from agent_framework.ollama import OllamaChatClient
 
-    if client_name == "openai_responses":
+    if client_name == "openai_chat":
         return OpenAIChatClient()
     if client_name == "openai_chat_completion":
         return OpenAIChatCompletionClient()
@@ -72,7 +70,7 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
         return OllamaChatClient()
     if client_name == "bedrock":
         return BedrockChatClient()
-    if client_name == "azure_openai_responses":
+    if client_name == "azure_openai_chat":
         return OpenAIChatClient(credential=AzureCliCredential())
     if client_name == "azure_openai_chat_completion":
         return OpenAIChatCompletionClient(credential=AzureCliCredential())
@@ -86,7 +84,7 @@ def get_client(client_name: ClientName) -> SupportsChatGetResponse[Any]:
     raise ValueError(f"Unsupported client name: {client_name}")
 
 
-async def main(client_name: ClientName = "openai_responses") -> None:
+async def main(client_name: ClientName = "openai_chat") -> None:
     """Run a basic prompt using a selected built-in client."""
     client = get_client(client_name)
 
@@ -122,7 +120,7 @@ async def main(client_name: ClientName = "openai_responses") -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main("openai_responses"))
+    asyncio.run(main("openai_chat"))
 
 
 """

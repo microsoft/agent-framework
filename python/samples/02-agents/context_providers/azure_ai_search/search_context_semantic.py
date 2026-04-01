@@ -85,13 +85,12 @@ async def main() -> None:
     # Create agent with search context provider
     async with (
         search_provider,
-        FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model_model=model_deployment,
-            credential=credential,
-        ) as client,
         Agent(
-            client=client,
+            client=FoundryChatClient(
+                project_endpoint=project_endpoint,
+                model=model_deployment,
+                credential=credential,
+            ),
             name="SearchAgent",
             instructions=(
                 "You are a helpful assistant. Use the provided context from the "
