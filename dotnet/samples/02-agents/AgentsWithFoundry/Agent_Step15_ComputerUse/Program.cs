@@ -1,11 +1,11 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use Computer Use Tool with a ChatClientAgent.
 
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 

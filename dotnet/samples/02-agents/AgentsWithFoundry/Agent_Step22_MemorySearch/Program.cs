@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use the Memory Search Tool with AI Agents.
 // The Memory Search Tool enables agents to recall information from previous conversations,
@@ -9,7 +9,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 

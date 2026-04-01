@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 // Uncomment this to enable JSON checkpointing to the local file system.
 //#define CHECKPOINT_JSON
@@ -8,7 +8,7 @@ using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.Foundry;
