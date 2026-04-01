@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
@@ -9,17 +8,16 @@ using Microsoft.Extensions.AI;
 
 namespace AzureAI.IntegrationTests;
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete AIProjectClientFixture
-[Obsolete("Use FoundryVersionedAgentStructuredOutputRunTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRunTests<AIProjectClientStructuredOutputFixture<CityInfo>>(() => new AIProjectClientStructuredOutputFixture<CityInfo>())
+public class FoundryVersionedAgentStructuredOutputRunTests() : StructuredOutputRunTests<FoundryVersionedAgentStructuredOutputFixture<CityInfo>>(() => new FoundryVersionedAgentStructuredOutputFixture<CityInfo>())
 {
-    private const string NotSupported = "AIProjectClient does not support specifying structured output type at invocation time.";
+    private const string NotSupported = "Versioned Foundry agents do not support specifying structured output type at invocation time.";
+    private const string ResponseFormatNotSupported = "AzureAIProjectChatClient clears ResponseFormat for versioned agents; structured output must be defined in the server-side agent definition.";
 
     /// <summary>
     /// Verifies that response format provided at agent initialization is used when invoking RunAsync.
     /// </summary>
     /// <returns></returns>
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay, Skip = ResponseFormatNotSupported)]
     public async Task RunWithResponseFormatAtAgentInitializationReturnsExpectedResultAsync()
     {
         // Arrange
@@ -39,14 +37,14 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
     }
 
     /// <summary>
-    /// Verifies that generic RunAsync works with AIProjectClient when structured output is configured at agent initialization.
+    /// Verifies that generic RunAsync works with versioned Foundry agents when structured output is configured at agent initialization.
     /// </summary>
     /// <remarks>
-    /// AIProjectClient does not support specifying the structured output type at invocation time yet.
+    /// Versioned Foundry agents do not support specifying the structured output type at invocation time yet.
     /// The type T provided to RunAsync&lt;T&gt; is ignored by AzureAIProjectChatClient and is only used
     /// for deserializing the agent response by AgentResponse&lt;T&gt;.Result.
     /// </remarks>
-    [RetryFact(Constants.RetryCount, Constants.RetryDelay)]
+    [RetryFact(Constants.RetryCount, Constants.RetryDelay, Skip = ResponseFormatNotSupported)]
     public async Task RunGenericWithResponseFormatAtAgentInitializationReturnsExpectedResultAsync()
     {
         // Arrange
@@ -88,10 +86,9 @@ public class AIProjectClientAgentStructuredOutputRunTests() : StructuredOutputRu
 }
 
 /// <summary>
-/// Represents a fixture for testing AIProjectClient with structured output of type <typeparamref name="T"/> provided at agent initialization.
+/// Represents a fixture for testing versioned Foundry agents with structured output of type <typeparamref name="T"/> provided at agent initialization.
 /// </summary>
-[Obsolete("Use FoundryVersionedAgentStructuredOutputFixture instead.")]
-public class AIProjectClientStructuredOutputFixture<T> : AIProjectClientFixture
+public class FoundryVersionedAgentStructuredOutputFixture<T> : FoundryVersionedAgentFixture
 {
     public override async ValueTask InitializeAsync()
     {

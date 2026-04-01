@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
-
 using System;
 using System.IO;
 using System.Threading.Tasks;
@@ -17,37 +15,35 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-[Obsolete("Use FoundryVersionedAgentCreateTests instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientCreateTests
+/// <summary>
+/// Integration tests for versioned <see cref="FoundryAgent"/> creation via
+/// <c>AIProjectClient.Agents.CreateAgentVersionAsync</c> and <c>AIProjectClient.AsAIAgent(AgentVersion)</c>.
+/// </summary>
+public class FoundryVersionedAgentCreateTests
 {
     private readonly AIProjectClient _client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync(string createMechanism)
+    [Fact]
+    public async Task CreateAgent_CreatesAgentWithCorrectMetadataAsync()
     {
         // Arrange.
-        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("IntegrationTestAgent");
+        string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("IntegrationTestAgent");
         const string AgentDescription = "An agent created during integration tests";
         const string AgentInstructions = "You are an integration test agent";
 
         // Act.
-        var agent = createMechanism switch
-        {
-            "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                options: new ChatClientAgentOptions()
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            AgentName,
+            new AgentVersionCreationOptions(
+                new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
                 {
-                    Name = AgentName,
-                    Description = AgentDescription,
-                    ChatOptions = new() { Instructions = AgentInstructions }
-                }),
-            "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
-                name: AgentName,
-                creationOptions: new AgentVersionCreationOptions(new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName)) { Instructions = AgentInstructions }) { Description = AgentDescription }),
-            _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
-        };
+                    Instructions = AgentInstructions
+                })
+            {
+                Description = AgentDescription
+            });
+
+        var agent = this._client.AsAIAgent(agentVersion);
 
         try
         {
@@ -72,12 +68,11 @@ public class AIProjectClientCreateTests
     }
 
     [Theory(Skip = "For manual testing only")]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithVectorStoresAsync(string createMechanism)
+    [InlineData("FileSearchTool")]
+    public async Task CreateAgent_CreatesAgentWithVectorStoresAsync(string _)
     {
         // Arrange.
-        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("VectorStoreAgent");
+        string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("VectorStoreAgent");
         const string AgentInstructions = """
             You are a helpful agent that can help fetch data from files you know about.
             Use the File Search Tool to look up codes for words.
@@ -99,21 +94,18 @@ public class AIProjectClientCreateTests
         );
         var vectorStoreMetadata = await projectOpenAIClient.GetProjectVectorStoresClient().CreateVectorStoreAsync(options: new() { FileIds = { uploadedAgentFile.Id }, Name = "WordCodeLookup_VectorStore" });
 
-        // Act.
-        var agent = createMechanism switch
+        // Act — create agent version with FileSearch tool via native SDK, then wrap with AsAIAgent.
+        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
-            "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                name: AgentName,
-                instructions: AgentInstructions,
-                tools: [new HostedFileSearchTool() { Inputs = [new HostedVectorStoreContent(vectorStoreMetadata.Value.Id)] }]),
-            "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                name: AgentName,
-                instructions: AgentInstructions,
-                tools: [ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreMetadata.Value.Id]).AsAITool()]),
-            _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
+            Instructions = AgentInstructions,
+            Tools = { ResponseTool.CreateFileSearchTool(vectorStoreIds: [vectorStoreMetadata.Value.Id]) }
         };
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            AgentName,
+            new AgentVersionCreationOptions(definition));
+
+        var agent = this._client.AsAIAgent(agentVersion);
 
         try
         {
@@ -132,13 +124,11 @@ public class AIProjectClientCreateTests
         }
     }
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    [InlineData("CreateWithFoundryOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync(string createMechanism)
+    [Fact]
+    public async Task CreateAgent_CreatesAgentWithCodeInterpreterAsync()
     {
         // Arrange.
-        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("CodeInterpreterAgent");
+        string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("CodeInterpreterAgent");
         const string AgentInstructions = """
             You are a helpful coding agent. A Python file is provided. Use the Code Interpreter Tool to run the file
             and report the SECRET_NUMBER value it prints. Respond only with the number.
@@ -158,23 +148,18 @@ public class AIProjectClientCreateTests
             purpose: FileUploadPurpose.Assistants
         );
 
-        // Act.
-        var agent = createMechanism switch
+        // Act — create agent version with CodeInterpreter tool via native SDK, then wrap with AsAIAgent.
+        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
-            // Hosted tool path (tools supplied via ChatClientAgentOptions)
-            "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                name: AgentName,
-                instructions: AgentInstructions,
-                tools: [new HostedCodeInterpreterTool() { Inputs = [new HostedFileContent(uploadedCodeFile.Id)] }]),
-            // Foundry (definitions + resources provided directly)
-            "CreateWithFoundryOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                name: AgentName,
-                instructions: AgentInstructions,
-                tools: [ResponseTool.CreateCodeInterpreterTool(new CodeInterpreterToolContainer(CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([uploadedCodeFile.Id]))).AsAITool()]),
-            _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
+            Instructions = AgentInstructions,
+            Tools = { ResponseTool.CreateCodeInterpreterTool(new CodeInterpreterToolContainer(CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([uploadedCodeFile.Id]))) }
         };
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            AgentName,
+            new AgentVersionCreationOptions(definition));
+
+        var agent = this._client.AsAIAgent(agentVersion);
 
         try
         {
@@ -202,7 +187,7 @@ public class AIProjectClientCreateTests
     public async Task AsAIAgent_WithOpenAPITool_NativeSDKCreation_InvokesServerSideToolAsync()
     {
         // Arrange — create agent version with OpenAPI tool using native Azure.AI.Projects SDK types.
-        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("OpenAPITestAgent");
+        string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("OpenAPITestAgent");
         const string AgentInstructions = "You are a helpful assistant that can use the countries API to retrieve information about countries by their currency code.";
 
         const string CountriesOpenApiSpec = """
@@ -320,28 +305,29 @@ public class AIProjectClientCreateTests
         }
     }
 
-    [Theory]
-    [InlineData("CreateWithChatClientAgentOptionsAsync")]
-    public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync(string createMechanism)
+    [Fact]
+    public async Task CreateAgent_CreatesAgentWithAIFunctionToolsAsync()
     {
         // Arrange.
-        string AgentName = AIProjectClientFixture.GenerateUniqueAgentName("WeatherAgent");
+        string AgentName = FoundryVersionedAgentFixture.GenerateUniqueAgentName("WeatherAgent");
         const string AgentInstructions = "You are a helpful weather assistant. Always call the GetWeather function to answer questions about weather.";
 
         static string GetWeather(string location) => $"The weather in {location} is sunny with a high of 23C.";
         var weatherFunction = AIFunctionFactory.Create(GetWeather);
 
-        FoundryAgent agent = createMechanism switch
+        // Create agent version with the function tool registered in the server-side definition,
+        // then wrap with AsAIAgent passing the local AIFunction implementation.
+        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
-            "CreateWithChatClientAgentOptionsAsync" => await this._client.CreateAIAgentAsync(
-                model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName),
-                options: new ChatClientAgentOptions()
-                {
-                    Name = AgentName,
-                    ChatOptions = new() { Instructions = AgentInstructions, Tools = [weatherFunction] }
-                }),
-            _ => throw new InvalidOperationException($"Unknown create mechanism: {createMechanism}")
+            Instructions = AgentInstructions,
         };
+        definition.Tools.Add(weatherFunction.AsOpenAIResponseTool());
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            AgentName,
+            new AgentVersionCreationOptions(definition));
+
+        FoundryAgent agent = this._client.AsAIAgent(agentVersion, tools: [weatherFunction]);
 
         try
         {

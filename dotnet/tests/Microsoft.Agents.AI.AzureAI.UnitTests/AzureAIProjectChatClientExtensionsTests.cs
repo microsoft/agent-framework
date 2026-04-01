@@ -1723,35 +1723,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         public int Value { get; set; }
     }
 #pragma warning restore CA1812
-
-    /// <summary>
-    /// Test AIContextProvider for options preservation tests.
-    /// </summary>
-    private sealed class TestAIContextProvider : AIContextProvider
-    {
-        protected override ValueTask<AIContext> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        {
-            return new ValueTask<AIContext>(context.AIContext);
-        }
-    }
-
-    /// <summary>
-    /// Test ChatHistoryProvider for options preservation tests.
-    /// </summary>
-    private sealed class TestChatHistoryProvider : ChatHistoryProvider
-    {
-        protected override ValueTask<IEnumerable<ChatMessage>> InvokingCoreAsync(InvokingContext context, CancellationToken cancellationToken = default)
-        {
-            return new ValueTask<IEnumerable<ChatMessage>>(context.RequestMessages);
-        }
-
-        protected override ValueTask InvokedCoreAsync(InvokedContext context, CancellationToken cancellationToken = default)
-        {
-            return default;
-        }
-    }
-}
 #pragma warning restore CS0618
+
+}
 
 /// <summary>
 /// Provides test data for invalid agent name validation tests.

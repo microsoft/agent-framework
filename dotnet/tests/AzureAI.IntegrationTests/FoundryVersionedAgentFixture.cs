@@ -1,7 +1,5 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-#pragma warning disable CS0618 // Tests intentionally exercise obsolete extension methods
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -10,6 +8,7 @@ using AgentConformance.IntegrationTests;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
@@ -18,8 +17,12 @@ using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests;
 
-[Obsolete("Use FoundryVersionedAgentFixture instead. These tests exercise obsolete AIProjectClient extension methods.")]
-public class AIProjectClientFixture : IChatClientAgentFixture
+/// <summary>
+/// Integration test fixture that creates versioned Foundry agents via
+/// <c>AIProjectClient.Agents.CreateAgentVersionAsync</c> and wraps them
+/// with <c>AIProjectClient.AsAIAgent(AgentVersion)</c>.
+/// </summary>
+public class FoundryVersionedAgentFixture : IChatClientAgentFixture
 {
     private FoundryAgent _agent = null!;
     private AIProjectClient _client = null!;
@@ -40,7 +43,6 @@ public class AIProjectClientFixture : IChatClientAgentFixture
 
         if (chatClientSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
         {
-            // Conversation sessions do not persist message history.
             return await this.GetChatHistoryFromConversationAsync(chatClientSession.ConversationId);
         }
 
@@ -119,14 +121,48 @@ public class AIProjectClientFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        return (await this._client.CreateAIAgentAsync(GenerateUniqueAgentName(name), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: instructions, tools: aiTools)).GetService<ChatClientAgent>()!;
+        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        {
+            Instructions = instructions
+        };
+
+        // Register AIFunction tool definitions in the server-side agent definition so the model
+        // can invoke them. The local AIFunction implementations are matched by name via AsAIAgent.
+        if (aiTools is not null)
+        {
+            foreach (var tool in aiTools)
+            {
+                if (tool.AsOpenAIResponseTool() is ResponseTool responseTool)
+                {
+                    definition.Tools.Add(responseTool);
+                }
+            }
+        }
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            GenerateUniqueAgentName(name),
+            new AgentVersionCreationOptions(definition));
+
+        return this._client.AsAIAgent(agentVersion, tools: aiTools).GetService<ChatClientAgent>()!;
     }
 
     public async Task<ChatClientAgent> CreateChatClientAgentAsync(ChatClientAgentOptions options)
     {
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        return (await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options)).GetService<ChatClientAgent>()!;
+        var definition = new PromptAgentDefinition(
+            options.ChatOptions?.ModelId ?? TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        {
+            Instructions = options.ChatOptions?.Instructions
+        };
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            options.Name,
+            new AgentVersionCreationOptions(definition) { Description = options.Description });
+
+        var agent = this._client.AsAIAgent(agentVersion, tools: options.ChatOptions?.Tools);
+
+        return agent.GetService<ChatClientAgent>()!;
     }
 
     public static string GenerateUniqueAgentName(string baseName) =>
@@ -174,13 +210,33 @@ public class AIProjectClientFixture : IChatClientAgentFixture
     public virtual async ValueTask InitializeAsync()
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
-        this._agent = await this._client.CreateAIAgentAsync(GenerateUniqueAgentName("HelpfulAssistant"), model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), instructions: "You are a helpful assistant.");
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            GenerateUniqueAgentName("HelpfulAssistant"),
+            new AgentVersionCreationOptions(
+                new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+                {
+                    Instructions = "You are a helpful assistant."
+                }));
+
+        this._agent = this._client.AsAIAgent(agentVersion);
     }
 
     public async Task InitializeAsync(ChatClientAgentOptions options)
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
-        this._agent = await this._client.CreateAIAgentAsync(model: TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName), options);
+
+        var definition = new PromptAgentDefinition(
+            options.ChatOptions?.ModelId ?? TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        {
+            Instructions = options.ChatOptions?.Instructions
+        };
+
+        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+            options.Name,
+            new AgentVersionCreationOptions(definition) { Description = options.Description });
+
+        this._agent = this._client.AsAIAgent(agentVersion, tools: options.ChatOptions?.Tools);
     }
 }

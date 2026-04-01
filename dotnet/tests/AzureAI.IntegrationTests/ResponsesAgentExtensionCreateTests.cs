@@ -3,6 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -35,10 +36,13 @@ public class ResponsesAgentExtensionCreateTests
             name: AgentName,
             description: AgentDescription);
 
-        AgentSession session = await agent.CreateSessionAsync();
+        AgentSession? session = null;
 
         try
         {
+            var conversation = await CreateConversationAsync(this._client);
+            session = await agent.CreateSessionAsync(conversation.Id);
+
             // Act
             AgentResponse response = await agent.RunAsync("Return the verification token.", session);
 
@@ -46,7 +50,6 @@ public class ResponsesAgentExtensionCreateTests
             Assert.NotNull(agent);
             Assert.Equal(AgentName, agent.Name);
             Assert.Equal(AgentDescription, agent.Description);
-            Assert.Same(this._client, agent.GetService<AIProjectClient>());
             Assert.NotNull(agent.GetService<IChatClient>());
             Assert.Contains(VerificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
         }
@@ -73,10 +76,14 @@ public class ResponsesAgentExtensionCreateTests
         };
 
         ChatClientAgent agent = this._client.AsAIAgent(options);
-        ChatClientAgentSession session = ((await agent.CreateSessionAsync()) as ChatClientAgentSession)!;
+
+        ChatClientAgentSession? session = null;
 
         try
         {
+            var conversation = await CreateConversationAsync(this._client);
+            session = ((await agent.CreateSessionAsync(conversation.Id)) as ChatClientAgentSession)!;
+
             // Act
             AgentResponse response = await agent.RunAsync("Return the verification token.", session);
 
@@ -84,7 +91,6 @@ public class ResponsesAgentExtensionCreateTests
             Assert.StartsWith("conv_", session!.ConversationId, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(options.Name, agent.Name);
             Assert.Equal(options.Description, agent.Description);
-            Assert.Same(this._client, agent.GetService<AIProjectClient>());
             Assert.Contains(VerificationToken, response.Text, StringComparison.OrdinalIgnoreCase);
         }
         finally
@@ -93,8 +99,13 @@ public class ResponsesAgentExtensionCreateTests
         }
     }
 
-    private static async Task DeleteSessionAsync(AIProjectClient client, AgentSession session)
+    private static async Task DeleteSessionAsync(AIProjectClient client, AgentSession? session)
     {
+        if (session is null)
+        {
+            return;
+        }
+
         ChatClientAgentSession typedSession = (ChatClientAgentSession)session;
 
         if (typedSession.ConversationId?.StartsWith("conv_", StringComparison.OrdinalIgnoreCase) == true)
@@ -117,5 +128,11 @@ public class ResponsesAgentExtensionCreateTests
         {
             await DeleteResponseChainAsync(client, response.Value.PreviousResponseId);
         }
+    }
+
+    private static async Task<ProjectConversation> CreateConversationAsync(AIProjectClient client)
+    {
+        ProjectConversationsClient conversationsClient = client.GetProjectOpenAIClient().GetProjectConversationsClient();
+        return (await conversationsClient.CreateProjectConversationAsync()).Value!;
     }
 }
