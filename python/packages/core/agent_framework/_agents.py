@@ -1320,7 +1320,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):  # type: ignore[misc]
             chat_options = {}
 
         session_context = await self._run_before_providers(
-            session=session, input_messages=input_messages, options=options,
+            session=session,
+            input_messages=input_messages,
+            options=options,
         )
 
         # Merge provider-contributed tools into chat_options
