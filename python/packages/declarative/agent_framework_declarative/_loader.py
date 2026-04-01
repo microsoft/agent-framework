@@ -223,7 +223,7 @@ class AgentFactory:
                     SupportsChatGetResponse implementation, and model_field is the name of the field in the
                     constructor that accepts the model.id value.
             default_provider: The default provider used when model.provider is not specified,
-                default is "OpenAI".
+                default is "Foundry", which uses the FoundryChatClient.
             safe_mode: Whether to run in safe mode, default is True.
                 When safe_mode is True, environment variables are not accessible in the powerfx expressions.
                 You can still use environment variables, but through the constructors of the classes.
