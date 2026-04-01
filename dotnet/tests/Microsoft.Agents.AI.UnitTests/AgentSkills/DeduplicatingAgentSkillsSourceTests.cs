@@ -13,7 +13,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class DeduplicatingAgentSkillsSourceTests
 {
     [Fact]
-    public async Task GetSkillsAsync_NoDuplicates_ReturnsAllSkillsAsync()
+    public async Task GetSkillsAsync_NoDuplicates_ReturnsAllSkills()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(new AgentSkill[]
@@ -31,7 +31,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_WithDuplicates_KeepsFirstOccurrenceAsync()
+    public async Task GetSkillsAsync_WithDuplicates_KeepsFirstOccurrence()
     {
         // Arrange
         var skills = new AgentSkill[]
@@ -53,7 +53,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_CaseInsensitiveDuplication_KeepsFirstAsync()
+    public async Task GetSkillsAsync_CaseInsensitiveDuplication_KeepsFirst()
     {
         // Arrange - Use a custom source that returns skills with same name but different casing
         var inner = new FakeDuplicateCaseSource();
@@ -68,7 +68,7 @@ public sealed class DeduplicatingAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_EmptySource_ReturnsEmptyAsync()
+    public async Task GetSkillsAsync_EmptySource_ReturnsEmpty()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(System.Array.Empty<AgentSkill>());

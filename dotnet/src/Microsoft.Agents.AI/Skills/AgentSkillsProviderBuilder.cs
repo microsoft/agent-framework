@@ -11,15 +11,31 @@ namespace Microsoft.Agents.AI;
 
 /// <summary>
 /// Fluent builder for constructing an <see cref="AgentSkillsProvider"/> backed by a composite source.
+/// Intended for advanced scenarios where the simple <see cref="AgentSkillsProvider"/> constructors are insufficient.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Use this builder to combine multiple skill sources into a single provider:
+/// For simple, single-source scenarios, prefer the <see cref="AgentSkillsProvider"/> constructors directly
+/// (e.g., passing a skill directory path or a set of skills). Use this builder when you need one or more
+/// of the following advanced capabilities:
+/// </para>
+/// <list type="bullet">
+///   <item><description><strong>Mixed skill types</strong> — combine file-based, code-defined (<see cref="AgentInlineSkill"/>),
+///   and class-based (<see cref="AgentClassSkill"/>) skills in a single provider.</description></item>
+///   <item><description><strong>Multiple file script runners</strong> — use different script runners for different
+///   file skill directories via per-source <c>scriptRunner</c> parameters on
+///   <see cref="UseFileSkill"/> / <see cref="UseFileSkills(IEnumerable{string}, AgentFileSkillsSourceOptions?, AgentFileSkillScriptRunner?)"/>.</description></item>
+///   <item><description><strong>Skill filtering</strong> — include or exclude skills using a predicate
+///   via <see cref="UseFilter"/>.</description></item>
+/// </list>
+/// <para>
+/// Example — combining file-based and code-defined skills:
 /// </para>
 /// <code>
 /// var provider = new AgentSkillsProviderBuilder()
 ///     .UseFileSkills("/path/to/skills")
 ///     .UseSkills(myInlineSkill1, myInlineSkill2)
+///     .UseFileScriptRunner(SubprocessScriptRunner.RunAsync)
 ///     .Build();
 /// </code>
 /// </remarks>
