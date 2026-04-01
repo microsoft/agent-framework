@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
-using Microsoft.Agents.AI.AzureAI;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests.Memory;
 

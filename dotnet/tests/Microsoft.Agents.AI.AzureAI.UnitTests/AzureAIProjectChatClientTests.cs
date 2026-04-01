@@ -15,24 +15,26 @@ namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 public class AzureAIProjectChatClientTests
 {
     /// <summary>
-    /// Verify that when the ChatOptions has a "conv_" prefixed conversation ID, the chat client uses conversation in the http requests via the chat client
+    /// Verify that after the first RunAsync, the session's ConversationId is set from the
+    /// response, and subsequent requests include that conversation ID automatically.
     /// </summary>
     [Fact]
     public async Task ChatClient_UsesDefaultConversationIdAsync()
     {
         // Arrange
-        var requestTriggered = false;
+        var responsesRequestCount = 0;
         using var httpHandler = new HttpHandlerAssert(async (request) =>
         {
             if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
             {
-                requestTriggered = true;
+                responsesRequestCount++;
 
-                // Assert
-                if (request.Content is not null)
+                // Assert: On the second Responses API call, verify the conversation ID
+                // from the first response is automatically included in the request body.
+                if (responsesRequestCount == 2 && request.Content is not null)
                 {
                     var requestBody = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    Assert.Contains("conv_12345", requestBody);
+                    Assert.Contains("resp_0888a", requestBody);
                 }
 
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetOpenAIDefaultResponseJson(), Encoding.UTF8, "application/json") };
@@ -55,10 +57,12 @@ public class AzureAIProjectChatClientTests
         // Act
         var session = await agent.CreateSessionAsync();
         await agent.RunAsync("Hello", session);
+        await agent.RunAsync("Follow up", session);
 
-        Assert.True(requestTriggered);
+        // Assert
+        Assert.Equal(2, responsesRequestCount);
         var chatClientSession = Assert.IsType<ChatClientAgentSession>(session);
-        Assert.Equal("conv_12345", chatClientSession.ConversationId);
+        Assert.Equal("resp_0888a46cbf2b1ff3006914596e05d08195a77c3f5187b769a7", chatClientSession.ConversationId);
     }
 
     /// <summary>

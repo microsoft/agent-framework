@@ -49,7 +49,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that the non-versioned AsAIAgent overload creates a valid ChatClientAgent.
     /// </summary>
     [Fact]
-    public void AsAIAgent_WithModelAndInstructions_CreatesChatClientAgent()
+    public void AsAIAgent_Rapi_WithModelAndInstructions_CreatesChatClientAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -70,8 +70,8 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.NotNull(agent);
         Assert.Equal("test-agent", agent.Name);
         Assert.Equal("A test agent", agent.Description);
-        Assert.Same(client, agent.GetService<AIProjectClient>());
         Assert.NotNull(agent.GetService<IChatClient>());
+        Assert.Null(agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
@@ -101,7 +101,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that the options-based non-versioned AsAIAgent overload creates a valid ChatClientAgent.
     /// </summary>
     [Fact]
-    public void AsAIAgent_WithOptions_CreatesChatClientAgent()
+    public void AsAIAgent_Rapi_WithOptions_CreatesChatClientAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
@@ -123,14 +123,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.NotNull(agent);
         Assert.Equal("options-agent", agent.Name);
         Assert.Equal("Agent from options", agent.Description);
-        Assert.Same(client, agent.GetService<AIProjectClient>());
+        Assert.Null(agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
     /// Verify that the non-versioned AsAIAgent overload adds the MEAI user-agent header to Responses API requests.
     /// </summary>
     [Fact]
-    public async Task AsAIAgent_WithModelAndInstructions_UserAgentHeaderAddedToResponsesRequestsAsync()
+    public async Task AsAIAgent_Rapi_WithModelAndInstructions_UserAgentHeaderAddedToResponsesRequestsAsync()
     {
         // Arrange
         bool userAgentFound = false;
@@ -237,7 +237,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
+        Assert.IsType<FoundryAgent>(agent);
         Assert.Equal("agent_abc123", agent.Name);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
@@ -315,7 +317,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
+        Assert.IsType<FoundryAgent>(agent);
         Assert.Equal("agent_abc123", agent.Name);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
@@ -610,7 +614,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that AsAIAgentAsync accepts FunctionTools from definition.
     /// </summary>
     [Fact]
-    public async Task AsAIAgentAsync_WithFunctionToolsInDefinition_AcceptsDeclarativeFunctionAsync()
+    public async Task AsAIAgent_WithFunctionToolsInDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
         var functionTool = ResponseTool.CreateFunctionTool(
@@ -644,7 +648,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that AsAIAgentAsync accepts declarative functions from definition.
     /// </summary>
     [Fact]
-    public async Task AsAIAgentAsync_WithDeclarativeFunctionFromDefinition_AcceptsDeclarativeFunctionAsync()
+    public async Task AsAIAgent_WithDeclarativeFunctionFromDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
         using var testClient = CreateTestAgentClientWithHandler();
@@ -672,7 +676,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that AsAIAgentAsync accepts declarative functions from definition.
     /// </summary>
     [Fact]
-    public async Task AsAIAgentAsync_WithDeclarativeFunctionInDefinition_AcceptsDeclarativeFunctionAsync()
+    public async Task AsAIAgent_WithDeclarativeFunctionInDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
         var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
@@ -807,21 +811,34 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region User-Agent Header Tests
 
     /// <summary>
-    /// Verifies that the MEAI user-agent header is added to CreateAIAgentAsync POST requests
+    /// Verifies that the MEAI user-agent header is added to Responses API POST requests
     /// via the protocol method's RequestOptions pipeline policy.
     /// </summary>
     [Fact]
-    public async Task AsAIAgentAsync_UserAgentHeaderAddedToRequestsAsync()
+    public async Task AsAIAgent_Rapi_UserAgentHeaderAddedToRequestsAsync()
     {
+        bool userAgentFound = false;
         using var httpHandler = new HttpHandlerAssert(request =>
         {
-            Assert.Equal("POST", request.Method.Method);
+            if (request.Method == HttpMethod.Post && request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                // Verify MEAI user-agent header is present on Responses API POST request
+                if (request.Headers.TryGetValues("User-Agent", out var userAgentValues)
+                    && userAgentValues.Any(v => v.Contains("MEAI")))
+                {
+                    userAgentFound = true;
+                }
 
-            // Verify MEAI user-agent header is present on CreateAgentVersion POST request
-            Assert.True(request.Headers.TryGetValues("User-Agent", out var userAgentValues));
-            Assert.Contains(userAgentValues, v => v.Contains("MEAI"));
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        TestDataUtil.GetOpenAIDefaultResponseJson(),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
 
-            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentVersionResponseJson(), Encoding.UTF8, "application/json") };
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
         });
 
 #pragma warning disable CA5399
@@ -831,7 +848,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Arrange
         var aiProjectClient = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agentOptions = new ChatClientAgentOptions { Name = "test-agent" };
+        var agentOptions = new ChatClientAgentOptions
+        {
+            Name = "test-agent",
+            ChatOptions = new ChatOptions { ModelId = "gpt-4o-mini" }
+        };
 
         // Act
         var agent = aiProjectClient.AsAIAgent(agentOptions);
@@ -841,23 +862,38 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(response);
+        Assert.True(userAgentFound, "MEAI user-agent header was not found in any Responses API request");
     }
 
     /// <summary>
-    /// Verifies that the MEAI user-agent header is added to CreateAIAgentAsync POST requests
-    /// via the protocol method's RequestOptions pipeline policy.
+    /// Verifies that the MEAI user-agent header is added to Responses API POST requests
+    /// when using a versioned agent created via CreateAgentVersionAsync.
     /// </summary>
     [Fact]
-    public async Task AsAIAgentAsync_VersionedAgent_UserAgentHeaderAddedToRequestsAsync()
+    public async Task AsAIAgent_Versioned_UserAgentHeaderAddedToRequestsAsync()
     {
+        bool userAgentFound = false;
         using var httpHandler = new HttpHandlerAssert(request =>
         {
             Assert.Equal("POST", request.Method.Method);
 
-            // Verify MEAI user-agent header is present on CreateAgentVersion POST request
-            Assert.True(request.Headers.TryGetValues("User-Agent", out var userAgentValues));
-            Assert.Contains(userAgentValues, v => v.Contains("MEAI"));
+            if (request.RequestUri!.PathAndQuery.Contains("/responses"))
+            {
+                // Verify MEAI user-agent header is present on Responses API POST request
+                Assert.True(request.Headers.TryGetValues("User-Agent", out var userAgentValues));
+                Assert.Contains(userAgentValues, v => v.Contains("MEAI"));
+                userAgentFound = true;
 
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        TestDataUtil.GetOpenAIDefaultResponseJson(),
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+
+            // CreateAgentVersion POST — return agent version response
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(TestDataUtil.GetAgentVersionResponseJson(), Encoding.UTF8, "application/json") };
         });
 
@@ -878,6 +914,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(agent);
         Assert.NotNull(response);
+        Assert.True(userAgentFound, "MEAI user-agent header was not found in any Responses API request");
     }
 
     #endregion
@@ -932,8 +969,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Assert
         Assert.NotNull(agent);
+        Assert.IsType<FoundryAgent>(agent);
         Assert.Equal("test-name", agent.Name);
         Assert.Equal("test-name:1", agent.Id);
+        Assert.Same(client, agent.GetService<AIProjectClient>());
     }
 
     /// <summary>
