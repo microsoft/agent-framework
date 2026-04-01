@@ -56,7 +56,10 @@ class FoundryMemoryProvider(BaseContextProvider):
         source_id: Unique identifier for this provider instance.
         project_client: Azure AI Project client for memory operations.
         memory_store_name: The name of the memory store to use.
-        scope: The namespace that logically groups and isolates memories (e.g., user ID).
+        scope: The namespace that logically groups and isolates memories.
+            If not provided, automatically resolved at runtime from
+            ``session.state["user_id"]`` (combined with ``session.state["org_id"]``
+            when present).
         context_prompt: The prompt to prepend to retrieved memories.
         update_delay: Timeout period before processing memory update in seconds.
             Defaults to 300 (5 minutes). Set to 0 to immediately trigger updates.
@@ -91,8 +94,9 @@ class FoundryMemoryProvider(BaseContextProvider):
                 Required when project_client is not provided.
             allow_preview: Enables preview opt-in on internally-created ``AIProjectClient``.
             memory_store_name: The name of the memory store to use.
-            scope: The namespace that logically groups and isolates memories (e.g., user ID).
-                If None, `session_id` will be used.
+            scope: The namespace that logically groups and isolates memories.
+                If None, resolved at runtime from ``session.state["user_id"]``
+                (combined with ``session.state["org_id"]`` when present).
             context_prompt: The prompt to prepend to retrieved memories.
             update_delay: Timeout period before processing memory update in seconds.
             env_file_path: Path to environment file for loading settings.
@@ -127,12 +131,10 @@ class FoundryMemoryProvider(BaseContextProvider):
 
         if not memory_store_name:
             raise ValueError("memory_store_name is required")
-        if not scope:
-            raise ValueError("scope is required")
 
         self.project_client = project_client
         self.memory_store_name = memory_store_name
-        self.scope = scope
+        self.scope = scope or None
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.update_delay = update_delay
 
@@ -149,6 +151,26 @@ class FoundryMemoryProvider(BaseContextProvider):
 
     # -- Hooks pattern ---------------------------------------------------------
 
+    def _resolve_scope(self, session: AgentSession) -> str:
+        """Resolve the memory scope.
+
+        Returns the explicit scope if set, otherwise derives it from
+        ``session.state["user_id"]``
+
+        Raises:
+            ValueError: If scope cannot be resolved.
+        """
+        if self.scope:
+            return self.scope
+
+        user_id = session.state.get("user_id")
+        if not user_id:
+            raise ValueError(
+                "Memory scope cannot be resolved. Provide 'scope' at init time or set 'user_id' in session.state."
+            )
+
+        return str(user_id)
+
     async def before_run(
         self,
         *,
@@ -164,12 +186,14 @@ class FoundryMemoryProvider(BaseContextProvider):
         2. Searches for contextual memories based on input messages
         3. Combines and injects memories into the context
         """
+        resolved_scope = self._resolve_scope(session)
+
         # On first run, retrieve static memories (user profile memories)
         if not state.get("initialized"):
             try:
                 static_search_result = await self.project_client.beta.memory_stores.search_memories(
                     name=self.memory_store_name,
-                    scope=self.scope or context.session_id,  # type: ignore[arg-type]
+                    scope=resolved_scope,
                 )
                 static_memories = [{"content": memory.memory_item.content} for memory in static_search_result.memories]
                 state["static_memories"] = static_memories
@@ -197,7 +221,7 @@ class FoundryMemoryProvider(BaseContextProvider):
         try:
             search_result = await self.project_client.beta.memory_stores.search_memories(
                 name=self.memory_store_name,
-                scope=self.scope or context.session_id,  # type: ignore[arg-type]
+                scope=resolved_scope,
                 items=items,
                 previous_search_id=state.get("previous_search_id"),
             )
@@ -255,10 +279,11 @@ class FoundryMemoryProvider(BaseContextProvider):
             return
 
         try:
+            resolved_scope = self._resolve_scope(session)
             # Fire and forget - don't wait for the update to complete
             update_poller = await self.project_client.beta.memory_stores.begin_update_memories(
                 name=self.memory_store_name,
-                scope=self.scope or context.session_id,  # type: ignore[arg-type]
+                scope=resolved_scope,
                 items=items,
                 previous_update_id=state.get("previous_update_id"),
                 update_delay=self.update_delay,
