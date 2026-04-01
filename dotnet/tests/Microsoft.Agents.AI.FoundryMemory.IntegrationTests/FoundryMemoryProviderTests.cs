@@ -5,6 +5,7 @@
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Shared.IntegrationTests;
 
@@ -57,8 +58,15 @@ public sealed class FoundryMemoryProviderTests : IDisposable
             this._memoryStoreName!,
             stateInitializer: _ => new(new FoundryMemoryProviderScope("it-user-1")));
 
-        AIAgent agent = await this._client!.CreateAIAgentAsync(this._deploymentName!,
-            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider] });
+        AIAgent agent = this._client!.AsAIAgent(new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                ModelId = this._deploymentName!,
+                Instructions = "You are a helpful assistant. Use known memories about the user when responding, and do not invent details."
+            },
+            AIContextProviders = [memoryProvider]
+        });
 
         AgentSession session = await agent.CreateSessionAsync();
 
@@ -95,10 +103,25 @@ public sealed class FoundryMemoryProviderTests : IDisposable
             this._memoryStoreName!,
             stateInitializer: _ => new(new FoundryMemoryProviderScope("it-scope-b")));
 
-        AIAgent agent1 = await this._client!.CreateAIAgentAsync(this._deploymentName!,
-            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider1] });
-        AIAgent agent2 = await this._client!.CreateAIAgentAsync(this._deploymentName!,
-            options: new ChatClientAgentOptions { AIContextProviders = [memoryProvider2] });
+        AIAgent agent1 = this._client!.AsAIAgent(new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                ModelId = this._deploymentName!,
+                Instructions = "You are a helpful assistant. Use known memories about the user when responding, and do not invent details."
+            },
+            AIContextProviders = [memoryProvider1]
+        });
+
+        AIAgent agent2 = this._client!.AsAIAgent(new ChatClientAgentOptions
+        {
+            ChatOptions = new ChatOptions
+            {
+                ModelId = this._deploymentName!,
+                Instructions = "You are a helpful assistant. Use known memories about the user when responding, and do not invent details."
+            },
+            AIContextProviders = [memoryProvider2]
+        });
 
         AgentSession session1 = await agent1.CreateSessionAsync();
         AgentSession session2 = await agent2.CreateSessionAsync();

@@ -6,12 +6,12 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 
 namespace Microsoft.Agents.AI.AzureAI.UnitTests;
 
 #pragma warning disable CS0618
-[Obsolete("Uses obsolete AIProjectClient.GetAIAgentAsync compatibility extensions while validating chat-client behavior.")]
 public class AzureAIProjectChatClientTests
 {
     /// <summary>
@@ -50,12 +50,7 @@ public class AzureAIProjectChatClientTests
             new FakeAuthenticationTokenProvider(),
             new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await projectClient.GetAIAgentAsync(
-            new ChatClientAgentOptions
-            {
-                Name = "test-agent",
-                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_12345" }
-            });
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -102,12 +97,7 @@ public class AzureAIProjectChatClientTests
             new FakeAuthenticationTokenProvider(),
             new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await projectClient.GetAIAgentAsync(
-            new ChatClientAgentOptions
-            {
-                Name = "test-agent",
-                ChatOptions = new() { Instructions = "Test instructions" },
-            });
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -154,12 +144,7 @@ public class AzureAIProjectChatClientTests
             new FakeAuthenticationTokenProvider(),
             new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await projectClient.GetAIAgentAsync(
-            new ChatClientAgentOptions
-            {
-                Name = "test-agent",
-                ChatOptions = new() { Instructions = "Test instructions", ConversationId = "conv_should_not_use_default" }
-            });
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
 
         // Act
         var session = await agent.CreateSessionAsync();
@@ -206,12 +191,7 @@ public class AzureAIProjectChatClientTests
             new FakeAuthenticationTokenProvider(),
             new AIProjectClientOptions() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agent = await projectClient.GetAIAgentAsync(
-            new ChatClientAgentOptions
-            {
-                Name = "test-agent",
-                ChatOptions = new() { Instructions = "Test instructions" },
-            });
+        var agent = projectClient.AsAIAgent(new AgentReference("agent-name"));
 
         // Act
         var session = await agent.CreateSessionAsync();

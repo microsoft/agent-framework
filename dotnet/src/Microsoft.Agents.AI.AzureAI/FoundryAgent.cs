@@ -163,7 +163,29 @@ public sealed class FoundryAgent : DelegatingAIAgent
             },
         };
 
-        return AzureAIProjectChatClientExtensions.CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
+        return CreateResponsesChatClientAgent(aiProjectClient, options, clientFactory, loggerFactory, services);
+    }
+
+    private static ChatClientAgent CreateResponsesChatClientAgent(
+        AIProjectClient aiProjectClient,
+        ChatClientAgentOptions agentOptions,
+        Func<IChatClient, IChatClient>? clientFactory,
+        ILoggerFactory? loggerFactory,
+        IServiceProvider? services)
+    {
+        Throw.IfNull(aiProjectClient);
+        Throw.IfNull(agentOptions);
+        Throw.IfNull(agentOptions.ChatOptions);
+        Throw.IfNullOrWhitespace(agentOptions.ChatOptions.ModelId);
+
+        IChatClient chatClient = new AzureAIProjectResponsesChatClient(aiProjectClient, agentOptions.ChatOptions.ModelId);
+
+        if (clientFactory is not null)
+        {
+            chatClient = clientFactory(chatClient);
+        }
+
+        return new ChatClientAgent(chatClient, agentOptions, loggerFactory, services);
     }
 
     private static ChatClientAgent CreateInnerAgentFromEndpoint(

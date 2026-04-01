@@ -9,7 +9,6 @@ using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Shared.IntegrationTests;
@@ -21,7 +20,7 @@ namespace AzureAI.IntegrationTests;
 /// </summary>
 public class ResponsesAgentFixture : IChatClientAgentFixture
 {
-    private FoundryAgent _agent = null!;
+    private ChatClientAgent _agent = null!;
     private AIProjectClient _client = null!;
 
     public IChatClient ChatClient => this._agent.GetService<ChatClientAgent>()!.ChatClient;

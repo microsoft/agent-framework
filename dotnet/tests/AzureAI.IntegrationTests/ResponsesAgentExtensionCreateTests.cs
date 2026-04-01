@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using AgentConformance.IntegrationTests.Support;
 using Azure.AI.Projects;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Shared.IntegrationTests;
 
@@ -30,7 +29,7 @@ public class ResponsesAgentExtensionCreateTests
         const string AgentDescription = "Integration test agent created from AIProjectClient.AsAIAgent(model, instructions).";
         const string VerificationToken = "integration-extension-ok";
 
-        FoundryAgent agent = this._client.AsAIAgent(
+        ChatClientAgent agent = this._client.AsAIAgent(
             model: Model,
             instructions: $"You are a helpful assistant. When asked for verification, reply with exactly '{VerificationToken}'.",
             name: AgentName,
@@ -73,8 +72,8 @@ public class ResponsesAgentExtensionCreateTests
             },
         };
 
-        FoundryAgent agent = this._client.AsAIAgent(options);
-        ChatClientAgentSession session = await agent.CreateConversationSessionAsync();
+        ChatClientAgent agent = this._client.AsAIAgent(options);
+        ChatClientAgentSession session = ((await agent.CreateSessionAsync()) as ChatClientAgentSession)!;
 
         try
         {
@@ -82,7 +81,7 @@ public class ResponsesAgentExtensionCreateTests
             AgentResponse response = await agent.RunAsync("Return the verification token.", session);
 
             // Assert
-            Assert.StartsWith("conv_", session.ConversationId, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("conv_", session!.ConversationId, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(options.Name, agent.Name);
             Assert.Equal(options.Description, agent.Description);
             Assert.Same(this._client, agent.GetService<AIProjectClient>());
