@@ -1,6 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-// This sample shows how to create and use a AI agents with Microsoft Foundry Agents as the backend.
+// This sample shows how to create and use AI agents with Microsoft Foundry Agents as the backend.
 
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
