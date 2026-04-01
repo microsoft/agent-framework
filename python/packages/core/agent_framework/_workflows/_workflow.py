@@ -7,10 +7,9 @@ import asyncio
 import functools
 import hashlib
 import json
-import logging
 import types
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, overload
 
 from .._types import ResponseStream
@@ -34,8 +33,6 @@ from ._runner import Runner
 from ._runner_context import RunnerContext
 from ._state import State
 from ._typing_utils import is_instance_of, try_coerce_to_type
-
-logger = logging.getLogger(__name__)
 
 
 class WorkflowRunResult(list[WorkflowEvent]):
@@ -180,6 +177,7 @@ class Workflow(DictConvertible):
         description: str | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         output_executors: list[str] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
         **kwargs: Any,
     ):
         """Initialize the workflow with a list of edges.
@@ -198,6 +196,8 @@ class Workflow(DictConvertible):
                 WorkflowBuilder, this will be the description of the builder.
             output_executors: Optional list of executor IDs whose outputs will be considered workflow outputs.
                               If None or empty, all executor outputs are treated as workflow outputs.
+            request_handlers: Optional default request handlers for automatic HITL request handling.
+                Can be overridden per-run via workflow.run(request_handlers=...).
             kwargs: Additional keyword arguments. Unused in this implementation.
         """
         self.edge_groups = list(edge_groups)
@@ -233,6 +233,9 @@ class Workflow(DictConvertible):
 
         # Flag to prevent concurrent workflow executions
         self._is_running = False
+
+        # Default response handlers (can be overridden per-run)
+        self._request_handlers = request_handlers
 
     def _ensure_not_running(self) -> None:
         """Ensure the workflow is not already running."""
@@ -301,6 +304,7 @@ class Workflow(DictConvertible):
         reset_context: bool = True,
         streaming: bool = False,
         run_kwargs: dict[str, Any] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -312,6 +316,7 @@ class Workflow(DictConvertible):
             reset_context: Whether to reset the context for a new run
             streaming: Whether to enable streaming mode for agents
             run_kwargs: Optional kwargs to store in State for agent invocations
+            request_handlers: Optional request handlers for automatic request_info responses.
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -327,7 +332,6 @@ class Workflow(DictConvertible):
             OtelAttr.WORKFLOW_RUN_SPAN,
             attributes,
         ) as span:
-            saw_request = False
             emitted_in_progress_pending = False
             try:
                 # Add workflow started event (telemetry + surface state to consumers)
@@ -364,10 +368,9 @@ class Workflow(DictConvertible):
                     await initial_executor_fn()
 
                 # All executor executions happen within workflow span
-                async for event in self._runner.run_until_convergence():
-                    # Track request events for final status determination
-                    if event.type == "request_info":
-                        saw_request = True
+                async for event in self._runner.run_until_convergence(
+                    request_handlers=request_handlers,
+                ):
                     yield event
 
                     if event.type == "request_info" and not emitted_in_progress_pending:
@@ -375,8 +378,13 @@ class Workflow(DictConvertible):
                         with _framework_event_origin():
                             pending_status = WorkflowEvent.status(WorkflowRunState.IN_PROGRESS_PENDING_REQUESTS)
                         yield pending_status
-                # Workflow runs until idle - emit final status based on whether requests are pending
-                if saw_request:
+                # Workflow runs until idle - emit final status based on whether requests are pending.
+                # NOTE: The runner's convergence check waits for all outstanding request handler
+                # tasks to complete before returning, so by this point every dispatched handler
+                # has either submitted a response (triggering further supersteps) or failed
+                # (leaving the request pending). The idle status below is therefore accurate.
+                pending = await self._runner_context.get_pending_request_info_events()
+                if pending:
                     with _framework_event_origin():
                         terminal_status = WorkflowEvent.status(WorkflowRunState.IDLE_WITH_PENDING_REQUESTS)
                     yield terminal_status
@@ -460,6 +468,7 @@ class Workflow(DictConvertible):
         *,
         stream: Literal[True],
         responses: dict[str, Any] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         **kwargs: Any,
@@ -472,6 +481,7 @@ class Workflow(DictConvertible):
         *,
         stream: Literal[False] = ...,
         responses: dict[str, Any] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -484,6 +494,7 @@ class Workflow(DictConvertible):
         *,
         stream: bool = False,
         responses: dict[str, Any] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
@@ -504,6 +515,13 @@ class Workflow(DictConvertible):
                 request IDs and values are the corresponding response data. Mutually
                 exclusive with message. Can be combined with checkpoint_id to restore
                 a checkpoint and send responses in a single call.
+            request_handlers: Dict mapping request data types to async handler functions.
+                Mutually exclusive with ``responses``. Handlers are dispatched inline
+                as asyncio tasks when request_info events are emitted during execution.
+                The runner waits for outstanding handler tasks before declaring convergence,
+                so handler responses are processed in subsequent supersteps within the
+                same workflow run. If None, falls back to handlers set at build time via
+                WorkflowBuilder. Pass an empty dict to explicitly disable handlers for a run.
             checkpoint_id: ID of checkpoint to restore from. Can be used alone (resume
                 from checkpoint), with message (not allowed), or with responses
                 (restore then send responses).
@@ -519,14 +537,24 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
-        # Validate parameters and set running flag eagerly (before any async work)
-        self._validate_run_params(message, responses, checkpoint_id)
+        # Fall back to builder-level request_handlers if none provided at runtime.
+        # Skip fallback when responses are provided — manual submission bypasses automatic handling.
+        if request_handlers is not None:
+            effective_handlers = request_handlers
+        elif responses is not None:
+            effective_handlers = None
+        else:
+            effective_handlers = self._request_handlers
+
+        # Validate parameters eagerly (before any async work or setting running flag)
+        self._validate_run_params(message, responses, checkpoint_id, effective_handlers)
         self._ensure_not_running()
 
         response_stream = ResponseStream[WorkflowEvent, WorkflowRunResult](
             self._run_core(
                 message=message,
                 responses=responses,
+                request_handlers=effective_handlers,
                 checkpoint_id=checkpoint_id,
                 checkpoint_storage=checkpoint_storage,
                 streaming=stream,
@@ -547,12 +575,19 @@ class Workflow(DictConvertible):
         message: Any | None = None,
         *,
         responses: dict[str, Any] | None = None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
         **kwargs: Any,
     ) -> AsyncIterable[WorkflowEvent]:
         """Single core execution path for both streaming and non-streaming modes.
+
+        When request_handlers are provided, the runner dispatches handlers inline
+        as asyncio tasks when request_info events are emitted. The runner's
+        convergence check waits for outstanding handler tasks before deciding the
+        workflow is idle, allowing handler responses to be processed in subsequent
+        supersteps.
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -574,6 +609,7 @@ class Workflow(DictConvertible):
             # A non-empty kwargs dict (even one with empty values like {"key": {}})
             # is passed through and will overwrite stored kwargs.
             run_kwargs=kwargs if kwargs else None,
+            request_handlers=request_handlers,
         ):
             if event.type == "output" and not self._should_yield_output_event(event):
                 continue
@@ -626,6 +662,7 @@ class Workflow(DictConvertible):
         message: Any | None,
         responses: dict[str, Any] | None,
         checkpoint_id: str | None,
+        request_handlers: Mapping[type, Callable[[Any], Awaitable[Any]]] | None = None,
     ) -> None:
         """Validate parameter combinations for run().
 
@@ -634,6 +671,7 @@ class Workflow(DictConvertible):
         - message and checkpoint_id are mutually exclusive
         - At least one of message, responses, or checkpoint_id must be provided
         - responses + checkpoint_id is allowed (restore then send)
+        - request_handlers and responses are mutually exclusive
         """
         if message is not None and responses is not None:
             raise ValueError("Cannot provide both 'message' and 'responses'. Use one or the other.")
@@ -645,6 +683,12 @@ class Workflow(DictConvertible):
             raise ValueError(
                 "Must provide at least one of: 'message' (new run), 'responses' (send responses), "
                 "or 'checkpoint_id' (resume from checkpoint)."
+            )
+
+        if request_handlers is not None and responses is not None:
+            raise ValueError(
+                "Cannot provide both 'request_handlers' and 'responses'. "
+                "Use 'request_handlers' for automatic handling or 'responses' for manual submission."
             )
 
     def _resolve_execution_mode(

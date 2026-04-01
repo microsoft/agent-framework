@@ -81,6 +81,7 @@ Once comfortable with these, explore the rest of the samples below.
 | Human-In-The-Loop (Guessing Game)          | [human-in-the-loop/guessing_game_with_human_input.py](./human-in-the-loop/guessing_game_with_human_input.py) | Interactive request/response prompts with a human via `ctx.request_info()`                            |
 | Agents with Approval Requests in Workflows | [human-in-the-loop/agents_with_approval_requests.py](./human-in-the-loop/agents_with_approval_requests.py)   | Agents that create approval requests during workflow execution and wait for human approval to proceed |
 | Agents with Declaration-Only Tools         | [human-in-the-loop/agents_with_declaration_only_tools.py](./human-in-the-loop/agents_with_declaration_only_tools.py) | Workflow pauses when agent calls a client-side tool (`func=None`), caller supplies the result         |
+| Fan-Out Async with Request Handlers       | [human-in-the-loop/fan_out_async_with_request_handlers.py](./human-in-the-loop/fan_out_async_with_request_handlers.py) | Type-based request handler dispatch for HITL requests in fan-out workflows; automatic async handler execution and response submission |
 
 Builder-oriented request-info samples are maintained in the orchestration sample set
 (sequential, concurrent, and group-chat builder variants).

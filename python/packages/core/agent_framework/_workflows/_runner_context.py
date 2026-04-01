@@ -453,25 +453,32 @@ class InProcRunnerContext:
         if not event:
             raise ValueError(f"No pending request found for request_id: {request_id}")
 
-        # Validate response type if specified
-        if event.response_type and not is_instance_of(response, event.response_type):
-            raise TypeError(
-                f"Response type mismatch for request_id {request_id}: "
-                f"expected {event.response_type.__name__}, got {type(response).__name__}"
+        try:
+            # Validate response type if specified
+            if event.response_type and not is_instance_of(response, event.response_type):
+                expected_type_name = getattr(event.response_type, "__name__", str(event.response_type))
+                raise TypeError(
+                    f"Response type mismatch for request_id {request_id}: "
+                    f"expected {expected_type_name}, got {type(response).__name__}"
+                )
+
+            source_executor_id = event.source_executor_id
+
+            # Create ResponseMessage instance
+            response_msg = WorkflowMessage(
+                data=response,
+                source_id=INTERNAL_SOURCE_ID(source_executor_id),
+                target_id=source_executor_id,
+                type=MessageType.RESPONSE,
+                original_request_info_event=event,
             )
 
-        source_executor_id = event.source_executor_id
-
-        # Create ResponseMessage instance
-        response_msg = WorkflowMessage(
-            data=response,
-            source_id=INTERNAL_SOURCE_ID(source_executor_id),
-            target_id=source_executor_id,
-            type=MessageType.RESPONSE,
-            original_request_info_event=event,
-        )
-
-        await self.send_message(response_msg)
+            await self.send_message(response_msg)
+        except BaseException:
+            # Restore pending request so callers can retry (for example, type mismatch
+            # from an async request handler or cancellation while submitting).
+            self._pending_request_info_events[request_id] = event
+            raise
 
     async def get_pending_request_info_events(self) -> dict[str, WorkflowEvent[Any]]:
         """Get the mapping of request IDs to their corresponding request_info events.
