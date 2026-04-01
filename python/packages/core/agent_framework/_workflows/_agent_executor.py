@@ -251,21 +251,6 @@ class AgentExecutor(Executor):
         Returns:
             Dict containing serialized cache and session state
         """
-        # Check if using AzureAIAgentClient with server-side session and warn about checkpointing limitations
-        if is_chat_agent(self._agent) and self._session.service_session_id is not None:
-            client_class_name = self._agent.client.__class__.__name__
-            client_module = self._agent.client.__class__.__module__
-
-            if client_class_name == "AzureAIAgentClient" and "azure_ai" in client_module:
-                logger.warning(
-                    "Checkpointing an AgentExecutor with AzureAIAgentClient that uses server-side sessions. "
-                    "Currently, checkpointing does not capture messages from server-side sessions "
-                    "(service_session_id: %s). The session state in checkpoints is not immutable and can be "
-                    "modified by subsequent runs. If you need reliable checkpointing with Azure AI agents, "
-                    "consider implementing a custom executor and managing the session state yourself.",
-                    self._session.service_session_id,
-                )
-
         serialized_session = self._session.to_dict()
 
         return {

@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-openai"
-description = "OpenAI integration for Microsoft Agent Framework."
+description = "OpenAI integrations for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,6 @@ classifiers = [
 dependencies = [
     "agent-framework-core>=1.0.0rc6",
     "openai>=1.99.0,<3",
-    "packaging>=24.1,<25",
 ]
 
 [tool.uv]

@@ -12,7 +12,7 @@ import uvicorn
 from agent_framework import ChatOptions
 from agent_framework._clients import SupportsChatGetResponse
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -80,7 +80,7 @@ client: SupportsChatGetResponse[ChatOptions] = cast(
     SupportsChatGetResponse[ChatOptions],
     AnthropicClient()
     if AnthropicClient is not None and os.getenv("CHAT_CLIENT", "").lower() == "anthropic"
-    else AzureOpenAIChatClient(),
+    else OpenAIChatCompletionClient(),
 )
 
 # Agentic Chat - basic chat agent

@@ -11,23 +11,39 @@ using Microsoft.Extensions.AI;
 namespace Microsoft.Agents.AI;
 
 /// <summary>
-/// A delegating chat client that simulates service-stored chat history behavior using
-/// framework-managed <see cref="ChatHistoryProvider"/> instances.
+/// A delegating chat client that persists chat history and updates session state after each
+/// individual service call within the <see cref="FunctionInvokingChatClient"/> loop.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This decorator is intended to operate between the <see cref="FunctionInvokingChatClient"/> and the leaf
-/// <see cref="IChatClient"/> in a <see cref="ChatClientAgent"/> pipeline.
+/// <see cref="IChatClient"/> in a <see cref="ChatClientAgent"/> pipeline. It is activated when
+/// <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> is <see langword="true"/>.
 /// </para>
 /// <para>
-/// Before each service call, it loads chat history from the agent's <see cref="ChatHistoryProvider"/>
-/// and prepends it to the request messages. After each successful service call, it persists
-/// new request and response messages to the provider. It also returns a sentinel
-/// <see cref="ChatOptions.ConversationId"/> on the response so that the
-/// <see cref="FunctionInvokingChatClient"/> treats the conversation as service-managed —
-/// clearing accumulated history between iterations and not injecting duplicate
-/// <see cref="FunctionCallContent"/> during approval-response processing.
+/// When active, it handles two complementary scenarios:
 /// </para>
+/// <list type="bullet">
+/// <item>
+/// <term>Framework-managed chat history</term>
+/// <description>
+/// Before each service call, the decorator loads history from the agent's <see cref="ChatHistoryProvider"/>
+/// and prepends it to the request messages. After each successful call, it persists new messages to
+/// the provider and returns a sentinel <see cref="ChatOptions.ConversationId"/> so that
+/// <see cref="FunctionInvokingChatClient"/> treats the conversation as service-managed — clearing
+/// accumulated history between iterations and not injecting duplicate <see cref="FunctionCallContent"/>
+/// during approval-response processing.
+/// </description>
+/// </item>
+/// <item>
+/// <term>Service-stored chat history</term>
+/// <description>
+/// When the underlying service manages its own chat history (real <see cref="ChatOptions.ConversationId"/>),
+/// the decorator updates <see cref="ChatClientAgentSession.ConversationId"/> after each service call so
+/// that intermediate ConversationId changes are captured immediately rather than only at the end of the run.
+/// </description>
+/// </item>
+/// </list>
 /// <para>
 /// This chat client must be used within the context of a running <see cref="ChatClientAgent"/>. It retrieves the
 /// current agent and session from <see cref="AIAgent.CurrentRunContext"/>, which is set automatically when an agent's
@@ -38,7 +54,7 @@ namespace Microsoft.Agents.AI;
 /// available or if the agent is not a <see cref="ChatClientAgent"/>.
 /// </para>
 /// </remarks>
-internal sealed class ServiceStoredSimulatingChatClient : DelegatingChatClient
+internal sealed class PerServiceCallChatHistoryPersistingChatClient : DelegatingChatClient
 {
     /// <summary>
     /// A sentinel value returned on <see cref="ChatResponse.ConversationId"/> to signal
@@ -59,10 +75,10 @@ internal sealed class ServiceStoredSimulatingChatClient : DelegatingChatClient
     internal const string LocalHistoryConversationId = "_agent_local_chat_history";
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="ServiceStoredSimulatingChatClient"/> class.
+    /// Initializes a new instance of the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> class.
     /// </summary>
     /// <param name="innerClient">The underlying chat client that will handle the core operations.</param>
-    public ServiceStoredSimulatingChatClient(IChatClient innerClient)
+    public PerServiceCallChatHistoryPersistingChatClient(IChatClient innerClient)
         : base(innerClient)
     {
     }
@@ -237,18 +253,18 @@ internal sealed class ServiceStoredSimulatingChatClient : DelegatingChatClient
     {
         var runContext = AIAgent.CurrentRunContext
             ?? throw new InvalidOperationException(
-                $"{nameof(ServiceStoredSimulatingChatClient)} can only be used within the context of a running AIAgent. " +
+                $"{nameof(PerServiceCallChatHistoryPersistingChatClient)} can only be used within the context of a running AIAgent. " +
                 "Ensure that the chat client is being invoked as part of an AIAgent.RunAsync or AIAgent.RunStreamingAsync call.");
 
         var chatClientAgent = runContext.Agent.GetService<ChatClientAgent>()
             ?? throw new InvalidOperationException(
-                $"{nameof(ServiceStoredSimulatingChatClient)} can only be used with a {nameof(ChatClientAgent)}. " +
+                $"{nameof(PerServiceCallChatHistoryPersistingChatClient)} can only be used with a {nameof(ChatClientAgent)}. " +
                 $"The current agent is of type '{runContext.Agent.GetType().Name}'.");
 
         if (runContext.Session is not ChatClientAgentSession chatClientAgentSession)
         {
             throw new InvalidOperationException(
-                $"{nameof(ServiceStoredSimulatingChatClient)} requires a {nameof(ChatClientAgentSession)}. " +
+                $"{nameof(PerServiceCallChatHistoryPersistingChatClient)} requires a {nameof(ChatClientAgentSession)}. " +
                 $"The current session is of type '{runContext.Session?.GetType().Name ?? "null"}'.");
         }
 

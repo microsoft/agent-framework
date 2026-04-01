@@ -22,8 +22,11 @@ This example requires `anthropic>=0.74.0` and an endpoint in Foundry for Anthrop
 To use the Foundry integration ensure you have the following environment variables set:
 - ANTHROPIC_FOUNDRY_API_KEY
     Alternatively you can pass in a azure_ad_token_provider function to the AsyncAnthropicFoundry constructor.
-- ANTHROPIC_FOUNDRY_ENDPOINT
-    Should be something like https://<your-resource-name>.services.ai.azure.com/anthropic/
+- ANTHROPIC_FOUNDRY_RESOURCE
+    Should be the resource name portion of your Foundry Anthropic URL, such as <your-resource-name>.
+- ANTHROPIC_FOUNDRY_BASE_URL
+    Optional alternative to ANTHROPIC_FOUNDRY_RESOURCE. Should be something like
+    https://<your-resource-name>.services.ai.azure.com/anthropic/
 - ANTHROPIC_CHAT_MODEL_ID
     Should be something like claude-haiku-4-5
 """

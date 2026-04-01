@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_framework import SessionContext, Skill, SkillResource, SkillsProvider
+from agent_framework import SessionContext, Skill, SkillResource, SkillScript, SkillScriptRunner, SkillsProvider
 from agent_framework._skills import (
     DEFAULT_RESOURCE_EXTENSIONS,
     DEFAULT_SCRIPT_EXTENSIONS,
@@ -31,6 +31,8 @@ from agent_framework._skills import (
     _read_file_skill_resource,
     _validate_skill_metadata,
 )
+
+pytestmark = pytest.mark.filterwarnings(r"ignore:\[SKILLS\].*:FutureWarning")
 
 
 async def _noop_script_runner(skill: Any, script: Any, args: Any = None) -> None:
@@ -776,6 +778,44 @@ class TestSymlinkDetection:
 # ---------------------------------------------------------------------------
 # Tests: SkillResource
 # ---------------------------------------------------------------------------
+
+
+class TestSkillsExperimentalStage:
+    """Tests for the experimental stage annotations applied to skills APIs."""
+
+    def test_docstrings_include_experimental_warning(self) -> None:
+        assert SkillResource.__doc__ is not None
+        assert SkillScript.__doc__ is not None
+        assert Skill.__doc__ is not None
+        assert SkillScriptRunner.__doc__ is not None
+        assert SkillsProvider.__doc__ is not None
+        assert SkillScript.parameters_schema.__doc__ is not None
+
+        assert ".. warning:: Experimental" in SkillResource.__doc__
+        assert ".. warning:: Experimental" in SkillScript.__doc__
+        assert ".. warning:: Experimental" in Skill.__doc__
+        assert ".. warning:: Experimental" in SkillScriptRunner.__doc__
+        assert ".. warning:: Experimental" in SkillsProvider.__doc__
+        assert ".. warning:: Experimental" not in SkillScript.parameters_schema.__doc__
+
+    def test_feature_metadata_is_set(self) -> None:
+        assert SkillResource.__feature_stage__ == "experimental"
+        assert SkillScript.__feature_stage__ == "experimental"
+        assert Skill.__feature_stage__ == "experimental"
+        assert SkillsProvider.__feature_stage__ == "experimental"
+        feature_ids = [
+            SkillResource.__feature_id__,
+            SkillScript.__feature_id__,
+            Skill.__feature_id__,
+            SkillsProvider.__feature_id__,
+        ]
+        assert all(isinstance(feature_id, str) and feature_id for feature_id in feature_ids)
+        assert len(set(feature_ids)) == 1
+        assert getattr(SkillScriptRunner, "__feature_stage__", None) is None
+        assert getattr(SkillScriptRunner, "__feature_id__", None) is None
+        assert SkillScript.parameters_schema.fget is not None
+        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_stage__")
+        assert not hasattr(SkillScript.parameters_schema.fget, "__feature_id__")
 
 
 class TestSkillResource:
@@ -1839,40 +1879,28 @@ class TestSkillScript:
     """Tests for the SkillScript data model."""
 
     def test_empty_name_raises(self) -> None:
-        from agent_framework import SkillScript
-
         with pytest.raises(ValueError, match="Script name cannot be empty"):
             SkillScript(name="")
 
     def test_whitespace_name_raises(self) -> None:
-        from agent_framework import SkillScript
-
         with pytest.raises(ValueError, match="Script name cannot be empty"):
             SkillScript(name="   ")
 
     def test_path_default_none(self) -> None:
-        from agent_framework import SkillScript
-
         script = SkillScript(name="test", function=lambda: None)
         assert script.path is None
 
     def test_path_set_explicitly(self) -> None:
-        from agent_framework import SkillScript
-
         script = SkillScript(name="gen.py", path="/skills/my-skill/scripts/gen.py")
         assert script.path == "/skills/my-skill/scripts/gen.py"
 
     def test_create_with_function(self) -> None:
-        from agent_framework import SkillScript
-
         script = SkillScript(name="analyze", description="Run analysis", function=lambda: "result")
         assert script.name == "analyze"
         assert script.description == "Run analysis"
         assert script.function is not None
 
     def test_accepts_kwargs_true_for_kwargs_function(self) -> None:
-        from agent_framework import SkillScript
-
         def func_with_kwargs(**kwargs: Any) -> str:
             return "result"
 
@@ -1880,8 +1908,6 @@ class TestSkillScript:
         assert script._accepts_kwargs is True
 
     def test_accepts_kwargs_false_for_regular_function(self) -> None:
-        from agent_framework import SkillScript
-
         def func_no_kwargs(x: int = 0) -> str:
             return "result"
 

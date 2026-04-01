@@ -15,22 +15,19 @@ This folder contains examples for direct chat client usage patterns.
 `built_in_chat_clients.py` starts with:
 
 ```python
-asyncio.run(main("openai_chat"))
+asyncio.run(main("openai_responses"))
 ```
 
 Change the argument to pick a client:
 
-- `openai_chat`
 - `openai_responses`
-- `openai_assistants`
+- `openai_chat_completion`
 - `anthropic`
 - `ollama`
 - `bedrock`
-- `azure_openai_chat`
 - `azure_openai_responses`
-- `azure_openai_responses_foundry`
-- `azure_openai_assistants`
-- `azure_ai_agent`
+- `azure_openai_chat_completion`
+- `foundry_chat`
 
 Example:
 
@@ -42,22 +39,19 @@ uv run samples/02-agents/chat_client/built_in_chat_clients.py
 
 Depending on the selected client, set the appropriate environment variables:
 
-**For Azure clients:**
+**For Azure OpenAI clients (`azure_openai_responses` and `azure_openai_chat_completion`):**
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat deployment
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses deployment
+- `AZURE_OPENAI_DEPLOYMENT_NAME`: The Azure OpenAI deployment used by the sample
+- `AZURE_OPENAI_API_VERSION` (optional): Azure OpenAI API version override
+- `AZURE_OPENAI_API_KEY` (optional): Azure OpenAI API key if you are not using `AzureCliCredential`
 
-**For Azure OpenAI Foundry responses client (`azure_openai_responses_foundry`):**
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses deployment
-
-**For Azure AI agent client (`azure_ai_agent`):**
-- `AZURE_AI_PROJECT_ENDPOINT`: Your Azure AI project endpoint
-- `AZURE_AI_MODEL_DEPLOYMENT_NAME`: The name of your model deployment (used by `azure_ai_agent`)
+**For Foundry client (`foundry_chat`):**
+- `FOUNDRY_PROJECT_ENDPOINT`: Your Azure AI Foundry project endpoint
+- `FOUNDRY_MODEL`: The Foundry deployment used by the sample
 
 **For OpenAI clients:**
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_chat` and `openai_assistants`
+- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_chat_completion`
 - `OPENAI_RESPONSES_MODEL`: The OpenAI model for `openai_responses`
 
 **For Anthropic client (`anthropic`):**

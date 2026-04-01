@@ -43,7 +43,7 @@ from agent_framework._types import (
     add_usage_details,
     validate_tool_mode,
 )
-from agent_framework.exceptions import ContentError
+from agent_framework.exceptions import AdditionItemMismatch, ContentError
 
 
 @fixture
@@ -1524,6 +1524,88 @@ def test_text_reasoning_content_iadd_coverage():
 
     # Content doesn't implement __iadd__, so += creates a new object via __add__
     assert t1.text == "Thinking 1 Thinking 2"
+
+
+def test_text_reasoning_content_add_preserves_id():
+    """Test that coalescing text_reasoning Content preserves the id field."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_id_fallback_to_other():
+    """Test that coalescing falls back to other's id when self has no id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" part 2")
+
+    result = t1 + t2
+    assert result.id == "rs_abc123"
+
+
+def test_text_reasoning_content_add_preserves_id_with_encrypted_content():
+    """Test that id and encrypted_content both survive coalescing for round-trip."""
+
+    t1 = Content.from_text_reasoning(
+        id="rs_abc123",
+        text="Thinking",
+        additional_properties={"encrypted_content": "enc_blob_data"},
+    )
+    t2 = Content.from_text_reasoning(id="rs_abc123", text=" more")
+
+    result = t1 + t2
+    assert result.text == "Thinking more"
+    assert result.id == "rs_abc123"
+    assert result.additional_properties.get("encrypted_content") == "enc_blob_data"
+
+
+def test_text_reasoning_content_add_conflicting_ids_raises():
+    """Test that coalescing text_reasoning Content with different ids raises AdditionItemMismatch."""
+
+    t1 = Content.from_text_reasoning(id="rs_abc123", text="Thinking part 1")
+    t2 = Content.from_text_reasoning(id="rs_xyz789", text=" part 2")
+
+    with pytest.raises(AdditionItemMismatch, match="different ids"):
+        t1 + t2
+
+
+def test_text_reasoning_content_add_neither_has_id():
+    """Test that coalescing text_reasoning Content when neither has an id results in None id."""
+
+    t1 = Content.from_text_reasoning(text="Thinking part 1")
+    t2 = Content.from_text_reasoning(text=" part 2")
+
+    result = t1 + t2
+    assert result.text == "Thinking part 1 part 2"
+    assert result.id is None
+
+
+def test_coalesce_text_reasoning_with_different_ids():
+    """Test that _coalesce_text_content keeps separate text_reasoning items when IDs differ.
+
+    Regression test: streaming responses can produce multiple text_reasoning
+    segments with distinct IDs. These must not be merged into one.
+    """
+    from agent_framework._types import _coalesce_text_content
+
+    contents = [
+        Content.from_text_reasoning(id="rs_aaa", text="Thinking A1"),
+        Content.from_text_reasoning(id="rs_aaa", text=" A2"),
+        Content.from_text_reasoning(id="rs_bbb", text="Thinking B1"),
+        Content.from_text_reasoning(id="rs_bbb", text=" B2"),
+    ]
+
+    _coalesce_text_content(contents, "text_reasoning")
+
+    assert len(contents) == 2
+    assert contents[0].id == "rs_aaa"
+    assert contents[0].text == "Thinking A1 A2"
+    assert contents[1].id == "rs_bbb"
+    assert contents[1].text == "Thinking B1 B2"
 
 
 def test_comprehensive_to_dict_exclude_options():

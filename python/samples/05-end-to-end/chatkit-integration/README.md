@@ -177,7 +177,7 @@ pip install agent-framework-chatkit fastapi uvicorn azure-identity
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 export AZURE_OPENAI_API_VERSION="2024-06-01"
-export AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="gpt-4o"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o"
 ```
 
 3. **Authenticate with Azure:**

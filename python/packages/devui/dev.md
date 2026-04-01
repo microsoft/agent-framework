@@ -37,7 +37,7 @@ OPENAI_CHAT_MODEL="gpt-4o-mini"
 
 # Or for Azure OpenAI
 AZURE_OPENAI_ENDPOINT="your-endpoint"
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME="your-deployment-name"
+AZURE_OPENAI_DEPLOYMENT_NAME="your-deployment-name"
 ```
 
 ## 4. Test DevUI

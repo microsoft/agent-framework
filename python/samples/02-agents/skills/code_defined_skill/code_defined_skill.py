@@ -3,6 +3,11 @@
 import asyncio
 import json
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings  # isort: skip
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 from typing import Any
 
@@ -89,7 +94,7 @@ def conversion_policy(**kwargs: Any) -> Any:
 
     Args:
         **kwargs: Runtime keyword arguments from ``agent.run()``.
-            For example, ``agent.run(..., precision=2)``
+            For example, ``agent.run(..., function_invocation_kwargs={"precision": 2})``
             makes ``kwargs["precision"]`` available here.
     """
     precision = kwargs.get("precision", 4)
@@ -137,15 +142,11 @@ async def main() -> None:
         credential=AzureCliCredential(),
     )
 
-    # Create the skills provider with the code-defined skill
-    skills_provider = SkillsProvider(
-        skills=[unit_converter_skill],
-    )
-
+    # Create the skills provider with the code-defined skill and pass it to the agent
     async with Agent(
         client=client,
         instructions="You are a helpful assistant that can convert units.",
-        context_providers=[skills_provider],
+        context_providers=[SkillsProvider(skills=[unit_converter_skill])],
     ) as agent:
         print("Converting units")
         print("-" * 60)

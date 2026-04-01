@@ -231,8 +231,7 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         streaming and non-streaming responses.
 
         For full-featured clients with middleware, telemetry, and function invocation support,
-        use the public client classes (e.g., ``OpenAIChatClient``, ``OpenAIResponsesClient``)
-        which compose these layers correctly.
+        use public client classes such as ``OpenAIChatClient`` which compose these layers correctly.
 
     Examples:
         .. code-block:: python

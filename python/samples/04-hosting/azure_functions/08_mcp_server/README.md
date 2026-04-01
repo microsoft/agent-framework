@@ -138,23 +138,35 @@ Expected response:
 The sample shows how to enable MCP tool triggers with flexible agent configuration:
 
 ```python
-from agent_framework.azure import AgentFunctionApp, AzureOpenAIChatClient
+import os
 
-# Create Azure OpenAI Chat Client
-client = AzureOpenAIChatClient()
+from agent_framework import Agent
+from agent_framework.azure import AgentFunctionApp
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
+
+# Create Foundry chat client
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=AzureCliCredential(),
+)
 
 # Define agents with different roles
-joker_agent = client.as_agent(
+joker_agent = Agent(
+    client=client,
     name="Joker",
     instructions="You are good at telling jokes.",
 )
 
-stock_agent = client.as_agent(
+stock_agent = Agent(
+    client=client,
     name="StockAdvisor",
     instructions="Check stock prices.",
 )
 
-plant_agent = client.as_agent(
+plant_agent = Agent(
+    client=client,
     name="PlantAdvisor",
     instructions="Recommend plants.",
     description="Get plant recommendations.",
