@@ -10,7 +10,7 @@ this agent uses CU for structured extraction — superior for scanned PDFs,
 handwritten content, audio transcription, and video analysis.
 
 Required environment variables:
-  AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
   AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
@@ -45,13 +45,13 @@ cu = ContentUnderstandingContextProvider(
 
 if _openai_api_key:
     client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         api_key=_openai_api_key,
     )
 else:
     client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         credential=_credential,
     )

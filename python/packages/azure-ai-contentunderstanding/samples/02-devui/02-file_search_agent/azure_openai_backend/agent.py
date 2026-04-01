@@ -22,7 +22,7 @@ Analyzer auto-detection:
     - Video            → prebuilt-videoSearch
 
 Required environment variables:
-  AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
   AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
@@ -53,7 +53,7 @@ _openai_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 _cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
 _cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
 
-_endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
+_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 
 # --- LLM client + sync vector store setup ---
 # DevUI loads agent modules synchronously at startup while an event loop is already

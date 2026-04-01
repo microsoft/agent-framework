@@ -49,8 +49,8 @@ Architecture:
 NOTE: Requires an async OpenAI client for vector store operations.
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_DEPLOYMENT_NAME             — Model deployment name (e.g. gpt-4.1)
+  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
@@ -64,15 +64,15 @@ async def main() -> None:
     # 2. Create async OpenAI client for vector store operations
     token = credential.get_token("https://cognitiveservices.azure.com/.default").token
     openai_client = AsyncAzureOpenAI(
-        azure_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
+        azure_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         api_version="2025-03-01-preview",
         azure_ad_token=token,
     )
 
     # 3. Create LLM client (needed for get_file_search_tool)
     client = FoundryChatClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
 

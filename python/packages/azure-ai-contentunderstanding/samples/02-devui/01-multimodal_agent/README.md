@@ -6,7 +6,7 @@ Interactive web UI for uploading and chatting with documents, images, audio, and
 
 1. Set environment variables (or create a `.env` file in `python/`):
    ```bash
-   AZURE_AI_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
+   FOUNDRY_PROJECT_ENDPOINT=https://your-project.api.azureml.ms
    AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME=gpt-4.1
    AZURE_CONTENTUNDERSTANDING_ENDPOINT=https://your-cu-resource.cognitiveservices.azure.com/
    ```

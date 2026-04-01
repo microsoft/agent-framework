@@ -32,8 +32,8 @@ markdown with table preservation — superior to LLM-only vision for
 scanned PDFs, handwritten content, and complex layouts.
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_DEPLOYMENT_NAME             — Model deployment name (e.g. gpt-4.1)
+  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
+  FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 """
 
@@ -55,8 +55,8 @@ async def main() -> None:
 
     # Set up the LLM client
     client = FoundryChatClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=credential,
     )
 
