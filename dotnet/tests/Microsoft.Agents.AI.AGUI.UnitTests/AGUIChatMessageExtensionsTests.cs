@@ -498,6 +498,95 @@ public sealed class AGUIChatMessageExtensionsTests
         Assert.Equal("The answer is 4.", chatMessages[2].Text);
     }
 
+    [Fact]
+    public void AsAGUIMessages_WithReasoningContent_ProducesReasoningMessage()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("I need to think about this.") { ProtectedData = "encrypted-tok-1" }
+            ]) { MessageId = "reason-1" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("reason-1", reasoningMessage.Id);
+        Assert.Equal(AGUIRoles.Reasoning, reasoningMessage.Role);
+        Assert.Equal("I need to think about this.", reasoningMessage.Content);
+        Assert.Equal("encrypted-tok-1", reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithReasoningContentWithoutProtectedData_ProducesReasoningMessage()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Just thinking.")
+            ]) { MessageId = "reason-2" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("Just thinking.", reasoningMessage.Content);
+        Assert.Null(reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AsAGUIMessages_WithMultipleReasoningChunksInOneMessage_ConcatenatesText()
+    {
+        // Arrange
+        List<ChatMessage> chatMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("First part. "),
+                new TextReasoningContent("Second part.") { ProtectedData = "final-token" }
+            ]) { MessageId = "reason-3" }
+        ];
+
+        // Act
+        List<AGUIMessage> aguiMessages = chatMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        AGUIMessage message = Assert.Single(aguiMessages);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("First part. Second part.", reasoningMessage.Content);
+        Assert.Equal("final-token", reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void RoundTrip_ReasoningMessage_PreservesData()
+    {
+        // Arrange
+        List<ChatMessage> originalMessages =
+        [
+            new ChatMessage(ChatRole.Assistant, [
+                new TextReasoningContent("Thinking about the problem.") { ProtectedData = "ErgDCkgIDB..." }
+            ]) { MessageId = "reason-rt" }
+        ];
+
+        // Act - Convert to AGUI and back
+        AGUIMessage aguiMessage = originalMessages.AsAGUIMessages(AGUIJsonSerializerContext.Default.Options).Single();
+        List<AGUIMessage> aguiList = [aguiMessage];
+        ChatMessage reconstructed = aguiList.AsChatMessages(AGUIJsonSerializerContext.Default.Options).Single();
+
+        // Assert
+        Assert.Equal(ChatRole.Assistant, reconstructed.Role);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(reconstructed.Contents[0]);
+        Assert.Equal("Thinking about the problem.", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
+    }
+
     #region Custom Type Serialization Tests
 
     [Fact]
