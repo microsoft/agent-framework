@@ -335,7 +335,7 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        function_invocation_kwargs, client_kwargs, backward_compatible_kwargs = self._prepare_agent_run_args(
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(
             ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
         )
 
@@ -346,7 +346,6 @@ class AgentExecutor(Executor):
             session=self._session,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
-            **backward_compatible_kwargs,
         )
         await ctx.yield_output(response)
 
@@ -368,7 +367,7 @@ class AgentExecutor(Executor):
         Returns:
             The complete AgentResponse, or None if waiting for user input.
         """
-        function_invocation_kwargs, client_kwargs, backward_compatible_kwargs = self._prepare_agent_run_args(
+        function_invocation_kwargs, client_kwargs = self._prepare_agent_run_args(
             ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
         )
 
@@ -381,7 +380,6 @@ class AgentExecutor(Executor):
             session=self._session,
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
-            **backward_compatible_kwargs,
         )
         async for update in stream:
             updates.append(update)
@@ -427,50 +425,28 @@ class AgentExecutor(Executor):
 
         return response
 
-    # Parameters that are explicitly passed to agent.run() by AgentExecutor
-    # and must not appear in **run_kwargs to avoid TypeError from duplicate values.
-    _RESERVED_RUN_PARAMS: frozenset[str] = frozenset({"session", "stream", "messages"})
-
     def _prepare_agent_run_args(
         self,
         raw_run_kwargs: dict[str, Any],
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any]]:
-        """Prepare function_invocation_kwargs, client_kwargs, and backward-compatible kwargs for agent.run().
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Prepare function_invocation_kwargs and client_kwargs for agent.run().
 
-        Extracts ``function_invocation_kwargs`` and ``client_invocation_kwargs`` from the
+        Extracts ``function_invocation_kwargs`` and ``client_kwargs`` from the
         workflow state dict, resolving per-executor entries using ``self.id``. The
         ``__global__`` sentinel key (set by ``Workflow._resolve_invocation_kwargs``) denotes
         global kwargs that apply to all executors. Per-executor dicts use executor IDs as
         keys; this executor extracts only its own entry.
 
-        Any remaining keys in the raw dict are treated as backward-compatible agent.run()
-        kwargs. Reserved parameters (session, stream, messages) that are explicitly managed
-        by AgentExecutor are stripped to prevent duplicate-keyword collisions.
-
         Returns:
-            A 3-tuple of (function_invocation_kwargs, client_kwargs, backward_compatible_kwargs).
+            A 2-tuple of (function_invocation_kwargs, client_kwargs).
         """
-        run_kwargs = dict(raw_run_kwargs)
-
-        # Extract the already-resolved invocation kwargs dicts
-        # (set by Workflow._resolve_invocation_kwargs).
-        fi_resolved = run_kwargs.pop("function_invocation_kwargs", None)
-        ci_resolved = run_kwargs.pop("client_invocation_kwargs", None)
+        fi_resolved = raw_run_kwargs.get("function_invocation_kwargs")
+        ci_resolved = raw_run_kwargs.get("client_kwargs")
 
         function_invocation_kwargs = self._resolve_executor_kwargs(fi_resolved)
         client_kwargs = self._resolve_executor_kwargs(ci_resolved)
 
-        # Strip reserved params that AgentExecutor passes explicitly to agent.run().
-        for key in AgentExecutor._RESERVED_RUN_PARAMS:
-            if key in run_kwargs:
-                logger.warning(
-                    "Workflow kwarg '%s' is reserved by AgentExecutor and will be ignored. "
-                    "Remove it from workflow.run() kwargs to silence this warning.",
-                    key,
-                )
-                run_kwargs.pop(key)
-
-        return function_invocation_kwargs, client_kwargs, run_kwargs
+        return function_invocation_kwargs, client_kwargs
 
     def _resolve_executor_kwargs(self, resolved: dict[str, Any] | None) -> dict[str, Any] | None:
         """Extract this executor's kwargs from a resolved invocation kwargs dict.

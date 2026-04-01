@@ -20,7 +20,7 @@ Sample: Per-Agent Workflow kwargs
 
 This sample demonstrates how to pass different kwargs to different agents in a
 workflow using per-agent targeting. When keys in function_invocation_kwargs (or
-client_invocation_kwargs) match executor IDs (agent names by default), each agent
+client_kwargs) match executor IDs (agent names by default), each agent
 receives only its own slice of the kwargs.
 
 Key Concepts:

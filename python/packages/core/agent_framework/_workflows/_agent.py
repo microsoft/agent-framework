@@ -6,7 +6,7 @@ import json
 import logging
 import sys
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
@@ -152,7 +152,8 @@ class WorkflowAgent(BaseAgent):
         session: AgentSession | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     @overload
@@ -164,7 +165,8 @@ class WorkflowAgent(BaseAgent):
         session: AgentSession | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AgentResponse: ...
 
     def run(
@@ -175,7 +177,8 @@ class WorkflowAgent(BaseAgent):
         session: AgentSession | None = None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse] | Awaitable[AgentResponse]:
         """Get a response from the workflow agent.
 
@@ -192,8 +195,12 @@ class WorkflowAgent(BaseAgent):
             checkpoint_storage: Runtime checkpoint storage. When provided with checkpoint_id,
                 used to load and restore the checkpoint. When provided without checkpoint_id,
                 enables checkpointing for this run.
-            **kwargs: Additional keyword arguments passed through to underlying workflow
-                and tool functions.
+            function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
+                subagents. Either a mapping of agent name/executor id to kwargs, or a flat
+                mapping of kwargs for all tool invocations.
+            client_kwargs: Keyword arguments forwarded to chat client calls in
+                subagents. Either a mapping of agent name/executor id to kwargs, or a flat
+                mapping of kwargs for all chat client calls.
 
         Returns:
             When stream=True: An AsyncIterable[AgentResponseUpdate] for streaming updates.
@@ -208,10 +215,26 @@ class WorkflowAgent(BaseAgent):
         response_id = str(uuid.uuid4())
         if stream:
             return ResponseStream(
-                self._run_stream_impl(messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs),
+                self._run_stream_impl(
+                    messages,
+                    response_id,
+                    session,
+                    checkpoint_id,
+                    checkpoint_storage,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ),
                 finalizer=AgentResponse.from_updates,
             )
-        return self._run_impl(messages, response_id, session, checkpoint_id, checkpoint_storage, **kwargs)
+        return self._run_impl(
+            messages,
+            response_id,
+            session,
+            checkpoint_id,
+            checkpoint_storage,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
+        )
 
     async def _run_impl(
         self,
@@ -220,7 +243,8 @@ class WorkflowAgent(BaseAgent):
         session: AgentSession | None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AgentResponse:
         """Internal implementation of non-streaming execution.
 
@@ -230,8 +254,8 @@ class WorkflowAgent(BaseAgent):
             session: The agent session for conversation context.
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
-            **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and tool functions.
+            function_invocation_kwargs: Optional kwargs for tool invocations.
+            client_kwargs: Optional kwargs for chat client calls.
 
         Returns:
             An AgentResponse representing the workflow execution results.
@@ -264,7 +288,12 @@ class WorkflowAgent(BaseAgent):
 
         output_events: list[WorkflowEvent[Any]] = []
         async for event in self._run_core(
-            session_messages, checkpoint_id, checkpoint_storage, streaming=False, **kwargs
+            session_messages,
+            checkpoint_id,
+            checkpoint_storage,
+            streaming=False,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
         ):
             if event.type == "output" or event.type == "request_info":
                 output_events.append(event)
@@ -285,7 +314,8 @@ class WorkflowAgent(BaseAgent):
         session: AgentSession | None,
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[AgentResponseUpdate]:
         """Internal implementation of streaming execution.
 
@@ -295,8 +325,8 @@ class WorkflowAgent(BaseAgent):
             session: The agent session for conversation context.
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
-            **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and tool functions.
+            function_invocation_kwargs: Optional kwargs for tool invocations.
+            client_kwargs: Optional kwargs for chat client calls.
 
         Yields:
             AgentResponseUpdate objects representing the workflow execution progress.
@@ -329,7 +359,12 @@ class WorkflowAgent(BaseAgent):
         session_messages: list[Message] = session_context.get_messages(include_input=True)
         all_updates: list[AgentResponseUpdate] = []
         async for event in self._run_core(
-            session_messages, checkpoint_id, checkpoint_storage, streaming=True, **kwargs
+            session_messages,
+            checkpoint_id,
+            checkpoint_storage,
+            streaming=True,
+            function_invocation_kwargs=function_invocation_kwargs,
+            client_kwargs=client_kwargs,
         ):
             updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
             for update in updates:
@@ -349,7 +384,8 @@ class WorkflowAgent(BaseAgent):
         checkpoint_id: str | None,
         checkpoint_storage: CheckpointStorage | None,
         streaming: bool,
-        **kwargs: Any,
+        function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Core implementation that yields workflow events for both streaming and non-streaming modes.
 
@@ -358,12 +394,18 @@ class WorkflowAgent(BaseAgent):
             checkpoint_id: ID of checkpoint to restore from.
             checkpoint_storage: Runtime checkpoint storage.
             streaming: Whether to use streaming workflow methods.
-            **kwargs: Additional keyword arguments passed through to the underlying
-                workflow and tool functions.
+            function_invocation_kwargs: Optional kwargs for tool invocations.
+            client_kwargs: Optional kwargs for chat client calls.
 
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
+        invocation_kwargs: dict[str, Any] = {}
+        if function_invocation_kwargs is not None:
+            invocation_kwargs["function_invocation_kwargs"] = function_invocation_kwargs
+        if client_kwargs is not None:
+            invocation_kwargs["client_kwargs"] = client_kwargs
+
         # Determine the execution mode based on state.
         # The streaming flag controls the workflow's internal streaming mode,
         # which affects executor behavior (e.g. AgentExecutor emits different event
@@ -371,10 +413,12 @@ class WorkflowAgent(BaseAgent):
         if bool(self.pending_requests):
             function_responses = self._process_pending_requests(input_messages)
             if streaming:
-                async for event in self.workflow.run(responses=function_responses, stream=True, **kwargs):
+                async for event in self.workflow.run(
+                    responses=function_responses, stream=True, **invocation_kwargs
+                ):
                     yield event
             else:
-                for event in await self.workflow.run(responses=function_responses, **kwargs):
+                for event in await self.workflow.run(responses=function_responses, **invocation_kwargs):
                     yield event
 
         elif checkpoint_id is not None:
@@ -383,14 +427,14 @@ class WorkflowAgent(BaseAgent):
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
-                    **kwargs,
+                    **invocation_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
-                    **kwargs,
+                    **invocation_kwargs,
                 ):
                     yield event
 
@@ -400,14 +444,14 @@ class WorkflowAgent(BaseAgent):
                     message=input_messages,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
-                    **kwargs,
+                    **invocation_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     message=input_messages,
                     checkpoint_storage=checkpoint_storage,
-                    **kwargs,
+                    **invocation_kwargs,
                 ):
                     yield event
 

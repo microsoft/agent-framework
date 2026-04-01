@@ -10,7 +10,6 @@ import json
 import logging
 import types
 import uuid
-import warnings
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, overload
 
@@ -300,8 +299,7 @@ class Workflow(DictConvertible):
         reset_context: bool = True,
         streaming: bool = False,
         function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        run_kwargs: Mapping[str, Any] | None = None,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Private method to run workflow with proper tracing.
 
@@ -314,9 +312,8 @@ class Workflow(DictConvertible):
             streaming: Whether to enable streaming mode for agents
             function_invocation_kwargs: Optional kwargs to store in State for function
                 invocations in subagents
-            client_invocation_kwargs: Optional kwargs to store in State for chat client
+            client_kwargs: Optional kwargs to store in State for chat client
                 invocations in subagents
-            run_kwargs: Deprecated optional kwargs to store in State for agent invocations
 
         Yields:
             WorkflowEvent: The events generated during the workflow execution.
@@ -355,21 +352,17 @@ class Workflow(DictConvertible):
                 # Only overwrite when new kwargs are explicitly provided or state was
                 # just cleared (fresh run). On continuation (reset_context=False) with
                 # no new kwargs, preserve the kwargs from the original run.
-                if function_invocation_kwargs or client_invocation_kwargs:
+                if function_invocation_kwargs is not None or client_kwargs is not None:
                     combined_kwargs: dict[str, Any] = {}
-                    if function_invocation_kwargs:
+                    if function_invocation_kwargs is not None:
                         combined_kwargs["function_invocation_kwargs"] = self._resolve_invocation_kwargs(
                             function_invocation_kwargs, "function_invocation_kwargs"
                         )
-                    if client_invocation_kwargs:
-                        combined_kwargs["client_invocation_kwargs"] = self._resolve_invocation_kwargs(
-                            client_invocation_kwargs, "client_invocation_kwargs"
+                    if client_kwargs is not None:
+                        combined_kwargs["client_kwargs"] = self._resolve_invocation_kwargs(
+                            client_kwargs, "client_kwargs"
                         )
                     self._state.set(WORKFLOW_RUN_KWARGS_KEY, combined_kwargs)
-                elif run_kwargs is not None:
-                    # Deprecated path for direct kwargs - still support but prefer the more explicit
-                    # function_invocation_kwargs/client_invocation_kwargs
-                    self._state.set(WORKFLOW_RUN_KWARGS_KEY, run_kwargs)
                 elif reset_context:
                     self._state.set(WORKFLOW_RUN_KWARGS_KEY, {})
                 self._state.commit()  # Commit immediately so kwargs are available
@@ -481,7 +474,7 @@ class Workflow(DictConvertible):
         checkpoint_id: str | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult]: ...
 
     @overload
@@ -495,7 +488,7 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         function_invocation_kwargs: Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Any] | None = None,
     ) -> Awaitable[WorkflowRunResult]: ...
 
     def run(
@@ -508,8 +501,7 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         include_status_events: bool = False,
         function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> ResponseStream[WorkflowEvent, WorkflowRunResult] | Awaitable[WorkflowRunResult]:
         """Run the workflow, optionally streaming events.
 
@@ -534,11 +526,9 @@ class Workflow(DictConvertible):
             function_invocation_kwargs: Keyword arguments forwarded to tool invocations in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
                 or a flat mapping of kwargs for all tool invocations.
-            client_invocation_kwargs: Keyword arguments forwarded to chat client calls in
+            client_kwargs: Keyword arguments forwarded to chat client calls in
                 subagents. Either a mapping for agent name or agent executor id to kwargs,
                 or a flat mapping of kwargs for all chat client calls.
-            **kwargs: Deprecated additional keyword arguments for the subagents. They are
-                forwarded to both tool invocations and the chat clients.
 
         Returns:
             When stream=True: A ResponseStream[WorkflowEvent, WorkflowRunResult] for
@@ -548,19 +538,6 @@ class Workflow(DictConvertible):
         Raises:
             ValueError: If parameter combination is invalid.
         """
-        if kwargs:
-            warnings.warn(
-                "Passing runtime keyword arguments directly to run() is deprecated; pass tool values via "
-                "function_invocation_kwargs and client_invocation_kwargs instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if function_invocation_kwargs or client_invocation_kwargs:
-                raise ValueError(
-                    "Cannot provide both deprecated kwargs and function_invocation_kwargs/client_invocation_kwargs. "
-                    "Please consolidate to function_invocation_kwargs/client_invocation_kwargs."
-                )
-
         # Validate parameters and set running flag eagerly (before any async work)
         self._validate_run_params(message, responses, checkpoint_id)
         self._ensure_not_running()
@@ -573,8 +550,7 @@ class Workflow(DictConvertible):
                 checkpoint_storage=checkpoint_storage,
                 streaming=stream,
                 function_invocation_kwargs=function_invocation_kwargs,
-                client_invocation_kwargs=client_invocation_kwargs,
-                **kwargs,
+                client_kwargs=client_kwargs,
             ),
             finalizer=functools.partial(self._finalize_events, include_status_events=include_status_events),
             cleanup_hooks=[
@@ -595,8 +571,7 @@ class Workflow(DictConvertible):
         checkpoint_storage: CheckpointStorage | None = None,
         streaming: bool = False,
         function_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        client_invocation_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
-        **kwargs: Any,
+        client_kwargs: Mapping[str, Mapping[str, Any]] | Mapping[str, Any] | None = None,
     ) -> AsyncIterable[WorkflowEvent]:
         """Single core execution path for both streaming and non-streaming modes.
 
@@ -616,12 +591,7 @@ class Workflow(DictConvertible):
             reset_context=reset_context,
             streaming=streaming,
             function_invocation_kwargs=function_invocation_kwargs,
-            client_invocation_kwargs=client_invocation_kwargs,
-            # Empty **kwargs (no caller-provided kwargs) is collapsed to None so that
-            # continuation calls without explicit kwargs preserve the original run's kwargs.
-            # A non-empty kwargs dict (even one with empty values like {"key": {}})
-            # is passed through and will overwrite stored kwargs.
-            run_kwargs=kwargs if kwargs else None,
+            client_kwargs=client_kwargs,
         ):
             if event.type == "output" and not self._should_yield_output_event(event):
                 continue

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from ._workflow import Workflow
 
 from ._checkpoint_encoding import decode_checkpoint_value
-from ._const import WORKFLOW_RUN_KWARGS_KEY
+from ._const import GLOBAL_KWARGS_KEY, WORKFLOW_RUN_KWARGS_KEY
 from ._events import (
     WorkflowEvent,
     WorkflowRunState,
@@ -387,8 +387,19 @@ class WorkflowExecutor(Executor):
             # Get kwargs from parent workflow's State to propagate to subworkflow
             parent_kwargs: dict[str, Any] = ctx.get_state(WORKFLOW_RUN_KWARGS_KEY, {})
 
+            # Extract invocation kwargs recognised by Workflow.run()
+            # The state stores resolved format (with __global__ wrapper for global kwargs).
+            # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
+            # against the subworkflow's own executor IDs.
+            invocation_kwargs: dict[str, Any] = {}
+            for key in ("function_invocation_kwargs", "client_kwargs"):
+                resolved = parent_kwargs.get(key)
+                if isinstance(resolved, dict):
+                    # Unwrap global sentinel; pass per-executor dicts as-is
+                    invocation_kwargs[key] = resolved.get(GLOBAL_KWARGS_KEY, resolved)
+
             # Run the sub-workflow and collect all events, passing parent kwargs
-            result = await self.workflow.run(input_data, **parent_kwargs)
+            result = await self.workflow.run(input_data, **invocation_kwargs)
 
             logger.debug(
                 f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "

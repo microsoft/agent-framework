@@ -1,8 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-import logging
 from collections.abc import AsyncIterable, Awaitable
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import Any, Literal, overload
 
 import pytest
 
@@ -23,9 +22,6 @@ from agent_framework import (
 from agent_framework._workflows._agent_executor import AgentExecutorResponse
 from agent_framework._workflows._checkpoint import InMemoryCheckpointStorage
 from agent_framework._workflows._const import GLOBAL_KWARGS_KEY
-
-if TYPE_CHECKING:
-    from _pytest.logging import LogCaptureFixture
 
 
 class _CountingAgent(BaseAgent):
@@ -310,93 +306,28 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
     assert restored_session.session_id == session.session_id
 
 
-async def test_agent_executor_run_with_session_kwarg_does_not_raise() -> None:
-    """Passing session= via workflow.run() should not cause a duplicate-keyword TypeError (#4295)."""
-    agent = _CountingAgent(id="session_kwarg_agent", name="SessionKwargAgent")
-    executor = AgentExecutor(agent, id="session_kwarg_exec")
-    workflow = WorkflowBuilder(start_executor=executor).build()
-
-    # This previously raised: TypeError: run() got multiple values for keyword argument 'session'
-    result = await workflow.run("hello", session="user-supplied-value")
-    assert result is not None
-    assert agent.call_count == 1
-
-
-async def test_agent_executor_run_streaming_with_stream_kwarg_does_not_raise() -> None:
-    """Passing stream= via workflow.run() kwargs should not cause a duplicate-keyword TypeError."""
-    agent = _CountingAgent(id="stream_kwarg_agent", name="StreamKwargAgent")
-    executor = AgentExecutor(agent, id="stream_kwarg_exec")
-    workflow = WorkflowBuilder(start_executor=executor).build()
-
-    # stream=True at workflow level triggers streaming mode (returns async iterable)
-    events: list[WorkflowEvent] = []
-    async for event in workflow.run("hello", stream=True):
-        events.append(event)
-    assert len(events) > 0
-    assert agent.call_count == 1
-
-
-@pytest.mark.parametrize("reserved_kwarg", ["session", "stream", "messages"])
-async def test_prepare_agent_run_args_strips_reserved_kwargs(reserved_kwarg: str, caplog: "LogCaptureFixture") -> None:
-    """_prepare_agent_run_args must remove reserved kwargs and log a warning."""
+async def test_prepare_agent_run_args_extracts_invocation_kwargs() -> None:
+    """_prepare_agent_run_args extracts function_invocation_kwargs and client_kwargs."""
     agent = _CountingAgent(id="test_agent", name="TestAgent")
     executor = AgentExecutor(agent, id="test_exec")
 
     raw: dict[str, Any] = {
-        reserved_kwarg: "should-be-stripped",
-        "custom_key": "keep-me",
+        "function_invocation_kwargs": {"__global__": {"key": "fi_val"}},
+        "client_kwargs": {"__global__": {"key": "ci_val"}},
     }
-
-    with caplog.at_level(logging.WARNING):
-        _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
-
-    assert reserved_kwarg not in backward_kwargs
-    assert "custom_key" in backward_kwargs
-    assert backward_kwargs["custom_key"] == "keep-me"
-    assert any(reserved_kwarg in record.message for record in caplog.records)
+    fi_kwargs, ci_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs == {"key": "fi_val"}
+    assert ci_kwargs == {"key": "ci_val"}
 
 
-async def test_prepare_agent_run_args_preserves_non_reserved_kwargs() -> None:
-    """Non-reserved workflow kwargs should pass through unchanged."""
+async def test_prepare_agent_run_args_returns_none_when_no_kwargs() -> None:
+    """_prepare_agent_run_args returns None for both when raw dict has no invocation kwargs."""
     agent = _CountingAgent(id="test_agent", name="TestAgent")
     executor = AgentExecutor(agent, id="test_exec")
 
-    raw: dict[str, Any] = {"custom_param": "value", "another": 42}
-    _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
-    assert backward_kwargs["custom_param"] == "value"
-    assert backward_kwargs["another"] == 42
-
-
-async def test_prepare_agent_run_args_strips_all_reserved_kwargs_at_once(
-    caplog: "LogCaptureFixture",
-) -> None:
-    """All reserved kwargs should be stripped when supplied together, each emitting a warning."""
-    agent = _CountingAgent(id="test_agent", name="TestAgent")
-    executor = AgentExecutor(agent, id="test_exec")
-
-    raw: dict[str, Any] = {"session": "x", "stream": True, "messages": [], "custom": 1}
-
-    with caplog.at_level(logging.WARNING):
-        _, _, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
-
-    assert "session" not in backward_kwargs
-    assert "stream" not in backward_kwargs
-    assert "messages" not in backward_kwargs
-    assert backward_kwargs["custom"] == 1
-
-    warned_keys = {r.message.split("'")[1] for r in caplog.records if "reserved" in r.message.lower()}
-    assert warned_keys == {"session", "stream", "messages"}
-
-
-async def test_agent_executor_run_with_messages_kwarg_does_not_raise() -> None:
-    """Passing messages= via workflow.run() kwargs should not cause a duplicate-keyword TypeError."""
-    agent = _CountingAgent(id="messages_kwarg_agent", name="MessagesKwargAgent")
-    executor = AgentExecutor(agent, id="messages_kwarg_exec")
-    workflow = WorkflowBuilder(start_executor=executor).build()
-
-    result = await workflow.run("hello", messages=["stale"])
-    assert result is not None
-    assert agent.call_count == 1
+    fi_kwargs, ci_kwargs = executor._prepare_agent_run_args({})  # pyright: ignore[reportPrivateUsage]
+    assert fi_kwargs is None
+    assert ci_kwargs is None
 
 
 class _NonCopyableRaw:
@@ -720,24 +651,22 @@ async def test_prepare_agent_run_args_extracts_function_invocation_kwargs() -> N
     raw: dict[str, Any] = {
         "function_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"tool_key": "tool_val"}},
     }
-    fi_kwargs, client_kwargs, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    fi_kwargs, client_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs == {"tool_key": "tool_val"}
     assert client_kwargs is None
-    assert "function_invocation_kwargs" not in backward_kwargs
 
 
-async def test_prepare_agent_run_args_extracts_client_invocation_kwargs() -> None:
-    """_prepare_agent_run_args extracts client_invocation_kwargs from the state dict."""
+async def test_prepare_agent_run_args_extracts_client_kwargs() -> None:
+    """_prepare_agent_run_args extracts client_kwargs from the state dict."""
     agent = _CountingAgent(id="a", name="A")
     executor = AgentExecutor(agent, id="exec_a")
 
     raw: dict[str, Any] = {
-        "client_invocation_kwargs": {GLOBAL_KWARGS_KEY: {"model": "gpt-4"}},
+        "client_kwargs": {GLOBAL_KWARGS_KEY: {"model": "gpt-4"}},
     }
-    fi_kwargs, client_kwargs, backward_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    fi_kwargs, client_kwargs = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs is None
     assert client_kwargs == {"model": "gpt-4"}
-    assert "client_invocation_kwargs" not in backward_kwargs
 
 
 async def test_prepare_agent_run_args_per_executor_resolution() -> None:
@@ -751,7 +680,7 @@ async def test_prepare_agent_run_args_per_executor_resolution() -> None:
             "exec_b": {"other_tool_key": "other_val"},
         },
     }
-    fi_kwargs, _, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    fi_kwargs, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs == {"my_tool_key": "my_val"}
 
 
@@ -766,5 +695,5 @@ async def test_prepare_agent_run_args_per_executor_no_match() -> None:
             "exec_b": {"other_tool_key": "other_val"},
         },
     }
-    fi_kwargs, _, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
+    fi_kwargs, _ = executor._prepare_agent_run_args(raw)  # pyright: ignore[reportPrivateUsage]
     assert fi_kwargs is None
