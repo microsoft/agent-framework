@@ -48,6 +48,15 @@ Architecture:
 
 NOTE: Requires an async OpenAI client for vector store operations.
 
+This sample uses a single small invoice PDF for simplicity. In practice,
+you can upload multiple files in the same session (each is indexed
+separately in the vector store), and this pattern is most valuable for
+large documents (up to 300 pages), long audio recordings, or video files
+where full-context injection would exceed the LLM's context window.
+CU supports PDFs up to 300 pages / 200 MB, and audio files up to 300 MB
+— see the full service limits:
+https://learn.microsoft.com/azure/ai-services/content-understanding/service-limits#input-file-limits
+
 Environment variables:
   FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
   FOUNDRY_MODEL             — Model deployment name (e.g. gpt-4.1)
