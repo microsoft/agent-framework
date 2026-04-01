@@ -94,15 +94,12 @@ Create a simple Azure Responses Agent that writes a haiku about the Microsoft Ag
 # Use `az login` to authenticate with Azure CLI
 import os
 import asyncio
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.openai import OpenAIChatClient
 from azure.identity import AzureCliCredential
 
 
 async def main():
-    # Initialize a chat agent with Azure OpenAI Responses
-    # the endpoint, deployment name, and api version can be set via environment variables
-    # or they can be passed in directly to the AzureOpenAIResponsesClient constructor
-    agent = AzureOpenAIResponsesClient(
+    agent = OpenAIChatClient(
         # endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         # deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
         # api_version=os.environ["AZURE_OPENAI_API_VERSION"],
