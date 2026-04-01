@@ -62,9 +62,7 @@ jobs:
             azure:
               - 'python/packages/openai/**'
               - 'python/packages/core/agent_framework/azure/**'
-              - 'python/packages/azure-ai/agent_framework_azure_ai/_deprecated_azure_openai.py'
-              - 'python/packages/azure-ai/tests/azure_openai/**'
-              - 'python/samples/**/providers/azure/openai_chat_completion_client_azure*.py'
+              - 'python/samples/**/providers/azure/**'
             misc:
               - 'python/packages/anthropic/**'
               - 'python/packages/ollama/**'
@@ -223,8 +221,6 @@ jobs:
           packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
           packages/openai/tests/openai/test_openai_chat_client_azure.py
           packages/openai/tests/openai/test_openai_embedding_client_azure.py
-          packages/azure-ai/tests/azure_openai
-          --ignore=packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -430,7 +426,6 @@ jobs:
         timeout-minutes: 15
         run: >
           uv run pytest --import-mode=importlib
-          packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
           packages/foundry/tests
           -m integration
           -n logical --dist worksteal

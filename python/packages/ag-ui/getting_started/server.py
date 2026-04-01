@@ -9,7 +9,7 @@ import os
 
 from agent_framework import Agent, tool
 from agent_framework.ag_ui import add_agent_framework_fastapi_endpoint
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME")
+deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
 if not deployment_name:
-    raise ValueError("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME environment variable is required")
+    raise ValueError("AZURE_OPENAI_DEPLOYMENT_NAME environment variable is required")
 
 
 # ============================================================================
@@ -119,9 +119,9 @@ def get_time_zone(location: str) -> str:
 agent = Agent(
     name="AGUIAssistant",
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
-    client=AzureOpenAIChatClient(
-        endpoint=endpoint,
-        deployment_name=deployment_name,
+    client=OpenAIChatCompletionClient(
+        azure_endpoint=endpoint,
+        model=deployment_name,
     ),
     tools=[get_time_zone],  # ONLY server-side tools
 )

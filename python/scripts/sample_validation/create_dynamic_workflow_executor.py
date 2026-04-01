@@ -292,7 +292,7 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 instructions=AgentInstruction,
                 default_options={
                     "on_permission_request": prompt_permission,
-                    "timeout": 60,
+                    "timeout": 120,
                 },  # type: ignore
             )
             agents.append(agent)

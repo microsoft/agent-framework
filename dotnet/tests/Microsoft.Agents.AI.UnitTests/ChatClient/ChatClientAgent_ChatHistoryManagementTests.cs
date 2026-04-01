@@ -520,7 +520,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Instructions = "Be helpful" },
-                SimulateServiceStoredChatHistory = true,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             expectedServiceCallCount: 1,
             expectedHistory:
@@ -554,7 +554,7 @@ public class ChatClientAgent_ChatHistoryManagementTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [tool] },
-                SimulateServiceStoredChatHistory = true,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             expectedServiceCallCount: 2,
             expectedHistory:
