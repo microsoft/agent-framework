@@ -18,7 +18,7 @@ Prerequisites:
 - `pip install agent-framework-foundry agent-framework-declarative --pre`
 - Set the following environment variables in a .env file or your environment:
     - FOUNDRY_PROJECT_ENDPOINT
-    - FOUNDRY_MODEL (optional, defaults to "gpt-4o")
+    - FOUNDRY_MODEL
 """
 
 

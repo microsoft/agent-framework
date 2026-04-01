@@ -1955,10 +1955,17 @@ def _parse_structured_response_value(text: str, response_format: Any | None) -> 
         return None
     if isinstance(response_format, type) and issubclass(response_format, BaseModel):
         return response_format.model_validate_json(text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Response text is not valid JSON: {exc}") from exc
+    if isinstance(response_format, Mapping):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Response text is not valid JSON: {exc}") from exc
+    logger.warning(
+        "Unable to parse structured response value, use either a Pydantic model or a dict defining the schema, "
+        "received response_format type: %s",
+        type(response_format),  # type: ignore[reportUnknownArgumentType]
+    )
+    return None
 
 
 class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
