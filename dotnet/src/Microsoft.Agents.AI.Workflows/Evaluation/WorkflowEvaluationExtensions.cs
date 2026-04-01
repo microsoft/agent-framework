@@ -52,7 +52,13 @@ public static class WorkflowEvaluationExtensions
             if (finalResponse is not null)
             {
                 var firstInvoked = events.OfType<ExecutorInvokedEvent>().FirstOrDefault();
-                var query = firstInvoked?.Data?.ToString() ?? string.Empty;
+                var query = firstInvoked?.Data switch
+                {
+                    ChatMessage cm => cm.Text ?? string.Empty,
+                    IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
+                    string s => s,
+                    _ => firstInvoked?.Data?.ToString() ?? string.Empty,
+                };
                 var conversation = new List<ChatMessage>
                 {
                     new(ChatRole.User, query),
@@ -106,8 +112,21 @@ public static class WorkflowEvaluationExtensions
             else if (evt is ExecutorCompletedEvent completedEvent
                      && invoked.TryGetValue(completedEvent.ExecutorId, out var matchingInvoked))
             {
-                var query = matchingInvoked.Data?.ToString() ?? string.Empty;
-                var responseText = completedEvent.Data?.ToString() ?? string.Empty;
+                var query = matchingInvoked.Data switch
+                {
+                    ChatMessage cm => cm.Text ?? string.Empty,
+                    IReadOnlyList<ChatMessage> msgs => msgs.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty,
+                    string s => s,
+                    _ => matchingInvoked.Data?.ToString() ?? string.Empty,
+                };
+
+                var responseText = completedEvent.Data switch
+                {
+                    AgentResponse ar => ar.Text,
+                    ChatMessage cm => cm.Text ?? string.Empty,
+                    string s => s,
+                    _ => completedEvent.Data?.ToString() ?? string.Empty,
+                };
                 var conversation = new List<ChatMessage>
                 {
                     new(ChatRole.User, query),

@@ -1170,13 +1170,13 @@ public sealed class EvaluationTests
     }
 
     [Fact]
-    public void ContainsExpected_SkipsWhenNoExpectedOutput()
+    public void ContainsExpected_FailsWhenNoExpectedOutput()
     {
         var check = EvalChecks.ContainsExpected();
         var item = new EvalItem(query: "hello", response: "world");
         var result = check(item);
-        Assert.True(result.Passed);
-        Assert.Contains("skipped", result.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.Passed);
+        Assert.Contains("not set", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1507,5 +1507,88 @@ public sealed class EvaluationTests
         var properties = (Dictionary<string, object>)schema["properties"];
 
         Assert.True(properties.ContainsKey("tool_definitions"));
+    }
+
+    // ---------------------------------------------------------------
+    // EvalItem constructor with splitter tests
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void EvalItem_ConversationConstructor_LastTurnSplitter_ExtractsLastTurn()
+    {
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, "First question"),
+            new(ChatRole.Assistant, "First answer"),
+            new(ChatRole.User, "Second question"),
+            new(ChatRole.Assistant, "Second answer"),
+        };
+
+        var item = new EvalItem(conversation, ConversationSplitters.LastTurn);
+
+        Assert.Equal("Second question", item.Query);
+        Assert.Equal("Second answer", item.Response);
+        Assert.Equal(conversation, item.Conversation);
+        Assert.Equal(ConversationSplitters.LastTurn, item.Splitter);
+    }
+
+    [Fact]
+    public void EvalItem_ConversationConstructor_FullSplitter_ExtractsFromFirstUser()
+    {
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, "First question"),
+            new(ChatRole.Assistant, "First answer"),
+            new(ChatRole.User, "Second question"),
+            new(ChatRole.Assistant, "Second answer"),
+        };
+
+        var item = new EvalItem(conversation, ConversationSplitters.Full);
+
+        Assert.Equal("First question", item.Query);
+        Assert.Equal("First answer Second answer", item.Response);
+    }
+
+    [Fact]
+    public void EvalItem_ConversationConstructor_NullSplitter_DefaultsToLastTurn()
+    {
+        var conversation = new List<ChatMessage>
+        {
+            new(ChatRole.User, "Q1"),
+            new(ChatRole.Assistant, "A1"),
+            new(ChatRole.User, "Q2"),
+            new(ChatRole.Assistant, "A2"),
+        };
+
+        var item = new EvalItem(conversation, splitter: null);
+
+        // Default is LastTurn, so should get the last user message
+        Assert.Equal("Q2", item.Query);
+        Assert.Equal("A2", item.Response);
+    }
+
+    // ---------------------------------------------------------------
+    // FoundryEvalConverter.ConvertMessage DataContent test
+    // ---------------------------------------------------------------
+
+    [Fact]
+    public void ConvertMessage_DataContent_ProducesInputImage()
+    {
+        var imageBytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 }; // PNG magic bytes
+        var msg = new ChatMessage(ChatRole.User,
+        [
+            new TextContent("Describe this image"),
+            new DataContent(imageBytes, "image/png"),
+        ]);
+
+        var output = AzureAI.FoundryEvalConverter.ConvertMessage(msg);
+
+        Assert.Single(output);
+        var content = (List<Dictionary<string, object>>)output[0]["content"];
+        Assert.Equal(2, content.Count);
+        Assert.Equal("text", content[0]["type"]);
+        Assert.Equal("Describe this image", content[0]["text"]);
+        Assert.Equal("input_image", content[1]["type"]);
+        Assert.Contains("data:image/png;base64,", (string)content[1]["image_url"]);
     }
 }

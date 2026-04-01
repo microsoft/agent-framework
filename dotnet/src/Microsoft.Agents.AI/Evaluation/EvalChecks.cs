@@ -121,7 +121,7 @@ public static class EvalChecks
         {
             if (string.IsNullOrEmpty(item.ExpectedOutput))
             {
-                return new EvalCheckResult(true, "No expected output provided, skipped", "contains_expected");
+                return new EvalCheckResult(false, "ExpectedOutput is not set; check cannot be applied.", "contains_expected");
             }
 
             var comparison = caseSensitive
