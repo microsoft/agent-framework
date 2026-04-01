@@ -11,7 +11,7 @@ Key features:
 
 Before running this sample, ensure you have:
 
-1. An Microsoft Foundry project set up
+1. A Microsoft Foundry project set up
 2. A deep research model deployment (e.g., o3-deep-research)
 3. A model deployment (e.g., gpt-4o)
 4. A Bing Connection configured in your Microsoft Foundry project
