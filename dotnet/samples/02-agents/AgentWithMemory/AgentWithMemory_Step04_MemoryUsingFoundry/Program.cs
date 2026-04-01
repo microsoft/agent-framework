@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample shows how to use the FoundryMemoryProvider to persist and recall memories for an agent.
-// The sample stores conversation messages in an Microsoft Foundry memory store and retrieves relevant
+// The sample stores conversation messages in a Microsoft Foundry memory store and retrieves relevant
 // memories for subsequent invocations, even across new sessions.
 //
 // Note: Memory extraction in Microsoft Foundry is asynchronous and takes time. This sample demonstrates
