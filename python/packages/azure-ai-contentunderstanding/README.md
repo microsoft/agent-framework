@@ -37,8 +37,7 @@ See the [samples directory](samples/) which demonstrates:
 - Multi-turn sessions with cached results ([02_multi_turn_session](samples/01-get-started/02_multi_turn_session.py))
 - PDF + audio + video parallel analysis ([03_multimodal_chat](samples/01-get-started/03_multimodal_chat.py))
 - Structured field extraction with prebuilt-invoice ([04_invoice_processing](samples/01-get-started/04_invoice_processing.py))
-- Non-blocking background analysis with status tracking ([05_background_analysis](samples/01-get-started/05_background_analysis.py))
-- CU extraction + OpenAI vector store RAG ([06_large_doc_file_search](samples/01-get-started/06_large_doc_file_search.py))
+- CU extraction + OpenAI vector store RAG ([05_large_doc_file_search](samples/01-get-started/05_large_doc_file_search.py))
 - Interactive web UI with DevUI ([02-devui](samples/02-devui/))
 
 ```python
