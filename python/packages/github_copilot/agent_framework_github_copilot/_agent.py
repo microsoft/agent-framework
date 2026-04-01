@@ -16,9 +16,11 @@ from agent_framework import (
     AgentSession,
     BaseAgent,
     BaseContextProvider,
+    BaseHistoryProvider,
     Content,
     Message,
     ResponseStream,
+    SessionContext,
     normalize_messages,
 )
 from agent_framework._settings import load_settings
@@ -547,6 +549,46 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                 yield item
         finally:
             unsubscribe()
+
+    async def _run_before_providers(
+        self,
+        *,
+        session: AgentSession,
+        input_messages: list[Message],
+        options: dict[str, Any],
+    ) -> SessionContext:
+        """Run before_run on all context providers and return the session context.
+
+        Creates a SessionContext and invokes ``before_run`` on each provider in
+        forward order.  ``BaseHistoryProvider`` instances with
+        ``load_messages=False`` are skipped.
+
+        Keyword Args:
+            session: The conversation session.
+            input_messages: The normalized input messages.
+            options: Runtime options dict.
+
+        Returns:
+            The SessionContext with provider context populated.
+        """
+        session_context = SessionContext(
+            session_id=session.session_id,
+            service_session_id=session.service_session_id,
+            input_messages=input_messages,
+            options=options,
+        )
+
+        for provider in self.context_providers:
+            if isinstance(provider, BaseHistoryProvider) and not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self,  # type: ignore[arg-type]
+                session=session,
+                context=session_context,
+                state=session.state.setdefault(provider.source_id, {}),
+            )
+
+        return session_context
 
     @staticmethod
     def _prepare_system_message(
