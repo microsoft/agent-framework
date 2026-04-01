@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
@@ -244,9 +244,9 @@ internal static class OutputConverter
 
     private static ResponseUsage ConvertUsage(UsageDetails details, ResponseUsage? existing)
     {
-        var inputTokens = (long)(details.InputTokenCount ?? 0);
-        var outputTokens = (long)(details.OutputTokenCount ?? 0);
-        var totalTokens = (long)(details.TotalTokenCount ?? 0);
+        var inputTokens = details.InputTokenCount ?? 0;
+        var outputTokens = details.OutputTokenCount ?? 0;
+        var totalTokens = details.TotalTokenCount ?? 0;
 
         if (existing is not null)
         {
