@@ -162,17 +162,6 @@ def test_resolve_scope_from_user_id(mock_project_client: AsyncMock) -> None:
     assert provider._resolve_scope(session) == "user_42"
 
 
-def test_resolve_scope_from_user_id_and_org_id(mock_project_client: AsyncMock) -> None:
-    provider = FoundryMemoryProvider(
-        project_client=mock_project_client,
-        memory_store_name="test_store",
-    )
-    session = AgentSession(session_id="s1")
-    session.state["user_id"] = "user_42"
-    session.state["org_id"] = "org_7"
-    assert provider._resolve_scope(session) == "user_42_org_7"
-
-
 def test_resolve_scope_raises_without_user_id(mock_project_client: AsyncMock) -> None:
     provider = FoundryMemoryProvider(
         project_client=mock_project_client,
@@ -200,7 +189,6 @@ async def test_before_run_resolves_scope_from_session_state(mock_project_client:
     )
     session = AgentSession(session_id="test-session")
     session.state["user_id"] = "u1"
-    session.state["org_id"] = "o1"
     ctx = SessionContext(input_messages=[Message(role="user", text="Hello")], session_id="s1")
 
     await provider.before_run(  # type: ignore[arg-type]
@@ -208,7 +196,7 @@ async def test_before_run_resolves_scope_from_session_state(mock_project_client:
     )
 
     for call in mock_project_client.beta.memory_stores.search_memories.call_args_list:
-        assert call.kwargs["scope"] == "u1_o1"
+        assert call.kwargs["scope"] == "u1"
 
 
 async def test_after_run_resolves_scope_from_session_state(mock_project_client: AsyncMock) -> None:

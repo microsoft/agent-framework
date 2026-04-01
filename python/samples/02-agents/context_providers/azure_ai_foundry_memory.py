@@ -97,7 +97,8 @@ async def main() -> None:
                 # note that we will use the service side storage, nor load messsages from the history provider,
                 # but we include it to demonstrate that it can be used alongside the Foundry provider for other use cases.
                 session = agent.create_session()
-                # Set user identity on the session so the memory provider can scope memories per user
+                # Set user identity on the session so the memory provider can scope memories per user. User identity could be
+                # resolved from app auth, conversation metadata, or other sources depending on your application.
                 # Maybe set the user_id when creating the session instead in the future if that fits better with the API design.
                 session.state["user_id"] = "user_123"
 
