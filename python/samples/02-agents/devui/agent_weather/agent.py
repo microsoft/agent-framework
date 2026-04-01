@@ -22,6 +22,7 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryChatClient
 from agent_framework_devui import register_cleanup
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -145,7 +146,7 @@ def send_email(
 
 # Agent instance following Agent Framework conventions
 agent = Agent(
-    name="AzureWeatherAgent",
+    name="WeatherAgent",
     description="A helpful agent that provides weather information and forecasts",
     instructions="""
     You are a weather assistant. You can provide current weather information
@@ -153,7 +154,9 @@ agent = Agent(
     weather information when asked.
     """,
     client=FoundryChatClient(
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+        project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
+        model=os.environ.get("FOUNDRY_MODEL"),
+        credential=AzureCliCredential(),
     ),
     tools=[get_weather, get_forecast, send_email],
     middleware=[security_filter_middleware, atlantis_location_filter_middleware],
@@ -164,7 +167,7 @@ register_cleanup(agent, cleanup_resources)
 
 
 def main():
-    """Launch the Azure weather agent in DevUI."""
+    """Launch the Weather Agent in DevUI."""
     import logging
 
     from agent_framework.devui import serve
@@ -173,9 +176,9 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     logger = logging.getLogger(__name__)
 
-    logger.info("Starting Azure Weather Agent")
+    logger.info("Starting Weather Agent")
     logger.info("Available at: http://localhost:8090")
-    logger.info("Entity ID: agent_AzureWeatherAgent")
+    logger.info("Entity ID: agent_WeatherAgent")
 
     # Launch server with the agent
     serve(entities=[agent], port=8090, auto_open=True)

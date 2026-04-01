@@ -48,8 +48,7 @@ async def main() -> None:
         client=chat_client,
         name="travel-assistant",
         instructions=(
-            "You are a helpful travel assistant. "
-            "Use your tools to answer questions about weather and flights."
+            "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."
         ),
         tools=[get_weather, get_flight_price],
     )
