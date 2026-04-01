@@ -400,12 +400,6 @@ class WorkflowAgent(BaseAgent):
         Yields:
             WorkflowEvent objects from the workflow execution.
         """
-        invocation_kwargs: dict[str, Any] = {}
-        if function_invocation_kwargs is not None:
-            invocation_kwargs["function_invocation_kwargs"] = function_invocation_kwargs
-        if client_kwargs is not None:
-            invocation_kwargs["client_kwargs"] = client_kwargs
-
         # Determine the execution mode based on state.
         # The streaming flag controls the workflow's internal streaming mode,
         # which affects executor behavior (e.g. AgentExecutor emits different event
@@ -414,11 +408,18 @@ class WorkflowAgent(BaseAgent):
             function_responses = self._process_pending_requests(input_messages)
             if streaming:
                 async for event in self.workflow.run(
-                    responses=function_responses, stream=True, **invocation_kwargs
+                    responses=function_responses,
+                    stream=True,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 ):
                     yield event
             else:
-                for event in await self.workflow.run(responses=function_responses, **invocation_kwargs):
+                for event in await self.workflow.run(
+                    responses=function_responses,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
+                ):
                     yield event
 
         elif checkpoint_id is not None:
@@ -427,14 +428,16 @@ class WorkflowAgent(BaseAgent):
                     stream=True,
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
-                    **invocation_kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     checkpoint_id=checkpoint_id,
                     checkpoint_storage=checkpoint_storage,
-                    **invocation_kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 ):
                     yield event
 
@@ -444,14 +447,16 @@ class WorkflowAgent(BaseAgent):
                     message=input_messages,
                     stream=True,
                     checkpoint_storage=checkpoint_storage,
-                    **invocation_kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 ):
                     yield event
             else:
                 for event in await self.workflow.run(
                     message=input_messages,
                     checkpoint_storage=checkpoint_storage,
-                    **invocation_kwargs,
+                    function_invocation_kwargs=function_invocation_kwargs,
+                    client_kwargs=client_kwargs,
                 ):
                     yield event
 

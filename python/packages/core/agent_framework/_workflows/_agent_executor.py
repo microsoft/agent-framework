@@ -469,6 +469,5 @@ class AgentExecutor(Executor):
             executor_kwargs = resolved[GLOBAL_KWARGS_KEY]
         else:
             return None
-        if isinstance(executor_kwargs, dict):
-            return dict(executor_kwargs) or None
-        return None
+
+        return executor_kwargs

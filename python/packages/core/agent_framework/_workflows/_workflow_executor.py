@@ -391,15 +391,24 @@ class WorkflowExecutor(Executor):
             # The state stores resolved format (with __global__ wrapper for global kwargs).
             # Unwrap __global__ before passing to the subworkflow so it gets re-resolved
             # against the subworkflow's own executor IDs.
-            invocation_kwargs: dict[str, Any] = {}
+            fi_kwargs: dict[str, Any] | None = None
+            ci_kwargs: dict[str, Any] | None = None
             for key in ("function_invocation_kwargs", "client_kwargs"):
                 resolved = parent_kwargs.get(key)
                 if isinstance(resolved, dict):
                     # Unwrap global sentinel; pass per-executor dicts as-is
-                    invocation_kwargs[key] = resolved.get(GLOBAL_KWARGS_KEY, resolved)
+                    unwrapped: dict[str, Any] = resolved.get(GLOBAL_KWARGS_KEY, resolved)  # type: ignore
+                    if key == "function_invocation_kwargs":
+                        fi_kwargs = unwrapped  # type: ignore
+                    else:
+                        ci_kwargs = unwrapped  # type: ignore
 
             # Run the sub-workflow and collect all events, passing parent kwargs
-            result = await self.workflow.run(input_data, **invocation_kwargs)
+            result = await self.workflow.run(
+                input_data,
+                function_invocation_kwargs=fi_kwargs,  # type: ignore
+                client_kwargs=ci_kwargs,  # type: ignore
+            )
 
             logger.debug(
                 f"WorkflowExecutor {self.id} sub-workflow {self.workflow.id} "
