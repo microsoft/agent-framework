@@ -306,7 +306,7 @@ class TestInitAgenticValidation:
                 index_name="idx",
                 api_key="key",
                 mode="agentic",
-                model_deployment_name="deploy",
+                model="deploy",
                 azure_openai_resource_url="https://aoai.openai.azure.com",
             )
 

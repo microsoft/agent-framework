@@ -180,8 +180,7 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -206,8 +205,7 @@ class AzureAISearchContextProvider(ContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Unused in semantic mode.
-            model_deployment_name: Unused in semantic mode.
-            model_name: Unused in semantic mode.
+            model: Unused in semantic mode.
             knowledge_base_name: Must be ``None`` for this overload.
             retrieval_instructions: Unused in semantic mode.
             azure_openai_api_key: Unused in semantic mode.
@@ -235,8 +233,7 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str,
-        model_deployment_name: str,
-        model_name: str | None = None,
+        model: str,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -261,8 +258,7 @@ class AzureAISearchContextProvider(ContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base creation.
-            model_deployment_name: Azure OpenAI deployment used by the generated Knowledge Base.
-            model_name: Underlying model name for the Knowledge Base model configuration.
+            model: Model used by the generated Knowledge Base.
             knowledge_base_name: Must be ``None`` for this overload.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
@@ -290,8 +286,7 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: str,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -317,8 +312,7 @@ class AzureAISearchContextProvider(ContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Unused when connecting to an existing Knowledge Base.
-            model_deployment_name: Unused when connecting to an existing Knowledge Base.
-            model_name: Unused when connecting to an existing Knowledge Base.
+            model: Unused when connecting to an existing Knowledge Base.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
@@ -345,8 +339,7 @@ class AzureAISearchContextProvider(ContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -375,8 +368,7 @@ class AzureAISearchContextProvider(ContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL when creating a Knowledge Base from an index.
-            model_deployment_name: Azure OpenAI deployment when creating a Knowledge Base from an index.
-            model_name: Underlying model name for Knowledge Base model configuration.
+            model: Model used when creating a Knowledge Base from an index.
             knowledge_base_name: Resolved from ``env_file_path`` or ``AZURE_SEARCH_KNOWLEDGE_BASE_NAME``.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
