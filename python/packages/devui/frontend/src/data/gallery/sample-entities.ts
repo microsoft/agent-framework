@@ -78,7 +78,7 @@ export const SAMPLE_ENTITIES: SampleEntity[] = [
         required: true,
       },
       {
-        name: "AZURE_OPENAI_DEPLOYMENT_NAME",
+        name: "AZURE_OPENAI_MODEL",
         description: "Name of the deployed model in Azure OpenAI",
         required: true,
         example: "gpt-4o",

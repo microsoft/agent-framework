@@ -18,7 +18,8 @@ import os
 from typing import Any
 
 from agent_framework import Agent, AgentExecutorResponse, WorkflowBuilder
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatClient
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
@@ -62,8 +63,13 @@ def is_approved(message: Any) -> bool:
         return True
 
 
-# Create Azure OpenAI chat client
-client = FoundryChatClient(api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""))
+# Create Azure OpenAI Responses chat client
+client = OpenAIChatClient(
+    model=os.environ.get("AZURE_OPENAI_RESPONSES_MODEL") or os.environ.get("AZURE_OPENAI_MODEL"),
+    azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+    api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
+    credential=AzureCliCredential(),
+)
 
 # Create Writer agent - generates content
 writer = Agent(

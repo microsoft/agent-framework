@@ -28,10 +28,13 @@ async def run_semantic_kernel() -> None:
         def add(self, a: float, b: float) -> float:
             return a + b
 
+    openai_settings = OpenAISettings()
+    assert openai_settings.responses_model is not None, "Responses model ID must be set in OpenAISettings"
+
     client = OpenAIResponsesAgent.create_client()
     # Plugins advertise callable tools to the Responses agent.
     agent = OpenAIResponsesAgent(
-        ai_model=OpenAISettings().responses_model_id,
+        ai_model=openai_settings.responses_model,
         client=client,
         instructions="Use the add tool when math is required.",
         name="MathExpert",

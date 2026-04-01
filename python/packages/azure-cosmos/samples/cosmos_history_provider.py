@@ -35,7 +35,7 @@ Optional:
 async def main() -> None:
     """Run the Cosmos history provider sample with an Agent."""
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("FOUNDRY_MODEL")
+    model = os.getenv("FOUNDRY_MODEL")
     cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
     cosmos_database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME")
     cosmos_container_name = os.getenv("AZURE_COSMOS_CONTAINER_NAME")
@@ -43,7 +43,7 @@ async def main() -> None:
 
     if (
         not project_endpoint
-        or not deployment_name
+        or not model
         or not cosmos_endpoint
         or not cosmos_database_name
         or not cosmos_container_name
@@ -58,7 +58,7 @@ async def main() -> None:
     async with AzureCliCredential() as credential:
         client = FoundryChatClient(
             project_endpoint=project_endpoint,
-            model=deployment_name,
+            model=model,
             credential=credential,
         )
 

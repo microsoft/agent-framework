@@ -4,9 +4,13 @@
 # Install the relevant packages for full type support.
 
 from agent_framework_azure_ai import (
+    AzureAIInferenceEmbeddingClient,
+    AzureAIInferenceEmbeddingOptions,
+    AzureAIInferenceEmbeddingSettings,
     AzureAISettings,
     AzureCredentialTypes,
     AzureTokenProvider,
+    RawAzureAIInferenceEmbeddingClient,
 )
 from agent_framework_azure_ai_search import (
     AzureAISearchContextProvider,
@@ -26,6 +30,9 @@ __all__ = [
     "AgentCallbackContext",
     "AgentFunctionApp",
     "AgentResponseCallbackProtocol",
+    "AzureAIInferenceEmbeddingClient",
+    "AzureAIInferenceEmbeddingOptions",
+    "AzureAIInferenceEmbeddingSettings",
     "AzureAISearchContextProvider",
     "AzureAISearchSettings",
     "AzureAISettings",
@@ -35,4 +42,5 @@ __all__ = [
     "DurableAIAgentClient",
     "DurableAIAgentOrchestrationContext",
     "DurableAIAgentWorker",
+    "RawAzureAIInferenceEmbeddingClient",
 ]

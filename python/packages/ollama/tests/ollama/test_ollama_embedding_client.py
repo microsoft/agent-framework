@@ -13,11 +13,11 @@ from agent_framework_ollama import OllamaEmbeddingClient, OllamaEmbeddingOptions
 
 def test_ollama_embedding_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test construction with explicit parameters."""
-    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL_ID", "nomic-embed-text")
+    monkeypatch.setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
     with patch("agent_framework_ollama._embedding_client.AsyncClient") as mock_client_cls:
         mock_client_cls.return_value = MagicMock()
         client = OllamaEmbeddingClient()
-        assert client.model_id == "nomic-embed-text"
+        assert client.model == "nomic-embed-text"
 
 
 def test_ollama_embedding_construction_with_params() -> None:
@@ -25,16 +25,16 @@ def test_ollama_embedding_construction_with_params() -> None:
     with patch("agent_framework_ollama._embedding_client.AsyncClient") as mock_client_cls:
         mock_client_cls.return_value = MagicMock()
         client = OllamaEmbeddingClient(
-            model_id="nomic-embed-text",
+            model="nomic-embed-text",
             host="http://localhost:11434",
         )
-        assert client.model_id == "nomic-embed-text"
+        assert client.model == "nomic-embed-text"
 
 
 def test_ollama_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that missing model_id raises an error."""
-    monkeypatch.delenv("OLLAMA_EMBEDDING_MODEL_ID", raising=False)
-    monkeypatch.delenv("OLLAMA_MODEL_ID", raising=False)
+    """Test that missing model raises an error."""
+    monkeypatch.delenv("OLLAMA_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
     from agent_framework.exceptions import SettingNotFoundError
 
     with pytest.raises(SettingNotFoundError):
@@ -54,14 +54,14 @@ async def test_ollama_embedding_get_embeddings() -> None:
         mock_client.embed = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        client = OllamaEmbeddingClient(model_id="nomic-embed-text")
+        client = OllamaEmbeddingClient(model="nomic-embed-text")
         result = await client.get_embeddings(["hello", "world"])
 
         assert isinstance(result, GeneratedEmbeddings)
         assert len(result) == 2
         assert result[0].vector == [0.1, 0.2, 0.3]
         assert result[1].vector == [0.4, 0.5, 0.6]
-        assert result[0].model_id == "nomic-embed-text"
+        assert result[0].model == "nomic-embed-text"
         assert result.usage == {"input_token_count": 10}
 
         mock_client.embed.assert_called_once_with(
@@ -76,7 +76,7 @@ async def test_ollama_embedding_get_embeddings_empty_input() -> None:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = OllamaEmbeddingClient(model_id="nomic-embed-text")
+        client = OllamaEmbeddingClient(model="nomic-embed-text")
         result = await client.get_embeddings([])
 
         assert isinstance(result, GeneratedEmbeddings)
@@ -96,7 +96,7 @@ async def test_ollama_embedding_get_embeddings_with_options() -> None:
         mock_client.embed = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        client = OllamaEmbeddingClient(model_id="nomic-embed-text")
+        client = OllamaEmbeddingClient(model="nomic-embed-text")
         options: OllamaEmbeddingOptions = {
             "truncate": True,
             "dimensions": 512,
@@ -113,22 +113,22 @@ async def test_ollama_embedding_get_embeddings_with_options() -> None:
 
 
 async def test_ollama_embedding_get_embeddings_no_model_raises() -> None:
-    """Test that missing model_id at call time raises ValueError."""
+    """Test that missing model at call time raises ValueError."""
     with patch("agent_framework_ollama._embedding_client.AsyncClient") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = OllamaEmbeddingClient(model_id="nomic-embed-text")
-        client.model_id = None  # type: ignore[assignment]
+        client = OllamaEmbeddingClient(model="nomic-embed-text")
+        client.model = None  # type: ignore[assignment]
 
-        with pytest.raises(ValueError, match="model_id is required"):
+        with pytest.raises(ValueError, match="model is required"):
             await client.get_embeddings(["hello"])
 
 
 # region: Integration Tests
 
 skip_if_ollama_embedding_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("OLLAMA_EMBEDDING_MODEL_ID", "") in ("", "test-model"),
+    os.getenv("OLLAMA_EMBEDDING_MODEL", "") in ("", "test-model"),
     reason="No real Ollama embedding model provided; skipping integration tests.",
 )
 

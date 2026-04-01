@@ -819,7 +819,7 @@ class MCPTool:
         return types.CreateMessageResult(
             role="assistant",
             content=mcp_content,
-            model=response.model_id or "unknown",
+            model=response.model or "unknown",
         )
 
     async def logging_callback(self, params: types.LoggingMessageNotificationParams) -> None:

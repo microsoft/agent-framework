@@ -754,6 +754,14 @@ def test_chat_response():
     assert str(response) == response.text
 
 
+def test_chat_response_accepts_model_alias() -> None:
+    """Test ChatResponse accepts model and exposes it through model alias."""
+    response = ChatResponse(messages=Message(role="assistant", text="Hello"), model="claude-test")
+
+    assert response.model == "claude-test"
+    assert response.model == "claude-test"
+
+
 class OutputModel(BaseModel):
     response: str
 
@@ -790,6 +798,19 @@ def test_chat_response_with_format_init():
     assert response.text == '{"response": "Hello"}'
     assert response.value is not None
     assert response.value.response == "Hello"
+
+
+def test_chat_response_with_mapping_response_format() -> None:
+    """ChatResponse.value should parse JSON when response_format is a mapping."""
+    message = Message(role="assistant", text='{"response": "Hello"}')
+    response = ChatResponse(
+        messages=message,
+        response_format={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["response"] == "Hello"
 
 
 def test_chat_response_value_raises_on_invalid_schema():
@@ -849,6 +870,14 @@ def test_chat_response_update():
     assert response_update.contents[0].text == "I'm doing well, thank you!"
     assert response_update.contents[0].type == "text"
     assert response_update.text == "I'm doing well, thank you!"
+
+
+def test_chat_response_update_accepts_model_alias() -> None:
+    """Test ChatResponseUpdate accepts model and exposes it through model alias."""
+    response_update = ChatResponseUpdate(contents=[Content.from_text("Hello")], model="claude-test")
+
+    assert response_update.model == "claude-test"
+    assert response_update.model == "claude-test"
 
 
 def test_chat_response_updates_to_chat_response_one():
@@ -986,6 +1015,22 @@ async def test_chat_response_from_async_generator_output_format_in_method():
     assert resp.text == '{ "response": "Hello" }'
     assert resp.value is not None
     assert resp.value.response == "Hello"
+
+
+async def test_chat_response_from_async_generator_mapping_response_format() -> None:
+    async def gen() -> AsyncIterable[ChatResponseUpdate]:
+        yield ChatResponseUpdate(contents=[Content.from_text('{ "respon')], message_id="1")
+        yield ChatResponseUpdate(contents=[Content.from_text('se": "Hello" }')], message_id="1")
+
+    resp = await ChatResponse.from_update_generator(
+        gen(),
+        output_format_type={"type": "object", "properties": {"response": {"type": "string"}}},
+    )
+
+    assert resp.text == '{ "response": "Hello" }'
+    assert resp.value is not None
+    assert isinstance(resp.value, dict)
+    assert resp.value["response"] == "Hello"
 
 
 # region ToolMode
@@ -1374,7 +1419,7 @@ def test_response_update_propagates_fields_and_metadata():
         response_id="rid",
         message_id="mid",
         conversation_id="cid",
-        model_id="model-x",
+        model="model-x",
         created_at="t0",
         finish_reason="stop",
         additional_properties={"k": "v"},
@@ -1383,7 +1428,7 @@ def test_response_update_propagates_fields_and_metadata():
     assert resp.response_id == "rid"
     assert resp.created_at == "t0"
     assert resp.conversation_id == "cid"
-    assert resp.model_id == "model-x"
+    assert resp.model == "model-x"
     assert resp.finish_reason == "stop"
     assert resp.additional_properties and resp.additional_properties["k"] == "v"
     assert resp.messages[0].role == "assistant"
@@ -1935,7 +1980,7 @@ def test_chat_response_complex_serialization():
     assert isinstance(response.messages[0], Message)
     assert isinstance(response.finish_reason, str)  # FinishReason is now a NewType of str
     assert isinstance(response.usage_details, dict)
-    assert response.model_id == "gpt-4"  # Should be stored as model_id
+    assert response.model == "gpt-4"  # Should be stored as model
 
     # Test to_dict with complex objects
     response_dict = response.to_dict()
@@ -1943,7 +1988,7 @@ def test_chat_response_complex_serialization():
     assert isinstance(response_dict["messages"][0], dict)
     assert isinstance(response_dict["finish_reason"], str)  # FinishReason serializes to string
     assert isinstance(response_dict["usage_details"], dict)
-    assert response_dict["model"] == "gpt-4"  # Should serialize as model_id
+    assert response_dict["model"] == "gpt-4"  # Should serialize as model
 
 
 def test_chat_response_update_all_content_types():

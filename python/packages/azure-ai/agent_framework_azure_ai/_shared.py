@@ -20,8 +20,8 @@ class AzureAISettings(TypedDict, total=False):
     Keyword Args:
         project_endpoint: The Azure AI Project endpoint URL.
             Can be set via environment variable AZURE_AI_PROJECT_ENDPOINT.
-        model_deployment_name: The name of the model deployment to use.
-            Can be set via environment variable AZURE_AI_MODEL_DEPLOYMENT_NAME.
+        model: The name of the model to use.
+            Can be set via environment variable AZURE_AI_MODEL.
         env_file_path: If provided, the .env settings are read from this file path location.
         env_file_encoding: The encoding of the .env file, defaults to 'utf-8'.
 
@@ -32,12 +32,12 @@ class AzureAISettings(TypedDict, total=False):
 
             # Using environment variables
             # Set AZURE_AI_PROJECT_ENDPOINT=https://your-project.cognitiveservices.azure.com
-            # Set AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4
+            # Set AZURE_AI_MODEL=gpt-4
             settings = AzureAISettings()
 
             # Or passing parameters directly
             settings = AzureAISettings(
-                project_endpoint="https://your-project.cognitiveservices.azure.com", model_deployment_name="gpt-4"
+                project_endpoint="https://your-project.cognitiveservices.azure.com", model="gpt-4"
             )
 
             # Or loading from a .env file
@@ -45,4 +45,4 @@ class AzureAISettings(TypedDict, total=False):
     """
 
     project_endpoint: str | None
-    model_deployment_name: str | None
+    model: str | None

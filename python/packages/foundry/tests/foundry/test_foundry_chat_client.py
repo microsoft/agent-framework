@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import json
 import os
 import sys
 from functools import wraps
@@ -532,6 +531,48 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     assert response.model == "test-model"
 
 
+async def test_response_format_dict_parse_path() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    response_format = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    mock_response = MagicMock()
+    mock_response.id = "response_123"
+    mock_response.model = "test-model"
+    mock_response.created_at = 1000000000
+    mock_response.metadata = {}
+    mock_response.output_parsed = None
+    mock_response.output = []
+    mock_response.usage = None
+    mock_response.finish_reason = None
+    mock_response.conversation = None
+    mock_response.status = "completed"
+
+    mock_message_content = MagicMock()
+    mock_message_content.type = "output_text"
+    mock_message_content.text = '{"answer": "Parsed"}'
+    mock_message_content.annotations = []
+    mock_message_content.logprobs = None
+
+    mock_message_item = MagicMock()
+    mock_message_item.type = "message"
+    mock_message_item.content = [mock_message_content]
+    mock_response.output = [mock_message_item]
+    client.client.responses.create = AsyncMock(return_value=mock_response)
+
+    response = await client.get_response(
+        messages=[Message(role="user", text="Test message")],
+        options={"response_format": response_format},
+    )
+
+    assert response.response_id == "response_123"
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Parsed"
+
+
 async def test_bad_request_error_non_content_filter() -> None:
     mock_openai_client = _make_mock_openai_client()
     project_client = MagicMock()
@@ -642,10 +683,9 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                assert response.value is None
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
 
 
 @pytest.mark.flaky

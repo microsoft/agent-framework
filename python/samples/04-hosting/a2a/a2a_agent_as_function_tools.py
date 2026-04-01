@@ -48,9 +48,7 @@ async def main() -> None:
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
     model = os.getenv("FOUNDRY_MODEL")
     if not project_endpoint or not model:
-        raise ValueError(
-            "FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL must be set"
-        )
+        raise ValueError("FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL must be set")
 
     print(f"Connecting to A2A agent at: {a2a_agent_host}")
 

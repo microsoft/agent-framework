@@ -12,7 +12,7 @@ Note: Caching is automatic and enabled by default.
 
 Environment variables:
 - AZURE_OPENAI_ENDPOINT (required)
-- AZURE_OPENAI_DEPLOYMENT_NAME (optional, defaults to gpt-4o-mini)
+- AZURE_OPENAI_MODEL (optional, defaults to gpt-4o-mini)
 - PURVIEW_CLIENT_APP_ID (required)
 - PURVIEW_USE_CERT_AUTH (optional, set to "true" for certificate auth)
 - PURVIEW_TENANT_ID (required if certificate auth)
@@ -143,7 +143,7 @@ async def run_with_agent_middleware() -> None:
         print("Skipping run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
@@ -179,7 +179,7 @@ async def run_with_chat_middleware() -> None:
         print("Skipping chat middleware run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", default="gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", default="gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
 
     client = FoundryChatClient(
@@ -229,7 +229,7 @@ async def run_with_custom_cache_provider() -> None:
         print("Skipping custom cache provider run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 
@@ -269,7 +269,7 @@ async def run_with_custom_cache_provider() -> None:
         print("Skipping default cache run: AZURE_OPENAI_ENDPOINT not set")
         return
 
-    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o-mini")
+    deployment = os.environ.get("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     user_id = os.environ.get("PURVIEW_DEFAULT_USER_ID")
     client = FoundryChatClient(model=deployment, endpoint=endpoint, credential=AzureCliCredential())
 

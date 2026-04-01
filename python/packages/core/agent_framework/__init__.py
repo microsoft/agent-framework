@@ -102,8 +102,10 @@ from ._middleware import (
 )
 from ._sessions import (
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    BaseContextProvider,  # type: ignore[reportDeprecated]
+    BaseHistoryProvider,  # type: ignore[reportDeprecated]
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
     register_state_type,
@@ -296,6 +298,7 @@ __all__ = [
     "CompactionProvider",
     "CompactionStrategy",
     "Content",
+    "ContextProvider",
     "ContinuationToken",
     "ConversationSplit",
     "ConversationSplitter",
@@ -331,6 +334,7 @@ __all__ = [
     "FunctionTool",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
+    "HistoryProvider",
     "InMemoryCheckpointStorage",
     "InMemoryHistoryProvider",
     "InProcRunnerContext",

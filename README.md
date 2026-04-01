@@ -94,23 +94,23 @@ Create a simple Azure Responses Agent that writes a haiku about the Microsoft Ag
 # Use `az login` to authenticate with Azure CLI
 import os
 import asyncio
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 
 async def main():
-    # Initialize a chat agent with Azure OpenAI Responses
+    # Initialize a chat agent with Microsoft Foundry
     # the endpoint, deployment name, and api version can be set via environment variables
-    # or they can be passed in directly to the AzureOpenAIResponsesClient constructor
-    agent = AzureOpenAIResponsesClient(
-        # endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-        # deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        # api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-        # api_key=os.environ["AZURE_OPENAI_API_KEY"],  # Optional if using AzureCliCredential
-        credential=AzureCliCredential(), # Optional, if using api_key
-    ).as_agent(
-        name="HaikuBot",
-        instructions="You are an upbeat assistant that writes beautifully.",
+    # or they can be passed in directly to the FoundryChatClient constructor
+    agent = Agent(
+      client=FoundryChatClient(
+          credential=AzureCliCredential(),
+          # project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+          # model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+      ),
+      name="HaikuBot",
+      instructions="You are an upbeat assistant that writes beautifully.",
     )
 
     print(await agent.run("Write a haiku about Microsoft Agent Framework."))

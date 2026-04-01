@@ -191,13 +191,13 @@ from fastapi import FastAPI
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+model = os.environ.get("AZURE_OPENAI_MODEL")
 api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
-if not deployment_name:
-    raise ValueError("AZURE_OPENAI_DEPLOYMENT_NAME environment variable is required")
+if not model:
+    raise ValueError("AZURE_OPENAI_MODEL environment variable is required")
 if not api_key:
     raise ValueError("AZURE_OPENAI_API_KEY environment variable is required")
 
@@ -207,7 +207,7 @@ agent = Agent(
     instructions="You are a helpful assistant.",
     client=OpenAIChatCompletionClient(
         azure_endpoint=endpoint,
-        model=deployment_name,
+        model=model,
         api_key=api_key,
     ),
 )
@@ -230,7 +230,7 @@ if __name__ == "__main__":
 - **`Agent`**: The agent that will handle incoming requests
 - **FastAPI Integration**: Uses FastAPI's native async support for streaming responses
 - **Instructions**: The agent is created with default instructions, which can be overridden by client messages
-- **Configuration**: `OpenAIChatCompletionClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
+- **Configuration**: `OpenAIChatCompletionClient` can read from environment variables (`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_MODEL`, `AZURE_OPENAI_API_KEY`) or accept parameters directly
 
 **Alternative (simpler)**: Use environment variables only:
 
@@ -249,7 +249,7 @@ Set the required environment variables:
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_MODEL="gpt-4o-mini"
 # Optional: Set API key if not using DefaultAzureCredential
 # export AZURE_OPENAI_API_KEY="your-api-key"
 ```

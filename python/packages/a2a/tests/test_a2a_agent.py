@@ -24,8 +24,8 @@ from agent_framework import (
     AgentResponse,
     AgentResponseUpdate,
     AgentSession,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     Message,
     SessionContext,
 )
@@ -869,7 +869,7 @@ async def test_poll_task_completed(a2a_agent: A2AAgent, mock_a2a_client: MockA2A
 # region Context Provider Tests
 
 
-class TrackingContextProvider(BaseContextProvider):
+class TrackingContextProvider(ContextProvider):
     """A context provider that records when before_run and after_run are called."""
 
     def __init__(self) -> None:
