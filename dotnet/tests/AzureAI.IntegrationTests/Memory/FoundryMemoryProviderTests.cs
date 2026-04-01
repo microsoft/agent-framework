@@ -3,10 +3,12 @@
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.AzureAI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
+using OpenAI.Responses;
 using Shared.IntegrationTests;
 
 namespace AzureAI.IntegrationTests.Memory;
@@ -17,7 +19,6 @@ namespace AzureAI.IntegrationTests.Memory;
 /// <remarks>
 /// These integration tests are skipped by default and require a live Azure AI Foundry Memory service.
 /// The tests need to be updated to use the new AIAgent-based API pattern.
-/// Set <see cref="SkipReason"/> to null to enable them after configuring the service.
 /// </remarks>
 public sealed class FoundryMemoryProviderTests : IDisposable
 {
@@ -26,6 +27,7 @@ public sealed class FoundryMemoryProviderTests : IDisposable
     private readonly AIProjectClient? _client;
     private readonly string? _memoryStoreName;
     private readonly string? _deploymentName;
+    private readonly string? _embeddingDeploymentName;
     private bool _disposed;
 
     public FoundryMemoryProviderTests()
@@ -39,13 +41,15 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         var endpoint = configuration[TestSettings.AzureAIProjectEndpoint];
         var memoryStoreName = configuration[TestSettings.AzureAIMemoryStoreId];
         var deploymentName = configuration[TestSettings.AzureAIModelDeploymentName];
+        var embeddingDeploymentName = configuration[TestSettings.AzureAIEmbeddingDeploymentName];
 
         if (!string.IsNullOrWhiteSpace(endpoint) &&
             !string.IsNullOrWhiteSpace(memoryStoreName))
         {
-            this._client = new AIProjectClient(new Uri(endpoint), TestAzureCliCredentials.CreateAzureCliCredential());
+            this._client = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
             this._memoryStoreName = memoryStoreName;
             this._deploymentName = deploymentName ?? "gpt-4.1-mini";
+            this._embeddingDeploymentName = embeddingDeploymentName ?? "text-embedding-ada-002";
         }
     }
 
@@ -57,6 +61,8 @@ public sealed class FoundryMemoryProviderTests : IDisposable
             this._client!,
             this._memoryStoreName!,
             stateInitializer: _ => new(new FoundryMemoryProviderScope("it-user-1")));
+
+        await memoryProvider.EnsureMemoryStoreCreatedAsync(this._deploymentName!, this._embeddingDeploymentName!);
 
         AIAgent agent = this._client!.AsAIAgent(new ChatClientAgentOptions
         {
@@ -80,6 +86,15 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         await memoryProvider.WhenUpdatesCompletedAsync();
         await Task.Delay(2000);
 
+        // Assert - verify memories were actually created in the store before querying via agent
+        var searchResult = await this._client!.MemoryStores.SearchMemoriesAsync(
+            this._memoryStoreName!,
+            new MemorySearchOptions("it-user-1")
+            {
+                Items = { ResponseItem.CreateUserMessageItem("Caoimhe") }
+            });
+        Assert.NotEmpty(searchResult.Value.Memories);
+
         AgentResponse resultAfter = await agent.RunAsync("What is my name?", session);
 
         // Cleanup
@@ -102,6 +117,8 @@ public sealed class FoundryMemoryProviderTests : IDisposable
             this._client!,
             this._memoryStoreName!,
             stateInitializer: _ => new(new FoundryMemoryProviderScope("it-scope-b")));
+
+        await memoryProvider1.EnsureMemoryStoreCreatedAsync(this._deploymentName!, this._embeddingDeploymentName!);
 
         AIAgent agent1 = this._client!.AsAIAgent(new ChatClientAgentOptions
         {
@@ -134,8 +151,25 @@ public sealed class FoundryMemoryProviderTests : IDisposable
         await memoryProvider1.WhenUpdatesCompletedAsync();
         await Task.Delay(2000);
 
-        AgentResponse result1 = await agent1.RunAsync("What is your name?", session1);
-        AgentResponse result2 = await agent2.RunAsync("What is your name?", session2);
+        // Assert - verify memories were created in scope A but not in scope B
+        var searchResultA = await this._client!.MemoryStores.SearchMemoriesAsync(
+            this._memoryStoreName!,
+            new MemorySearchOptions("it-scope-a")
+            {
+                Items = { ResponseItem.CreateUserMessageItem("Caoimhe") }
+            });
+        Assert.NotEmpty(searchResultA.Value.Memories);
+
+        var searchResultB = await this._client.MemoryStores.SearchMemoriesAsync(
+            this._memoryStoreName!,
+            new MemorySearchOptions("it-scope-b")
+            {
+                Items = { ResponseItem.CreateUserMessageItem("Caoimhe") }
+            });
+        Assert.Empty(searchResultB.Value.Memories);
+
+        AgentResponse result1 = await agent1.RunAsync("What is my name?", session1);
+        AgentResponse result2 = await agent2.RunAsync("What is my name?", session2);
 
         // Assert
         Assert.Contains("Caoimhe", result1.Text);
