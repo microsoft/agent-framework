@@ -46,6 +46,7 @@ class ExperimentalFeature(str, Enum):
     on enum membership or attribute presence over time.
     """
 
+    EVALS = "EVALS"
     SKILLS = "SKILLS"
 
 
