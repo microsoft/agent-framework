@@ -28,6 +28,7 @@ namespace Microsoft.Agents.AI.AGUI;
 [JsonSerializable(typeof(AGUIUserMessage))]
 [JsonSerializable(typeof(AGUIAssistantMessage))]
 [JsonSerializable(typeof(AGUIToolMessage))]
+[JsonSerializable(typeof(AGUIReasoningMessage))]
 [JsonSerializable(typeof(AGUITool))]
 [JsonSerializable(typeof(AGUIToolCall))]
 [JsonSerializable(typeof(AGUIToolCall[]))]

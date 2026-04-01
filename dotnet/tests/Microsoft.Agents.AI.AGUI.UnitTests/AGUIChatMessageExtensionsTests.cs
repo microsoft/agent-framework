@@ -102,18 +102,20 @@ public sealed class AGUIChatMessageExtensionsTests
             new AGUISystemMessage { Id = "msg1", Content = "System message" },
             new AGUIUserMessage { Id = "msg2", Content = "User message" },
             new AGUIAssistantMessage { Id = "msg3", Content = "Assistant message" },
-            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" }
+            new AGUIDeveloperMessage { Id = "msg4", Content = "Developer message" },
+            new AGUIReasoningMessage { Id = "msg5", Content = "Reasoning message" }
         ];
 
         // Act
         List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
 
         // Assert
-        Assert.Equal(4, chatMessages.Count);
+        Assert.Equal(5, chatMessages.Count);
         Assert.Equal(ChatRole.System, chatMessages[0].Role);
         Assert.Equal(ChatRole.User, chatMessages[1].Role);
         Assert.Equal(ChatRole.Assistant, chatMessages[2].Role);
         Assert.Equal("developer", chatMessages[3].Role.Value);
+        Assert.Equal(ChatRole.Assistant, chatMessages[4].Role);
     }
 
     [Fact]
@@ -365,6 +367,135 @@ public sealed class AGUIChatMessageExtensionsTests
 
         // Assert
         Assert.Equal(ChatRole.Tool, role);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessage_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = "I need to consider the user's request.",
+                EncryptedValue = "ErgDCkgIDB..."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Equal("reason1", message.MessageId);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("I need to consider the user's request.", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessageWithoutEncryptedValue_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = "Thinking about this problem."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("Thinking about this problem.", reasoningContent.Text);
+        Assert.Null(reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithReasoningMessageWithOnlyEncryptedValue_ConvertsToTextReasoningContent()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = string.Empty,
+                EncryptedValue = "ErgDCkgIDB..."
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        var reasoningContent = Assert.IsType<TextReasoningContent>(message.Contents[0]);
+        Assert.Equal("", reasoningContent.Text);
+        Assert.Equal("ErgDCkgIDB...", reasoningContent.ProtectedData);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithEmptyReasoningMessage_ProducesEmptyContents()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIReasoningMessage
+            {
+                Id = "reason1",
+                Content = string.Empty
+            }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        ChatMessage message = Assert.Single(chatMessages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        Assert.Empty(message.Contents);
+    }
+
+    [Fact]
+    public void MapChatRole_WithReasoningRole_ReturnsAssistantChatRole()
+    {
+        // Arrange & Act
+        ChatRole role = AGUIChatMessageExtensions.MapChatRole(AGUIRoles.Reasoning);
+
+        // Assert
+        Assert.Equal(ChatRole.Assistant, role);
+    }
+
+    [Fact]
+    public void AsChatMessages_WithMixedMessagesIncludingReasoning_PreservesOrder()
+    {
+        // Arrange
+        List<AGUIMessage> aguiMessages =
+        [
+            new AGUIUserMessage { Id = "msg1", Content = "What is 2+2?" },
+            new AGUIReasoningMessage { Id = "msg2", Content = "I need to add 2 and 2.", EncryptedValue = "tok-123" },
+            new AGUIAssistantMessage { Id = "msg3", Content = "The answer is 4." }
+        ];
+
+        // Act
+        List<ChatMessage> chatMessages = aguiMessages.AsChatMessages(AGUIJsonSerializerContext.Default.Options).ToList();
+
+        // Assert
+        Assert.Equal(3, chatMessages.Count);
+        Assert.Equal(ChatRole.User, chatMessages[0].Role);
+        Assert.Equal(ChatRole.Assistant, chatMessages[1].Role);
+        Assert.IsType<TextReasoningContent>(chatMessages[1].Contents[0]);
+        Assert.Equal(ChatRole.Assistant, chatMessages[2].Role);
+        Assert.Equal("The answer is 4.", chatMessages[2].Text);
     }
 
     #region Custom Type Serialization Tests

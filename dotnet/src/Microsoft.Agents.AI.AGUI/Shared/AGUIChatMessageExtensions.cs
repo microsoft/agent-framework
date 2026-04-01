@@ -55,6 +55,32 @@ internal static class AGUIChatMessageExtensions
                     break;
                 }
 
+                case AGUIReasoningMessage reasoningMessage:
+                {
+                    var contents = new List<AIContent>();
+
+                    if (!string.IsNullOrEmpty(reasoningMessage.Content))
+                    {
+                        contents.Add(new TextReasoningContent(reasoningMessage.Content)
+                        {
+                            ProtectedData = reasoningMessage.EncryptedValue
+                        });
+                    }
+                    else if (!string.IsNullOrEmpty(reasoningMessage.EncryptedValue))
+                    {
+                        contents.Add(new TextReasoningContent("")
+                        {
+                            ProtectedData = reasoningMessage.EncryptedValue
+                        });
+                    }
+
+                    yield return new ChatMessage(role, contents)
+                    {
+                        MessageId = message.Id
+                    };
+                    break;
+                }
+
                 case AGUIAssistantMessage assistantMessage when assistantMessage.ToolCalls is { Length: > 0 }:
                 {
                     var contents = new List<AIContent>();
@@ -212,5 +238,6 @@ internal static class AGUIChatMessageExtensions
         string.Equals(role, AGUIRoles.Assistant, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
         string.Equals(role, AGUIRoles.Developer, StringComparison.OrdinalIgnoreCase) ? s_developerChatRole :
         string.Equals(role, AGUIRoles.Tool, StringComparison.OrdinalIgnoreCase) ? ChatRole.Tool :
+        string.Equals(role, AGUIRoles.Reasoning, StringComparison.OrdinalIgnoreCase) ? ChatRole.Assistant :
         throw new InvalidOperationException($"Unknown chat role: {role}");
 }
