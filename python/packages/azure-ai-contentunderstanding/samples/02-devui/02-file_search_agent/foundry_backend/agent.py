@@ -31,6 +31,7 @@ Run with DevUI:
 
 import os
 
+from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
@@ -80,6 +81,10 @@ _file_search_tool = client.get_file_search_tool(
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
+    # max_wait is the combined budget for CU analysis + vector store upload.
+    # For file_search mode, 10s gives enough time for small documents to be
+    # analyzed and indexed in one turn.  Larger files (audio, video) will
+    # be deferred to background and resolved on the next turn.
     max_wait=10.0,
     file_search=FileSearchConfig.from_foundry(
         client.client,
@@ -88,7 +93,8 @@ cu = ContentUnderstandingContextProvider(
     ),
 )
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="FoundryFileSearchDocAgent",
     instructions=(
         "You are a helpful document analysis assistant with RAG capabilities. "

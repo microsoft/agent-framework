@@ -10,8 +10,8 @@ this agent uses CU for structured extraction — superior for scanned PDFs,
 handwritten content, audio transcription, and video analysis.
 
 Required environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
+  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
 Run with DevUI:
@@ -20,7 +20,8 @@ Run with DevUI:
 
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -30,33 +31,29 @@ from agent_framework_azure_ai_contentunderstanding import ContentUnderstandingCo
 load_dotenv()
 
 # --- Auth ---
-# AzureCliCredential works for both Azure OpenAI and CU.
-# API keys can be set separately if the services are on different resources.
 _credential = AzureCliCredential()
-_openai_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 _cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
 _cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
 
 cu = ContentUnderstandingContextProvider(
     endpoint=os.environ["AZURE_CONTENTUNDERSTANDING_ENDPOINT"],
     credential=_cu_credential,
+    # max_wait controls how long before_run() waits for CU analysis before
+    # deferring to background.  For interactive DevUI use, a short timeout
+    # (e.g. 5s) keeps the chat responsive — the agent tells the user the
+    # file is still being analyzed and resolves it on the next turn.
+    # Use max_wait=None to always wait for analysis to complete.
     max_wait=5.0,
 )
 
-if _openai_api_key:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        api_key=_openai_api_key,
-    )
-else:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=_credential,
-    )
+client = FoundryChatClient(
+    project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=_credential,
+)
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="MultiModalDocAgent",
     instructions=(
         "You are a helpful document analysis assistant. "

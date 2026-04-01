@@ -60,8 +60,7 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 | `02_multi_turn_session.py` | AgentSession persistence across turns |
 | `03_multimodal_chat.py` | PDF + audio + video parallel analysis |
 | `04_invoice_processing.py` | Structured field extraction with `prebuilt-invoice` analyzer |
-| `05_background_analysis.py` | Non-blocking analysis with `max_wait` + status tracking |
-| `06_large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |
+| `05_large_doc_file_search.py` | CU extraction + OpenAI vector store RAG |
 | `02-devui/01-multimodal_agent/` | DevUI web UI for CU-powered chat |
 | `02-devui/02-file_search_agent/` | DevUI web UI combining CU + file_search RAG |
 

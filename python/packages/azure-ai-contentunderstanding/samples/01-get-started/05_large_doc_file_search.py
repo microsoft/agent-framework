@@ -7,7 +7,7 @@
 #     "openai",
 # ]
 # ///
-# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/06_large_doc_file_search.py
+# Run with: uv run packages/azure-ai-contentunderstanding/samples/01-get-started/05_large_doc_file_search.py
 
 # Copyright (c) Microsoft. All rights reserved.
 

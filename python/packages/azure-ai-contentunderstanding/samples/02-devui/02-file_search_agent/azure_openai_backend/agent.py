@@ -22,8 +22,8 @@ Analyzer auto-detection:
     - Video            → prebuilt-videoSearch
 
 Required environment variables:
-  FOUNDRY_PROJECT_ENDPOINT                — Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME   — Model deployment name (e.g. gpt-4.1)
+  FOUNDRY_PROJECT_ENDPOINT                 — Azure AI Foundry project endpoint
+  FOUNDRY_MODEL                            — Model deployment name (e.g. gpt-4.1)
   AZURE_CONTENTUNDERSTANDING_ENDPOINT      — CU endpoint URL
 
 Run with DevUI:
@@ -32,7 +32,8 @@ Run with DevUI:
 
 import os
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.projects import AIProjectClient
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import AzureCliCredential
@@ -46,10 +47,7 @@ from agent_framework_azure_ai_contentunderstanding import (
 load_dotenv()
 
 # --- Auth ---
-# AzureCliCredential works for both Azure OpenAI and CU.
-# API keys can be set separately if the services are on different resources.
 _credential = AzureCliCredential()
-_openai_api_key = os.environ.get("AZURE_OPENAI_API_KEY")
 _cu_api_key = os.environ.get("AZURE_CONTENTUNDERSTANDING_API_KEY")
 _cu_credential = AzureKeyCredential(_cu_api_key) if _cu_api_key else _credential
 
@@ -59,18 +57,11 @@ _endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 # DevUI loads agent modules synchronously at startup while an event loop is already
 # running, so we cannot use async APIs here. A sync AIProjectClient is used for
 # one-time vector store creation; runtime file uploads use client.client (async).
-if _openai_api_key:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=_endpoint,
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        api_key=_openai_api_key,
-    )
-else:
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=_endpoint,
-        deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
-        credential=_credential,
-    )
+client = FoundryChatClient(
+    project_endpoint=_endpoint,
+    model=os.environ["FOUNDRY_MODEL"],
+    credential=_credential,
+)
 
 _sync_project = AIProjectClient(endpoint=_endpoint, credential=_credential)  # type: ignore[arg-type]
 _sync_openai = _sync_project.get_openai_client()
@@ -98,7 +89,8 @@ cu = ContentUnderstandingContextProvider(
     ),
 )
 
-agent = client.as_agent(
+agent = Agent(
+    client=client,
     name="FileSearchDocAgent",
     instructions=(
         "You are a helpful document analysis assistant with RAG capabilities. "

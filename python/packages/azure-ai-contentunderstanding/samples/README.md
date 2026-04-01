@@ -22,8 +22,7 @@ These samples demonstrate how to use the `agent-framework-azure-ai-contentunders
 | 02 | [Multi-Turn Session](01-get-started/02_multi_turn_session.py) | AgentSession persistence across turns | `uv run samples/01-get-started/02_multi_turn_session.py` |
 | 03 | [Multi-Modal Chat](01-get-started/03_multimodal_chat.py) | PDF + audio + video parallel analysis | `uv run samples/01-get-started/03_multimodal_chat.py` |
 | 04 | [Invoice Processing](01-get-started/04_invoice_processing.py) | Structured field extraction with prebuilt-invoice | `uv run samples/01-get-started/04_invoice_processing.py` |
-| 05 | [Background Analysis](01-get-started/05_background_analysis.py) | Non-blocking analysis with status tracking | `uv run samples/01-get-started/05_background_analysis.py` |
-| 06 | [Large Doc + file_search](01-get-started/06_large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/01-get-started/06_large_doc_file_search.py` |
+| 05 | [Large Doc + file_search](01-get-started/05_large_doc_file_search.py) | CU extraction + OpenAI vector store RAG | `uv run samples/01-get-started/05_large_doc_file_search.py` |
 
 ### 02-devui — Interactive web UI samples
 
