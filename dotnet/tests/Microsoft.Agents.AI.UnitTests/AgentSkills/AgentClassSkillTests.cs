@@ -111,7 +111,7 @@ public sealed class AgentClassSkillTests
     }
 
     [Fact]
-    public async Task AgentInMemorySkillsSource_ReturnsAllSkills()
+    public async Task AgentInMemorySkillsSource_ReturnsAllSkillsAsync()
     {
         // Arrange
         var skills = new AgentClassSkill[] { new MinimalClassSkill(), new FullClassSkill() };

@@ -12,7 +12,7 @@ namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
 public sealed class FilteringAgentSkillsSourceTests
 {
     [Fact]
-    public async Task GetSkillsAsync_PredicateIncludesAll_ReturnsAllSkills()
+    public async Task GetSkillsAsync_PredicateIncludesAll_ReturnsAllSkillsAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(new AgentSkill[]
@@ -30,7 +30,7 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PredicateExcludesAll_ReturnsEmpty()
+    public async Task GetSkillsAsync_PredicateExcludesAll_ReturnsEmptyAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(new AgentSkill[]
@@ -48,7 +48,7 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PartialFilter_ReturnsMatchingSkillsOnly()
+    public async Task GetSkillsAsync_PartialFilter_ReturnsMatchingSkillsOnlyAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(new AgentSkill[]
@@ -70,7 +70,7 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_EmptySource_ReturnsEmpty()
+    public async Task GetSkillsAsync_EmptySource_ReturnsEmptyAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(Array.Empty<AgentSkill>());
@@ -101,7 +101,7 @@ public sealed class FilteringAgentSkillsSourceTests
     }
 
     [Fact]
-    public async Task GetSkillsAsync_PreservesOrder()
+    public async Task GetSkillsAsync_PreservesOrderAsync()
     {
         // Arrange
         var inner = new AgentInMemorySkillsSource(new AgentSkill[]
