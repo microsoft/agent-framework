@@ -68,7 +68,7 @@ Illustrates a basic agent using Azure OpenAI with structured responses.
 
 **Key concepts**: Azure OpenAI integration, credential management, structured outputs
 
-### 5. **OpenAI Responses Agent** ([`openai_responses_agent.py`](./openai_responses_agent.py))
+### 5. **OpenAI Responses Agent** ([`openai_agent.py`](./openai_agent.py))
 
 Demonstrates the simplest possible agent using OpenAI directly.
 
