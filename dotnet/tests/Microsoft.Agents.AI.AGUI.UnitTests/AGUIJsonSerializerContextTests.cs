@@ -65,6 +65,49 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     [Fact]
+    public void RunAgentInput_Deserializes_FromJsonWithReasoningMessages()
+    {
+        // Arrange
+        const string Json = """
+            {
+                "threadId": "thread1",
+                "runId": "run1",
+                "messages": [
+                    {
+                        "id": "m1",
+                        "role": "user",
+                        "content": "Hello"
+                    },
+                    {
+                        "id": "m2",
+                        "role": "reasoning",
+                        "content": "I need to consider this.",
+                        "encryptedValue": "ErgDCkgIDB..."
+                    },
+                    {
+                        "id": "m3",
+                        "role": "assistant",
+                        "content": "Here is my answer."
+                    }
+                ]
+            }
+            """;
+
+        // Act
+        RunAgentInput? input = JsonSerializer.Deserialize(Json, AGUIJsonSerializerContext.Default.RunAgentInput);
+
+        // Assert
+        Assert.NotNull(input);
+        var messages = input.Messages.ToList();
+        Assert.Equal(3, messages.Count);
+        Assert.IsType<AGUIUserMessage>(messages[0]);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(messages[1]);
+        Assert.Equal("I need to consider this.", reasoningMessage.Content);
+        Assert.Equal("ErgDCkgIDB...", reasoningMessage.EncryptedValue);
+        Assert.IsType<AGUIAssistantMessage>(messages[2]);
+    }
+
+    [Fact]
     public void RunAgentInput_HandlesOptionalFields_StateContextAndForwardedProperties()
     {
         // Arrange
@@ -963,7 +1006,76 @@ public sealed class AGUIJsonSerializerContextTests
     }
 
     [Fact]
-    public void AllFiveMessageTypes_SerializeAsPolymorphicArray_Correctly()
+    public void AGUIReasoningMessage_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIReasoningMessage
+        {
+            Id = "reason1",
+            Content = "I need to consider the user's request carefully.",
+            EncryptedValue = "ErgDCkgIDB..."
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIReasoningMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIReasoningMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("reason1", deserialized.Id);
+        Assert.Equal("I need to consider the user's request carefully.", deserialized.Content);
+        Assert.Equal("ErgDCkgIDB...", deserialized.EncryptedValue);
+        Assert.Equal(AGUIRoles.Reasoning, deserialized.Role);
+    }
+
+    [Fact]
+    public void AGUIReasoningMessage_WithoutEncryptedValue_SerializesAndDeserializes_Correctly()
+    {
+        // Arrange
+        var originalMessage = new AGUIReasoningMessage
+        {
+            Id = "reason2",
+            Content = "Thinking about this problem."
+        };
+
+        // Act
+        string json = JsonSerializer.Serialize(originalMessage, AGUIJsonSerializerContext.Default.AGUIReasoningMessage);
+        var deserialized = JsonSerializer.Deserialize(json, AGUIJsonSerializerContext.Default.AGUIReasoningMessage);
+
+        // Assert
+        Assert.NotNull(deserialized);
+        Assert.Equal("reason2", deserialized.Id);
+        Assert.Equal("Thinking about this problem.", deserialized.Content);
+        Assert.Null(deserialized.EncryptedValue);
+    }
+
+    [Fact]
+    public void AGUIReasoningMessage_DeserializesViaPolymorphicConverter_Correctly()
+    {
+        // Arrange
+        const string Json = """
+            {
+                "id": "reason1",
+                "role": "reasoning",
+                "content": "Let me think about this.",
+                "encryptedValue": "tok-encrypted"
+            }
+            """;
+
+        // Act
+        AGUIMessage? message = JsonSerializer.Deserialize(Json, AGUIJsonSerializerContext.Default.AGUIMessage);
+
+        // Assert
+        Assert.NotNull(message);
+        var reasoningMessage = Assert.IsType<AGUIReasoningMessage>(message);
+        Assert.Equal("reason1", reasoningMessage.Id);
+        Assert.Equal(AGUIRoles.Reasoning, reasoningMessage.Role);
+        Assert.Equal("Let me think about this.", reasoningMessage.Content);
+        Assert.Equal("tok-encrypted", reasoningMessage.EncryptedValue);
+    }
+
+    [Fact]
+    public void AllSixMessageTypes_SerializeAsPolymorphicArray_Correctly()
     {
         // Arrange
         AGUIMessage[] messages =
@@ -972,7 +1084,8 @@ public sealed class AGUIJsonSerializerContextTests
             new AGUIDeveloperMessage { Id = "2", Content = "Developer message" },
             new AGUIUserMessage { Id = "3", Content = "User message" },
             new AGUIAssistantMessage { Id = "4", Content = "Assistant message" },
-            new AGUIToolMessage { Id = "5", ToolCallId = "call_1", Content = "{\"result\":\"success\"}" }
+            new AGUIToolMessage { Id = "5", ToolCallId = "call_1", Content = "{\"result\":\"success\"}" },
+            new AGUIReasoningMessage { Id = "6", Content = "Reasoning message", EncryptedValue = "tok-123" }
         ];
 
         // Act
@@ -981,12 +1094,13 @@ public sealed class AGUIJsonSerializerContextTests
 
         // Assert
         Assert.NotNull(deserialized);
-        Assert.Equal(5, deserialized.Length);
+        Assert.Equal(6, deserialized.Length);
         Assert.IsType<AGUISystemMessage>(deserialized[0]);
         Assert.IsType<AGUIDeveloperMessage>(deserialized[1]);
         Assert.IsType<AGUIUserMessage>(deserialized[2]);
         Assert.IsType<AGUIAssistantMessage>(deserialized[3]);
         Assert.IsType<AGUIToolMessage>(deserialized[4]);
+        Assert.IsType<AGUIReasoningMessage>(deserialized[5]);
     }
 
     #endregion
