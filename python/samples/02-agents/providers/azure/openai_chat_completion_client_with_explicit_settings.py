@@ -41,7 +41,7 @@ async def main() -> None:
     # authentication option.
     agent = Agent(
         client=OpenAIChatCompletionClient(
-            model=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
+            model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
             azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
             credential=AzureCliCredential(),
         ),

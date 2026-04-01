@@ -237,6 +237,63 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     assert result["tools"] == [dict_tool]
 
 
+def test_mcp_tool_dict_passed_through_to_chat_api(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts are passed through unchanged by the chat client.
+
+    The Chat Completions API does not support "type": "mcp" tools. MCP tools
+    should be used with the Responses API client instead. This test documents
+    that the chat client passes dict-based tools through without filtering,
+    so callers must use the correct client for MCP tools.
+    """
+    client = OpenAIChatCompletionClient()
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    result = client._prepare_tools_for_openai(mcp_tool)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    # The chat client passes dict tools through unchanged, including unsupported types
+    assert result["tools"][0]["type"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_dict_causes_api_rejection(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts passed to the Chat Completions API cause a rejection.
+
+    The Chat Completions API only supports "type": "function" tools.
+    When an MCP tool dict reaches the API, it returns a 400 error.
+    This regression test for #4861 verifies the chat client does not
+    silently drop or transform MCP dicts, so callers get a clear error
+    rather than a silent no-op.
+    """
+    client = OpenAIChatCompletionClient()
+    messages = [Message(role="user", text="test message")]
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    mock_response = MagicMock()
+    mock_error = BadRequestError(
+        message="Invalid tool type: mcp",
+        response=mock_response,
+        body={"error": {"code": "invalid_request", "message": "Invalid tool type: mcp"}},
+    )
+    mock_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(ChatClientException),
+    ):
+        await client._inner_get_response(messages=messages, options={"tools": mcp_tool})  # type: ignore
+
+
 def test_prepare_tools_with_single_function_tool(
     openai_unit_test_env: dict[str, str],
 ) -> None:

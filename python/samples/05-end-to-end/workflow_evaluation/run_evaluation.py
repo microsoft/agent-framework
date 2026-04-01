@@ -99,7 +99,7 @@ def fetch_agent_responses(openai_client: OpenAI, workflow_data: dict[str, Any], 
 
 def create_evaluation(openai_client: OpenAI, deployment_name: str | None = "gpt-5.2") -> EvalCreateResponse:
     """Create evaluation with multiple evaluators."""
-    deployment_name = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", deployment_name)
+    deployment_name = os.environ.get("FOUNDRY_MODEL", deployment_name)
     data_source_config = {"type": "azure_ai_source", "scenario": "responses"}
 
     testing_criteria = [
@@ -199,8 +199,8 @@ async def main():
     openai_client = create_openai_client()
 
     # Model configuration
-    workflow_agent_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW", "gpt-4.1-nano")
-    eval_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_EVAL", "gpt-5.2")
+    workflow_agent_model = os.environ.get("FOUNDRY_MODEL_WORKFLOW", "gpt-4.1-nano")
+    eval_model = os.environ.get("FOUNDRY_MODEL_EVAL", "gpt-5.2")
 
     # Focus on these agents, uncomment other ones you want to have evals run on
     agents_to_evaluate = [

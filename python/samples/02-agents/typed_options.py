@@ -1,11 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Literal
 
 from agent_framework import Agent, Message
 from agent_framework.anthropic import AnthropicClient
-from agent_framework.foundry import FoundryChatClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
 
@@ -46,10 +44,10 @@ async def demo_anthropic_chat_client() -> None:
     response = await client.get_response(
         [Message("user", text="What is the capital of France?")],
         options={
-            "temperature": 0.5,
-            "max_tokens": 1000,
+            "temperature": 1,  # Must be 1 when thinking is enabled
+            "max_tokens": 2048,
             # Anthropic-specific options:
-            "thinking": {"type": "enabled", "budget_tokens": 1000},
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
             # "top_k": 40,  # <-- Uncomment for Anthropic-specific option
         },
     )
@@ -91,17 +89,11 @@ class OpenAIReasoningChatOptions(OpenAIChatOptions, total=False):
     Examples:
         .. code-block:: python
 
-            from agent_framework.openai import OpenAIReasoningChatOptions
-
             options: OpenAIReasoningChatOptions = {
-                "model_id": "o3",
-                "reasoning_effort": "high",
+                "reasoning": {"effort": "high"},
                 "max_tokens": 4096,
             }
     """
-
-    # Reasoning-specific parameters
-    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
     # Unsupported parameters for reasoning models (override with None)
     temperature: None
@@ -129,7 +121,7 @@ async def demo_openai_chat_client_reasoning_models() -> None:
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:
-            "reasoning_effort": "medium",
+            "reasoning": {"effort": "medium"},
             # Unsupported options are caught by type checker (uncomment to see):
             # "temperature": 0.7,
             # "random": 234,
@@ -149,7 +141,7 @@ async def demo_openai_agent() -> None:
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
     agent = Agent[OpenAIReasoningChatOptions](
-        client=FoundryChatClient(model="o3"),
+        client=OpenAIChatClient(model="o3"),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time
@@ -157,7 +149,7 @@ async def demo_openai_agent() -> None:
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:
-            "reasoning_effort": "medium",
+            "reasoning": {"effort": "medium"},
             # Unsupported options are caught by type checker (uncomment to see):
             # "temperature": 0.7,
             # "random": 234,
@@ -168,7 +160,7 @@ async def demo_openai_agent() -> None:
     response = await agent.run(
         "What is 25 * 47?",
         options={
-            "reasoning_effort": "high",  # Override for a run
+            "reasoning": {"effort": "high"},  # Override for a run
         },
     )
 

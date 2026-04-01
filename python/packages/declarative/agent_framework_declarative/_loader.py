@@ -47,58 +47,73 @@ class ProviderTypeMapping(TypedDict, total=True):
     package: str
     name: str
     model_id_field: str
+    endpoint_field: str | None
+    api_key_field: str | None
 
 
 PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
-    "AzureOpenAI.Chat": {
-        "package": "agent_framework.azure",
-        "name": "AzureOpenAIChatClient",
-        "model_id_field": "deployment_name",
+    "AzureOpenAI": {
+        "package": "agent_framework.openai",
+        "name": "OpenAIChatClient",
+        "model_id_field": "model",
+        "endpoint_field": "azure_endpoint",
+        "api_key_field": "api_key",
     },
-    "AzureOpenAI.Assistants": {
-        "package": "agent_framework.azure",
-        "name": "AzureOpenAIAssistantsClient",
-        "model_id_field": "deployment_name",
+    "AzureOpenAI.Chat": {
+        "package": "agent_framework.openai",
+        "name": "OpenAIChatCompletionClient",
+        "model_id_field": "model",
+        "endpoint_field": "azure_endpoint",
+        "api_key_field": "api_key",
     },
     "AzureOpenAI.Responses": {
-        "package": "agent_framework.azure",
-        "name": "AzureOpenAIResponsesClient",
-        "model_id_field": "deployment_name",
+        "package": "agent_framework.openai",
+        "name": "OpenAIChatClient",
+        "model_id_field": "model",
+        "endpoint_field": "azure_endpoint",
+        "api_key_field": "api_key",
+    },
+    "Foundry": {
+        "package": "agent_framework.foundry",
+        "name": "FoundryChatClient",
+        "model_id_field": "model",
+        "endpoint_field": "project_endpoint",
+        "api_key_field": None,
     },
     "OpenAI.Chat": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatClient",
-        "model_id_field": "model_id",
-    },
-    "OpenAI.Assistants": {
-        "package": "agent_framework.openai",
-        "name": "OpenAIAssistantsClient",
-        "model_id_field": "model_id",
+        "model_id_field": "model",
+        "endpoint_field": "base_url",
+        "api_key_field": "api_key",
     },
     "OpenAI.Responses": {
         "package": "agent_framework.openai",
-        "name": "OpenAIResponsesClient",
-        "model_id_field": "model_id",
-    },
-    "AzureAIAgentClient": {
-        "package": "agent_framework.azure",
-        "name": "AzureAIAgentClient",
-        "model_id_field": "model_deployment_name",
-    },
-    "AzureAIClient": {
-        "package": "agent_framework.azure",
-        "name": "AzureAIClient",
-        "model_id_field": "model_deployment_name",
-    },
-    "AzureAI.ProjectProvider": {
-        "package": "agent_framework.azure",
-        "name": "AzureAIProjectAgentProvider",
+        "name": "OpenAIChatClient",
         "model_id_field": "model",
+        "endpoint_field": "base_url",
+        "api_key_field": "api_key",
+    },
+    "OpenAI": {
+        "package": "agent_framework.openai",
+        "name": "OpenAIChatClient",
+        "model_id_field": "model",
+        "endpoint_field": "base_url",
+        "api_key_field": "api_key",
+    },
+    "Foundry.Chat": {
+        "package": "agent_framework.foundry",
+        "name": "FoundryChatClient",
+        "model_id_field": "model",
+        "endpoint_field": "project_endpoint",
+        "api_key_field": None,
     },
     "Anthropic.Chat": {
         "package": "agent_framework.anthropic",
         "name": "AnthropicChatClient",
         "model_id_field": "model_id",
+        "endpoint_field": None,
+        "api_key_field": "api_key",
     },
 }
 
@@ -137,11 +152,11 @@ class AgentFactory:
 
         .. code-block:: python
 
-            from agent_framework.azure import AzureOpenAIChatClient
+            from agent_framework.openai import OpenAIChatClient
             from agent_framework_declarative import AgentFactory
 
             # With pre-configured chat client
-            client = AzureOpenAIChatClient()
+            client = OpenAIChatClient()
             factory = AgentFactory(client=client)
             agent = factory.create_agent_from_yaml_path("agent.yaml")
 
@@ -171,7 +186,7 @@ class AgentFactory:
         connections: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         additional_mappings: Mapping[str, ProviderTypeMapping] | None = None,
-        default_provider: str = "AzureAIClient",
+        default_provider: str = "OpenAI",
         safe_mode: bool = True,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -192,13 +207,15 @@ class AgentFactory:
                     ..code-block:: python
 
                         additional_mappings = {
-                            "Provider.ApiType": {
-                                "package": "package.name",
-                                "name": "ClassName",
-                                "model_id_field": "field_name_in_constructor",
-                            },
-                            ...
-                        }
+                             "Provider.ApiType": {
+                                 "package": "package.name",
+                                 "name": "ClassName",
+                                 "model_id_field": "field_name_in_constructor",
+                                 "endpoint_field": "endpoint_kwarg_name_or_null",
+                                 "api_key_field": "api_key_kwarg_name_or_null",
+                             },
+                             ...
+                         }
 
                     Here, "Provider.ApiType" is the lookup key used when both provider and apiType are specified in the
                     model, "Provider" is also allowed.
@@ -206,7 +223,7 @@ class AgentFactory:
                     SupportsChatGetResponse implementation, and model_id_field is the name of the field in the
                     constructor that accepts the model.id value.
             default_provider: The default provider used when model.provider is not specified,
-                default is "AzureAIClient".
+                default is "OpenAI".
             safe_mode: Whether to run in safe mode, default is True.
                 When safe_mode is True, environment variables are not accessible in the powerfx expressions.
                 You can still use environment variables, but through the constructors of the classes.
@@ -227,11 +244,11 @@ class AgentFactory:
 
             .. code-block:: python
 
-                from agent_framework.azure import AzureOpenAIChatClient
+                from agent_framework.openai import OpenAIChatClient
                 from agent_framework_declarative import AgentFactory
 
                 # With shared chat client
-                client = AzureOpenAIChatClient()
+                client = OpenAIChatClient()
                 factory = AgentFactory(
                     client=client,
                     env_file_path=".env",
@@ -457,8 +474,8 @@ class AgentFactory:
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
         """Async version: Create a Agent from a YAML file path.
 
-        Use this method when the provider requires async initialization, such as
-        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+        This is the async counterpart to ``create_agent_from_dict`` and is useful when
+        the rest of your setup is already async.
 
         Args:
             yaml_path: Path to the YAML file representation of a PromptAgent.
@@ -473,7 +490,7 @@ class AgentFactory:
 
                 factory = AgentFactory(
                     client_kwargs={"credential": credential},
-                    default_provider="AzureAI.ProjectProvider",
+                    default_provider="Foundry",
                 )
                 agent = await factory.create_agent_from_yaml_path_async("agent.yaml")
         """
@@ -487,8 +504,8 @@ class AgentFactory:
     async def create_agent_from_yaml_async(self, yaml_str: str) -> Agent:
         """Async version: Create a Agent from a YAML string.
 
-        Use this method when the provider requires async initialization, such as
-        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+        Use this method when the surrounding call site is already async and you
+        want to build an agent directly from YAML text.
 
         Args:
             yaml_str: YAML string representation of a PromptAgent.
@@ -507,7 +524,7 @@ class AgentFactory:
                 instructions: You are a helpful assistant.
                 model:
                     id: gpt-4o
-                    provider: AzureAI.ProjectProvider
+                    provider: Foundry
                 '''
 
                 factory = AgentFactory(client_kwargs={"credential": credential})
@@ -518,8 +535,8 @@ class AgentFactory:
     async def create_agent_from_dict_async(self, agent_def: dict[str, Any]) -> Agent:
         """Async version: Create a Agent from a dictionary definition.
 
-        Use this method when the provider requires async initialization, such as
-        AzureAI.ProjectProvider which creates agents on the Azure AI Agent Service.
+        This is the async counterpart to ``create_agent_from_dict`` and is useful when
+        the rest of your setup is already async.
 
         Args:
             agent_def: Dictionary representation of a PromptAgent.
@@ -538,7 +555,7 @@ class AgentFactory:
                     "instructions": "You are a helpful assistant.",
                     "model": {
                         "id": "gpt-4o",
-                        "provider": "AzureAI.ProjectProvider",
+                        "provider": "Foundry",
                     },
                 }
 
@@ -551,12 +568,6 @@ class AgentFactory:
         if not isinstance(prompt_agent, PromptAgent):
             raise DeclarativeLoaderError("Only definitions for a PromptAgent are supported for agent creation.")
 
-        # Check if we're using a provider-based approach (like AzureAIProjectAgentProvider)
-        mapping = self._retrieve_provider_configuration(prompt_agent.model) if prompt_agent.model else None
-        if mapping and mapping["name"] == "AzureAIProjectAgentProvider":
-            return await self._create_agent_with_provider(prompt_agent, mapping)
-
-        # Fall back to standard ChatClient approach
         client = self._get_client(prompt_agent)
         chat_options = self._parse_chat_options(prompt_agent.model)
         if tools := self._parse_tools(prompt_agent.tools):
@@ -572,48 +583,42 @@ class AgentFactory:
         )
 
     async def _create_agent_with_provider(self, prompt_agent: PromptAgent, mapping: ProviderTypeMapping) -> Agent:
-        """Create a Agent using AzureAIProjectAgentProvider.
+        """Create an Agent through a provider object that exposes ``create_agent``.
 
-        This method handles the special case where we use a provider that creates
-        agents on a remote service (like Azure AI Agent Service) and returns
-        Agent instances directly.
+        This remains available as an internal escape hatch for provider-style custom mappings
+        that return a fully constructed ``Agent`` rather than a chat client.
         """
-        # Import the provider class
         module_name = mapping["package"]
         class_name = mapping["name"]
         module = __import__(module_name, fromlist=[class_name])
         provider_class = getattr(module, class_name)
 
-        # Build provider kwargs from client_kwargs and connection info
         provider_kwargs: dict[str, Any] = {}
         provider_kwargs.update(self.client_kwargs)
 
-        # Handle connection settings for the model
+        endpoint_field = mapping.get("endpoint_field")
+        api_key_field = mapping.get("api_key_field", "api_key")
+
         if prompt_agent.model and prompt_agent.model.connection:
             match prompt_agent.model.connection:
-                case RemoteConnection() | AnonymousConnection():
-                    if prompt_agent.model.connection.endpoint:
-                        provider_kwargs["project_endpoint"] = prompt_agent.model.connection.endpoint
                 case ApiKeyConnection():
-                    if prompt_agent.model.connection.endpoint:
-                        provider_kwargs["project_endpoint"] = prompt_agent.model.connection.endpoint
+                    if api_key_field:
+                        provider_kwargs[api_key_field] = prompt_agent.model.connection.apiKey
+                    if prompt_agent.model.connection.endpoint and endpoint_field:
+                        provider_kwargs[endpoint_field] = prompt_agent.model.connection.endpoint
+                case RemoteConnection() | AnonymousConnection():
+                    if prompt_agent.model.connection.endpoint and endpoint_field:
+                        provider_kwargs[endpoint_field] = prompt_agent.model.connection.endpoint
                 case ReferenceConnection():
-                    # Reference connections are resolved by concrete providers when supported.
                     pass
 
-        # Create the provider and use it to create the agent
         provider = provider_class(**provider_kwargs)
-
-        # Parse tools
         tools = self._parse_tools(prompt_agent.tools) if prompt_agent.tools else None
 
-        # Parse response format into default_options
         default_options: dict[str, Any] | None = None
         if prompt_agent.outputSchema:
             default_options = {"response_format": prompt_agent.outputSchema.to_json_schema()}
 
-        # Create the agent using the provider
-        # The provider's create_agent returns a Agent directly
         return cast(
             Agent,
             await provider.create_agent(
@@ -637,18 +642,35 @@ class AgentFactory:
                 "alternatively define a model in the PromptAgent."
             )
 
+        mapping = self._retrieve_provider_configuration(prompt_agent.model)
         setup_dict: dict[str, Any] = {}
         setup_dict.update(self.client_kwargs)
+        endpoint_field = mapping.get("endpoint_field")
+        api_key_field = mapping.get("api_key_field", "api_key")
 
         # parse connections
         if prompt_agent.model.connection:
             match prompt_agent.model.connection:
                 case ApiKeyConnection():
-                    setup_dict["api_key"] = prompt_agent.model.connection.apiKey
+                    if api_key_field:
+                        setup_dict[api_key_field] = prompt_agent.model.connection.apiKey
+                    elif prompt_agent.model.connection.apiKey:
+                        raise DeclarativeLoaderError(
+                            f"{mapping['name']} does not support API key-based model connections."
+                        )
                     if prompt_agent.model.connection.endpoint:
-                        setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
+                        if not endpoint_field:
+                            raise DeclarativeLoaderError(
+                                f"{mapping['name']} does not support endpoint-based model connections."
+                            )
+                        setup_dict[endpoint_field] = prompt_agent.model.connection.endpoint
                 case RemoteConnection() | AnonymousConnection():
-                    setup_dict["endpoint"] = prompt_agent.model.connection.endpoint
+                    if prompt_agent.model.connection.endpoint:
+                        if not endpoint_field:
+                            raise DeclarativeLoaderError(
+                                f"{mapping['name']} does not support endpoint-based model connections."
+                            )
+                        setup_dict[endpoint_field] = prompt_agent.model.connection.endpoint
                 case ReferenceConnection():
                     if not self.connections:
                         raise ValueError("Connections must be provided to resolve ReferenceConnection")
@@ -673,7 +695,6 @@ class AgentFactory:
                 "ChatClient must be provided to create agent from PromptAgent, or define model.id in the PromptAgent."
             )
         # if provider is defined, use that, if possible with apiType, fallback to default_provider
-        mapping = self._retrieve_provider_configuration(prompt_agent.model)
         module_name = mapping["package"]
         class_name = mapping["name"]
         module = __import__(module_name, fromlist=[class_name])

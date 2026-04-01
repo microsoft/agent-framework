@@ -1,19 +1,19 @@
 # In-Function-Loop Checkpointing
 
-This sample demonstrates how `ChatClientAgent` can persist chat history after each individual call to the AI service using the `SimulateServiceStoredChatHistory` option. This per-service-call persistence ensures intermediate progress is saved during the function invocation loop.
+This sample demonstrates how `ChatClientAgent` can persist chat history after each individual call to the AI service using the `RequirePerServiceCallChatHistoryPersistence` option. This per-service-call persistence ensures intermediate progress is saved during the function invocation loop.
 
 ## What This Sample Shows
 
-When an agent uses tools, the `FunctionInvokingChatClient` loops multiple times (service call → tool execution → service call → …). By enabling `SimulateServiceStoredChatHistory = true`, chat history is persisted after each service call via the `ServiceStoredSimulatingChatClient` decorator:
+When an agent uses tools, the `FunctionInvokingChatClient` loops multiple times (service call → tool execution → service call → …). By enabling `RequirePerServiceCallChatHistoryPersistence = true`, chat history is persisted after each service call via the `PerServiceCallChatHistoryPersistingChatClient` decorator:
 
-- A `ServiceStoredSimulatingChatClient` decorator is inserted into the chat client pipeline
+- A `PerServiceCallChatHistoryPersistingChatClient` decorator is inserted into the chat client pipeline
 - Before each service call, the decorator loads history from the `ChatHistoryProvider` and prepends it to the request
 - After each service call, the decorator notifies the `ChatHistoryProvider` (and any `AIContextProvider` instances) with the new messages
 - Only **new** messages are sent to providers on each notification — messages that were already persisted in an earlier call within the same run are deduplicated automatically
 
-By default (without `SimulateServiceStoredChatHistory`), chat history is persisted at the end of the full agent run instead. To use per-service-call persistence, set `SimulateServiceStoredChatHistory = true` on `ChatClientAgentOptions`.
+By default (without `RequirePerServiceCallChatHistoryPersistence`), chat history is persisted at the end of the full agent run instead. To use per-service-call persistence, set `RequirePerServiceCallChatHistoryPersistence = true` on `ChatClientAgentOptions`.
 
-With `SimulateServiceStoredChatHistory` = true, the behavior matches that of chat history stored in the underlying AI service exactly.
+With `RequirePerServiceCallChatHistoryPersistence` = true, the behavior matches that of chat history stored in the underlying AI service exactly.
 
 Per-service-call persistence is useful for:
 - **Crash recovery** — if the process is interrupted mid-loop, the intermediate tool calls and results are already persisted
@@ -29,7 +29,7 @@ The sample asks the agent about the weather and time in three cities. The model 
 ```
 ChatClientAgent
   └─ FunctionInvokingChatClient    (handles tool call loop)
-       └─ ServiceStoredSimulatingChatClient  (persists after each service call)
+       └─ PerServiceCallChatHistoryPersistingChatClient  (persists after each service call)
             └─ Leaf IChatClient            (Azure OpenAI)
 ```
 

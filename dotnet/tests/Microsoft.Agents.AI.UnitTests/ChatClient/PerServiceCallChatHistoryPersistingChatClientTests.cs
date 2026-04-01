@@ -13,15 +13,15 @@ using Moq.Protected;
 namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
-/// Contains unit tests for the <see cref="ServiceStoredSimulatingChatClient"/> decorator,
+/// Contains unit tests for the <see cref="PerServiceCallChatHistoryPersistingChatClient"/> decorator,
 /// verifying that it persists messages via the <see cref="ChatHistoryProvider"/> after each
 /// individual service call by default, or marks messages for end-of-run persistence when the
-/// <see cref="ChatClientAgentOptions.SimulateServiceStoredChatHistory"/> option is enabled.
+/// <see cref="ChatClientAgentOptions.RequirePerServiceCallChatHistoryPersistence"/> option is enabled.
 /// </summary>
-public class ServiceStoredSimulatingChatClientTests
+public class PerServiceCallChatHistoryPersistingChatClientTests
 {
     /// <summary>
-    /// Verifies that by default (SimulateServiceStoredChatHistory is false),
+    /// Verifies that by default (RequirePerServiceCallChatHistoryPersistence is false),
     /// the ChatHistoryProvider receives messages after a successful non-streaming call.
     /// </summary>
     [Fact]
@@ -50,7 +50,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -97,7 +97,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -145,7 +145,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -163,7 +163,7 @@ public class ServiceStoredSimulatingChatClientTests
     }
 
     /// <summary>
-    /// Verifies that the decorator is NOT injected by default (SimulateServiceStoredChatHistory is false).
+    /// Verifies that the decorator is NOT injected by default (RequirePerServiceCallChatHistoryPersistence is false).
     /// </summary>
     [Fact]
     public void ChatClient_DoesNotContainDecorator_ByDefault()
@@ -175,15 +175,15 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new());
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
+        var decorator = agent.ChatClient.GetService<PerServiceCallChatHistoryPersistingChatClient>();
         Assert.Null(decorator);
     }
 
     /// <summary>
-    /// Verifies that the decorator is injected when SimulateServiceStoredChatHistory is true.
+    /// Verifies that the decorator is injected when RequirePerServiceCallChatHistoryPersistence is true.
     /// </summary>
     [Fact]
-    public void ChatClient_ContainsDecorator_WhenSimulateServiceStoredChatHistory()
+    public void ChatClient_ContainsDecorator_WhenRequirePerServiceCallChatHistoryPersistence()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -191,11 +191,11 @@ public class ServiceStoredSimulatingChatClientTests
         // Act
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
+        var decorator = agent.ChatClient.GetService<PerServiceCallChatHistoryPersistingChatClient>();
         Assert.NotNull(decorator);
     }
 
@@ -215,27 +215,27 @@ public class ServiceStoredSimulatingChatClientTests
         });
 
         // Assert
-        var decorator = agent.ChatClient.GetService<ServiceStoredSimulatingChatClient>();
+        var decorator = agent.ChatClient.GetService<PerServiceCallChatHistoryPersistingChatClient>();
         Assert.Null(decorator);
     }
 
     /// <summary>
-    /// Verifies that the SimulateServiceStoredChatHistory option is included in Clone().
+    /// Verifies that the RequirePerServiceCallChatHistoryPersistence option is included in Clone().
     /// </summary>
     [Fact]
-    public void ChatClientAgentOptions_Clone_IncludesSimulateServiceStoredChatHistory()
+    public void ChatClientAgentOptions_Clone_IncludesRequirePerServiceCallChatHistoryPersistence()
     {
         // Arrange
         var options = new ChatClientAgentOptions
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         };
 
         // Act
         var cloned = options.Clone();
 
         // Assert
-        Assert.True(cloned.SimulateServiceStoredChatHistory);
+        Assert.True(cloned.RequirePerServiceCallChatHistoryPersistence);
     }
 
     /// <summary>
@@ -289,7 +289,7 @@ public class ServiceStoredSimulatingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -358,7 +358,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -407,7 +407,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             AIContextProviders = [mockContextProvider.Object],
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -454,7 +454,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             AIContextProviders = [mockContextProvider.Object],
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -513,7 +513,7 @@ public class ServiceStoredSimulatingChatClientTests
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
             AIContextProviders = [mockContextProvider.Object],
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -587,7 +587,7 @@ public class ServiceStoredSimulatingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -652,7 +652,7 @@ public class ServiceStoredSimulatingChatClientTests
         {
             ChatOptions = new() { Tools = [tool] },
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         }, services: new ServiceCollection().BuildServiceProvider());
 
         // Act
@@ -720,8 +720,8 @@ public class ServiceStoredSimulatingChatClientTests
 
     /// <summary>
     /// Verifies that when per-service-call persistence is active and no real conversation ID exists,
-    /// <see cref="ChatClientAgent"/> sets the <see cref="ServiceStoredSimulatingChatClient.LocalHistoryConversationId"/>
-    /// sentinel on the chat options and <see cref="ServiceStoredSimulatingChatClient"/> strips it before
+    /// <see cref="ChatClientAgent"/> sets the <see cref="PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId"/>
+    /// sentinel on the chat options and <see cref="PerServiceCallChatHistoryPersistingChatClient"/> strips it before
     /// forwarding to the inner client.
     /// </summary>
     [Fact]
@@ -741,7 +741,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -773,7 +773,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -808,7 +808,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Create a session with a real conversation ID.
@@ -842,7 +842,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatOptions = new() { Instructions = "test" },
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -862,7 +862,7 @@ public class ServiceStoredSimulatingChatClientTests
     /// skip provider resolution in the agent (the decorator handles it).
     /// </summary>
     [Fact]
-    public async Task RunAsync_SetsSentinelOnSession_WhenSimulateServiceStoredChatHistoryActiveAsync()
+    public async Task RunAsync_SetsSentinelOnSession_WhenRequirePerServiceCallChatHistoryPersistenceActiveAsync()
     {
         // Arrange
         Mock<IChatClient> mockService = new();
@@ -875,7 +875,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -883,7 +883,7 @@ public class ServiceStoredSimulatingChatClientTests
         await agent.RunAsync([new(ChatRole.User, "test")], session);
 
         // Assert — session should have the sentinel conversation ID
-        Assert.Equal(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
+        Assert.Equal(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
 
     /// <summary>
@@ -924,7 +924,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act & Assert — conflict detection should throw
@@ -969,7 +969,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
             AIContextProviders = [mockContextProvider.Object],
         });
 
@@ -1025,7 +1025,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
             AIContextProviders = [mockContextProvider.Object],
         });
 
@@ -1077,7 +1077,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
             AIContextProviders = [mockContextProvider.Object],
         });
 
@@ -1137,7 +1137,7 @@ public class ServiceStoredSimulatingChatClientTests
         // No ChatHistoryProvider — so conflict detection won't throw.
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
             AIContextProviders = [mockContextProvider.Object],
         });
 
@@ -1192,7 +1192,7 @@ public class ServiceStoredSimulatingChatClientTests
         // No ChatHistoryProvider — so conflict detection won't throw.
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
             AIContextProviders = [mockContextProvider.Object],
         });
 
@@ -1253,7 +1253,7 @@ public class ServiceStoredSimulatingChatClientTests
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
             ChatHistoryProvider = mockChatHistoryProvider.Object,
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -1270,7 +1270,7 @@ public class ServiceStoredSimulatingChatClientTests
         Assert.Equal("test", messageList[0].Text);
 
         // Assert — session should NOT have the sentinel (agent handles ConversationId at end-of-run)
-        Assert.NotEqual(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
+        Assert.NotEqual(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
 
     /// <summary>
@@ -1291,7 +1291,7 @@ public class ServiceStoredSimulatingChatClientTests
 
         ChatClientAgent agent = new(mockService.Object, options: new()
         {
-            SimulateServiceStoredChatHistory = true,
+            RequirePerServiceCallChatHistoryPersistence = true,
         });
 
         // Act
@@ -1309,6 +1309,6 @@ public class ServiceStoredSimulatingChatClientTests
         Assert.NotEmpty(updates);
 
         // Assert — session should NOT have the sentinel
-        Assert.NotEqual(ServiceStoredSimulatingChatClient.LocalHistoryConversationId, session!.ConversationId);
+        Assert.NotEqual(PerServiceCallChatHistoryPersistingChatClient.LocalHistoryConversationId, session!.ConversationId);
     }
 }
