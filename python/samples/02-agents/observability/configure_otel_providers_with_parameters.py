@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 from agent_framework import Message, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import configure_otel_providers, get_tracer
-from azure.identity._credentials import AzureCliCredential
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace.span import format_trace_id
