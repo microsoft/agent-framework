@@ -46,10 +46,10 @@ Key Concepts:
 - kwargs Propagation: Automatic forwarding of runtime context through delegation chains
 
 Environment Setup:
-- Ensure Azure credentials are configured (e.g., via Azure CLI)
-- And `az login` has been run to authenticate
+- Configure Azure credentials (e.g., via Azure CLI)
+- Run `az login` to authenticate
 - Set FOUNDRY_PROJECT_ENDPOINT to your Azure AI Foundry project endpoint
-- Set FOUNDRY_MODEL to the model deployment name (e.g. gpt-4o)
+- Set FOUNDRY_MODEL to the model deployment name (for example: gpt-4o)
 
 """
 
