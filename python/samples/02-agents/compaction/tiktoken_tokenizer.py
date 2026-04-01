@@ -11,7 +11,7 @@
 import asyncio
 from typing import Any
 
-import tiktoken
+import tiktoken  # type: ignore
 from agent_framework import (
     Message,
     TokenizerProtocol,

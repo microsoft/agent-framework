@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-import uuid
 
 from agent_framework import Agent, tool
 from agent_framework.foundry import FoundryChatClient
@@ -27,52 +26,49 @@ def get_user_preferences(user_id: str) -> str:
     return preferences.get(user_id, "No specific preferences found")
 
 
-async def example_global_thread_scope() -> None:
-    """Example 1: Global thread_id scope (memories shared across all operations)."""
-    print("1. Global Thread Scope Example:")
+async def example_user_scoped_memory() -> None:
+    """Example 1: User-scoped memory (memories shared across all sessions for the same user)."""
+    print("1. User-Scoped Memory Example:")
     print("-" * 40)
 
-    global_thread_id = str(uuid.uuid4())
     user_id = "user123"
 
     async with (
         AzureCliCredential() as credential,
         Agent(
             client=FoundryChatClient(credential=credential),
-            name="GlobalMemoryAssistant",
+            name="UserMemoryAssistant",
             instructions="You are an assistant that remembers user preferences across conversations.",
             tools=get_user_preferences,
             context_providers=[
                 Mem0ContextProvider(
                     source_id="mem0",
                     user_id=user_id,
-                    thread_id=global_thread_id,
-                    scope_to_per_operation_thread_id=False,  # Share memories across all sessions
                 )
             ],
-        ) as global_agent,
+        ) as user_agent,
     ):
-        # Store some preferences in the global scope
+        # Store some preferences
         query = "Remember that I prefer technical responses with code examples when discussing programming."
         print(f"User: {query}")
-        result = await global_agent.run(query)
+        result = await user_agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Create a new session - but memories should still be accessible due to global scope
-        new_session = global_agent.create_session()
+        # Create a new session - memories should still be accessible via user_id scoping
+        new_session = user_agent.create_session()
         query = "What do you know about my preferences?"
         print(f"User (new session): {query}")
-        result = await global_agent.run(query, session=new_session)
+        result = await user_agent.run(query, session=new_session)
         print(f"Agent: {result}\n")
 
 
-async def example_per_operation_thread_scope() -> None:
-    """Example 2: Per-operation thread scope (memories isolated per session).
+async def example_agent_scoped_memory() -> None:
+    """Example 2: Agent-scoped memory (memories isolated per agent_id).
 
-    Note: When scope_to_per_operation_thread_id=True, the provider is bound to a single session
-    throughout its lifetime. Use the same session object for all operations with that provider.
+    Note: Use different agent_id values to isolate memories between different
+    agent personas, even when the user_id is the same.
     """
-    print("2. Per-Operation Thread Scope Example:")
+    print("2. Agent-Scoped Memory Example:")
     print("-" * 40)
 
     user_id = "user123"
@@ -82,48 +78,45 @@ async def example_per_operation_thread_scope() -> None:
         Agent(
             client=FoundryChatClient(credential=credential),
             name="ScopedMemoryAssistant",
-            instructions="You are an assistant with thread-scoped memory.",
+            instructions="You are an assistant with agent-scoped memory.",
             tools=get_user_preferences,
             context_providers=[
                 Mem0ContextProvider(
                     source_id="mem0",
                     user_id=user_id,
-                    scope_to_per_operation_thread_id=True,  # Isolate memories per session
+                    agent_id="scoped_assistant",
                 )
             ],
         ) as scoped_agent,
     ):
-        # Create a specific session for this scoped provider
-        dedicated_session = scoped_agent.create_session()
-
-        # Store some information in the dedicated session
+        # Store some information
         query = "Remember that for this conversation, I'm working on a Python project about data analysis."
-        print(f"User (dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
+        print(f"User: {query}")
+        result = await scoped_agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Test memory retrieval in the same dedicated session
+        # Test memory retrieval
         query = "What project am I working on?"
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
+        print(f"User: {query}")
+        result = await scoped_agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Store more information in the same session
+        # Store more information
         query = "Also remember that I prefer using pandas and matplotlib for this project."
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
+        print(f"User: {query}")
+        result = await scoped_agent.run(query)
         print(f"Agent: {result}\n")
 
         # Test comprehensive memory retrieval
         query = "What do you know about my current project and preferences?"
-        print(f"User (same dedicated session): {query}")
-        result = await scoped_agent.run(query, session=dedicated_session)
+        print(f"User: {query}")
+        result = await scoped_agent.run(query)
         print(f"Agent: {result}\n")
 
 
 async def example_multiple_agents() -> None:
-    """Example 3: Multiple agents with different thread configurations."""
-    print("3. Multiple Agents with Different Thread Configurations:")
+    """Example 3: Multiple agents with different memory configurations."""
+    print("3. Multiple Agents with Different Memory Configurations:")
     print("-" * 40)
 
     agent_id_1 = "agent_personal"
@@ -178,11 +171,11 @@ async def example_multiple_agents() -> None:
 
 
 async def main() -> None:
-    """Run all Mem0 thread management examples."""
-    print("=== Mem0 Thread Management Example ===\n")
+    """Run all Mem0 memory management examples."""
+    print("=== Mem0 Memory Management Example ===\n")
 
-    await example_global_thread_scope()
-    await example_per_operation_thread_scope()
+    await example_user_scoped_memory()
+    await example_agent_scoped_memory()
     await example_multiple_agents()
 
 

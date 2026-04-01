@@ -61,6 +61,10 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Subscribe to events - they will flow directly to the channel as they're raised
         this._stepRunner.OutgoingEvents.EventRaised += OnEventRaisedAsync;
 
+        // Re-emit any pending external requests that were restored from a checkpoint
+        // before this subscription was active. For non-resume starts this is a no-op.
+        await this._stepRunner.RepublishPendingEventsAsync(linkedSource.Token).ConfigureAwait(false);
+
         // Start the session-level activity that spans the entire run loop lifetime.
         // Individual run-stage activities are nested within this session activity.
         Activity? sessionActivity = this._stepRunner.TelemetryContext.StartWorkflowSessionActivity();

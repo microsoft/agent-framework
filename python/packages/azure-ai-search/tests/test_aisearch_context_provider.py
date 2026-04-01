@@ -283,6 +283,37 @@ class TestInitAgenticValidation:
         assert provider._use_existing_knowledge_base is False
         assert provider.knowledge_base_name == "idx-kb"
 
+    def test_agentic_explicit_kb_ignores_env_index_name(self) -> None:
+        with patch.dict(os.environ, {"AZURE_SEARCH_INDEX_NAME": "env-index"}, clear=False):
+            provider = AzureAISearchContextProvider(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="my-kb",
+                api_key="key",
+                mode="agentic",
+            )
+
+        assert provider.index_name is None
+        assert provider.knowledge_base_name == "my-kb"
+        assert provider._use_existing_knowledge_base is True
+        assert provider._search_client is None
+
+    def test_agentic_explicit_index_ignores_env_kb_name(self) -> None:
+        with patch.dict(os.environ, {"AZURE_SEARCH_KNOWLEDGE_BASE_NAME": "env-kb"}, clear=False):
+            provider = AzureAISearchContextProvider(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                index_name="idx",
+                api_key="key",
+                mode="agentic",
+                model_deployment_name="deploy",
+                azure_openai_resource_url="https://aoai.openai.azure.com",
+            )
+
+        assert provider.index_name == "idx"
+        assert provider.knowledge_base_name == "idx-kb"
+        assert provider._use_existing_knowledge_base is False
+
 
 # -- __aenter__ / __aexit__ ---------------------------------------------------
 

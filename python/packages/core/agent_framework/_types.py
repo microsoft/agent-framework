@@ -1380,6 +1380,13 @@ class Content:
 
     def _add_text_reasoning_content(self, other: Content) -> Content:
         """Add two TextReasoningContent instances."""
+        # Ensure we do not silently merge contents with conflicting ids
+        if self.id and other.id and self.id != other.id:
+            raise AdditionItemMismatch(
+                f"Cannot add text_reasoning content with different ids: {self.id!r} != {other.id!r}"
+            )
+        combined_id = self.id or other.id
+
         # Concatenate text, handling None values
         self_text = self.text or ""  # type: ignore[attr-defined]
         other_text = other.text or ""  # type: ignore[attr-defined]
@@ -1390,6 +1397,7 @@ class Content:
 
         return Content(
             "text_reasoning",
+            id=combined_id,
             text=combined_text,
             protected_data=protected_data,
             annotations=_combine_annotations(self.annotations, other.annotations),
@@ -1880,7 +1888,12 @@ def _coalesce_text_content(contents: list[Content], type_str: Literal["text", "t
             if first_new_content is None:
                 first_new_content = deepcopy(content)
             else:
-                first_new_content += content
+                try:
+                    first_new_content += content
+                except AdditionItemMismatch:
+                    # Different IDs means a new logical segment; flush the current one
+                    coalesced_contents.append(first_new_content)
+                    first_new_content = deepcopy(content)
         else:
             # skip this content, it is not of the right type
             # so write the existing one to the list and start a new one,
@@ -1988,6 +2001,7 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
     """
 
     DEFAULT_EXCLUDE: ClassVar[set[str]] = {"raw_representation", "additional_properties"}
+    _INTERNAL_CONVERSATION_ID_KEY: ClassVar[str] = "_agent_framework_internal_conversation_id"
 
     def __init__(
         self,
@@ -2055,6 +2069,18 @@ class ChatResponse(SerializationMixin, Generic[ResponseModelT]):
         )
         self.continuation_token = continuation_token
         self.raw_representation: Any | list[Any] | None = raw_representation
+
+    def mark_internal_conversation_id(self) -> None:
+        """Mark the current conversation_id as internal control-flow state."""
+        self.additional_properties[self._INTERNAL_CONVERSATION_ID_KEY] = True
+
+    def clear_internal_conversation_id(self) -> None:
+        """Remove the internal conversation-id marker."""
+        self.additional_properties.pop(self._INTERNAL_CONVERSATION_ID_KEY, None)
+
+    def has_internal_conversation_id(self) -> bool:
+        """Return whether conversation_id is internal control-flow state."""
+        return bool(self.additional_properties.get(self._INTERNAL_CONVERSATION_ID_KEY, False))
 
     @property
     def model_id(self) -> str | None:

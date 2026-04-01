@@ -15,7 +15,7 @@ from typing import (
     runtime_checkable,
 )
 
-from ._sessions import BaseContextProvider
+from ._sessions import ContextProvider
 from ._types import ChatResponse, Content, Message
 
 if TYPE_CHECKING:
@@ -1152,7 +1152,7 @@ async def apply_compaction(
 COMPACTION_STATE_KEY: Final[str] = "_compaction_messages"
 
 
-class CompactionProvider(BaseContextProvider):
+class CompactionProvider(ContextProvider):
     """Context provider that compacts messages before and after agent runs.
 
     This provider accepts two separate strategies:

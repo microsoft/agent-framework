@@ -15,6 +15,7 @@ from agent_framework import (
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
@@ -463,6 +464,31 @@ class TestChatAgentMultipleMiddlewareOrdering:
         assert chat_client_base.call_count == 1
         expected_order = ["class_agent_before", "function_agent_before", "function_agent_after", "class_agent_after"]
         assert execution_order == expected_order
+
+    async def test_provider_added_agent_middleware_is_rejected(self, chat_client_base: "MockBaseChatClient") -> None:
+        """Test provider-added agent middleware is rejected explicitly."""
+
+        @agent_middleware
+        async def provider_middleware(context: AgentContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            await call_next()
+
+        class ProviderMiddlewareContextProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="provider-middleware")
+
+            async def before_run(self, *, agent, session, context, state) -> None:
+                context.extend_middleware(self.source_id, provider_middleware)
+
+        agent = Agent(
+            client=chat_client_base,
+            context_providers=[ProviderMiddlewareContextProvider()],
+        )
+
+        with pytest.raises(
+            MiddlewareException,
+            match="Context providers may only add chat or function middleware",
+        ):
+            await agent.run([Message(role="user", text="test message")])
 
 
 # region Tool Functions for Testing
@@ -2064,6 +2090,121 @@ class TestChatAgentChatMiddleware:
             "chat_middleware_before_2",
             "chat_middleware_after_2",
             "agent_middleware_after",
+        ]
+
+    async def test_provider_added_chat_and_function_middleware_are_forwarded(
+        self, chat_client_base: "MockBaseChatClient"
+    ) -> None:
+        """Test provider-added chat and function middleware forwarding and ordering."""
+        execution_order: list[str] = []
+
+        @chat_middleware
+        async def constructor_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            execution_order.append("constructor_chat_before")
+            await call_next()
+            execution_order.append("constructor_chat_after")
+
+        @chat_middleware
+        async def provider_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            execution_order.append("provider_chat_before")
+            await call_next()
+            execution_order.append("provider_chat_after")
+
+        @chat_middleware
+        async def run_chat_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+            execution_order.append("run_chat_before")
+            await call_next()
+            execution_order.append("run_chat_after")
+
+        @function_middleware
+        async def constructor_function_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            execution_order.append("constructor_function_before")
+            await call_next()
+            execution_order.append("constructor_function_after")
+
+        @function_middleware
+        async def provider_function_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            execution_order.append("provider_function_before")
+            await call_next()
+            execution_order.append("provider_function_after")
+
+        @function_middleware
+        async def run_function_middleware(
+            context: FunctionInvocationContext, call_next: Callable[[], Awaitable[None]]
+        ) -> None:
+            execution_order.append("run_function_before")
+            await call_next()
+            execution_order.append("run_function_after")
+
+        class ProviderMiddlewareContextProvider(ContextProvider):
+            def __init__(self) -> None:
+                super().__init__(source_id="provider-middleware")
+
+            async def before_run(self, *, agent, session, context, state) -> None:
+                context.extend_middleware(
+                    self.source_id,
+                    [
+                        provider_chat_middleware,
+                        provider_function_middleware,
+                    ],
+                )
+
+        chat_client_base.run_responses = [
+            ChatResponse(
+                messages=[
+                    Message(
+                        role="assistant",
+                        contents=[
+                            Content.from_function_call(
+                                call_id="call_provider",
+                                name="sample_tool_function",
+                                arguments='{"location": "Seattle"}',
+                            )
+                        ],
+                    )
+                ]
+            ),
+            ChatResponse(messages=[Message(role="assistant", text="Final response")]),
+        ]
+
+        agent = Agent(
+            client=chat_client_base,
+            middleware=[constructor_chat_middleware, constructor_function_middleware],
+            context_providers=[ProviderMiddlewareContextProvider()],
+            tools=[sample_tool_function],
+        )
+
+        response = await agent.run(
+            [Message(role="user", text="Get weather for Seattle")],
+            middleware=[run_chat_middleware, run_function_middleware],
+        )
+
+        assert response is not None
+        assert chat_client_base.call_count == 2
+        assert response.messages[-1].text == "Final response"
+        assert execution_order == [
+            "constructor_chat_before",
+            "run_chat_before",
+            "provider_chat_before",
+            "provider_chat_after",
+            "run_chat_after",
+            "constructor_chat_after",
+            "constructor_function_before",
+            "run_function_before",
+            "provider_function_before",
+            "provider_function_after",
+            "run_function_after",
+            "constructor_function_after",
+            "constructor_chat_before",
+            "run_chat_before",
+            "provider_chat_before",
+            "provider_chat_after",
+            "run_chat_after",
+            "constructor_chat_after",
         ]
 
     async def test_agent_middleware_can_access_and_override_options(self) -> None:
