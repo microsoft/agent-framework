@@ -23,7 +23,7 @@ This sample demonstrates three ways to customize the FoundryAgent client layer:
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the agent in Foundry
-    FOUNDRY_AGENT_VERSION    — Version of the agent
+    FOUNDRY_AGENT_VERSION    — Version of the agent (optional, for PromptAgents)
 """
 
 
@@ -32,7 +32,7 @@ async def main() -> None:
     agent = FoundryAgent(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
         credential=AzureCliCredential(),
     )
     result = await agent.run("Hello from the default setup!")
@@ -42,7 +42,7 @@ async def main() -> None:
     agent_raw_client = FoundryAgent(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
         credential=AzureCliCredential(),
         client_type=RawFoundryAgentChatClient,
     )
@@ -54,7 +54,7 @@ async def main() -> None:
     client = RawFoundryAgentChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
         credential=AzureCliCredential(),
     )
     agent_composed = Agent(client=client)

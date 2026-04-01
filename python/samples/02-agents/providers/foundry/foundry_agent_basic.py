@@ -19,7 +19,7 @@ tools are all configured on the service — you just connect and run.
 Environment variables:
     FOUNDRY_PROJECT_ENDPOINT — Azure AI Foundry project endpoint
     FOUNDRY_AGENT_NAME       — Name of the agent in Foundry
-    FOUNDRY_AGENT_VERSION    — Version of the agent (for PromptAgents)
+    FOUNDRY_AGENT_VERSION    — Version of the agent (optional, for PromptAgents)
 """
 
 
@@ -27,7 +27,7 @@ async def main() -> None:
     agent = FoundryAgent(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
         agent_name=os.environ["FOUNDRY_AGENT_NAME"],
-        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+        agent_version=os.environ.get("FOUNDRY_AGENT_VERSION"),
         credential=AzureCliCredential(),
     )
 
