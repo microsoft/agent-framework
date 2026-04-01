@@ -632,7 +632,7 @@ class TestAgentFactorySafeMode:
 
         from agent_framework_declarative._loader import AgentFactory
 
-        monkeypatch.setenv("TEST_MODEL_ID", "gpt-4-from-env")
+        monkeypatch.setenv("TEST_MODEL", "gpt-4-from-env")
 
         # Create a mock chat client to avoid needing real provider
         mock_client = MagicMock()
