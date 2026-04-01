@@ -12,7 +12,7 @@ import asyncio
 import pathlib
 
 from agent_framework import Content
-from agent_framework_azure_ai import AzureAIInferenceEmbeddingClient
+from agent_framework.azure import AzureAIInferenceEmbeddingClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,8 +24,12 @@ Azure AI Inference embedding client with the Cohere-embed-v3-english model.
 Images are passed as ``Content`` objects created with ``Content.from_data()``.
 
 Prerequisites:
-    Set the following environment variables or add them to a .env file:
-    - AZURE_AI_INFERENCE_ENDPOINT: Your Azure AI model inference endpoint URL
+    Deploy a embedding model in Azure AI Inference that supports image inputs, such as Cohere-embed-v3-english.
+
+    The details page for that model, has a target URI and a Key, which should be set in environment variables or a .env
+    file as follows, the target URI should append the `/models` path:
+    - AZURE_AI_INFERENCE_ENDPOINT: Your Azure AI model inference endpoint URL, for instance:
+        https://<apim-instance>.azure-api.net/<foundry-instance>/models
     - AZURE_AI_INFERENCE_API_KEY: Your API key
     - AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID: The text embedding model name
       (e.g. "text-embedding-3-small")
@@ -75,13 +79,15 @@ if __name__ == "__main__":
 """
 Sample output (using Cohere-embed-v3-english):
 Image embedding dimensions: 1024
-First 5 values: [0.023, -0.045, 0.067, -0.089, 0.011]
-Model: Cohere-embed-v3-english
-Usage: {'prompt_tokens': 1, 'total_tokens': 1}
+First 5 values: [0.029159546, -0.007926941, -0.0032978058, -0.0030403137, -0.012786865]
+Model: embed-english-v3.0-image
+Usage: {'input_token_count': 1000, 'output_token_count': 0}
 
-Image+text (separate) results:
 Text embedding dimensions: 1536
+First 5 values: [-0.019439403, 0.015791258, 0.012358093, 0.0028533707, -0.01649483]
 Image embedding dimensions: 1024
+First 5 values: [0.029159546, -0.007926941, -0.0032978058, -0.0030403137, -0.012786865]
 
 Document embedding dimensions: 1024
+First 5 values: [0.029159546, -0.007926941, -0.0032978058, -0.0030403137, -0.012786865]
 """
