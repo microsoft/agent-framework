@@ -10,7 +10,6 @@ import pytest
 
 from agent_framework_foundry._oauth_helpers import _validate_consent_link, try_parse_oauth_consent_event
 
-
 # region _validate_consent_link tests
 
 
