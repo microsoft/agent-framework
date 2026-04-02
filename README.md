@@ -149,8 +149,8 @@ using OpenAI.Responses;
 
 // Replace the <apikey> with your OpenAI API key.
 var agent = new OpenAIClient("<apikey>")
-    .GetResponsesClient("gpt-5.3-mini")
-    .AsAIAgent(name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
+    .GetResponsesClient()
+    .AsAIAgent(model: "gpt-5.4-mini", name: "HaikuBot", instructions: "You are an upbeat assistant that writes beautifully.");
 
 Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Framework."));
 ```
