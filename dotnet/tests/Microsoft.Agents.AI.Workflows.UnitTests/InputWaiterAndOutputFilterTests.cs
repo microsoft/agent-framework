@@ -19,7 +19,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_WaitForInputAsync_CompletesAfterSignalAsync()
+    public async Task InputWaiter_WaitForInputAsync_CompletesAfterSignalAsync()
     {
         this._waiter.SignalInput();
 
@@ -31,7 +31,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_WaitForInputAsync_BlocksUntilSignaledAsync()
+    public async Task InputWaiter_WaitForInputAsync_BlocksUntilSignaledAsync()
     {
         Task waitTask = this._waiter.WaitForInputAsync(TimeSpan.FromSeconds(5));
 
@@ -45,7 +45,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public void Test_SignalInput_DoubleSignalDoesNotThrow()
+    public void InputWaiter_SignalInput_DoubleSignalDoesNotThrow()
     {
         // Binary semaphore behavior: double signal should be idempotent
         FluentActions.Invoking(() =>
@@ -56,7 +56,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_WaitForInputAsync_RespectsCancellationAsync()
+    public async Task InputWaiter_WaitForInputAsync_RespectsCancellationAsync()
     {
         using CancellationTokenSource cts = new();
         Task waitTask = this._waiter.WaitForInputAsync(cts.Token);
@@ -68,7 +68,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_WaitForInputAsync_DoesNotCompleteWhenNotSignaledAsync()
+    public async Task InputWaiter_WaitForInputAsync_DoesNotCompleteWhenNotSignaledAsync()
     {
         using CancellationTokenSource cts = new();
         Task waitTask = this._waiter.WaitForInputAsync(cts.Token);
@@ -83,7 +83,7 @@ public sealed class InputWaiterTests : IDisposable
     }
 
     [Fact]
-    public async Task Test_WaitForInputAsync_CanBeSignaledMultipleTimesSequentiallyAsync()
+    public async Task InputWaiter_WaitForInputAsync_CanBeSignaledMultipleTimesSequentiallyAsync()
     {
         // First signal/wait cycle
         this._waiter.SignalInput();
@@ -111,7 +111,7 @@ public class OutputFilterTests
     }
 
     [Fact]
-    public void Test_CanOutput_ReturnsTrueForRegisteredExecutor()
+    public void OutputFilter_CanOutput_ReturnsTrueForRegisteredExecutor()
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
@@ -119,7 +119,7 @@ public class OutputFilterTests
     }
 
     [Fact]
-    public void Test_CanOutput_ReturnsFalseForUnregisteredExecutor()
+    public void OutputFilter_CanOutput_ReturnsFalseForUnregisteredExecutor()
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 
@@ -127,7 +127,7 @@ public class OutputFilterTests
     }
 
     [Fact]
-    public void Test_CanOutput_ReturnsFalseForNonExistentExecutor()
+    public void OutputFilter_CanOutput_ReturnsFalseForNonExistentExecutor()
     {
         OutputFilter filter = CreateFilterWithOutputFrom("end");
 

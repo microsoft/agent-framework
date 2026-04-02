@@ -8,7 +8,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class AggregatingExecutorTests
 {
     [Fact]
-    public async Task Test_HandleAsync_AggregatesIncrementallyAsync()
+    public async Task AggregatingExecutor_HandleAsync_AggregatesIncrementallyAsync()
     {
         AggregatingExecutor<string, string> executor = new("sum", (aggregate, input) =>
             aggregate == null ? input : $"{aggregate}+{input}");
@@ -25,7 +25,7 @@ public class AggregatingExecutorTests
     }
 
     [Fact]
-    public async Task Test_HandleAsync_FirstCallReceivesNullAggregateAsync()
+    public async Task AggregatingExecutor_HandleAsync_FirstCallReceivesNullAggregateAsync()
     {
         string? receivedAggregate = "sentinel";
 
@@ -42,7 +42,7 @@ public class AggregatingExecutorTests
     }
 
     [Fact]
-    public async Task Test_HandleAsync_AggregatorReturningNullClearsStateAsync()
+    public async Task AggregatingExecutor_HandleAsync_AggregatorReturningNullClearsStateAsync()
     {
         AggregatingExecutor<string, string> executor = new("nullable", (aggregate, input) =>
             input == "clear" ? null : (aggregate ?? "") + input);
@@ -61,7 +61,7 @@ public class AggregatingExecutorTests
     }
 
     [Fact]
-    public async Task Test_HandleAsync_PersistsStateBetweenCallsAsync()
+    public async Task AggregatingExecutor_HandleAsync_PersistsStateBetweenCallsAsync()
     {
         AggregatingExecutor<string, string> executor = new("counter", (aggregate, _) =>
             aggregate == null ? "1" : $"{int.Parse(aggregate) + 1}");

@@ -11,7 +11,7 @@ namespace Microsoft.Agents.AI.Workflows.UnitTests;
 public class RoundRobinGroupChatManagerTests
 {
     [Fact]
-    public async Task Test_SelectNextAgent_CyclesInOrderAsync()
+    public async Task RoundRobinGroupChat_SelectNextAgent_CyclesInOrderAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         TestEchoAgent agent2 = new(id: "agent2");
@@ -31,7 +31,7 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public async Task Test_SelectNextAgent_WrapsAroundAsync()
+    public async Task RoundRobinGroupChat_SelectNextAgent_WrapsAroundAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         TestEchoAgent agent2 = new(id: "agent2");
@@ -49,7 +49,7 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public async Task Test_ShouldTerminate_DefaultBehaviorTerminatesAtMaxIterationsAsync()
+    public async Task RoundRobinGroupChat_ShouldTerminate_DefaultBehaviorTerminatesAtMaxIterationsAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         List<AIAgent> agents = [agent1];
@@ -67,7 +67,7 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public async Task Test_ShouldTerminate_CustomFuncTerminatesEarlyAsync()
+    public async Task RoundRobinGroupChat_ShouldTerminate_CustomFuncTerminatesEarlyAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         List<AIAgent> agents = [agent1];
@@ -84,7 +84,7 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public async Task Test_ShouldTerminate_CustomFuncDoesNotTerminateWhenNotMetAsync()
+    public async Task RoundRobinGroupChat_ShouldTerminate_CustomFuncDoesNotTerminateWhenNotMetAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         List<AIAgent> agents = [agent1];
@@ -101,7 +101,7 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public async Task Test_Reset_ResetsIterationCountAndAgentIndexAsync()
+    public async Task RoundRobinGroupChat_Reset_ResetsIterationCountAndAgentIndexAsync()
     {
         TestEchoAgent agent1 = new(id: "agent1");
         TestEchoAgent agent2 = new(id: "agent2");
@@ -123,14 +123,14 @@ public class RoundRobinGroupChatManagerTests
     }
 
     [Fact]
-    public void Test_Constructor_ThrowsOnNullAgents()
+    public void RoundRobinGroupChat_Constructor_ThrowsOnNullAgents()
     {
         FluentActions.Invoking(() => new RoundRobinGroupChatManager(null!))
             .Should().Throw<System.ArgumentException>();
     }
 
     [Fact]
-    public void Test_Constructor_ThrowsOnEmptyAgents()
+    public void RoundRobinGroupChat_Constructor_ThrowsOnEmptyAgents()
     {
         FluentActions.Invoking(() => new RoundRobinGroupChatManager([]))
             .Should().Throw<System.ArgumentException>();
