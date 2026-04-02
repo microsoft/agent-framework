@@ -11,8 +11,7 @@ using System.Text.Json;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
-using Microsoft.Agents.AI.FoundryMemory;
+using Microsoft.Agents.AI.Foundry;
 
 string foundryEndpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string memoryStoreName = Environment.GetEnvironmentVariable("AZURE_AI_MEMORY_STORE_ID") ?? "memory-store-sample";
@@ -37,7 +36,7 @@ FoundryMemoryProvider memoryProvider = new(
     memoryStoreName,
     stateInitializer: _ => new(new FoundryMemoryProviderScope("sample-user-123")));
 
-FoundryAgent agent = projectClient.AsAIAgent(
+ChatClientAgent agent = projectClient.AsAIAgent(
     new ChatClientAgentOptions()
     {
         Name = "TravelAssistantWithFoundryMemory",
