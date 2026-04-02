@@ -88,6 +88,9 @@ internal static class FoundryEvalConverter
 
         if (toolResults.Count > 0)
         {
+            // Tool results take precedence — the Foundry Evals API expects tool messages
+            // to have role=tool with a single tool_result content. Any text content in the
+            // same message is omitted since the API format doesn't support mixed content.
             foreach (var tr in toolResults)
             {
                 output.Add(new Dictionary<string, object>

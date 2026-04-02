@@ -148,6 +148,23 @@ public sealed class EvaluationTests
         Assert.Equal(1, results.Failed);
     }
 
+    [Fact]
+    public async Task LocalEvaluator_WithZeroChecks_ItemsHaveZeroMetricsAndFailAsync()
+    {
+        // A LocalEvaluator with no checks produces items with 0 metrics.
+        // Items with 0 metrics count as failed (the Metrics.Count > 0 guard in ItemPassed).
+        var evaluator = new LocalEvaluator();
+        var items = new List<EvalItem> { CreateItem(response: "anything") };
+
+        var results = await evaluator.EvaluateAsync(items);
+
+        Assert.Equal(1, results.Total);
+        Assert.Equal(0, results.Passed);
+        Assert.Equal(1, results.Failed);
+        var item = Assert.Single(results.Items);
+        Assert.Empty(item.Metrics);
+    }
+
     // ---------------------------------------------------------------
     // FunctionEvaluator tests
     // ---------------------------------------------------------------
@@ -1015,7 +1032,7 @@ public sealed class EvaluationTests
         var inputMessages = new List<ChatMessage> { userMsg };
         var response = new AgentResponse(assistantMsg);
 
-        var item = AgentEvaluationExtensions.BuildEvalItem("test query", response, inputMessages, null!);
+        var item = AgentEvaluationExtensions.BuildEvalItem("test query", response, inputMessages, null);
 
         Assert.Equal("test query", item.Query);
         Assert.NotNull(item.RawResponse);
@@ -1031,7 +1048,7 @@ public sealed class EvaluationTests
         var response = new AgentResponse(assistantMsg);
 
         // Act
-        var item = AgentEvaluationExtensions.BuildEvalItem("hello", response, inputMessages, null!);
+        var item = AgentEvaluationExtensions.BuildEvalItem("hello", response, inputMessages, null);
 
         // Assert — input list is not mutated
         Assert.Single(inputMessages);

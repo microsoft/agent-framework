@@ -3,7 +3,6 @@
 using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -47,7 +46,6 @@ public sealed class FoundryEvals : IAgentEvaluator
     private readonly IConversationSplitter? _splitter;
     private readonly double _pollIntervalSeconds = 5.0;
     private readonly double _timeoutSeconds = 300.0;
-    private readonly ConcurrentDictionary<(bool HasContext, bool HasTools), string> _evalIdCache = new();
 
     // -----------------------------------------------------------------------
     // Constructors
@@ -150,34 +148,30 @@ public sealed class FoundryEvals : IAgentEvaluator
         // Filter out tool evaluators if no items have tools
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
 
-        // 2. Reuse or create the evaluation definition (keyed by schema shape)
-        var cacheKey = (hasContext, hasTools);
-        if (!this._evalIdCache.TryGetValue(cacheKey, out var evalId))
+        // 2. Create the evaluation definition
+        var createEvalPayload = new Dictionary<string, object>
         {
-            var createEvalPayload = new Dictionary<string, object>
+            ["name"] = evalName,
+            ["data_source_config"] = new Dictionary<string, object>
             {
-                ["name"] = evalName,
-                ["data_source_config"] = new Dictionary<string, object>
-                {
-                    ["type"] = "custom",
-                    ["item_schema"] = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
-                    ["include_sample_schema"] = true,
-                },
-                ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(
-                    evaluators, this._model, includeDataMapping: true),
-            };
+                ["type"] = "custom",
+                ["item_schema"] = FoundryEvalConverter.BuildItemSchema(hasContext, hasTools),
+                ["include_sample_schema"] = true,
+            },
+            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(
+                evaluators, this._model, includeDataMapping: true),
+        };
 
-            var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
-            var createEvalResult = await this._evaluationClient.CreateEvaluationAsync(
-                BinaryContent.Create(BinaryData.FromString(createEvalJson)),
-                new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+        var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
+        var createEvalResult = await this._evaluationClient.CreateEvaluationAsync(
+            BinaryContent.Create(BinaryData.FromString(createEvalJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
 
-            using (var evalResponse = JsonDocument.Parse(createEvalResult.GetRawResponse().Content))
-            {
-                evalId = evalResponse.RootElement.GetProperty("id").GetString()!;
-            }
-
-            this._evalIdCache.TryAdd(cacheKey, evalId);
+        string evalId;
+        using (var evalResponse = JsonDocument.Parse(createEvalResult.GetRawResponse().Content))
+        {
+            evalId = evalResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval creation returned a null ID.");
         }
 
         // 3. Create the evaluation run with inline JSONL data
@@ -206,7 +200,8 @@ public sealed class FoundryEvals : IAgentEvaluator
         string runId;
         using (var runResponse = JsonDocument.Parse(createRunResult.GetRawResponse().Content))
         {
-            runId = runResponse.RootElement.GetProperty("id").GetString()!;
+            runId = runResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval run creation returned a null run ID.");
         }
 
         // 4. Poll until complete

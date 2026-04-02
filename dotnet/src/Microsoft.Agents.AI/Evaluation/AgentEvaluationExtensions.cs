@@ -336,7 +336,7 @@ public static partial class AgentEvaluationExtensions
         string query,
         AgentResponse response,
         List<ChatMessage> messages,
-        AIAgent agent)
+        AIAgent? agent)
     {
         // Build conversation from existing messages plus any new response messages
         var conversation = new List<ChatMessage>(messages);
@@ -348,10 +348,22 @@ public static partial class AgentEvaluationExtensions
             }
         }
 
-        return new EvalItem(query, response.Text, conversation)
+        var item = new EvalItem(query, response.Text, conversation)
         {
             RawResponse = new ChatResponse(response.Messages.LastOrDefault()
                 ?? new ChatMessage(ChatRole.Assistant, response.Text)),
         };
+
+        // Extract tool definitions from the agent (mirrors Python's to_eval_item(agent=...))
+        if (agent is not null)
+        {
+            var chatOptions = agent.GetService<ChatOptions>();
+            if (chatOptions?.Tools is { Count: > 0 } tools)
+            {
+                item.Tools = tools.ToList().AsReadOnly();
+            }
+        }
+
+        return item;
     }
 }
