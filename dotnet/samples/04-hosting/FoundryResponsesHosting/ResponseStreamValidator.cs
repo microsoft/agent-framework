@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -36,7 +36,7 @@ internal sealed class ResponseStreamValidator
     private bool _hasTerminal;
 
     /// <summary>All violations found so far.</summary>
-    internal IReadOnlyList<ValidationViolation> Violations => _violations;
+    internal IReadOnlyList<ValidationViolation> Violations => this._violations;
 
     /// <summary>
     /// Processes a single SSE event line pair (event type + JSON data).
@@ -52,33 +52,33 @@ internal sealed class ResponseStreamValidator
         }
         catch (JsonException ex)
         {
-            Fail("PARSE-01", $"Invalid JSON in event data: {ex.Message}");
+            this.Fail("PARSE-01", $"Invalid JSON in event data: {ex.Message}");
             return;
         }
 
-        _eventCount++;
+        this._eventCount++;
 
         // ── Sequence number validation ──────────────────────────────────
         if (data.TryGetProperty("sequence_number", out var seqProp) && seqProp.ValueKind == JsonValueKind.Number)
         {
             int seq = seqProp.GetInt32();
-            if (seq != _expectedSequenceNumber)
+            if (seq != this._expectedSequenceNumber)
             {
-                Fail("SEQ-01", $"Expected sequence_number {_expectedSequenceNumber}, got {seq}");
+                this.Fail("SEQ-01", $"Expected sequence_number {this._expectedSequenceNumber}, got {seq}");
             }
 
-            _expectedSequenceNumber = seq + 1;
+            this._expectedSequenceNumber = seq + 1;
         }
-        else if (_state != StreamState.Initial || eventType != "error")
+        else if (this._state != StreamState.Initial || eventType != "error")
         {
             // Pre-creation error events may not have sequence_number
-            Fail("SEQ-02", $"Missing sequence_number on event '{eventType}'");
+            this.Fail("SEQ-02", $"Missing sequence_number on event '{eventType}'");
         }
 
         // ── Post-terminal guard ─────────────────────────────────────────
-        if (_hasTerminal)
+        if (this._hasTerminal)
         {
-            Fail("TERM-01", $"Event '{eventType}' received after terminal event");
+            this.Fail("TERM-01", $"Event '{eventType}' received after terminal event");
             return;
         }
 
@@ -86,93 +86,93 @@ internal sealed class ResponseStreamValidator
         switch (eventType)
         {
             case "response.created":
-                ValidateResponseCreated(data);
+                this.ValidateResponseCreated(data);
                 break;
 
             case "response.queued":
-                ValidateStateTransition(eventType, StreamState.Created, StreamState.Queued);
-                ValidateResponseEnvelope(data, eventType);
+                this.ValidateStateTransition(eventType, StreamState.Created, StreamState.Queued);
+                this.ValidateResponseEnvelope(data, eventType);
                 break;
 
             case "response.in_progress":
-                if (_state is StreamState.Created or StreamState.Queued)
+                if (this._state is StreamState.Created or StreamState.Queued)
                 {
-                    _state = StreamState.InProgress;
+                    this._state = StreamState.InProgress;
                 }
                 else
                 {
-                    Fail("ORDER-02", $"'response.in_progress' received in state {_state} (expected Created or Queued)");
+                    this.Fail("ORDER-02", $"'response.in_progress' received in state {this._state} (expected Created or Queued)");
                 }
 
-                ValidateResponseEnvelope(data, eventType);
+                this.ValidateResponseEnvelope(data, eventType);
                 break;
 
             case "response.output_item.added":
             case "output_item.added":
-                ValidateInProgress(eventType);
-                ValidateOutputItemAdded(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateOutputItemAdded(data);
                 break;
 
             case "response.output_item.done":
             case "output_item.done":
-                ValidateInProgress(eventType);
-                ValidateOutputItemDone(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateOutputItemDone(data);
                 break;
 
             case "response.content_part.added":
             case "content_part.added":
-                ValidateInProgress(eventType);
-                ValidateContentPartAdded(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateContentPartAdded(data);
                 break;
 
             case "response.content_part.done":
             case "content_part.done":
-                ValidateInProgress(eventType);
-                ValidateContentPartDone(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateContentPartDone(data);
                 break;
 
             case "response.output_text.delta":
             case "output_text.delta":
-                ValidateInProgress(eventType);
-                ValidateTextDelta(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateTextDelta(data);
                 break;
 
             case "response.output_text.done":
             case "output_text.done":
-                ValidateInProgress(eventType);
-                ValidateTextDone(data);
+                this.ValidateInProgress(eventType);
+                this.ValidateTextDone(data);
                 break;
 
             case "response.function_call_arguments.delta":
             case "function_call_arguments.delta":
-                ValidateInProgress(eventType);
+                this.ValidateInProgress(eventType);
                 break;
 
             case "response.function_call_arguments.done":
             case "function_call_arguments.done":
-                ValidateInProgress(eventType);
+                this.ValidateInProgress(eventType);
                 break;
 
             case "response.completed":
-                ValidateTerminal(data, "completed");
+                this.ValidateTerminal(data, "completed");
                 break;
 
             case "response.failed":
-                ValidateTerminal(data, "failed");
+                this.ValidateTerminal(data, "failed");
                 break;
 
             case "response.incomplete":
-                ValidateTerminal(data, "incomplete");
+                this.ValidateTerminal(data, "incomplete");
                 break;
 
             case "error":
                 // Pre-creation error — standalone, no response.created precedes it
-                if (_state != StreamState.Initial)
+                if (this._state != StreamState.Initial)
                 {
-                    Fail("ERR-01", "'error' event received after response.created — should use response.failed instead");
+                    this.Fail("ERR-01", "'error' event received after response.created — should use response.failed instead");
                 }
 
-                _hasTerminal = true;
+                this._hasTerminal = true;
                 break;
 
             default:
@@ -186,31 +186,31 @@ internal sealed class ResponseStreamValidator
     /// </summary>
     internal void Complete()
     {
-        if (!_hasTerminal && _state != StreamState.Initial)
+        if (!this._hasTerminal && this._state != StreamState.Initial)
         {
-            Fail("TERM-02", "Stream ended without a terminal event (response.completed, response.failed, or response.incomplete)");
+            this.Fail("TERM-02", "Stream ended without a terminal event (response.completed, response.failed, or response.incomplete)");
         }
 
-        if (_state == StreamState.Initial && _eventCount == 0)
+        if (this._state == StreamState.Initial && this._eventCount == 0)
         {
-            Fail("EMPTY-01", "No events received in the stream");
+            this.Fail("EMPTY-01", "No events received in the stream");
         }
 
         // Check for output items that were added but never completed
-        foreach (int idx in _addedItemIndices)
+        foreach (int idx in this._addedItemIndices)
         {
-            if (!_doneItemIndices.Contains(idx))
+            if (!this._doneItemIndices.Contains(idx))
             {
-                Fail("ITEM-03", $"Output item at index {idx} was added but never received output_item.done");
+                this.Fail("ITEM-03", $"Output item at index {idx} was added but never received output_item.done");
             }
         }
 
         // Check for content parts that were added but never completed
-        foreach (string key in _addedContentParts)
+        foreach (string key in this._addedContentParts)
         {
-            if (!_doneContentParts.Contains(key))
+            if (!this._doneContentParts.Contains(key))
             {
-                Fail("CONTENT-03", $"Content part '{key}' was added but never received content_part.done");
+                this.Fail("CONTENT-03", $"Content part '{key}' was added but never received content_part.done");
             }
         }
     }
@@ -221,9 +221,9 @@ internal sealed class ResponseStreamValidator
     internal ValidationResult GetResult()
     {
         return new ValidationResult(
-            EventCount: _eventCount,
-            IsValid: _violations.Count == 0,
-            Violations: [.. _violations]);
+            EventCount: this._eventCount,
+            IsValid: this._violations.Count == 0,
+            Violations: [.. this._violations]);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -232,28 +232,28 @@ internal sealed class ResponseStreamValidator
 
     private void ValidateResponseCreated(JsonElement data)
     {
-        if (_state != StreamState.Initial)
+        if (this._state != StreamState.Initial)
         {
-            Fail("ORDER-01", $"'response.created' received in state {_state} (expected Initial — must be first event)");
+            this.Fail("ORDER-01", $"'response.created' received in state {this._state} (expected Initial — must be first event)");
             return;
         }
 
-        _state = StreamState.Created;
+        this._state = StreamState.Created;
 
         // Must have a response envelope
         if (!data.TryGetProperty("response", out var resp))
         {
-            Fail("FIELD-01", "'response.created' missing 'response' object");
+            this.Fail("FIELD-01", "'response.created' missing 'response' object");
             return;
         }
 
         // Required response fields
-        ValidateRequiredResponseFields(resp, "response.created");
+        this.ValidateRequiredResponseFields(resp, "response.created");
 
         // Capture response ID for cross-event checks
         if (resp.TryGetProperty("id", out var idProp))
         {
-            _responseId = idProp.GetString();
+            this._responseId = idProp.GetString();
         }
 
         // Status must be non-terminal
@@ -262,28 +262,28 @@ internal sealed class ResponseStreamValidator
             string? status = statusProp.GetString();
             if (status is "completed" or "failed" or "incomplete" or "cancelled")
             {
-                Fail("STATUS-01", $"'response.created' has terminal status '{status}' — must be 'queued' or 'in_progress'");
+                this.Fail("STATUS-01", $"'response.created' has terminal status '{status}' — must be 'queued' or 'in_progress'");
             }
         }
     }
 
     private void ValidateTerminal(JsonElement data, string expectedKind)
     {
-        if (_state is StreamState.Initial or StreamState.Created)
+        if (this._state is StreamState.Initial or StreamState.Created)
         {
-            Fail("ORDER-03", $"Terminal event 'response.{expectedKind}' received before 'response.in_progress'");
+            this.Fail("ORDER-03", $"Terminal event 'response.{expectedKind}' received before 'response.in_progress'");
         }
 
-        _hasTerminal = true;
-        _state = StreamState.Terminal;
+        this._hasTerminal = true;
+        this._state = StreamState.Terminal;
 
         if (!data.TryGetProperty("response", out var resp))
         {
-            Fail("FIELD-01", $"'response.{expectedKind}' missing 'response' object");
+            this.Fail("FIELD-01", $"'response.{expectedKind}' missing 'response' object");
             return;
         }
 
-        ValidateRequiredResponseFields(resp, $"response.{expectedKind}");
+        this.ValidateRequiredResponseFields(resp, $"response.{expectedKind}");
 
         if (resp.TryGetProperty("status", out var statusProp))
         {
@@ -295,12 +295,12 @@ internal sealed class ResponseStreamValidator
 
             if (status == "completed" && !hasCompletedAt)
             {
-                Fail("FIELD-02", "'completed_at' must be non-null when status is 'completed'");
+                this.Fail("FIELD-02", "'completed_at' must be non-null when status is 'completed'");
             }
 
             if (status != "completed" && hasCompletedAt)
             {
-                Fail("FIELD-03", $"'completed_at' must be null when status is '{status}'");
+                this.Fail("FIELD-03", $"'completed_at' must be null when status is '{status}'");
             }
 
             // error field validation
@@ -309,39 +309,39 @@ internal sealed class ResponseStreamValidator
 
             if (status == "failed" && !hasError)
             {
-                Fail("FIELD-04", "'error' must be non-null when status is 'failed'");
+                this.Fail("FIELD-04", "'error' must be non-null when status is 'failed'");
             }
 
             if (status is "completed" or "incomplete" && hasError)
             {
-                Fail("FIELD-05", $"'error' must be null when status is '{status}'");
+                this.Fail("FIELD-05", $"'error' must be null when status is '{status}'");
             }
 
             // error structure validation
             if (hasError)
             {
-                ValidateErrorObject(errProp, $"response.{expectedKind}");
+                this.ValidateErrorObject(errProp, $"response.{expectedKind}");
             }
 
             // cancelled output must be empty (B11)
             if (status == "cancelled" && resp.TryGetProperty("output", out var outputProp)
                 && outputProp.ValueKind == JsonValueKind.Array && outputProp.GetArrayLength() > 0)
             {
-                Fail("CANCEL-01", "Cancelled response must have empty output array (B11)");
+                this.Fail("CANCEL-01", "Cancelled response must have empty output array (B11)");
             }
 
             // response ID consistency
-            if (_responseId is not null && resp.TryGetProperty("id", out var idProp)
-                && idProp.GetString() != _responseId)
+            if (this._responseId is not null && resp.TryGetProperty("id", out var idProp)
+                && idProp.GetString() != this._responseId)
             {
-                Fail("ID-01", $"Response ID changed: was '{_responseId}', now '{idProp.GetString()}'");
+                this.Fail("ID-01", $"Response ID changed: was '{this._responseId}', now '{idProp.GetString()}'");
             }
         }
 
         // Usage validation (optional, but if present must be structured correctly)
         if (resp.TryGetProperty("usage", out var usageProp) && usageProp.ValueKind == JsonValueKind.Object)
         {
-            ValidateUsage(usageProp, $"response.{expectedKind}");
+            this.ValidateUsage(usageProp, $"response.{expectedKind}");
         }
     }
 
@@ -350,19 +350,19 @@ internal sealed class ResponseStreamValidator
         if (data.TryGetProperty("output_index", out var idxProp) && idxProp.ValueKind == JsonValueKind.Number)
         {
             int index = idxProp.GetInt32();
-            if (!_addedItemIndices.Add(index))
+            if (!this._addedItemIndices.Add(index))
             {
-                Fail("ITEM-01", $"Duplicate output_item.added for output_index {index}");
+                this.Fail("ITEM-01", $"Duplicate output_item.added for output_index {index}");
             }
         }
         else
         {
-            Fail("FIELD-06", "output_item.added missing 'output_index' field");
+            this.Fail("FIELD-06", "output_item.added missing 'output_index' field");
         }
 
         if (!data.TryGetProperty("item", out _))
         {
-            Fail("FIELD-07", "output_item.added missing 'item' object");
+            this.Fail("FIELD-07", "output_item.added missing 'item' object");
         }
     }
 
@@ -371,37 +371,37 @@ internal sealed class ResponseStreamValidator
         if (data.TryGetProperty("output_index", out var idxProp) && idxProp.ValueKind == JsonValueKind.Number)
         {
             int index = idxProp.GetInt32();
-            if (!_addedItemIndices.Contains(index))
+            if (!this._addedItemIndices.Contains(index))
             {
-                Fail("ITEM-02", $"output_item.done for output_index {index} without preceding output_item.added");
+                this.Fail("ITEM-02", $"output_item.done for output_index {index} without preceding output_item.added");
             }
 
-            _doneItemIndices.Add(index);
+            this._doneItemIndices.Add(index);
         }
         else
         {
-            Fail("FIELD-06", "output_item.done missing 'output_index' field");
+            this.Fail("FIELD-06", "output_item.done missing 'output_index' field");
         }
     }
 
     private void ValidateContentPartAdded(JsonElement data)
     {
         string key = GetContentPartKey(data);
-        if (!_addedContentParts.Add(key))
+        if (!this._addedContentParts.Add(key))
         {
-            Fail("CONTENT-01", $"Duplicate content_part.added for {key}");
+            this.Fail("CONTENT-01", $"Duplicate content_part.added for {key}");
         }
     }
 
     private void ValidateContentPartDone(JsonElement data)
     {
         string key = GetContentPartKey(data);
-        if (!_addedContentParts.Contains(key))
+        if (!this._addedContentParts.Contains(key))
         {
-            Fail("CONTENT-02", $"content_part.done for {key} without preceding content_part.added");
+            this.Fail("CONTENT-02", $"content_part.done for {key} without preceding content_part.added");
         }
 
-        _doneContentParts.Add(key);
+        this._doneContentParts.Add(key);
     }
 
     private void ValidateTextDelta(JsonElement data)
@@ -411,13 +411,13 @@ internal sealed class ResponseStreamValidator
             ? deltaProp.GetString() ?? string.Empty
             : string.Empty;
 
-        if (!_textAccumulators.TryGetValue(key, out string? existing))
+        if (!this._textAccumulators.TryGetValue(key, out string? existing))
         {
-            _textAccumulators[key] = delta;
+            this._textAccumulators[key] = delta;
         }
         else
         {
-            _textAccumulators[key] = existing + delta;
+            this._textAccumulators[key] = existing + delta;
         }
     }
 
@@ -430,13 +430,13 @@ internal sealed class ResponseStreamValidator
 
         if (finalText is null)
         {
-            Fail("TEXT-01", $"output_text.done for {key} missing 'text' field");
+            this.Fail("TEXT-01", $"output_text.done for {key} missing 'text' field");
             return;
         }
 
-        if (_textAccumulators.TryGetValue(key, out string? accumulated) && accumulated != finalText)
+        if (this._textAccumulators.TryGetValue(key, out string? accumulated) && accumulated != finalText)
         {
-            Fail("TEXT-02", $"output_text.done text for {key} does not match accumulated deltas (accumulated {accumulated.Length} chars, done has {finalText.Length} chars)");
+            this.Fail("TEXT-02", $"output_text.done text for {key} does not match accumulated deltas (accumulated {accumulated.Length} chars, done has {finalText.Length} chars)");
         }
     }
 
@@ -448,34 +448,34 @@ internal sealed class ResponseStreamValidator
     {
         if (!HasNonNullString(resp, "id"))
         {
-            Fail("FIELD-01", $"{context}: response missing 'id'");
+            this.Fail("FIELD-01", $"{context}: response missing 'id'");
         }
 
         if (resp.TryGetProperty("object", out var objProp))
         {
             if (objProp.GetString() != "response")
             {
-                Fail("FIELD-08", $"{context}: response.object must be 'response', got '{objProp.GetString()}'");
+                this.Fail("FIELD-08", $"{context}: response.object must be 'response', got '{objProp.GetString()}'");
             }
         }
         else
         {
-            Fail("FIELD-08", $"{context}: response missing 'object' field");
+            this.Fail("FIELD-08", $"{context}: response missing 'object' field");
         }
 
         if (!resp.TryGetProperty("created_at", out var catProp) || catProp.ValueKind == JsonValueKind.Null)
         {
-            Fail("FIELD-09", $"{context}: response missing 'created_at'");
+            this.Fail("FIELD-09", $"{context}: response missing 'created_at'");
         }
 
         if (!resp.TryGetProperty("status", out _))
         {
-            Fail("FIELD-10", $"{context}: response missing 'status'");
+            this.Fail("FIELD-10", $"{context}: response missing 'status'");
         }
 
         if (!resp.TryGetProperty("output", out var outputProp) || outputProp.ValueKind != JsonValueKind.Array)
         {
-            Fail("FIELD-11", $"{context}: response missing 'output' array");
+            this.Fail("FIELD-11", $"{context}: response missing 'output' array");
         }
     }
 
@@ -483,12 +483,12 @@ internal sealed class ResponseStreamValidator
     {
         if (!HasNonNullString(error, "code"))
         {
-            Fail("ERR-02", $"{context}: error object missing 'code' field");
+            this.Fail("ERR-02", $"{context}: error object missing 'code' field");
         }
 
         if (!HasNonNullString(error, "message"))
         {
-            Fail("ERR-03", $"{context}: error object missing 'message' field");
+            this.Fail("ERR-03", $"{context}: error object missing 'message' field");
         }
     }
 
@@ -496,17 +496,17 @@ internal sealed class ResponseStreamValidator
     {
         if (!usage.TryGetProperty("input_tokens", out _))
         {
-            Fail("USAGE-01", $"{context}: usage missing 'input_tokens'");
+            this.Fail("USAGE-01", $"{context}: usage missing 'input_tokens'");
         }
 
         if (!usage.TryGetProperty("output_tokens", out _))
         {
-            Fail("USAGE-02", $"{context}: usage missing 'output_tokens'");
+            this.Fail("USAGE-02", $"{context}: usage missing 'output_tokens'");
         }
 
         if (!usage.TryGetProperty("total_tokens", out _))
         {
-            Fail("USAGE-03", $"{context}: usage missing 'total_tokens'");
+            this.Fail("USAGE-03", $"{context}: usage missing 'total_tokens'");
         }
     }
 
@@ -514,17 +514,17 @@ internal sealed class ResponseStreamValidator
     {
         if (!data.TryGetProperty("response", out var resp))
         {
-            Fail("FIELD-01", $"'{eventType}' missing 'response' object");
+            this.Fail("FIELD-01", $"'{eventType}' missing 'response' object");
             return;
         }
 
-        ValidateRequiredResponseFields(resp, eventType);
+        this.ValidateRequiredResponseFields(resp, eventType);
 
         // Response ID consistency
-        if (_responseId is not null && resp.TryGetProperty("id", out var idProp)
-            && idProp.GetString() != _responseId)
+        if (this._responseId is not null && resp.TryGetProperty("id", out var idProp)
+            && idProp.GetString() != this._responseId)
         {
-            Fail("ID-01", $"Response ID changed: was '{_responseId}', now '{idProp.GetString()}'");
+            this.Fail("ID-01", $"Response ID changed: was '{this._responseId}', now '{idProp.GetString()}'");
         }
     }
 
@@ -534,27 +534,27 @@ internal sealed class ResponseStreamValidator
 
     private void ValidateInProgress(string eventType)
     {
-        if (_state != StreamState.InProgress)
+        if (this._state != StreamState.InProgress)
         {
-            Fail("ORDER-04", $"'{eventType}' received in state {_state} (expected InProgress)");
+            this.Fail("ORDER-04", $"'{eventType}' received in state {this._state} (expected InProgress)");
         }
     }
 
     private void ValidateStateTransition(string eventType, StreamState expected, StreamState next)
     {
-        if (_state != expected)
+        if (this._state != expected)
         {
-            Fail("ORDER-05", $"'{eventType}' received in state {_state} (expected {expected})");
+            this.Fail("ORDER-05", $"'{eventType}' received in state {this._state} (expected {expected})");
         }
         else
         {
-            _state = next;
+            this._state = next;
         }
     }
 
     private void Fail(string ruleId, string message)
     {
-        _violations.Add(new ValidationViolation(ruleId, message, _eventCount));
+        this._violations.Add(new ValidationViolation(ruleId, message, this._eventCount));
     }
 
     private static bool HasNonNullString(JsonElement obj, string property)

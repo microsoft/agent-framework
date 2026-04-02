@@ -16,8 +16,8 @@
 //   - AZURE_OPENAI_DEPLOYMENT - the model deployment name (default: "gpt-4o")
 
 using System.ComponentModel;
-using Azure.AI.OpenAI;
 using Azure.AI.AgentServer.Responses;
+using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Hosting;

@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -20,8 +20,6 @@ namespace Microsoft.Agents.AI.Hosting.AzureAIResponses.UnitTests;
 
 public class AgentFrameworkResponseHandlerTests
 {
-    private static string ValidResponseId => "resp_" + new string('0', 46);
-
     [Fact]
     public async Task CreateAsync_WithDefaultAgent_ProducesStreamEvents()
     {
@@ -688,13 +686,13 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
@@ -721,13 +719,13 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
@@ -743,8 +741,8 @@ public class AgentFrameworkResponseHandlerTests
             AgentRunOptions? options,
             CancellationToken cancellationToken = default)
         {
-            CapturedMessages = messages.ToList();
-            CapturedOptions = options;
+            this.CapturedMessages = messages.ToList();
+            this.CapturedOptions = options;
             return ToAsyncEnumerableAsync(new AgentResponseUpdate
             {
                 MessageId = "resp_msg_1",
@@ -765,13 +763,13 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
@@ -802,13 +800,13 @@ public class AgentFrameworkResponseHandlerTests
 
         protected override ValueTask<JsonElement> SerializeSessionCoreAsync(
             AgentSession session,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
 
         protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(
             JsonElement serializedState,
-            System.Text.Json.JsonSerializerOptions? jsonSerializerOptions,
+            JsonSerializerOptions? jsonSerializerOptions,
             CancellationToken cancellationToken = default) =>
             throw new NotImplementedException();
     }
