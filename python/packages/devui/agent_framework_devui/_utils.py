@@ -509,7 +509,7 @@ def _build_message_from_legacy_payload(input_data: str | dict[str, Any]) -> Mess
     if contents is None:
         contents_list: list[Any] = []
     elif isinstance(contents, list):
-        contents_list = cast(list[Any], contents)
+        contents_list = contents  # type: ignore[reportUnknownVariableType]
     else:
         contents_list = [contents]
 
