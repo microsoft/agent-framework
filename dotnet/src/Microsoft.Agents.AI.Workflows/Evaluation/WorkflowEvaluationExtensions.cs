@@ -62,8 +62,9 @@ public static class WorkflowEvaluationExtensions
                 var conversation = new List<ChatMessage>
                 {
                     new(ChatRole.User, query),
-                    new(ChatRole.Assistant, finalResponse.Response.Text),
                 };
+
+                conversation.AddRange(finalResponse.Response.Messages);
 
                 overallItems.Add(new EvalItem(query, finalResponse.Response.Text, conversation)
                 {
@@ -127,11 +128,20 @@ public static class WorkflowEvaluationExtensions
                     string s => s,
                     _ => completedEvent.Data?.ToString() ?? string.Empty,
                 };
+                var agentResponse = completedEvent.Data as AgentResponse;
                 var conversation = new List<ChatMessage>
                 {
                     new(ChatRole.User, query),
-                    new(ChatRole.Assistant, responseText),
                 };
+
+                if (agentResponse is not null)
+                {
+                    conversation.AddRange(agentResponse.Messages);
+                }
+                else
+                {
+                    conversation.Add(new(ChatRole.Assistant, responseText));
+                }
 
                 var item = new EvalItem(query, responseText, conversation)
                 {

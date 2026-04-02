@@ -214,4 +214,51 @@ public sealed class WorkflowEvaluationTests
         Assert.Equal("Hi there", result["agent-1"][0].Query);
         Assert.Equal("Agent says hello", result["agent-1"][0].Response);
     }
+
+    [Fact]
+    public void ExtractAgentData_AgentResponseData_PreservesFullMessages()
+    {
+        // When completed Data is an AgentResponse, the conversation should include
+        // all response messages (tool calls, intermediate, etc.) not just a text summary
+        var toolCallMsg = new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["city"] = "Seattle" })]);
+        var toolResultMsg = new ChatMessage(ChatRole.Tool, [new FunctionResultContent("call_1", "Sunny, 72°F")]);
+        var finalMsg = new ChatMessage(ChatRole.Assistant, "It's sunny and 72°F in Seattle.");
+        var agentResponse = new AgentResponse
+        {
+            Messages = [toolCallMsg, toolResultMsg, finalMsg],
+        };
+
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", "What's the weather?"),
+            new ExecutorCompletedEvent("agent-1", agentResponse),
+        };
+
+        var result = WorkflowEvaluationExtensions.ExtractAgentData(events, splitter: null);
+
+        // Should have user query + all 3 response messages
+        Assert.Equal(4, result["agent-1"][0].Conversation.Count);
+        Assert.Equal(ChatRole.User, result["agent-1"][0].Conversation[0].Role);
+        Assert.Equal(ChatRole.Assistant, result["agent-1"][0].Conversation[1].Role);
+        Assert.Equal(ChatRole.Tool, result["agent-1"][0].Conversation[2].Role);
+        Assert.Equal(ChatRole.Assistant, result["agent-1"][0].Conversation[3].Role);
+    }
+
+    [Fact]
+    public void ExtractAgentData_UnknownObjectData_UsesToString()
+    {
+        // When Data is an unknown object type, the ToString() fallback should produce
+        // the string representation (not a type name for known types)
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("agent-1", 42),
+            new ExecutorCompletedEvent("agent-1", 3.14),
+        };
+
+        var result = WorkflowEvaluationExtensions.ExtractAgentData(events, splitter: null);
+
+        Assert.Single(result);
+        Assert.Equal("42", result["agent-1"][0].Query);
+        Assert.Equal("3.14", result["agent-1"][0].Response);
+    }
 }
