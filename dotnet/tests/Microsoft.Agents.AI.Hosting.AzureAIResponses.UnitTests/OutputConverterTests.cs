@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -7,8 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
-using Microsoft.Extensions.AI;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.AI;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
@@ -233,7 +233,7 @@ public class OutputConverterTests
     public async Task ConvertUpdatesToEventsAsync_NullTextContent_NoTextDeltaEmitted()
     {
         var (stream, _) = CreateTestStream();
-        var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent((string)null!)] };
+        var update = new AgentResponseUpdate { MessageId = "msg_1", Contents = [new MeaiTextContent(null!)] };
 
         var events = new List<ResponseStreamEvent>();
         await foreach (var evt in OutputConverter.ConvertUpdatesToEventsAsync(ToAsync(new[] { update }), stream))
@@ -314,7 +314,7 @@ public class OutputConverterTests
         var (stream, _) = CreateTestStream();
         var update = new AgentResponseUpdate
         {
-            Contents = [new FunctionCallContent("call_1", "do_something", (IDictionary<string, object?>?)null)]
+            Contents = [new FunctionCallContent("call_1", "do_something", null)]
         };
 
         var events = new List<ResponseStreamEvent>();

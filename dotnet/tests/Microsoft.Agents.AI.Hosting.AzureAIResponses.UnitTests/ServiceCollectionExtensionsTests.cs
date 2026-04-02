@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Linq;
@@ -67,6 +67,6 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         Assert.Throws<ArgumentNullException>(
-            () => services.AddAgentFrameworkHandler((AIAgent)null!));
+            () => services.AddAgentFrameworkHandler(null!));
     }
 }

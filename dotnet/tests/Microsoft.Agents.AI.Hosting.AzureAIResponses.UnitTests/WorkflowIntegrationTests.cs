@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -27,8 +27,6 @@ namespace Microsoft.Agents.AI.Hosting.AzureAIResponses.UnitTests;
 /// </summary>
 public class WorkflowIntegrationTests
 {
-    private static string ValidResponseId => "resp_" + new string('0', 46);
-
     // ===== Sequential Workflow Tests =====
 
     [Fact]
@@ -156,7 +154,7 @@ public class WorkflowIntegrationTests
             executionEnvironment: InProcessExecution.OffThread);
 
         var services = new ServiceCollection();
-        services.AddKeyedSingleton<AIAgent>("my-workflow", workflowAgent);
+        services.AddKeyedSingleton("my-workflow", workflowAgent);
         var sp = services.BuildServiceProvider();
 
         var handler = new AgentFrameworkResponseHandler(sp, NullLogger<AgentFrameworkResponseHandler>.Instance);
@@ -357,7 +355,7 @@ public class WorkflowIntegrationTests
         CreateHandlerWithAgent(AIAgent agent, string userMessage)
     {
         var services = new ServiceCollection();
-        services.AddSingleton<AIAgent>(agent);
+        services.AddSingleton(agent);
         services.AddSingleton<ILogger<AgentFrameworkResponseHandler>>(NullLogger<AgentFrameworkResponseHandler>.Instance);
         var sp = services.BuildServiceProvider();
 
