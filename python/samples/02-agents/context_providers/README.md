@@ -6,7 +6,7 @@ These samples demonstrate how to use context providers to enrich agent conversat
 
 | File / Folder | Description |
 |---------------|-------------|
-| [`simple_context_provider.py`](simple_context_provider.py) | Implement a custom context provider by extending `BaseContextProvider` to extract and inject structured user information across turns. |
+| [`simple_context_provider.py`](simple_context_provider.py) | Implement a custom context provider by extending `ContextProvider` to extract and inject structured user information across turns. |
 | [`azure_ai_foundry_memory.py`](azure_ai_foundry_memory.py) | Use `FoundryMemoryProvider` to add semantic memory — automatically retrieves, searches, and stores memories via Azure AI Foundry. |
 | [`azure_ai_search/`](azure_ai_search/) | Retrieval Augmented Generation (RAG) with Azure AI Search in semantic and agentic modes. See its own [README](azure_ai_search/README.md). |
 | [`mem0/`](mem0/) | Memory-powered context using the Mem0 integration (open-source and managed). See its own [README](mem0/README.md). |

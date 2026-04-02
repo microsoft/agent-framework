@@ -502,7 +502,7 @@ class ChatMiddleware(ABC):
                     # Add system prompt to messages
                     from agent_framework import Message
 
-                    context.messages.insert(0, Message(role="system", text=self.system_prompt))
+                    context.messages.insert(0, Message(role="system", contents=[self.system_prompt]))
 
                     # Continue execution
                     await call_next()

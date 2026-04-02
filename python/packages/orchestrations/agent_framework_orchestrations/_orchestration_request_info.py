@@ -73,7 +73,7 @@ class AgentRequestInfoResponse:
         Returns:
             AgentRequestInfoResponse instance.
         """
-        return AgentRequestInfoResponse(messages=[Message(role="user", text=text) for text in texts])
+        return AgentRequestInfoResponse(messages=[Message(role="user", contents=[text]) for text in texts])
 
     @staticmethod
     def approve() -> "AgentRequestInfoResponse":

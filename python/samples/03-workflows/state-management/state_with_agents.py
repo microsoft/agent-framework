@@ -109,7 +109,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
     ctx.set_state(CURRENT_EMAIL_ID_KEY, new_email.email_id)
 
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -140,7 +140,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content by id from workflow state and forward it to the assistant.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[email.email_content])], should_respond=True)
     )
 
 

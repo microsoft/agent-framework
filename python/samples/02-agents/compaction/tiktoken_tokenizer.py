@@ -45,30 +45,34 @@ class TiktokenTokenizer(TokenizerProtocol):
 
 def _build_messages() -> list[Message]:
     return [
-        Message(role="system", text="You are a migration assistant."),
+        Message(role="system", contents=["You are a migration assistant."]),
         Message(
             role="user",
-            text="List all migration risks and include detailed mitigations for each risk category.",
+            contents=["List all migration risks and include detailed mitigations for each risk category."],
         ),
         Message(
             role="assistant",
-            text=(
-                "Primary risks include schema drift, missing foreign key constraints, "
-                "and data quality regressions. Mitigations include staged validation, "
-                "shadow writes, and replay-based verification."
-            ),
+            contents=[
+                (
+                    "Primary risks include schema drift, missing foreign key constraints, "
+                    "and data quality regressions. Mitigations include staged validation, "
+                    "shadow writes, and replay-based verification."
+                )
+            ],
         ),
         Message(
             role="user",
-            text=("Now provide a detailed checklist with owners, rollback gates, and validation criteria."),
+            contents=[("Now provide a detailed checklist with owners, rollback gates, and validation criteria.")],
         ),
         Message(
             role="assistant",
-            text=(
-                "Checklist: baseline snapshots, migration dry-run, production "
-                "canary, progressive deployment, automated integrity checks, and "
-                "post-migration reconciliation."
-            ),
+            contents=[
+                (
+                    "Checklist: baseline snapshots, migration dry-run, production "
+                    "canary, progressive deployment, automated integrity checks, and "
+                    "post-migration reconciliation."
+                )
+            ],
         ),
     ]
 

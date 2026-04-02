@@ -195,14 +195,16 @@ async def test_azure_openai_chat_completion_client_response() -> None:
         messages = [
             Message(
                 role="user",
-                text=(
-                    "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-                    "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-                    "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-                    "of climate change."
-                ),
+                contents=[
+                    (
+                        "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+                        "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+                        "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+                        "of climate change."
+                    )
+                ],
             ),
-            Message(role="user", text="who are Emily and David?"),
+            Message(role="user", contents=["who are Emily and David?"]),
         ]
 
         response = await client.get_response(messages=messages)
@@ -223,7 +225,7 @@ async def test_azure_openai_chat_completion_client_response_tools() -> None:
         client = OpenAIChatCompletionClient(credential=credential)
 
         response = await client.get_response(
-            messages=[Message(role="user", text="who are Emily and David?")],
+            messages=[Message(role="user", contents=["who are Emily and David?"])],
             options={"tools": [get_story_text], "tool_choice": "auto"},
         )
 
@@ -244,14 +246,16 @@ async def test_azure_openai_chat_completion_client_streaming() -> None:
             messages=[
                 Message(
                     role="user",
-                    text=(
-                        "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-                        "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-                        "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-                        "of climate change."
-                    ),
+                    contents=[
+                        (
+                            "Emily and David, two passionate scientists, met during a research expedition to "
+                            "Antarctica. Bonded by their love for the natural world and shared curiosity, they "
+                            "uncovered a groundbreaking phenomenon in glaciology that could potentially reshape our "
+                            "understanding of climate change."
+                        )
+                    ],
                 ),
-                Message(role="user", text="who are Emily and David?"),
+                Message(role="user", contents=["who are Emily and David?"]),
             ],
             stream=True,
         )
@@ -277,7 +281,7 @@ async def test_azure_openai_chat_completion_client_streaming_tools() -> None:
         client = OpenAIChatCompletionClient(credential=credential)
 
         response = client.get_response(
-            messages=[Message(role="user", text="who are Emily and David?")],
+            messages=[Message(role="user", contents=["who are Emily and David?"])],
             stream=True,
             options={"tools": [get_story_text], "tool_choice": "auto"},
         )

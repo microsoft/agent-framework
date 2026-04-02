@@ -588,7 +588,9 @@ class BaseToolExecutor(DeclarativeActionExecutor):
                 messages=[
                     Message(
                         role="assistant",
-                        text=f"Function '{function_name}' was rejected: {response.reason or 'No reason provided'}",
+                        contents=[
+                            f"Function '{function_name}' was rejected: {response.reason or 'No reason provided'}"
+                        ],
                     )
                 ],
             )

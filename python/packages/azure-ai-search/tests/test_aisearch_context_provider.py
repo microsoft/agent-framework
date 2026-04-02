@@ -1370,7 +1370,7 @@ class TestPrepareMessagesForKbSearch:
         assert len(result) == 0
 
     def test_fallback_to_msg_text_when_no_contents(self) -> None:
-        msg = Message(role="user", text="fallback text")
+        msg = Message(role="user", contents=["fallback text"])
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search([msg])
         assert len(result) == 1
         assert result[0].content[0].text == "fallback text"

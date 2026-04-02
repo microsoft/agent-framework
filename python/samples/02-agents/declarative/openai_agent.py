@@ -13,7 +13,13 @@ async def main():
     """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "declarative-agents" / "agent-samples" / "openai" / "OpenAIResponses.yaml"
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "openai"
+        / "OpenAIResponses.yaml"
+    )
     # create the agent from the yaml
     agent = AgentFactory(safe_mode=False).create_agent_from_yaml_path(yaml_path)
     # use the agent

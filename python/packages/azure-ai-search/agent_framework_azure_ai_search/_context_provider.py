@@ -604,7 +604,9 @@ class AzureAISearchContextProvider(ContextProvider):
         if not result_messages:
             return
 
-        context.extend_messages(self.source_id, [Message(role="user", text=self.context_prompt), *result_messages])
+        context.extend_messages(
+            self.source_id, [Message(role="user", contents=[self.context_prompt]), *result_messages]
+        )
 
     def _find_vector_fields(self, index: Any) -> list[str]:
         """Find all fields that can store vectors."""
@@ -719,7 +721,7 @@ class AzureAISearchContextProvider(ContextProvider):
             doc_id = doc.get("id") or doc.get("@search.id")  # type: ignore[reportUnknownVariableType]
             doc_text: str = self._extract_document_text(doc, doc_id=doc_id)  # type: ignore[reportUnknownArgumentType]
             if doc_text:
-                result_messages.append(Message(role="user", text=doc_text))  # type: ignore[reportUnknownArgumentType]
+                result_messages.append(Message(role="user", contents=[doc_text]))  # type: ignore[reportUnknownArgumentType]
         return result_messages
 
     async def _ensure_knowledge_base(self) -> None:
@@ -951,7 +953,7 @@ class AzureAISearchContextProvider(ContextProvider):
             List of Messages, or a single default Message if no results found.
         """
         if not retrieval_result.response:
-            return [Message(role="assistant", text="No results found from Knowledge Base.")]
+            return [Message(role="assistant", contents=["No results found from Knowledge Base."])]
 
         annotations = AzureAISearchContextProvider._parse_references_to_annotations(retrieval_result.references)
 
@@ -972,7 +974,7 @@ class AzureAISearchContextProvider(ContextProvider):
                 result_messages.append(Message(role=kb_msg.role or "assistant", contents=contents))
 
         if not result_messages:
-            return [Message(role="assistant", text="No results found from Knowledge Base.")]
+            return [Message(role="assistant", contents=["No results found from Knowledge Base."])]
         return result_messages
 
     def _extract_document_text(self, doc: dict[str, Any], doc_id: str | None = None) -> str:

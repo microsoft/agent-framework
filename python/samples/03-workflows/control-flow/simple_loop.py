@@ -102,7 +102,7 @@ class SubmitToJudgeAgent(Executor):
             f"Target: {self._target}\nGuess: {guess}\nResponse:"
         )
         await ctx.send_message(
-            AgentExecutorRequest(messages=[Message("user", text=prompt)], should_respond=True),
+            AgentExecutorRequest(messages=[Message("user", contents=[prompt])], should_respond=True),
             target_id=self._judge_agent_id,
         )
 

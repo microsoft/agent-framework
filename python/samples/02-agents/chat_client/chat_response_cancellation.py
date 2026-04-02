@@ -31,7 +31,7 @@ async def main() -> None:
 
     try:
         task = asyncio.create_task(
-            client.get_response(messages=[Message(role="user", text="Tell me a fantasy story.")])
+            client.get_response(messages=[Message(role="user", contents=["Tell me a fantasy story."])])
         )
         await asyncio.sleep(1)
         task.cancel()

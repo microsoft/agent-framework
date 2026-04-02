@@ -469,10 +469,10 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Plan: Test task", author_name="manager")
+            return Message(role="assistant", contents=["Plan: Test task"], author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Replan: Test task", author_name="manager")
+            return Message(role="assistant", contents=["Replan: Test task"], author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             # Return completed on first call
@@ -485,7 +485,7 @@ async def test_magentic_kwargs_flow_to_agents() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Final answer", author_name="manager")
+            return Message(role="assistant", contents=["Final answer"], author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()
@@ -520,10 +520,10 @@ async def test_magentic_kwargs_stored_in_state() -> None:
             self.task_ledger = None
 
         async def plan(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Plan", author_name="manager")
+            return Message(role="assistant", contents=["Plan"], author_name="manager")
 
         async def replan(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Replan", author_name="manager")
+            return Message(role="assistant", contents=["Replan"], author_name="manager")
 
         async def create_progress_ledger(self, magentic_context: MagenticContext) -> MagenticProgressLedger:
             return MagenticProgressLedger(
@@ -535,7 +535,7 @@ async def test_magentic_kwargs_stored_in_state() -> None:
             )
 
         async def prepare_final_answer(self, magentic_context: MagenticContext) -> Message:
-            return Message(role="assistant", text="Final", author_name="manager")
+            return Message(role="assistant", contents=["Final"], author_name="manager")
 
     agent = _KwargsCapturingAgent(name="agent1")
     manager = _MockManager()

@@ -121,7 +121,7 @@ async def run_chat_client() -> None:
     print(f"User: {message}")
     print("Assistant: ", end="")
     async for chunk in client.get_response(
-        [Message(role="user", text=message)],
+        [Message(role="user", contents=[message])],
         stream=True,
         options={"tools": [get_weather]},
     ):

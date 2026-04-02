@@ -161,7 +161,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[Message] = []
         if isinstance(response, str):
-            messages.append(Message(role="user", text=response))
+            messages.append(Message(role="user", contents=[response]))
         elif isinstance(response, Message):
             messages.append(response)
         elif isinstance(response, list):
@@ -169,7 +169,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, Message):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(Message(role="user", text=item))
+                    messages.append(Message(role="user", contents=[item]))
                 else:
                     raise TypeError("List items must be either str or Message instances")
         else:
@@ -535,7 +535,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([Message(role="user", text=self._autonomous_mode_prompt)])
+            self._cache.extend([Message(role="user", contents=[self._autonomous_mode_prompt])])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:

@@ -699,7 +699,7 @@ def test_ai_content_serialization(args: dict):
 def test_chat_message_text():
     """Test the Message class to ensure it initializes correctly with text content."""
     # Create a Message with a role and text content
-    message = Message(role="user", text="Hello, how are you?")
+    message = Message(role="user", contents=["Hello, how are you?"])
 
     # Check the type and content
     assert message.role == "user"
@@ -730,7 +730,7 @@ def test_chat_message_contents():
 
 
 def test_chat_message_with_chatrole_instance():
-    m = Message(role="user", text="hi")
+    m = Message(role="user", contents=["hi"])
     assert m.role == "user"
     assert m.text == "hi"
 
@@ -741,7 +741,7 @@ def test_chat_message_with_chatrole_instance():
 def test_chat_response():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text="I'm doing well, thank you!")
+    message = Message(role="assistant", contents=["I'm doing well, thank you!"])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message)
@@ -756,7 +756,7 @@ def test_chat_response():
 
 def test_chat_response_accepts_model_alias() -> None:
     """Test ChatResponse accepts model and exposes it through model alias."""
-    response = ChatResponse(messages=Message(role="assistant", text="Hello"), model="claude-test")
+    response = ChatResponse(messages=Message(role="assistant", contents=["Hello"]), model="claude-test")
 
     assert response.model == "claude-test"
     assert response.model == "claude-test"
@@ -769,7 +769,7 @@ class OutputModel(BaseModel):
 def test_chat_response_with_format():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -786,7 +786,7 @@ def test_chat_response_with_format():
 def test_chat_response_with_format_init():
     """Test the ChatResponse class to ensure it initializes correctly with a message."""
     # Create a Message
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
 
     # Create a ChatResponse with the message
     response = ChatResponse(messages=message, response_format=OutputModel)
@@ -802,7 +802,7 @@ def test_chat_response_with_format_init():
 
 def test_chat_response_with_mapping_response_format() -> None:
     """ChatResponse.value should parse JSON when response_format is a mapping."""
-    message = Message(role="assistant", text='{"response": "Hello"}')
+    message = Message(role="assistant", contents=['{"response": "Hello"}'])
     response = ChatResponse(
         messages=message,
         response_format={"type": "object", "properties": {"response": {"type": "string"}}},
@@ -821,7 +821,7 @@ def test_chat_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = ChatResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -842,7 +842,7 @@ def test_agent_response_value_raises_on_invalid_schema():
         name: str = Field(min_length=10)
         score: int = Field(gt=0, le=100)
 
-    message = Message(role="assistant", text='{"id": 1, "name": "test", "score": -5}')
+    message = Message(role="assistant", contents=['{"id": 1, "name": "test", "score": -5}'])
     response = AgentResponse(messages=message, response_format=StrictSchema)
 
     with raises(ValidationError) as exc_info:
@@ -1185,7 +1185,7 @@ def test_chat_options_and_tool_choice_required_specific_function() -> None:
 
 @fixture
 def chat_message() -> Message:
-    return Message(role="user", text="Hello")
+    return Message(role="user", contents=["Hello"])
 
 
 @fixture
@@ -1302,7 +1302,7 @@ def test_agent_run_response_created_at() -> None:
     # Test with a properly formatted UTC timestamp
     utc_timestamp = "2024-12-01T00:31:30.000000Z"
     response = AgentResponse(
-        messages=[Message(role="assistant", text="Hello")],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=utc_timestamp,
     )
     assert response.created_at == utc_timestamp
@@ -1312,7 +1312,7 @@ def test_agent_run_response_created_at() -> None:
     now_utc = datetime.now(tz=timezone.utc)
     formatted_utc = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     response_with_now = AgentResponse(
-        messages=[Message(role="assistant", text="Hello")],
+        messages=[Message(role="assistant", contents=["Hello"])],
         created_at=formatted_utc,
     )
     assert response_with_now.created_at == formatted_utc
@@ -1466,7 +1466,7 @@ def test_chat_tool_mode_eq_with_string():
 
 @fixture
 def agent_run_response_async() -> AgentResponse:
-    return AgentResponse(messages=[Message(role="user", text="Hello")])
+    return AgentResponse(messages=[Message(role="user", contents=["Hello"])])
 
 
 async def test_agent_run_response_from_async_generator():

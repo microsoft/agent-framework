@@ -306,7 +306,7 @@ async def test_chat_client_agent_response_format_dict_from_default_options(
 ) -> None:
     """AgentResponse.value should parse JSON dicts from default_options response_format."""
     json_text = json.dumps({"greeting": "Hello"})
-    client.responses.append(ChatResponse(messages=Message(role="assistant", text=json_text)))  # type: ignore[attr-defined]
+    client.responses.append(ChatResponse(messages=Message(role="assistant", contents=[json_text])))  # type: ignore[attr-defined]
 
     agent = Agent(
         client=client,
@@ -366,13 +366,13 @@ async def test_chat_client_agent_prepare_session_and_messages(
     from agent_framework._sessions import InMemoryHistoryProvider
 
     agent = Agent(client=client, context_providers=[InMemoryHistoryProvider()])
-    message = Message(role="user", text="Hello")
+    message = Message(role="user", contents=["Hello"])
     session = AgentSession()
     session.state[InMemoryHistoryProvider.DEFAULT_SOURCE_ID] = {"messages": [message]}
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
-        input_messages=[Message(role="user", text="Test")],
+        input_messages=[Message(role="user", contents=["Test"])],
     )
     result_messages = session_context.get_messages(include_input=True)
 
@@ -393,7 +393,7 @@ async def test_prepare_session_does_not_mutate_agent_chat_options(
 
     _, prepared_chat_options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=session,
-        input_messages=[Message(role="user", text="Test")],
+        input_messages=[Message(role="user", contents=["Test"])],
     )
 
     assert prepared_chat_options.get("tools") is not None
@@ -444,8 +444,8 @@ async def test_chat_agent_persists_history_per_service_call(
     session = AgentSession()
     session.state[provider.source_id] = {
         "messages": [
-            Message(role="user", text="Earlier question"),
-            Message(role="assistant", text="Earlier answer"),
+            Message(role="user", contents=["Earlier question"]),
+            Message(role="assistant", contents=["Earlier answer"]),
         ]
     }
     chat_client_base.run_responses = [
@@ -462,7 +462,9 @@ async def test_chat_agent_persists_history_per_service_call(
             ),
             response_id="resp_call_1",
         ),
-        ChatResponse(messages=Message(role="assistant", text="It is sunny in Seattle."), response_id="resp_call_2"),
+        ChatResponse(
+            messages=Message(role="assistant", contents=["It is sunny in Seattle."]), response_id="resp_call_2"
+        ),
     ]
 
     agent = Agent(
@@ -498,8 +500,8 @@ async def test_chat_agent_persists_history_per_service_call_streaming(
     session = AgentSession()
     session.state[provider.source_id] = {
         "messages": [
-            Message(role="user", text="Earlier question"),
-            Message(role="assistant", text="Earlier answer"),
+            Message(role="user", contents=["Earlier question"]),
+            Message(role="assistant", contents=["Earlier answer"]),
         ]
     }
     chat_client_base.streaming_responses = [
@@ -634,7 +636,7 @@ async def test_per_service_call_persistence_uses_real_service_storage_when_clien
             response_id="resp_call_1",
         ),
         ChatResponse(
-            messages=Message(role="assistant", text="It is sunny in Seattle."),
+            messages=Message(role="assistant", contents=["It is sunny in Seattle."]),
             conversation_id="resp_service_managed",
             response_id="resp_call_2",
         ),
@@ -777,7 +779,7 @@ async def test_chat_agent_without_per_service_call_persistence_preserves_respons
 ) -> None:
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=Message(role="assistant", text="Hello"),
+            messages=Message(role="assistant", contents=["Hello"]),
             response_id="resp_call_1",
         )
     ]
@@ -801,7 +803,7 @@ async def test_per_service_call_persistence_rejects_real_service_conversation_id
     session.state[provider.source_id] = {"messages": []}
     chat_client_base.run_responses = [
         ChatResponse(
-            messages=Message(role="assistant", text="Hello"),
+            messages=Message(role="assistant", contents=["Hello"]),
             conversation_id="resp_service_managed",
         )
     ]
@@ -1138,7 +1140,7 @@ async def test_chat_agent_context_providers_model_before_run(
     client: SupportsChatGetResponse,
 ) -> None:
     """Test that context providers' before_run is called during agent run."""
-    mock_provider = MockContextProvider(messages=[Message(role="system", text="Test context instructions")])
+    mock_provider = MockContextProvider(messages=[Message(role="system", contents=["Test context instructions"])])
     agent = Agent(client=client, context_providers=[mock_provider])
 
     await agent.run("Hello")
@@ -1185,7 +1187,7 @@ async def test_chat_agent_context_instructions_in_messages(
     client: SupportsChatGetResponse,
 ) -> None:
     """Test that AI context instructions are included in messages."""
-    mock_provider = MockContextProvider(messages=[Message(role="system", text="Context-specific instructions")])
+    mock_provider = MockContextProvider(messages=[Message(role="system", contents=["Context-specific instructions"])])
     agent = Agent(
         client=client,
         instructions="Agent instructions",
@@ -1194,7 +1196,7 @@ async def test_chat_agent_context_instructions_in_messages(
 
     # We need to test the _prepare_session_and_messages method directly
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
-        session=None, input_messages=[Message(role="user", text="Hello")]
+        session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
     messages = session_context.get_messages(include_input=True)
 
@@ -1219,7 +1221,7 @@ async def test_chat_agent_no_context_instructions(
     )
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
-        session=None, input_messages=[Message(role="user", text="Hello")]
+        session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
     messages = session_context.get_messages(include_input=True)
 
@@ -1233,7 +1235,7 @@ async def test_chat_agent_run_stream_context_providers(
     client: SupportsChatGetResponse,
 ) -> None:
     """Test that context providers work with run method."""
-    mock_provider = MockContextProvider(messages=[Message(role="system", text="Stream context instructions")])
+    mock_provider = MockContextProvider(messages=[Message(role="system", contents=["Stream context instructions"])])
     agent = Agent(client=client, context_providers=[mock_provider])
 
     # Collect all stream updates and get final response
@@ -1727,7 +1729,7 @@ async def test_agent_tool_without_context_does_not_receive_session(chat_client_b
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     agent = Agent(client=chat_client_base, tools=[echo_session_info])
@@ -1766,7 +1768,7 @@ async def test_agent_tool_receives_explicit_session_via_function_invocation_cont
                 ],
             )
         ),
-        ChatResponse(messages=Message(role="assistant", text="done")),
+        ChatResponse(messages=Message(role="assistant", contents=["done"])),
     ]
 
     agent = Agent(client=chat_client_base, tools=[capture_session_context])
@@ -1899,8 +1901,8 @@ async def test_chat_agent_compaction_overrides_client_defaults(chat_client_base:
     )
 
     await agent.run([
-        Message(role="user", text="Hello"),
-        Message(role="assistant", text="Previous response"),
+        Message(role="user", contents=["Hello"]),
+        Message(role="assistant", contents=["Previous response"]),
     ])
 
     assert captured_roles == [["user", "assistant"]]
@@ -1924,8 +1926,8 @@ async def test_chat_agent_uses_client_compaction_defaults_when_agent_unset(chat_
     agent = Agent(client=chat_client_base)
 
     await agent.run([
-        Message(role="user", text="Hello"),
-        Message(role="assistant", text="Previous response"),
+        Message(role="user", contents=["Hello"]),
+        Message(role="assistant", contents=["Previous response"]),
     ])
 
     assert captured_roles == [["assistant"]]
@@ -1957,8 +1959,8 @@ async def test_chat_agent_run_level_compaction_and_tokenizer_override_agent_defa
 
     await agent.run(
         [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Previous response"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Previous response"]),
         ],
         compaction_strategy=TruncationStrategy(max_n=1, compact_to=1),
         tokenizer=_FixedTokenizer(23),
@@ -2352,7 +2354,7 @@ async def test_chat_agent_context_provider_adds_tools_when_agent_has_none(
 
     # Run the agent and verify context tools are added
     _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
-        session=None, input_messages=[Message(role="user", text="Hello")]
+        session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
 
     # The context tools should now be in the options
@@ -2381,7 +2383,7 @@ async def test_chat_agent_context_provider_adds_instructions_when_agent_has_none
 
     # Run the agent and verify context instructions are available
     _, options = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
-        session=None, input_messages=[Message(role="user", text="Hello")]
+        session=None, input_messages=[Message(role="user", contents=["Hello"])]
     )
 
     # The context instructions should now be in the options
@@ -2408,7 +2410,7 @@ async def test_chat_agent_context_provider_adds_middleware_when_agent_has_none(
 
     session_context, _ = await agent._prepare_session_and_messages(  # type: ignore[reportPrivateUsage]
         session=None,
-        input_messages=[Message(role="user", text="Hello")],
+        input_messages=[Message(role="user", contents=["Hello"])],
     )
 
     assert session_context.middleware["middleware-context"] == [context_chat_middleware]
