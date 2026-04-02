@@ -597,3 +597,28 @@ def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:
     ) as mock_super:
         client._parse_chunk_from_openai(mock_event, {}, {})
         mock_super.assert_called_once_with(mock_event, {}, {})
+
+
+def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
+    """A top-level response.oauth_consent_requested event surfaces as Content."""
+
+    mock_project = MagicMock()
+    mock_project.get_openai_client.return_value = MagicMock()
+
+    client = RawFoundryAgentChatClient(
+        project_client=mock_project,
+        agent_name="test-agent",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.oauth_consent_requested"
+    mock_event.consent_link = "https://consent-host.example.com/authorize?code=xyz"
+    mock_event.id = "consent-event-1"
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/authorize?code=xyz"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event
