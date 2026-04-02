@@ -269,7 +269,7 @@ async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
     second_events = await _drain(
         workflow.run(
             stream=True,
-            responses={first_request.request_id: [Message(role="user", text="Order 2939393")]},
+            responses={first_request.request_id: [Message(role="user", contents=["Order 2939393"])]},
         )
     )
     second_request = _latest_request_info_event(second_events)
@@ -280,7 +280,7 @@ async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
     third_events = await _drain(
         workflow.run(
             stream=True,
-            responses={second_request.request_id: [Message(role="user", text="It arrived broken and unusable.")]},
+            responses={second_request.request_id: [Message(role="user", contents=["It arrived broken and unusable."])]},
         )
     )
     third_request = _latest_request_info_event(third_events)
@@ -370,7 +370,7 @@ async def test_tool_approval_responses_are_not_replayed_from_history() -> None:
     await _drain(
         workflow.run(
             stream=True,
-            responses={second_request.request_id: [Message(role="user", text="Thanks, what's next?")]},
+            responses={second_request.request_id: [Message(role="user", contents=["Thanks, what's next?"])]},
         )
     )
 
@@ -679,7 +679,7 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
     await _drain(
         workflow.run(
             stream=True,
-            responses={order_request.request_id: [Message(role="user", text="Please continue with refund.")]},
+            responses={order_request.request_id: [Message(role="user", contents=["Please continue with refund."])]},
         )
     )
 
@@ -767,7 +767,7 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     )
 
     conversation = [
-        Message(role="user", text="My order arrived damaged."),
+        Message(role="user", contents=["My order arrived damaged."]),
         Message(
             role="assistant",
             contents=[
@@ -933,7 +933,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     events = await _drain(
         workflow.run(
-            stream=True, responses={requests[-1].request_id: [Message(role="user", text="Second user message")]}
+            stream=True, responses={requests[-1].request_id: [Message(role="user", contents=["Second user message"])]}
         )
     )
     outputs = [ev for ev in events if ev.type == "output"]
@@ -1011,7 +1011,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[Message(role="assistant", text="Response")],
+            messages=[Message(role="assistant", contents=["Response"])],
             response_id="test_response",
         )
 

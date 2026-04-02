@@ -40,7 +40,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         # Create sub-agent with middleware
@@ -82,7 +82,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         sub_agent = Agent(
@@ -133,8 +133,8 @@ class TestAsToolKwargsPropagation:
                     )
                 ]
             ),
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent_c")]),
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent_b")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent_c"])]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent_b"])]),
         ]
 
         # Create agent C (bottom level)
@@ -219,7 +219,7 @@ class TestAsToolKwargsPropagation:
         """Test that as_tool works correctly when no extra kwargs are provided."""
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from agent"])]),
         ]
 
         sub_agent = Agent(
@@ -248,7 +248,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response with options")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response with options"])]),
         ]
 
         sub_agent = Agent(
@@ -295,8 +295,8 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock responses for both calls
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="First response")]),
-            ChatResponse(messages=[Message(role="assistant", text="Second response")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["First response"])]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Second response"])]),
         ]
 
         sub_agent = Agent(
@@ -342,7 +342,7 @@ class TestAsToolKwargsPropagation:
 
         # Setup mock response
         client.responses = [
-            ChatResponse(messages=[Message(role="assistant", text="Response from sub-agent")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Response from sub-agent"])]),
         ]
 
         sub_agent = Agent(

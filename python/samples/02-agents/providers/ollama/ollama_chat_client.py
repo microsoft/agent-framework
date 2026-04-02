@@ -35,7 +35,7 @@ def get_time():
 async def main() -> None:
     client = OllamaChatClient()
     message = "What time is it? Use a tool call"
-    messages = [Message(role="user", text=message)]
+    messages = [Message(role="user", contents=[message])]
     stream = False
     print(f"User: {message}")
     if stream:

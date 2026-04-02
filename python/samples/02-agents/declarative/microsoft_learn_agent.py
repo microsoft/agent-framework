@@ -28,7 +28,13 @@ async def main():
     """Create an agent from a declarative yaml specification and run it."""
     # get the path
     current_path = Path(__file__).parent
-    yaml_path = current_path.parent.parent.parent.parent / "declarative-agents" / "agent-samples" / "foundry" / "MicrosoftLearnAgent.yaml"
+    yaml_path = (
+        current_path.parent.parent.parent.parent
+        / "declarative-agents"
+        / "agent-samples"
+        / "foundry"
+        / "MicrosoftLearnAgent.yaml"
+    )
     # create the agent from the yaml
     async with (
         AzureCliCredential() as credential,

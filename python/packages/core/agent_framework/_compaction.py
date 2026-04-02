@@ -877,7 +877,7 @@ class ToolResultCompactionStrategy:
             insertion_index = starts.get(group_id, 0)
             summary_message = Message(
                 role="assistant",
-                text=summary_text,
+                contents=[summary_text],
                 message_id=summary_id,
                 additional_properties={
                     GROUP_ANNOTATION_KEY: summary_annotation,
@@ -1015,10 +1015,10 @@ class SummarizationStrategy:
         try:
             summary_response: ChatResponse[None] = await self.client.get_response(
                 [
-                    Message(role="system", text=self.prompt),
+                    Message(role="system", contents=[self.prompt]),
                     Message(
                         role="user",
-                        text=_format_messages_for_summary(messages_to_summarize),
+                        contents=[_format_messages_for_summary(messages_to_summarize)],
                     ),
                 ],
                 stream=False,
@@ -1044,7 +1044,7 @@ class SummarizationStrategy:
 
         summary_message = Message(
             role="assistant",
-            text=summary_text,
+            contents=[summary_text],
             message_id=summary_id,
             additional_properties={
                 GROUP_ANNOTATION_KEY: summary_annotation,

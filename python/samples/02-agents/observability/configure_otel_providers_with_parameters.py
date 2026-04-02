@@ -84,7 +84,7 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
         if stream:
             print("Assistant: ", end="")
             async for chunk in client.get_response(
-                [Message(role="user", text=message)],
+                [Message(role="user", contents=[message])],
                 stream=True,
                 options={"tools": [get_weather]},
             ):
@@ -93,7 +93,7 @@ async def run_chat_client(client: "SupportsChatGetResponse", stream: bool = Fals
             print("")
         else:
             response = await client.get_response(
-                [Message(role="user", text=message)],
+                [Message(role="user", contents=[message])],
                 options={"tools": [get_weather]},
             )
             print(f"Assistant: {response}")

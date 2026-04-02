@@ -99,7 +99,7 @@ class TextSearchContextProvider(ContextProvider):
 
         context.extend_messages(
             self.source_id,
-            [Message(role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results))],
+            [Message(role="user", contents=["\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)])],
         )
 
 

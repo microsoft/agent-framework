@@ -7,7 +7,7 @@ These samples demonstrate different approaches to managing conversation history 
 | File | Description |
 |------|-------------|
 | [`suspend_resume_session.py`](suspend_resume_session.py) | Suspend and resume conversation sessions, comparing service-managed sessions (Azure AI Foundry) with in-memory sessions (OpenAI). |
-| [`custom_history_provider.py`](custom_history_provider.py) | Implement a custom history provider by extending `BaseHistoryProvider`, enabling conversation persistence in your preferred storage backend. |
+| [`custom_history_provider.py`](custom_history_provider.py) | Implement a custom history provider by extending `HistoryProvider`, enabling conversation persistence in your preferred storage backend. |
 | [`cosmos_history_provider.py`](cosmos_history_provider.py) | Use Azure Cosmos DB as a history provider for durable conversation storage with `CosmosHistoryProvider`. |
 | [`redis_history_provider.py`](redis_history_provider.py) | Use Redis as a history provider for persistent conversation history storage across sessions. |
 

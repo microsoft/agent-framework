@@ -158,8 +158,8 @@ async def test_agent_executor_checkpoint_stores_and_restores_state() -> None:
 
     # Add some initial messages to the session state to verify session state persistence
     initial_messages = [
-        Message(role="user", text="Initial message 1"),
-        Message(role="assistant", text="Initial response 1"),
+        Message(role="user", contents=["Initial message 1"]),
+        Message(role="assistant", contents=["Initial response 1"]),
     ]
     initial_session.state["history"] = {"messages": initial_messages}
 
@@ -256,9 +256,9 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to session state
     session_messages = [
-        Message(role="user", text="Message in session 1"),
-        Message(role="assistant", text="Session response 1"),
-        Message(role="user", text="Message in session 2"),
+        Message(role="user", contents=["Message in session 1"]),
+        Message(role="assistant", contents=["Session response 1"]),
+        Message(role="user", contents=["Message in session 2"]),
     ]
     session.state["history"] = {"messages": session_messages}
 
@@ -266,8 +266,8 @@ async def test_agent_executor_save_and_restore_state_directly() -> None:
 
     # Add messages to executor cache
     cache_messages = [
-        Message(role="user", text="Cached user message"),
-        Message(role="assistant", text="Cached assistant response"),
+        Message(role="user", contents=["Cached user message"]),
+        Message(role="assistant", contents=["Cached assistant response"]),
     ]
     executor._cache = list(cache_messages)  # type: ignore[reportPrivateUsage]
 
@@ -562,7 +562,7 @@ async def test_checkpoint_restore_works_without_context_mode_in_state() -> None:
 
     # Simulate a checkpoint state without context_mode (as saved by the new code)
     state: dict[str, Any] = {
-        "cache": [Message(role="user", text="cached msg")],
+        "cache": [Message(role="user", contents=["cached msg"])],
         "full_conversation": [],
         "agent_session": AgentSession().to_dict(),
         "pending_agent_requests": {},

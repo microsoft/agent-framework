@@ -8,8 +8,6 @@ import pytest
 from agent_framework import (
     AgentContext,
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
     ChatContext,
     ContextProvider,
     HistoryProvider,
@@ -235,23 +233,6 @@ class TestContextProvider:
         session = AgentSession()
         ctx = SessionContext(input_messages=[])
         await provider.after_run(agent=None, session=session, context=ctx, state={})  # type: ignore[arg-type]
-
-
-# ---------------------------------------------------------------------------
-# Deprecated provider alias tests
-# ---------------------------------------------------------------------------
-
-
-class TestDeprecatedProviderAliases:
-    def test_base_context_provider_warns_and_is_compatible(self) -> None:
-        with pytest.warns(DeprecationWarning, match="BaseContextProvider is deprecated. Use ContextProvider instead."):
-            provider = BaseContextProvider(source_id="test")
-
-        assert isinstance(provider, ContextProvider)
-
-    def test_base_provider_aliases_preserve_subtyping(self) -> None:
-        assert issubclass(BaseContextProvider, ContextProvider)
-        assert issubclass(BaseHistoryProvider, HistoryProvider)
 
 
 # ---------------------------------------------------------------------------

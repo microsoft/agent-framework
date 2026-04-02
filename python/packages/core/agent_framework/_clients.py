@@ -253,7 +253,8 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
                     else:
                         # Non-streaming implementation
                         return ChatResponse(
-                            messages=[Message(role="assistant", text="Hello!")], response_id="custom-response"
+                            messages=[Message(role="assistant", contents=["Hello!"])],
+                            response_id="custom-response",
                         )
 
 
@@ -261,9 +262,9 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             client = CustomChatClient()
 
             # Use the client to get responses
-            response = await client.get_response([Message(role="user", text="Hello, how are you?")])
+            response = await client.get_response([Message(role="user", contents=["Hello, how are you?"])])
             # Or stream responses
-            async for update in client.get_response([Message(role="user", text="Hello!")], stream=True):
+            async for update in client.get_response([Message(role="user", contents=["Hello!"])], stream=True):
                 print(update)
     """
 

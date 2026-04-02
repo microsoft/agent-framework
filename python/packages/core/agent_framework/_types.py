@@ -1669,7 +1669,6 @@ class Message(SerializationMixin):
         role: RoleLiteral | str,
         contents: Sequence[Content | str | Mapping[str, Any]] | None = None,
         *,
-        text: str | None = None,
         author_name: str | None = None,
         message_id: str | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
@@ -1683,20 +1682,13 @@ class Message(SerializationMixin):
                 to TextContent), or dicts (parsed via Content.from_dict). Defaults to empty list.
 
         Keyword Args:
-            text: Deprecated. Text content of the message. Use contents instead.
-                This parameter is kept for backward compatibility with serialization.
             author_name: Optional name of the author of the message.
             message_id: Optional ID of the chat message.
             additional_properties: Optional additional properties associated with the chat message.
                 Additional properties are used within Agent Framework, they are not sent to services.
             raw_representation: Optional raw representation of the chat message.
         """
-        # Handle contents conversion
         parsed_contents = [] if contents is None else _parse_content_list(contents)
-
-        # Handle text for backward compatibility (from serialization)
-        if text is not None:
-            parsed_contents.append(Content.from_text(text=text))
 
         self.role: str = role
         self.contents = parsed_contents

@@ -11,7 +11,7 @@ This package provides:
 ## Installation
 
 ```bash
-pip install agent-framework-openai --pre
+pip install agent-framework-openai
 ```
 
 ## Which chat client should I use?

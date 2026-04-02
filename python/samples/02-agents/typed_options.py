@@ -42,7 +42,7 @@ async def demo_anthropic_chat_client() -> None:
 
     # Standard options work great:
     response = await client.get_response(
-        [Message("user", text="What is the capital of France?")],
+        [Message("user", contents=["What is the capital of France?"])],
         options={
             "temperature": 1,  # Must be 1 when thinking is enabled
             "max_tokens": 2048,
@@ -116,7 +116,7 @@ async def demo_openai_chat_client_reasoning_models() -> None:
     # With specific options, you get full IDE autocomplete!
     # Try typing `client.get_response("Hello", options={` and see the suggestions
     response = await client.get_response(
-        [Message("user", text="What is 2 + 2?")],
+        [Message("user", contents=["What is 2 + 2?"])],
         options={
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,

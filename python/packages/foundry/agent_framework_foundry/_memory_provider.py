@@ -219,7 +219,7 @@ class FoundryMemoryProvider(ContextProvider):
                 if line_separated_memories:
                     context.extend_messages(
                         self.source_id,
-                        [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                        [Message(role="user", contents=[f"{self.context_prompt}\n{line_separated_memories}"])],
                     )
         except Exception as e:
             # Log but don't fail - memory retrieval is non-critical

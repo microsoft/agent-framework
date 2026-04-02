@@ -6,7 +6,7 @@ concepts of **Agent Framework** one step at a time.
 ## Prerequisites
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
 Set the required environment variables:

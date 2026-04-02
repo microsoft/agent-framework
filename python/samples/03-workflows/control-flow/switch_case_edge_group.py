@@ -104,7 +104,7 @@ async def store_email(email_text: str, ctx: WorkflowContext[AgentExecutorRequest
 
     # Kick off the detector by forwarding the email as a user message to the spam_detection_agent.
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=new_email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[new_email.email_content])], should_respond=True)
     )
 
 
@@ -125,7 +125,7 @@ async def submit_to_email_assistant(detection: DetectionResult, ctx: WorkflowCon
     # Load the original content from workflow state using the id carried in DetectionResult.
     email: Email = ctx.get_state(f"{EMAIL_STATE_PREFIX}{detection.email_id}")
     await ctx.send_message(
-        AgentExecutorRequest(messages=[Message("user", text=email.email_content)], should_respond=True)
+        AgentExecutorRequest(messages=[Message("user", contents=[email.email_content])], should_respond=True)
     )
 
 

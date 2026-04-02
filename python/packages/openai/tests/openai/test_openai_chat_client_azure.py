@@ -285,14 +285,14 @@ async def test_integration_options(
 
         for streaming in [False, True]:
             if option_name in {"tools", "tool_choice"}:
-                messages = [Message(role="user", text="What is the weather in Seattle?")]
+                messages = [Message(role="user", contents=["What is the weather in Seattle?"])]
             elif option_name == "response_format":
                 messages = [
-                    Message(role="user", text="The weather in Seattle is sunny"),
-                    Message(role="user", text="What is the weather in Seattle?"),
+                    Message(role="user", contents=["The weather in Seattle is sunny"]),
+                    Message(role="user", contents=["What is the weather in Seattle?"]),
                 ]
             else:
-                messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+                messages = [Message(role="user", contents=["Say 'Hello World' briefly."])]
 
             options: dict[str, Any] = {option_name: option_value}
             if option_name == "tool_choice":
@@ -339,7 +339,7 @@ async def test_integration_web_search() -> None:
             messages=[
                 Message(
                     role="user",
-                    text="What is the current weather? Do not ask for my current location.",
+                    contents=["What is the current weather? Do not ask for my current location."],
                 )
             ],
             options={
@@ -361,7 +361,9 @@ async def test_integration_client_file_search() -> None:
         file_id, vector_store = await create_vector_store(client)
         try:
             response = await client.get_response(
-                messages=[Message(role="user", text="What is the weather today? Do a file search to find the answer.")],
+                messages=[
+                    Message(role="user", contents=["What is the weather today? Do a file search to find the answer."])
+                ],
                 options={
                     "tools": [OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])],
                     "tool_choice": "auto",
@@ -384,7 +386,9 @@ async def test_integration_client_file_search_streaming() -> None:
         file_id, vector_store = await create_vector_store(client)
         try:
             response_stream = client.get_response(
-                messages=[Message(role="user", text="What is the weather today? Do a file search to find the answer.")],
+                messages=[
+                    Message(role="user", contents=["What is the weather today? Do a file search to find the answer."])
+                ],
                 stream=True,
                 options={
                     "tools": [OpenAIChatClient.get_file_search_tool(vector_store_ids=[vector_store.vector_store_id])],
@@ -407,7 +411,7 @@ async def test_integration_client_agent_hosted_mcp_tool() -> None:
     async with AzureCliCredential() as credential:
         client = OpenAIChatClient(credential=credential)
         response = await client.get_response(
-            messages=[Message(role="user", text="How to create an Azure storage account using az cli?")],
+            messages=[Message(role="user", contents=["How to create an Azure storage account using az cli?"])],
             options={
                 "max_tokens": 5000,
                 "tools": OpenAIChatClient.get_mcp_tool(
@@ -432,7 +436,7 @@ async def test_integration_client_agent_hosted_code_interpreter_tool() -> None:
         client = OpenAIChatClient(credential=credential)
 
         response = await client.get_response(
-            messages=[Message(role="user", text="Calculate the sum of numbers from 1 to 10 using Python code.")],
+            messages=[Message(role="user", contents=["Calculate the sum of numbers from 1 to 10 using Python code."])],
             options={"tools": [OpenAIChatClient.get_code_interpreter_tool()]},
         )
 
@@ -496,7 +500,7 @@ async def test_azure_openai_chat_client_tool_rich_content_image() -> None:
         client.function_invocation_configuration["max_iterations"] = 2
 
         for streaming in [False, True]:
-            messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
+            messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
             options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
             if streaming:

@@ -134,7 +134,7 @@ class CustomAgentExecutor(Executor):
                     [
                         Message(
                             role="user",
-                            text=f"Validate the following sample:\n\n{sample.relative_path}",
+                            contents=[f"Validate the following sample:\n\n{sample.relative_path}"],
                         )
                     ],
                     session=self._session,

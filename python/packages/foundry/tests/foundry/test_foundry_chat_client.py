@@ -359,7 +359,7 @@ async def test_web_search_tool_with_location() -> None:
     assert web_search_tool.user_location.city == "Seattle"
     assert web_search_tool.user_location.country == "US"
     _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", text="What's the weather?")],
+        messages=[Message(role="user", contents=["What's the weather?"])],
         options={"tools": [web_search_tool], "tool_choice": "auto"},
     )
 
@@ -387,7 +387,7 @@ async def test_code_interpreter_tool_variations() -> None:
     assert code_tool_with_files.container.file_ids == ["file1", "file2"]
 
     _, run_options, _ = await client._prepare_request(
-        messages=[Message(role="user", text="Process these files")],
+        messages=[Message(role="user", contents=["Process these files"])],
         options={"tools": [code_tool_with_files]},
     )
 
@@ -428,7 +428,7 @@ async def test_chat_message_parsing_with_function_calls() -> None:
     )
     function_result = Content.from_function_result(call_id="test-call-id", result="Function executed successfully")
     messages = [
-        Message(role="user", text="Call a function"),
+        Message(role="user", contents=["Call a function"]),
         Message(role="assistant", contents=[function_call]),
         Message(role="tool", contents=[function_result]),
     ]
@@ -471,7 +471,7 @@ async def test_content_filter_exception() -> None:
     client.client.responses.create.side_effect = mock_error
 
     with pytest.raises(OpenAIContentFilterException) as exc_info:
-        await client.get_response(messages=[Message(role="user", text="Test message")])
+        await client.get_response(messages=[Message(role="user", contents=["Test message"])])
 
     assert "content error" in str(exc_info.value)
 
@@ -495,7 +495,7 @@ async def test_response_format_parse_path() -> None:
     client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Test message")],
+        messages=[Message(role="user", contents=["Test message"])],
         options={"response_format": OutputStruct, "store": True},
     )
     assert response.response_id == "parsed_response_123"
@@ -523,7 +523,7 @@ async def test_response_format_parse_path_with_conversation_id() -> None:
     client.client.responses.parse = AsyncMock(return_value=mock_parsed_response)
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Test message")],
+        messages=[Message(role="user", contents=["Test message"])],
         options={"response_format": OutputStruct, "store": True},
     )
     assert response.response_id == "parsed_response_123"
@@ -563,7 +563,7 @@ async def test_response_format_dict_parse_path() -> None:
     client.client.responses.create = AsyncMock(return_value=mock_response)
 
     response = await client.get_response(
-        messages=[Message(role="user", text="Test message")],
+        messages=[Message(role="user", contents=["Test message"])],
         options={"response_format": response_format},
     )
 
@@ -589,7 +589,7 @@ async def test_bad_request_error_non_content_filter() -> None:
 
     with pytest.raises(ChatClientException) as exc_info:
         await client.get_response(
-            messages=[Message(role="user", text="Test message")],
+            messages=[Message(role="user", contents=["Test message"])],
             options={"response_format": OutputStruct},
         )
 
@@ -656,12 +656,12 @@ async def test_integration_options(
     client.function_invocation_configuration["max_iterations"] = 2
 
     if option_name.startswith("tools") or option_name.startswith("tool_choice"):
-        messages = [Message(role="user", text="What is the weather in Seattle?")]
+        messages = [Message(role="user", contents=["What is the weather in Seattle?"])]
     elif option_name.startswith("response_format"):
-        messages = [Message(role="user", text="The weather in Seattle is sunny")]
-        messages.append(Message(role="user", text="What is the weather in Seattle?"))
+        messages = [Message(role="user", contents=["The weather in Seattle is sunny"])]
+        messages.append(Message(role="user", contents=["What is the weather in Seattle?"]))
     else:
-        messages = [Message(role="user", text="Say 'Hello World' briefly.")]
+        messages = [Message(role="user", contents=["Say 'Hello World' briefly."])]
 
     options: dict[str, Any] = {option_name: option_value}
     if option_name.startswith("tool_choice"):
@@ -700,7 +700,7 @@ async def test_integration_web_search() -> None:
         "messages": [
             Message(
                 role="user",
-                text="Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer.",
+                contents=["Who are the main characters of Kpop Demon Hunters? Do a web search to find the answer."],
             )
         ],
         "options": {"tool_choice": "auto", "tools": [web_search_tool]},
@@ -728,7 +728,7 @@ async def test_integration_tool_rich_content_image() -> None:
     client = FoundryChatClient(credential=AzureCliCredential())
     client.function_invocation_configuration["max_iterations"] = 2
 
-    messages = [Message(role="user", text="Call the get_test_image tool and describe what you see.")]
+    messages = [Message(role="user", contents=["Call the get_test_image tool and describe what you see."])]
     options: dict[str, Any] = {"tools": [get_test_image], "tool_choice": "auto"}
 
     response = await client.get_response(messages=messages, options=options, stream=True).get_final_response()

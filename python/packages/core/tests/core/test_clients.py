@@ -31,13 +31,13 @@ def test_chat_client_type(client: SupportsChatGetResponse):
 
 
 async def test_chat_client_get_response(client: SupportsChatGetResponse):
-    response = await client.get_response([Message(role="user", text="Hello")])
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
     assert response.text == "test response"
     assert response.messages[0].role == "assistant"
 
 
 async def test_chat_client_get_response_streaming(client: SupportsChatGetResponse):
-    async for update in client.get_response([Message(role="user", text="Hello")], stream=True):
+    async for update in client.get_response([Message(role="user", contents=["Hello"])], stream=True):
         assert update.text == "test streaming response " or update.text == "another update"
         assert update.role == "assistant"
 
@@ -62,7 +62,7 @@ async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_
     async def fake_inner_get_response(**kwargs):
         assert kwargs["trace_id"] == "trace-123"
         assert "function_invocation_kwargs" not in kwargs
-        return ChatResponse(messages=[Message(role="assistant", text="ok")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["ok"])])
 
     with patch.object(
         chat_client_base,
@@ -70,7 +70,7 @@ async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_
         side_effect=fake_inner_get_response,
     ) as mock_inner_get_response:
         await chat_client_base.get_response(
-            [Message(role="user", text="hello")],
+            [Message(role="user", contents=["hello"])],
             function_invocation_kwargs={"tool_request_id": "tool-123"},
             client_kwargs={"trace_id": "trace-123"},
         )
@@ -78,13 +78,13 @@ async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_
 
 
 async def test_base_client_get_response(chat_client_base: SupportsChatGetResponse):
-    response = await chat_client_base.get_response([Message(role="user", text="Hello")])
+    response = await chat_client_base.get_response([Message(role="user", contents=["Hello"])])
     assert response.messages[0].role == "assistant"
     assert response.messages[0].text == "test response - Hello"
 
 
 async def test_base_client_get_response_streaming(chat_client_base: SupportsChatGetResponse):
-    async for update in chat_client_base.get_response([Message(role="user", text="Hello")], stream=True):
+    async for update in chat_client_base.get_response([Message(role="user", contents=["Hello"])], stream=True):
         assert update.text == "update - Hello" or update.text == "another update"
 
 
@@ -107,8 +107,8 @@ async def test_base_client_applies_compaction_before_non_streaming_inner_call(
 
     chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     await chat_client_base.get_response([
-        Message(role="user", text="Hello"),
-        Message(role="assistant", text="Previous response"),
+        Message(role="user", contents=["Hello"]),
+        Message(role="assistant", contents=["Previous response"]),
     ])
     assert captured_roles == [["assistant"]]
 
@@ -133,8 +133,8 @@ async def test_base_client_applies_compaction_before_streaming_inner_call(
     chat_client_base._get_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     async for _ in chat_client_base.get_response(
         [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Previous response"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Previous response"]),
         ],
         stream=True,
     ):
@@ -161,8 +161,8 @@ async def test_base_client_per_call_compaction_override_applies_before_inner_cal
     chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     await chat_client_base.get_response(
         [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Previous response"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Previous response"]),
         ],
         compaction_strategy=TruncationStrategy(max_n=1, compact_to=1),
     )
@@ -191,8 +191,8 @@ async def test_base_client_per_call_tokenizer_override_annotates_messages(
     chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     await chat_client_base.get_response(
         [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Previous response"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Previous response"]),
         ],
         compaction_strategy=SlidingWindowStrategy(keep_last_groups=2),
         tokenizer=_FixedTokenizer(17),
@@ -222,8 +222,8 @@ async def test_base_client_per_call_tokenizer_override_without_strategy_annotate
     chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     await chat_client_base.get_response(
         [
-            Message(role="user", text="Hello"),
-            Message(role="assistant", text="Previous response"),
+            Message(role="user", contents=["Hello"]),
+            Message(role="assistant", contents=["Previous response"]),
         ],
         tokenizer=_FixedTokenizer(17),
     )
@@ -252,8 +252,8 @@ async def test_base_client_default_tokenizer_without_strategy_annotates_messages
 
     chat_client_base._get_non_streaming_response = _capture  # type: ignore[attr-defined,method-assign]
     await chat_client_base.get_response([
-        Message(role="user", text="Hello"),
-        Message(role="assistant", text="Previous response"),
+        Message(role="user", contents=["Hello"]),
+        Message(role="assistant", contents=["Previous response"]),
     ])
     assert captured_token_counts == [[19, 19]]
 
@@ -276,7 +276,7 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
     instructions = "You are a helpful assistant."
 
     async def fake_inner_get_response(**kwargs):
-        return ChatResponse(messages=[Message(role="assistant", text="ok")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["ok"])])
 
     with patch.object(
         chat_client_base,
@@ -284,7 +284,7 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         side_effect=fake_inner_get_response,
     ) as mock_inner_get_response:
         await chat_client_base.get_response(
-            [Message(role="user", text="hello")], options={"instructions": instructions}
+            [Message(role="user", contents=["hello"])], options={"instructions": instructions}
         )
         mock_inner_get_response.assert_called_once()
         _, kwargs = mock_inner_get_response.call_args
@@ -296,7 +296,7 @@ async def test_chat_client_instructions_handling(chat_client_base: SupportsChatG
         from agent_framework._types import prepend_instructions_to_messages
 
         appended_messages = prepend_instructions_to_messages(
-            [Message(role="user", text="hello")],
+            [Message(role="user", contents=["hello"])],
             instructions,
         )
         assert len(appended_messages) == 2
