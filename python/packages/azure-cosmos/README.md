@@ -35,7 +35,7 @@ Container naming behavior:
 - Container name is configured on the provider (`container_name` or `AZURE_COSMOS_CONTAINER_NAME`)
 - `session_id` is used as the Cosmos partition key for reads/writes
 
-See `samples/history_provider/cosmos_history_basic.py` for a runnable package-local example.
+See `samples/02-agents/conversations/cosmos_history_provider.py` for a runnable example.
 
 ## Cosmos DB Workflow Checkpoint Storage
 
@@ -121,7 +121,6 @@ portal with this partition key configuration.
 | `AZURE_COSMOS_CONTAINER_NAME` | Container name |
 | `AZURE_COSMOS_KEY` | Account key (optional if using Azure credentials) |
 
-See `samples/checkpoint_storage/cosmos_checkpoint_workflow.py` for a standalone example,
-`samples/checkpoint_storage/cosmos_checkpoint_foundry.py` for an end-to-end example
-with Azure AI Foundry agents, or `samples/cosmos_e2e_foundry.py` for both
-history and checkpointing together.
+See `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing.py` for a standalone example,
+or `samples/03-workflows/checkpoint/cosmos_workflow_checkpointing_foundry.py` for an end-to-end
+example with Azure AI Foundry agents.

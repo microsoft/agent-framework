@@ -5,12 +5,12 @@
 
 Purpose:
 This sample demonstrates how to use CosmosCheckpointStorage with agents built
-on Azure AI Foundry (via AzureOpenAIResponsesClient). It shows a multi-agent
+on Azure AI Foundry (via FoundryChatClient). It shows a multi-agent
 workflow where checkpoint state is persisted to Cosmos DB, enabling durable
 pause-and-resume across process restarts.
 
 What you learn:
-- How to wire CosmosCheckpointStorage with AzureOpenAIResponsesClient agents
+- How to wire CosmosCheckpointStorage with FoundryChatClient agents
 - How to combine session history with workflow checkpointing
 - How to resume a workflow-as-agent from a Cosmos DB checkpoint
 
@@ -20,8 +20,8 @@ Key concepts:
 - These are complementary: sessions track conversation, checkpoints track workflow state
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT              - Azure AI Foundry project endpoint
-  AZURE_AI_MODEL_DEPLOYMENT_NAME         - Model deployment name
+  FOUNDRY_PROJECT_ENDPOINT                - Azure AI Foundry project endpoint
+  FOUNDRY_MODEL                           - Model deployment name
   AZURE_COSMOS_ENDPOINT                  - Cosmos DB account endpoint
   AZURE_COSMOS_DATABASE_NAME             - Database name
   AZURE_COSMOS_CONTAINER_NAME            - Container name for checkpoints
@@ -33,27 +33,27 @@ import asyncio
 import os
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
+from agent_framework_azure_cosmos import CosmosCheckpointStorage
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-from agent_framework_azure_cosmos import CosmosCheckpointStorage
 
 load_dotenv()
 
 
 async def main() -> None:
     """Run the Azure AI Foundry + Cosmos DB checkpointing sample."""
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT",)
-    deployment_name = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    model = os.getenv("FOUNDRY_MODEL")
     cosmos_endpoint = os.getenv("AZURE_COSMOS_ENDPOINT")
     cosmos_database_name = os.getenv("AZURE_COSMOS_DATABASE_NAME")
     cosmos_container_name = os.getenv("AZURE_COSMOS_CONTAINER_NAME")
     cosmos_key = os.getenv("AZURE_COSMOS_KEY")
 
-    if not project_endpoint or not deployment_name:
-        print("Please set AZURE_AI_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME.")
+    if not project_endpoint or not model:
+        print("Please set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL.")
         return
 
     if not cosmos_endpoint or not cosmos_database_name or not cosmos_container_name:
@@ -75,20 +75,22 @@ async def main() -> None:
             container_name=cosmos_container_name,
         ) as checkpoint_storage:
             # Create Azure AI Foundry agents
-            client = AzureOpenAIResponsesClient(
+            client = FoundryChatClient(
                 project_endpoint=project_endpoint,
-                deployment_name=deployment_name,
+                model=model,
                 credential=azure_credential,
             )
 
-            assistant = client.as_agent(
+            assistant = Agent(
                 name="assistant",
                 instructions="You are a helpful assistant. Keep responses brief.",
+                client=client,
             )
 
-            reviewer = client.as_agent(
+            reviewer = Agent(
                 name="reviewer",
                 instructions="You are a reviewer. Provide a one-sentence summary of the assistant's response.",
+                client=client,
             )
 
             # Build a sequential workflow and wrap it as an agent
