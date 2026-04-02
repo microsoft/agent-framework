@@ -37,10 +37,12 @@ def try_parse_oauth_consent_event(event: Any, model: str) -> ChatResponseUpdate 
     consent_link: str = ""
     raw_item: Any = None
 
-    if event.type == "response.output_item.added" and getattr(event.item, "type", None) == "oauth_consent_request":
+    event_type = getattr(event, "type", None)
+
+    if event_type == "response.output_item.added" and getattr(event.item, "type", None) == "oauth_consent_request":
         raw_item = event.item
         consent_link = getattr(raw_item, "consent_link", None) or ""
-    elif event.type == "response.oauth_consent_requested":
+    elif event_type == "response.oauth_consent_requested":
         raw_item = event
         consent_link = getattr(event, "consent_link", None) or ""
     else:
