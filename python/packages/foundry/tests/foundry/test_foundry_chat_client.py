@@ -21,6 +21,8 @@ from openai import BadRequestError
 from pydantic import BaseModel
 from pytest import param
 
+from agent_framework_openai._chat_client import RawOpenAIChatClient
+
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 
 
@@ -838,6 +840,9 @@ def test_parse_chunk_surfaces_oauth_consent_request() -> None:
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent_contents) == 1
     assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+    assert update.role == "assistant"
+    assert update.raw_representation is mock_event
+    assert update.model == "test-model"
 
 
 def test_parse_chunk_skips_non_https_oauth_consent() -> None:
@@ -892,3 +897,55 @@ def test_parse_chunk_handles_missing_consent_link() -> None:
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent_contents) == 0
+
+
+
+def test_parse_chunk_handles_empty_string_consent_link() -> None:
+    """An oauth_consent_request with empty-string consent_link produces no content."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_item.added"
+    mock_item = MagicMock()
+    mock_item.type = "oauth_consent_request"
+    mock_item.consent_link = ""
+    mock_item.id = "oauth-item-4"
+    mock_event.item = mock_item
+    mock_event.output_index = 0
+
+    update = client._parse_chunk_from_openai(mock_event, {}, {})
+
+    consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 0
+
+
+def test_parse_chunk_delegates_non_oauth_events_to_super() -> None:
+    """Non-oauth events are delegated to super()._parse_chunk_from_openai()."""
+
+    mock_project = MagicMock()
+    mock_openai = _make_mock_openai_client()
+    mock_project.get_openai_client.return_value = mock_openai
+
+    client = RawFoundryChatClient(
+        project_client=mock_project,
+        model="test-model",
+    )
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.delta"
+
+    with patch.object(
+        RawOpenAIChatClient,
+        "_parse_chunk_from_openai",
+        return_value=MagicMock(),
+    ) as mock_super:
+        client._parse_chunk_from_openai(mock_event, {}, {})
+        mock_super.assert_called_once_with(mock_event, {}, {})

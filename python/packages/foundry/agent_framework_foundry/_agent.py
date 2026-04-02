@@ -33,6 +33,8 @@ from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework.observability import AgentTelemetryLayer, ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
+
+from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
@@ -310,26 +312,9 @@ class RawFoundryAgentChatClient(  # type: ignore[misc]
         function_call_ids: dict[int, tuple[str, str]],
     ) -> ChatResponseUpdate:
         """Parse streaming event, intercepting oauth_consent_request items."""
-        if event.type == "response.output_item.added" and getattr(event.item, "type", None) == "oauth_consent_request":
-            consent_link = getattr(event.item, "consent_link", None) or ""
-            if consent_link and not consent_link.startswith("https://"):
-                logger.warning("Skipping oauth_consent_request with non-HTTPS consent_link: %s", event.item)
-                consent_link = ""
-            contents: list[Content] = []
-            if consent_link:
-                contents.append(
-                    Content.from_oauth_consent_request(
-                        consent_link=consent_link,
-                        raw_representation=event.item,
-                    )
-                )
-            else:
-                logger.warning("Received oauth_consent_request output without consent_link: %s", event.item)
-            return ChatResponseUpdate(
-                contents=contents,
-                role="assistant",
-                raw_representation=event,
-            )
+        update = try_parse_oauth_consent_event(event, self.model)
+        if update is not None:
+            return update
         return super()._parse_chunk_from_openai(event, options, function_call_ids)
 
     def _prepare_messages_for_azure_ai(self, messages: Sequence[Message]) -> tuple[list[Message], str | None]:
