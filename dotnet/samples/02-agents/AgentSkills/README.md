@@ -8,8 +8,7 @@ Samples demonstrating Agent Skills capabilities. Each sample shows a different w
 | [Agent_Step02_CodeDefinedSkills](Agent_Step02_CodeDefinedSkills/) | Define skills entirely in C# code using `AgentInlineSkill`, with static/dynamic resources and scripts. |
 | [Agent_Step03_ClassBasedSkills](Agent_Step03_ClassBasedSkills/) | Define skills as C# classes using `AgentClassSkill`. |
 | [Agent_Step04_MixedSkills](Agent_Step04_MixedSkills/) | **(Advanced)** Combine file-based, code-defined, and class-based skills using `AgentSkillsProviderBuilder`. |
-| [Agent_Step05_CodeDefinedSkillsWithDI](Agent_Step05_CodeDefinedSkillsWithDI/) | Use Dependency Injection with code-defined skills (`AgentInlineSkill`). |
-| [Agent_Step06_ClassBasedSkillsWithDI](Agent_Step06_ClassBasedSkillsWithDI/) | Use Dependency Injection with class-based skills (`AgentClassSkill`). |
+| [Agent_Step05_SkillsWithDI](Agent_Step05_SkillsWithDI/) | Use Dependency Injection with both code-defined (`AgentInlineSkill`) and class-based (`AgentClassSkill`) skills. |
 
 ## Key Concepts
 
