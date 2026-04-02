@@ -65,7 +65,7 @@ def is_approved(message: Any) -> bool:
 
 # Create Azure OpenAI Responses chat client
 client = OpenAIChatClient(
-    model=os.environ.get("AZURE_OPENAI_RESPONSES_MODEL") or os.environ.get("AZURE_OPENAI_MODEL"),
+    model=os.environ.get("AZURE_OPENAI_CHAT_MODEL") or os.environ.get("AZURE_OPENAI_MODEL"),
     azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
     api_version=os.environ.get("AZURE_OPENAI_API_VERSION"),
     credential=AzureCliCredential(),

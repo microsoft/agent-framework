@@ -21,7 +21,7 @@ export USE_ANONYMOUS_MODE=True # set to false if using auth
 
 # OpenAI
 export OPENAI_API_KEY="..."
-export OPENAI_CHAT_MODEL="..."
+export OPENAI_CHAT_COMPLETION_MODEL="..."
 ```
 
 ## Installing Dependencies

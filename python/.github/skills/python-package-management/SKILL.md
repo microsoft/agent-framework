@@ -15,7 +15,7 @@ python/
 ├── pyproject.toml              # Root package (agent-framework)
 ├── packages/
 │   ├── core/                   # agent-framework-core (main package)
-│   ├── azure-ai/               # agent-framework-azure-ai
+│   ├── foundry/                # agent-framework-foundry
 │   ├── anthropic/              # agent-framework-anthropic
 │   └── ...                     # Other connector packages
 ```
@@ -76,9 +76,9 @@ uv run poe add-dependency-and-validate-bounds --package core --dependency "<depe
 Provider folders in core use `__getattr__` to lazy load from connector packages:
 
 ```python
-# In agent_framework/azure/__init__.py
+# In agent_framework/foundry/__init__.py
 _IMPORTS: dict[str, tuple[str, str]] = {
-    "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
 }
 
 def __getattr__(name: str) -> Any:

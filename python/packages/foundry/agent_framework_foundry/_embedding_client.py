@@ -28,22 +28,22 @@ else:
     from typing_extensions import TypeVar  # type: ignore # pragma: no cover
 
 
-logger = logging.getLogger("agent_framework.azure_ai")
+logger = logging.getLogger("agent_framework.foundry")
 
 _IMAGE_MEDIA_PREFIXES = ("image/",)
 
 
-class AzureAIInferenceEmbeddingOptions(EmbeddingGenerationOptions, total=False):
-    """Azure AI Inference-specific embedding options.
+class FoundryEmbeddingOptions(EmbeddingGenerationOptions, total=False):
+    """Foundry inference-specific embedding options.
 
-    Extends EmbeddingGenerationOptions with Azure AI Inference-specific fields.
+    Extends ``EmbeddingGenerationOptions`` with Foundry inference-specific fields.
 
     Examples:
         .. code-block:: python
 
-            from agent_framework_azure_ai import AzureAIInferenceEmbeddingOptions
+            from agent_framework_foundry import FoundryEmbeddingOptions
 
-            options: AzureAIInferenceEmbeddingOptions = {
+            options: FoundryEmbeddingOptions = {
                 "model": "text-embedding-3-small",
                 "dimensions": 1536,
                 "input_type": "document",
@@ -68,28 +68,28 @@ class AzureAIInferenceEmbeddingOptions(EmbeddingGenerationOptions, total=False):
     """Additional model-specific parameters passed directly to the API."""
 
 
-AzureAIInferenceEmbeddingOptionsT = TypeVar(
-    "AzureAIInferenceEmbeddingOptionsT",
+FoundryEmbeddingOptionsT = TypeVar(
+    "FoundryEmbeddingOptionsT",
     bound=TypedDict,  # type: ignore[valid-type]
-    default="AzureAIInferenceEmbeddingOptions",
+    default="FoundryEmbeddingOptions",
     covariant=True,
 )
 
 
-class AzureAIInferenceEmbeddingSettings(TypedDict, total=False):
-    """Azure AI Inference embedding settings."""
+class FoundryEmbeddingSettings(TypedDict, total=False):
+    """Foundry inference embedding settings."""
 
-    endpoint: str | None
-    api_key: str | None
+    models_endpoint: str | None
+    models_api_key: str | None
     embedding_model: str | None
     image_embedding_model: str | None
 
 
-class RawAzureAIInferenceEmbeddingClient(
-    BaseEmbeddingClient[Content | str, list[float], AzureAIInferenceEmbeddingOptionsT],
-    Generic[AzureAIInferenceEmbeddingOptionsT],
+class RawFoundryEmbeddingClient(
+    BaseEmbeddingClient[Content | str, list[float], FoundryEmbeddingOptionsT],
+    Generic[FoundryEmbeddingOptionsT],
 ):
-    """Raw Azure AI Inference embedding client without telemetry.
+    """Raw Foundry embedding client without telemetry.
 
     Accepts both text (``str``) and image (``Content``) inputs. Text and image
     inputs within a single batch are separated and dispatched to
@@ -98,14 +98,14 @@ class RawAzureAIInferenceEmbeddingClient(
 
     Keyword Args:
         model: The text embedding model (e.g. "text-embedding-3-small").
-            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL.
+            Can also be set via environment variable FOUNDRY_EMBEDDING_MODEL.
         image_model: The image embedding model (e.g. "Cohere-embed-v3-english").
-            Can also be set via environment variable AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL.
+            Can also be set via environment variable FOUNDRY_IMAGE_EMBEDDING_MODEL.
             Falls back to ``model`` if not provided.
-        endpoint: The Azure AI Inference endpoint URL.
-            Can also be set via environment variable AZURE_AI_INFERENCE_ENDPOINT.
+        endpoint: The Foundry inference endpoint URL.
+            Can also be set via environment variable FOUNDRY_MODELS_ENDPOINT.
         api_key: API key for authentication.
-            Can also be set via environment variable AZURE_AI_INFERENCE_API_KEY.
+            Can also be set via environment variable FOUNDRY_MODELS_API_KEY.
         text_client: Optional pre-configured ``EmbeddingsClient``.
         image_client: Optional pre-configured ``ImageEmbeddingsClient``.
         credential: Optional ``AzureKeyCredential`` or token credential. If not provided,
@@ -128,13 +128,13 @@ class RawAzureAIInferenceEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize a raw Azure AI Inference embedding client."""
+        """Initialize a raw Foundry embedding client."""
         settings = load_settings(
-            AzureAIInferenceEmbeddingSettings,
-            env_prefix="AZURE_AI_INFERENCE_",
-            required_fields=["endpoint", "embedding_model"],
-            endpoint=endpoint,
-            api_key=api_key,
+            FoundryEmbeddingSettings,
+            env_prefix="FOUNDRY_",
+            required_fields=["models_endpoint", "embedding_model"],
+            models_endpoint=endpoint,
+            models_api_key=api_key,
             embedding_model=model,
             image_embedding_model=image_model,
             env_file_path=env_file_path,
@@ -143,10 +143,10 @@ class RawAzureAIInferenceEmbeddingClient(
 
         self.model = settings["embedding_model"]  # type: ignore[reportTypedDictNotRequiredAccess]
         self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
-        resolved_endpoint = settings["endpoint"]  # type: ignore[reportTypedDictNotRequiredAccess]
+        resolved_endpoint = settings["models_endpoint"]  # type: ignore[reportTypedDictNotRequiredAccess]
 
-        if credential is None and settings.get("api_key"):
-            credential = AzureKeyCredential(settings["api_key"])  # type: ignore[arg-type]
+        if credential is None and settings.get("models_api_key"):
+            credential = AzureKeyCredential(settings["models_api_key"])  # type: ignore[arg-type]
 
         if credential is None and text_client is None and image_client is None:
             raise ValueError("Either 'api_key', 'credential', or pre-configured client(s) must be provided.")
@@ -169,7 +169,7 @@ class RawAzureAIInferenceEmbeddingClient(
         with suppress(Exception):
             await self._image_client.close()
 
-    async def __aenter__(self) -> RawAzureAIInferenceEmbeddingClient[AzureAIInferenceEmbeddingOptionsT]:
+    async def __aenter__(self) -> RawFoundryEmbeddingClient[FoundryEmbeddingOptionsT]:
         """Enter the async context manager."""
         return self
 
@@ -185,8 +185,8 @@ class RawAzureAIInferenceEmbeddingClient(
         self,
         values: Sequence[Content | str],
         *,
-        options: AzureAIInferenceEmbeddingOptionsT | None = None,
-    ) -> GeneratedEmbeddings[list[float], AzureAIInferenceEmbeddingOptionsT]:
+        options: FoundryEmbeddingOptionsT | None = None,
+    ) -> GeneratedEmbeddings[list[float], FoundryEmbeddingOptionsT]:
         """Generate embeddings for text and/or image inputs.
 
         Text inputs (``str`` or ``Content`` with ``type="text"``) are sent to the
@@ -310,12 +310,12 @@ class RawAzureAIInferenceEmbeddingClient(
         )  # type: ignore[reportReturnType]
 
 
-class AzureAIInferenceEmbeddingClient(
-    EmbeddingTelemetryLayer[Content | str, list[float], AzureAIInferenceEmbeddingOptionsT],
-    RawAzureAIInferenceEmbeddingClient[AzureAIInferenceEmbeddingOptionsT],
-    Generic[AzureAIInferenceEmbeddingOptionsT],
+class FoundryEmbeddingClient(
+    EmbeddingTelemetryLayer[Content | str, list[float], FoundryEmbeddingOptionsT],
+    RawFoundryEmbeddingClient[FoundryEmbeddingOptionsT],
+    Generic[FoundryEmbeddingOptionsT],
 ):
-    """Azure AI Inference embedding client with telemetry support.
+    """Foundry embedding client with telemetry support.
 
     Supports both text and image inputs in a single client. Pass plain strings
     or ``Content`` instances created with ``Content.from_text()`` or
@@ -323,14 +323,14 @@ class AzureAIInferenceEmbeddingClient(
 
     Keyword Args:
         model: The text embedding model (e.g. "text-embedding-3-small").
-            Can also be set via environment variable AZURE_AI_INFERENCE_EMBEDDING_MODEL.
+            Can also be set via environment variable FOUNDRY_EMBEDDING_MODEL.
         image_model: The image embedding model
             (e.g. "Cohere-embed-v3-english"). Can also be set via environment variable
-            AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL. Falls back to ``model``.
-        endpoint: The Azure AI Inference endpoint URL.
-            Can also be set via environment variable AZURE_AI_INFERENCE_ENDPOINT.
+            FOUNDRY_IMAGE_EMBEDDING_MODEL. Falls back to ``model``.
+        endpoint: The Foundry inference endpoint URL.
+            Can also be set via environment variable FOUNDRY_MODELS_ENDPOINT.
         api_key: API key for authentication.
-            Can also be set via environment variable AZURE_AI_INFERENCE_API_KEY.
+            Can also be set via environment variable FOUNDRY_MODELS_API_KEY.
         text_client: Optional pre-configured ``EmbeddingsClient``.
         image_client: Optional pre-configured ``ImageEmbeddingsClient``.
         credential: Optional ``AzureKeyCredential`` or token credential.
@@ -341,14 +341,14 @@ class AzureAIInferenceEmbeddingClient(
     Examples:
         .. code-block:: python
 
-            from agent_framework_azure_ai import AzureAIInferenceEmbeddingClient
+            from agent_framework_foundry import FoundryEmbeddingClient
 
             # Using environment variables
-            # Set AZURE_AI_INFERENCE_ENDPOINT=https://your-endpoint.inference.ai.azure.com
-            # Set AZURE_AI_INFERENCE_API_KEY=your-key
-            # Set AZURE_AI_INFERENCE_EMBEDDING_MODEL=text-embedding-3-small
-            # Set AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL=Cohere-embed-v3-english
-            client = AzureAIInferenceEmbeddingClient()
+            # Set FOUNDRY_MODELS_ENDPOINT=https://your-endpoint.inference.ai.azure.com
+            # Set FOUNDRY_MODELS_API_KEY=your-key
+            # Set FOUNDRY_EMBEDDING_MODEL=text-embedding-3-small
+            # Set FOUNDRY_IMAGE_EMBEDDING_MODEL=Cohere-embed-v3-english
+            client = FoundryEmbeddingClient()
 
             # Text embeddings
             result = await client.get_embeddings(["Hello, world!"])
@@ -380,7 +380,7 @@ class AzureAIInferenceEmbeddingClient(
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
-        """Initialize an Azure AI Inference embedding client."""
+        """Initialize a Foundry embedding client."""
         super().__init__(
             model=model,
             image_model=image_model,

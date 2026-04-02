@@ -1,20 +1,19 @@
 # Copyright (c) Microsoft. All rights reserved.
-# ruff: noqa: T201
 
 import asyncio
 import os
 
+from agent_framework import Agent
+from agent_framework.azure import CosmosHistoryProvider
 from agent_framework.foundry import FoundryChatClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
-
-from agent_framework_azure_cosmos import CosmosHistoryProvider
 
 # Load environment variables from .env file.
 load_dotenv()
 
 """
-This sample demonstrates CosmosHistoryProvider as an agent context provider.
+This sample demonstrates CosmosHistoryProvider as an agent history provider.
 
 Key components:
 - FoundryChatClient configured with an Azure AI project endpoint
@@ -54,39 +53,38 @@ async def main() -> None:
         )
         return
 
-    # 1. Create an Azure credential and Foundry chat client using project endpoint auth.
-    async with AzureCliCredential() as credential:
-        client = FoundryChatClient(
-            project_endpoint=project_endpoint,
-            model=model,
-            credential=credential,
-        )
+    # 1. Create an Azure credential and a CosmosHistoryProvider for agent context
+    async with (
+        AzureCliCredential() as credential,
+        CosmosHistoryProvider(
+            endpoint=cosmos_endpoint,
+            database_name=cosmos_database_name,
+            container_name=cosmos_container_name,
+            credential=cosmos_key or credential,
+        ) as history_provider,
+        # 2. Create an agent that uses Cosmos for persisted conversation history.
+        Agent(
+            client=FoundryChatClient(
+                project_endpoint=project_endpoint,
+                model=model,
+                credential=credential,
+            ),
+            name="CosmosHistoryAgent",
+            instructions="You are a helpful assistant that remembers prior turns.",
+            context_providers=[history_provider],
+            default_options={"store": False},
+        ) as agent,
+    ):
+        # 3. Create a session (session_id is used as the partition key).
+        session = agent.create_session()
 
-        # 2. Create an agent that uses the history provider as a context provider.
-        async with (
-            CosmosHistoryProvider(
-                endpoint=cosmos_endpoint,
-                database_name=cosmos_database_name,
-                container_name=cosmos_container_name,
-                credential=cosmos_key or credential,
-            ) as history_provider,
-            client.as_agent(
-                name="CosmosHistoryAgent",
-                instructions="You are a helpful assistant that remembers prior turns.",
-                context_providers=[history_provider],
-                default_options={"store": False},
-            ) as agent,
-        ):
-            # 3. Create a session (session_id is used as the partition key).
-            session = agent.create_session()
+        # 4. Run a multi-turn conversation; history is persisted by CosmosHistoryProvider.
+        response1 = await agent.run("My name is Ada and I enjoy distributed systems.", session=session)
+        print(f"Assistant: {response1.text}")
 
-            # 4. Run a multi-turn conversation; history is persisted by CosmosHistoryProvider.
-            response1 = await agent.run("My name is Ada and I enjoy distributed systems.", session=session)
-            print(f"Assistant: {response1.text}")
-
-            response2 = await agent.run("What do you remember about me?", session=session)
-            print(f"Assistant: {response2.text}")
-            print(f"Container: {history_provider.container_name}")
+        response2 = await agent.run("What do you remember about me?", session=session)
+        print(f"Assistant: {response2.text}")
+        print(f"Container: {history_provider.container_name}")
 
 
 if __name__ == "__main__":

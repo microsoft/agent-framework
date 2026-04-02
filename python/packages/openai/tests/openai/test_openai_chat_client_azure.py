@@ -23,7 +23,7 @@ pytestmark = pytest.mark.azure
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.openai.azure.com")
-    or (os.getenv("AZURE_OPENAI_RESPONSES_MODEL", "") == "" and os.getenv("AZURE_OPENAI_MODEL", "") == ""),
+    or (os.getenv("AZURE_OPENAI_CHAT_MODEL", "") == "" and os.getenv("AZURE_OPENAI_MODEL", "") == ""),
     reason="No real Azure OpenAI endpoint or responses deployment provided; skipping integration tests.",
 )
 
@@ -35,7 +35,7 @@ def _with_azure_openai_debug() -> Any:
             try:
                 return await func(*args, **kwargs)
             except Exception as exc:
-                model = os.getenv("AZURE_OPENAI_RESPONSES_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "<unset>")
+                model = os.getenv("AZURE_OPENAI_CHAT_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "<unset>")
                 api_version = os.getenv("AZURE_OPENAI_API_VERSION") or "preview"
                 endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
                 debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
@@ -96,7 +96,7 @@ async def get_weather(location: str) -> str:
 def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIChatClient(credential=AzureCliCredential())
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_MODEL"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_MODEL"]
     assert isinstance(client, SupportsChatGetResponse)
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
@@ -106,7 +106,7 @@ def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) ->
 def test_init_auto_detects_azure_env(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIChatClient()
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_MODEL"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
 
@@ -141,7 +141,7 @@ def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_
 
     client = OpenAIChatClient(credential=lambda: "token")
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_MODEL"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
 
@@ -149,7 +149,7 @@ def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_
 def test_init_falls_back_to_generic_azure_deployment_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_RESPONSES_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_MODEL", raising=False)
 
     client = OpenAIChatClient()
 
@@ -160,9 +160,9 @@ def test_init_falls_back_to_generic_azure_deployment_env(
 def test_init_does_not_fall_back_to_openai_responses_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_RESPONSES_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_MODEL", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_MODEL", raising=False)
-    monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_responses_model")
 
     with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a model"):
         OpenAIChatClient()
@@ -171,9 +171,9 @@ def test_init_does_not_fall_back_to_openai_responses_model_for_azure_env(
 def test_init_does_not_fall_back_to_openai_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_RESPONSES_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_MODEL", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_MODEL", raising=False)
-    monkeypatch.delenv("OPENAI_RESPONSES_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
 
     with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a model"):
@@ -203,7 +203,7 @@ def test_init_with_credential_wraps_async_token_credential(
 def test_init_uses_default_azure_api_version(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIChatClient(credential=AzureCliCredential())
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_RESPONSES_MODEL"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_MODEL"]
     assert client.api_version is not None
 
 

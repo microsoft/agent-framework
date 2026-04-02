@@ -61,8 +61,8 @@ Depending on the selected client, set the appropriate environment variables:
 
 **For OpenAI clients:**
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_chat_completion`
-- `OPENAI_RESPONSES_MODEL`: The OpenAI model for `openai_responses`
+- `OPENAI_CHAT_COMPLETION_MODEL`: The OpenAI model for `openai_chat_completion`
+- `OPENAI_CHAT_MODEL`: The OpenAI model for `openai_responses`
 
 **For Anthropic client (`anthropic`):**
 - `ANTHROPIC_API_KEY`: Your Anthropic API key

@@ -30,7 +30,6 @@ members = [
     "agent-framework-a2a",
     "agent-framework-ag-ui",
     "agent-framework-anthropic",
-    "agent-framework-azure-ai",
     "agent-framework-azure-ai-search",
     "agent-framework-azure-cosmos",
     "agent-framework-azurefunctions",
@@ -204,31 +203,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "agent-framework-azure-ai"
-version = "1.0.0rc6"
-source = { editable = "packages/azure-ai" }
-dependencies = [
-    { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "aiohttp", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-agents", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-inference", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "azure-identity", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "agent-framework-core", editable = "packages/core" },
-    { name = "agent-framework-openai", editable = "packages/openai" },
-    { name = "aiohttp", specifier = ">=3.7.0,<4" },
-    { name = "azure-ai-agents", specifier = ">=1.2.0b5,<1.2.0b6" },
-    { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
-    { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
-    { name = "azure-identity", specifier = ">=1,<2" },
-]
-
-[[package]]
 name = "agent-framework-azure-ai-search"
 version = "1.0.0b260330"
 source = { editable = "packages/azure-ai-search" }
@@ -358,8 +332,8 @@ all = [
     { name = "agent-framework-a2a", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-ag-ui", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-anthropic", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "agent-framework-azure-ai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azure-ai-search", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "agent-framework-azure-cosmos", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-azurefunctions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-bedrock", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-chatkit", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -386,8 +360,8 @@ requires-dist = [
     { name = "agent-framework-a2a", marker = "extra == 'all'", editable = "packages/a2a" },
     { name = "agent-framework-ag-ui", marker = "extra == 'all'", editable = "packages/ag-ui" },
     { name = "agent-framework-anthropic", marker = "extra == 'all'", editable = "packages/anthropic" },
-    { name = "agent-framework-azure-ai", marker = "extra == 'all'", editable = "packages/azure-ai" },
     { name = "agent-framework-azure-ai-search", marker = "extra == 'all'", editable = "packages/azure-ai-search" },
+    { name = "agent-framework-azure-cosmos", marker = "extra == 'all'", editable = "packages/azure-cosmos" },
     { name = "agent-framework-azurefunctions", marker = "extra == 'all'", editable = "packages/azurefunctions" },
     { name = "agent-framework-bedrock", marker = "extra == 'all'", editable = "packages/bedrock" },
     { name = "agent-framework-chatkit", marker = "extra == 'all'", editable = "packages/chatkit" },
@@ -511,6 +485,7 @@ source = { editable = "packages/foundry" }
 dependencies = [
     { name = "agent-framework-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "agent-framework-openai", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "azure-ai-inference", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "azure-ai-projects", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
@@ -518,6 +493,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-framework-core", editable = "packages/core" },
     { name = "agent-framework-openai", editable = "packages/openai" },
+    { name = "azure-ai-inference", specifier = ">=1.0.0b9,<1.0.0b10" },
     { name = "azure-ai-projects", specifier = ">=2.0.0,<3.0" },
 ]
 
@@ -1018,20 +994,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32", size = 952055, upload-time = "2026-03-19T14:22:25.026Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309", size = 67548, upload-time = "2026-03-19T14:22:23.645Z" },
-]
-
-[[package]]
-name = "azure-ai-agents"
-version = "1.2.0b5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "azure-core", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "isodate", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform == 'darwin' or sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/57/8adeed578fa8984856c67b4229e93a58e3f6024417d448d0037aafa4ee9b/azure_ai_agents-1.2.0b5.tar.gz", hash = "sha256:1a16ef3f305898aac552269f01536c34a00473dedee0bca731a21fdb739ff9d5", size = 394876, upload-time = "2025-09-30T01:55:02.328Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/6d/15070d23d7a94833a210da09d5d7ed3c24838bb84f0463895e5d159f1695/azure_ai_agents-1.2.0b5-py3-none-any.whl", hash = "sha256:257d0d24a6bf13eed4819cfa5c12fb222e5908deafb3cbfd5711d3a511cc4e88", size = 217948, upload-time = "2025-09-30T01:55:04.155Z" },
 ]
 
 [[package]]

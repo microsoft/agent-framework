@@ -25,7 +25,7 @@ The new usage tracking sample uses `OpenAIChatClient`, so set the usual OpenAI r
 
 ```bash
 export OPENAI_API_KEY="your-openai-api-key"
-export OPENAI_RESPONSES_MODEL="gpt-4.1-mini"
+export OPENAI_CHAT_MODEL="gpt-4.1-mini"
 ```
 
 Then run:

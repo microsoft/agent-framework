@@ -79,7 +79,7 @@ def test_supports_web_search_only() -> None:
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
+    monkeypatch.setenv("OPENAI_CHAT_COMPLETION_MODEL", "test_chat_model")
 
     open_ai_chat_completion = OpenAIChatCompletionClient()
 

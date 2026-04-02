@@ -67,10 +67,10 @@ class OpenAISettings(TypedDict, total=False):
             Can be set via environment variable OPENAI_MODEL.
         embedding_model: The OpenAI embedding model to use, for example, text-embedding-3-small.
             Can be set via environment variable OPENAI_EMBEDDING_MODEL.
-        chat_model: The OpenAI chat-completions model to prefer before OPENAI_MODEL.
+        chat_model: The OpenAIChatClient model to prefer before OPENAI_MODEL.
             Can be set via environment variable OPENAI_CHAT_MODEL.
-        responses_model: The OpenAI responses model to prefer before OPENAI_MODEL.
-            Can be set via environment variable OPENAI_RESPONSES_MODEL.
+        chat_completion_model: The OpenAIChatCompletionClient model to prefer before OPENAI_MODEL.
+            Can be set via environment variable OPENAI_CHAT_COMPLETION_MODEL.
 
     Examples:
         .. code-block:: python
@@ -95,7 +95,7 @@ class OpenAISettings(TypedDict, total=False):
     model: str | None
     embedding_model: str | None
     chat_model: str | None
-    responses_model: str | None
+    chat_completion_model: str | None
 
 
 class AzureOpenAISettings(TypedDict, total=False):
@@ -107,24 +107,24 @@ class AzureOpenAISettings(TypedDict, total=False):
     model: str | None
     embedding_model: str | None
     chat_model: str | None
-    responses_model: str | None
+    chat_completion_model: str | None
     api_version: str | None
 
 
-OpenAIModelSettingName = Literal["model", "embedding_model", "chat_model", "responses_model"]
+OpenAIModelSettingName = Literal["model", "embedding_model", "chat_model", "chat_completion_model"]
 
 OPENAI_MODEL_ENV_VARS: dict[OpenAIModelSettingName, str] = {
     "model": "OPENAI_MODEL",
     "embedding_model": "OPENAI_EMBEDDING_MODEL",
     "chat_model": "OPENAI_CHAT_MODEL",
-    "responses_model": "OPENAI_RESPONSES_MODEL",
+    "chat_completion_model": "OPENAI_CHAT_COMPLETION_MODEL",
 }
 
 AZURE_MODEL_ENV_VARS: dict[OpenAIModelSettingName, str] = {
     "model": "AZURE_OPENAI_MODEL",
     "embedding_model": "AZURE_OPENAI_EMBEDDING_MODEL",
     "chat_model": "AZURE_OPENAI_CHAT_MODEL",
-    "responses_model": "AZURE_OPENAI_RESPONSES_MODEL",
+    "chat_completion_model": "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
 }
 
 

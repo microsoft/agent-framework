@@ -150,12 +150,12 @@ def test_openai_chat_client_tool_methods_return_dict() -> None:
     assert web_tool.get("type") == "web_search"
 
 
-def test_init_prefers_openai_responses_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_RESPONSES_MODEL", "test_responses_model")
+def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
 
     openai_responses_client = OpenAIChatClient()
 
-    assert openai_responses_client.model == "test_responses_model"
+    assert openai_responses_client.model == "test_chat_model"
 
 
 def test_init_validation_fail() -> None:

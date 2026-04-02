@@ -36,15 +36,19 @@ These variables are used when the client is configured for OpenAI:
 | `OPENAI_ORG_ID` | OpenAI organization ID |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible base URL |
 | `OPENAI_MODEL` | Generic fallback model |
-| `OPENAI_RESPONSES_MODEL` | Preferred model for `OpenAIChatClient` |
-| `OPENAI_CHAT_MODEL` | Preferred model for `OpenAIChatCompletionClient` |
+| `OPENAI_CHAT_MODEL` | Preferred model for `OpenAIChatClient` |
+| `OPENAI_CHAT_COMPLETION_MODEL` | Preferred model for `OpenAIChatCompletionClient` |
 | `OPENAI_EMBEDDING_MODEL` | Preferred model for `OpenAIEmbeddingClient` |
 
 Model lookup order:
 
-- `OpenAIChatClient`: `OPENAI_RESPONSES_MODEL` -> `OPENAI_MODEL`
-- `OpenAIChatCompletionClient`: `OPENAI_CHAT_MODEL` -> `OPENAI_MODEL`
+- `OpenAIChatClient`: `OPENAI_CHAT_MODEL` -> `OPENAI_MODEL`
+- `OpenAIChatCompletionClient`: `OPENAI_CHAT_COMPLETION_MODEL` -> `OPENAI_MODEL`
 - `OpenAIEmbeddingClient`: `OPENAI_EMBEDDING_MODEL` -> `OPENAI_MODEL`
+
+These model variables are only consulted when you do not pass `model=` directly. In other words,
+`OpenAIChatClient(model="...")` ignores `OPENAI_CHAT_MODEL`, and
+`OpenAIChatCompletionClient(model="...")` ignores `OPENAI_CHAT_COMPLETION_MODEL`.
 
 ### Azure OpenAI
 
@@ -57,15 +61,18 @@ These variables are used when the client is configured for Azure OpenAI:
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key |
 | `AZURE_OPENAI_API_VERSION` | Azure OpenAI API version |
 | `AZURE_OPENAI_MODEL` | Generic fallback deployment |
-| `AZURE_OPENAI_RESPONSES_MODEL` | Preferred deployment for `OpenAIChatClient` |
-| `AZURE_OPENAI_CHAT_MODEL` | Preferred deployment for `OpenAIChatCompletionClient` |
+| `AZURE_OPENAI_CHAT_MODEL` | Preferred deployment for `OpenAIChatClient` |
+| `AZURE_OPENAI_CHAT_COMPLETION_MODEL` | Preferred deployment for `OpenAIChatCompletionClient` |
 | `AZURE_OPENAI_EMBEDDING_MODEL` | Preferred deployment for `OpenAIEmbeddingClient` |
 
 Deployment lookup order:
 
-- `OpenAIChatClient`: `AZURE_OPENAI_RESPONSES_MODEL` -> `AZURE_OPENAI_MODEL`
-- `OpenAIChatCompletionClient`: `AZURE_OPENAI_CHAT_MODEL` -> `AZURE_OPENAI_MODEL`
+- `OpenAIChatClient`: `AZURE_OPENAI_CHAT_MODEL` -> `AZURE_OPENAI_MODEL`
+- `OpenAIChatCompletionClient`: `AZURE_OPENAI_CHAT_COMPLETION_MODEL` -> `AZURE_OPENAI_MODEL`
 - `OpenAIEmbeddingClient`: `AZURE_OPENAI_EMBEDDING_MODEL` -> `AZURE_OPENAI_MODEL`
+
+For Azure routing, the same rule applies: the client-specific deployment variable is checked first,
+then the generic `AZURE_OPENAI_MODEL` fallback. Passing `model=` overrides both environment variables.
 
 When both OpenAI and Azure environment variables are present, the generic clients prefer OpenAI
 when `OPENAI_API_KEY` is configured. To use Azure explicitly, pass `azure_endpoint` or

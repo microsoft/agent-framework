@@ -1,10 +1,10 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "agent-framework-azure-ai",
+#     "agent-framework-foundry",
 # ]
 # ///
-# Run with: uv run samples/02-agents/embeddings/azure_ai_inference_embeddings.py
+# Run with: uv run samples/02-agents/embeddings/foundry_embeddings.py
 
 # Copyright (c) Microsoft. All rights reserved.
 
@@ -12,28 +12,29 @@ import asyncio
 import pathlib
 
 from agent_framework import Content
-from agent_framework.azure import AzureAIInferenceEmbeddingClient
+from agent_framework.foundry import FoundryEmbeddingClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
-"""Azure AI Inference Image Embedding Example
+"""Microsoft Foundry Image Embedding Example
 
 This sample demonstrates how to generate image embeddings using the
-Azure AI Inference embedding client with the Cohere-embed-v3-english model.
+Foundry embedding client with the Cohere-embed-v3-english model.
 Images are passed as ``Content`` objects created with ``Content.from_data()``.
 
 Prerequisites:
-    Deploy an embedding model in Azure AI Inference that supports image inputs, such as Cohere-embed-v3-english.
+    Deploy an embedding model to a Foundry-hosted inference endpoint that supports image inputs,
+    such as Cohere-embed-v3-english.
 
     The details page for that model, has a target URI and a Key, which should be set in environment variables or a .env
     file as follows, the target URI should append the `/models` path:
-    - AZURE_AI_INFERENCE_ENDPOINT: Your Azure AI model inference endpoint URL, for instance:
+    - FOUNDRY_MODELS_ENDPOINT: Your Foundry models endpoint URL, for instance:
         https://<apim-instance>.azure-api.net/<foundry-instance>/models
-    - AZURE_AI_INFERENCE_API_KEY: Your API key
-    - AZURE_AI_INFERENCE_EMBEDDING_MODEL: The text embedding model name
+    - FOUNDRY_MODELS_API_KEY: Your API key
+    - FOUNDRY_EMBEDDING_MODEL: The text embedding model name
       (e.g. "text-embedding-3-small")
-    - AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL: The image embedding model name
+    - FOUNDRY_IMAGE_EMBEDDING_MODEL: The image embedding model name
       (e.g. "Cohere-embed-v3-english")
 """
 
@@ -41,8 +42,8 @@ SAMPLE_IMAGE_PATH = pathlib.Path(__file__).parent.parent.parent / "shared" / "sa
 
 
 async def main() -> None:
-    """Generate image embeddings with Azure AI Inference."""
-    async with AzureAIInferenceEmbeddingClient() as client:
+    """Generate image embeddings with Foundry."""
+    async with FoundryEmbeddingClient() as client:
         # 1. Generate an image embedding.
         image_bytes = SAMPLE_IMAGE_PATH.read_bytes()
         image_content = Content.from_data(data=image_bytes, media_type="image/jpeg")
