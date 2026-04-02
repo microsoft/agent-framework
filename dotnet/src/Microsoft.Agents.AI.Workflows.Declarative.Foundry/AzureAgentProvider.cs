@@ -28,7 +28,7 @@ namespace Microsoft.Agents.AI.Workflows.Declarative;
 /// <param name="projectCredentials">The credentials used to authenticate with the Foundry project. This must be a valid instance of <see cref="TokenCredential"/>.</param>
 public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential projectCredentials) : ResponseAgentProvider
 {
-    private readonly Dictionary<string, AgentVersion> _versionCache = [];
+    private readonly Dictionary<string, ProjectsAgentVersion> _versionCache = [];
     private readonly Dictionary<string, AIAgent> _agentCache = [];
 
     private AIProjectClient? _agentClient;
@@ -99,7 +99,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         IDictionary<string, object?>? inputArguments,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        AgentVersion agentVersionResult = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
+        ProjectsAgentVersion agentVersionResult = await this.QueryAgentAsync(agentId, agentVersion, cancellationToken).ConfigureAwait(false);
         AIAgent agent = await this.GetAgentAsync(agentVersionResult, cancellationToken).ConfigureAwait(false);
 
         ChatOptions chatOptions =
@@ -133,10 +133,10 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         }
     }
 
-    private async Task<AgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
+    private async Task<ProjectsAgentVersion> QueryAgentAsync(string agentName, string? agentVersion, CancellationToken cancellationToken = default)
     {
         string agentKey = $"{agentName}:{agentVersion}";
-        if (this._versionCache.TryGetValue(agentKey, out AgentVersion? targetAgent))
+        if (this._versionCache.TryGetValue(agentKey, out ProjectsAgentVersion? targetAgent))
         {
             return targetAgent;
         }
@@ -145,8 +145,8 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
 
         if (string.IsNullOrEmpty(agentVersion))
         {
-            AgentRecord agentRecord =
-                await client.Agents.GetAgentAsync(
+            ProjectsAgentRecord agentRecord =
+                await client.AgentAdministrationClient.GetAgentAsync(
                     agentName,
                     cancellationToken).ConfigureAwait(false);
 
@@ -155,7 +155,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         else
         {
             targetAgent =
-                await client.Agents.GetAgentVersionAsync(
+                await client.AgentAdministrationClient.GetAgentVersionAsync(
                     agentName,
                     agentVersion,
                     cancellationToken).ConfigureAwait(false);
@@ -166,7 +166,7 @@ public sealed class AzureAgentProvider(Uri projectEndpoint, TokenCredential proj
         return targetAgent;
     }
 
-    private async Task<AIAgent> GetAgentAsync(AgentVersion agentVersion, CancellationToken cancellationToken = default)
+    private async Task<AIAgent> GetAgentAsync(ProjectsAgentVersion agentVersion, CancellationToken cancellationToken = default)
     {
         if (this._agentCache.TryGetValue(agentVersion.Id, out AIAgent? agent))
         {

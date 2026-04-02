@@ -4,6 +4,7 @@ using System.ClientModel;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Memory;
 
 namespace Microsoft.Agents.AI.Foundry;
 

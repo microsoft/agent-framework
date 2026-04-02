@@ -25,8 +25,8 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
 {
     private readonly ChatClientMetadata? _metadata;
     private readonly AIProjectClient _agentClient;
-    private readonly AgentVersion? _agentVersion;
-    private readonly AgentRecord? _agentRecord;
+    private readonly ProjectsAgentVersion? _agentVersion;
+    private readonly ProjectsAgentRecord? _agentRecord;
     private readonly ChatOptions? _chatOptions;
     private readonly AgentReference _agentReference;
 
@@ -56,34 +56,34 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
     /// Initializes a new instance of the <see cref="AzureAIProjectChatClient"/> class.
     /// </summary>
     /// <param name="aiProjectClient">An instance of <see cref="AIProjectClient"/> to interact with Azure AI Agents services.</param>
-    /// <param name="agentRecord">An instance of <see cref="AgentRecord"/> representing the specific agent to use.</param>
+    /// <param name="agentRecord">An instance of <see cref="ProjectsAgentRecord"/> representing the specific agent to use.</param>
     /// <param name="chatOptions">An instance of <see cref="ChatOptions"/> representing the options on how the agent was predefined.</param>
     /// <remarks>
     /// The <see cref="IChatClient"/> provided should be decorated with a <see cref="AzureAIProjectChatClient"/> for proper functionality.
     /// </remarks>
-    internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentRecord agentRecord, ChatOptions? chatOptions)
+    internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, ProjectsAgentRecord agentRecord, ChatOptions? chatOptions)
         : this(aiProjectClient, Throw.IfNull(agentRecord).GetLatestVersion(), chatOptions)
     {
         this._agentRecord = agentRecord;
     }
 
-    internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, AgentVersion agentVersion, ChatOptions? chatOptions)
+    internal AzureAIProjectChatClient(AIProjectClient aiProjectClient, ProjectsAgentVersion agentVersion, ChatOptions? chatOptions)
         : this(
               aiProjectClient,
               CreateAgentReference(Throw.IfNull(agentVersion)),
-              (agentVersion.Definition as PromptAgentDefinition)?.Model,
+              (agentVersion.Definition as DeclarativeAgentDefinition)?.Model,
               chatOptions)
     {
         this._agentVersion = agentVersion;
     }
 
     /// <summary>
-    /// Creates an <see cref="AgentReference"/> from an <see cref="AgentVersion"/>.
+    /// Creates an <see cref="AgentReference"/> from an <see cref="ProjectsAgentVersion"/>.
     /// Uses the agent version's version if available, otherwise defaults to "latest".
     /// </summary>
     /// <param name="agentVersion">The agent version to create a reference from.</param>
     /// <returns>An <see cref="AgentReference"/> for the specified agent version.</returns>
-    private static AgentReference CreateAgentReference(AgentVersion agentVersion)
+    private static AgentReference CreateAgentReference(ProjectsAgentVersion agentVersion)
     {
         // If the version is null, empty, or whitespace, use "latest" as the default.
         // This handles cases where hosted agents (like MCP agents) may not have a version assigned.
@@ -98,9 +98,9 @@ internal sealed class AzureAIProjectChatClient : DelegatingChatClient
             ? this._metadata
             : (serviceKey is null && serviceType == typeof(AIProjectClient))
             ? this._agentClient
-            : (serviceKey is null && serviceType == typeof(AgentVersion))
+            : (serviceKey is null && serviceType == typeof(ProjectsAgentVersion))
             ? this._agentVersion
-            : (serviceKey is null && serviceType == typeof(AgentRecord))
+            : (serviceKey is null && serviceType == typeof(ProjectsAgentRecord))
             ? this._agentRecord
             : (serviceKey is null && serviceType == typeof(AgentReference))
             ? this._agentReference

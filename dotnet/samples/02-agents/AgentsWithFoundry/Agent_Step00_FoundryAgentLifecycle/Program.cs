@@ -18,10 +18,10 @@ const string JokerName = "JokerAgent";
 AIProjectClient aiProjectClient = new(new Uri(endpoint), new AzureCliCredential());
 
 // Create a server-side agent version using the native SDK.
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     JokerName,
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: deploymentName)
         {
             Instructions = "You are good at telling jokes.",
         }));
@@ -33,4 +33,4 @@ FoundryAgent agent = aiProjectClient.AsAIAgent(agentVersion);
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate."));
 
 // Cleanup: deletes the agent and all its versions.
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(agent.Name);

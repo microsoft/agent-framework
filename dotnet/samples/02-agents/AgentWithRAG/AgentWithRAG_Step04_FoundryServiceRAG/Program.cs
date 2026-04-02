@@ -44,10 +44,10 @@ ClientResult<VectorStore> vectorStoreCreate = await vectorStoreClient.CreateVect
 FileSearchTool fileSearchTool = new([vectorStoreCreate.Value.Id]);
 #pragma warning restore OPENAI001
 
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "AskContoso",
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: deploymentName)
         {
             Instructions = "You are a helpful support specialist for Contoso Outdoors. Answer questions using the provided context and cite the source document when available.",
             Tools = { fileSearchTool }
@@ -68,4 +68,4 @@ Console.WriteLine(await agent.RunAsync("What is the best way to maintain the Tra
 // Cleanup
 await fileClient.DeleteFileAsync(uploadResult.Value.Id);
 await vectorStoreClient.DeleteVectorStoreAsync(vectorStoreCreate.Value.Id);
-await aiProjectClient.Agents.DeleteAgentAsync(agent.Name);
+await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(agent.Name);

@@ -58,9 +58,9 @@ public static class Program
         finally
         {
             // Cleanup the agents created for the sample.
-            await aiProjectClient.Agents.DeleteAgentAsync(frenchAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(spanishAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(englishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(frenchAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(spanishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(englishAgent.Name);
         }
     }
 
@@ -76,10 +76,10 @@ public static class Program
         AIProjectClient aiProjectClient,
         string model)
     {
-        AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+        ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
             $"{targetLanguage} Translator",
-            new AgentVersionCreationOptions(
-                new PromptAgentDefinition(model: model)
+            new ProjectsAgentVersionCreationOptions(
+                new DeclarativeAgentDefinition(model: model)
                 {
                     Instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.",
                 }));

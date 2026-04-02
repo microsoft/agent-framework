@@ -3,6 +3,7 @@
 using System;
 using System.Threading.Tasks;
 using Azure.AI.Projects;
+using Azure.AI.Projects.Memory;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
