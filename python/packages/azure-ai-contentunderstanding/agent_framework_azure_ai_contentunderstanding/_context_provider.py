@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Azure Content Understanding context provider using BaseContextProvider.
+"""Azure Content Understanding context provider using ContextProvider.
 
 This module provides ``ContentUnderstandingContextProvider``, built on the
-:class:`BaseContextProvider` hooks pattern.  It automatically detects file
+:class:`ContextProvider` hooks pattern.  It automatically detects file
 attachments, analyzes them via the Azure Content Understanding API, and
 injects structured results into the LLM context.
 """
@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     FunctionTool,
     Message,
     SessionContext,
@@ -73,7 +73,7 @@ class ContentUnderstandingSettings(TypedDict, total=False):
     endpoint: str | None
 
 
-class ContentUnderstandingContextProvider(BaseContextProvider):
+class ContentUnderstandingContextProvider(ContextProvider):
     """Context provider that analyzes file attachments using Azure Content Understanding.
 
     Automatically detects supported file attachments in the agent's input,

@@ -10,7 +10,7 @@ into the Agent Framework as a context provider. It automatically analyzes file a
 
 | Symbol | Type | Description |
 |--------|------|-------------|
-| `ContentUnderstandingContextProvider` | class | Main context provider — extends `BaseContextProvider` |
+| `ContentUnderstandingContextProvider` | class | Main context provider — extends `ContextProvider` |
 | `AnalysisSection` | enum | Output section selector (MARKDOWN, FIELDS, etc.) |
 | `DocumentStatus` | enum | Document lifecycle state (ANALYZING, UPLOADING, READY, FAILED) |
 | `FileSearchBackend` | ABC | Abstract vector store file operations interface |
