@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -162,7 +162,7 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
         this._options = options;
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<AgentSkillsProvider>();
 
-        if (options?.SkillsInstructionPrompt is string prompt)
+        if ((options?.IncludeSkillInstructions ?? true) && options?.SkillsInstructionPrompt is string prompt)
         {
             ValidatePromptTemplate(prompt, nameof(options));
         }
@@ -260,6 +260,11 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
 
     private string? BuildSkillsInstructions(IList<AgentSkill> skills, bool includeScriptInstructions, bool includeResourceInstructions)
     {
+        if (this._options?.IncludeSkillInstructions == false)
+        {
+            return null;
+        }
+
         string promptTemplate = this._options?.SkillsInstructionPrompt ?? DefaultSkillsInstructionPrompt;
 
         var sb = new StringBuilder();

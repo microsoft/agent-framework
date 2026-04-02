@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Shared.DiagnosticIds;
@@ -34,4 +34,12 @@ public sealed class AgentSkillsProviderOptions
     /// Set to <see langword="true"/> to rebuild tools and instructions on every invocation.
     /// </summary>
     public bool DisableCaching { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether skill instructions should be included in the system prompt.
+    /// When <see langword="true"/> (the default), skill names and descriptions are added
+    /// to the system prompt to guide the model on when to use specific skills.
+    /// Set to <see langword="false"/> to skip including these instructions in the prompt.
+    /// </summary>
+    public bool IncludeSkillInstructions { get; set; } = true;
 }

@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -136,6 +136,17 @@ public sealed class AgentSkillsProviderBuilder
     public AgentSkillsProviderBuilder UseScriptApproval(bool enabled = true)
     {
         this.GetOrCreateOptions().ScriptApproval = enabled;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables or disables including skill instructions in the system prompt.
+    /// </summary>
+    /// <param name="enabled">Whether to include skill instructions. Defaults to <see langword="true"/>.</param>
+    /// <returns>This builder instance for chaining.</returns>
+    public AgentSkillsProviderBuilder IncludeSkillInstructions(bool enabled = true)
+    {
+        this.GetOrCreateOptions().IncludeSkillInstructions = enabled;
         return this;
     }
 

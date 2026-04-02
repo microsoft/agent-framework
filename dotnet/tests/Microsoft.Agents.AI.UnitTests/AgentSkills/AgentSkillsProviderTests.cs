@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -849,6 +849,42 @@ public sealed class AgentSkillsProviderTests : IDisposable
 
         // Assert — only one occurrence (first)
         Assert.Contains("First instructions.", content!.ToString()!);
+    }
+
+    [Fact]
+    public async Task InvokingAsync_IncludeSkillInstructionsFalse_ReturnsNullInstructionsAsync()
+    {
+        // Arrange
+        this.CreateSkill("skip-skill", "Skip test", "Body.");
+        var options = new AgentSkillsProviderOptions { IncludeSkillInstructions = false };
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
+        var inputContext = new AIContext { Instructions = "Base instructions" };
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, inputContext);
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("Base instructions", result.Instructions); // Should not have changed
+        Assert.NotNull(result.Tools);
+        Assert.Contains(result.Tools!, t => t.Name == "load_skill");
+    }
+
+    [Fact]
+    public void Constructor_IncludeSkillInstructionsFalse_SkipsPromptValidation()
+    {
+        // Arrange — invalid prompt (missing placeholders)
+        var options = new AgentSkillsProviderOptions
+        {
+            IncludeSkillInstructions = false,
+            SkillsInstructionPrompt = "Invalid prompt without placeholders"
+        };
+
+        // Act — should not throw
+        var provider = new AgentSkillsProvider(new AgentFileSkillsSource(this._testRoot, s_noOpExecutor), options);
+
+        // Assert
+        Assert.NotNull(provider);
     }
 
     /// <summary>
