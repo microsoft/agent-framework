@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Foundry.Hosting;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
@@ -16,7 +17,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Hosting.AzureAIResponses.UnitTests;
+namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 
 public class AgentFrameworkResponseHandlerTests
 {

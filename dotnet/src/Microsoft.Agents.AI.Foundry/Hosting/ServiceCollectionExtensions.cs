@@ -1,10 +1,11 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using Azure.AI.AgentServer.Responses;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
-namespace Microsoft.Agents.AI.Hosting.AzureAIResponses;
+namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Extension methods for <see cref="IServiceCollection"/> to register the agent-framework

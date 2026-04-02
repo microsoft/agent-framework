@@ -1,13 +1,17 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Microsoft.Agents.AI.Hosting.AzureAIResponses;
+namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// A <see cref="ResponseHandler"/> implementation that bridges the Azure AI Responses Server SDK

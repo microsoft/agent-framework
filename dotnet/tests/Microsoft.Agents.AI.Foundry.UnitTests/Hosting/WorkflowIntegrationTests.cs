@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
+using Microsoft.Agents.AI.Foundry.Hosting;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,7 +18,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Hosting.AzureAIResponses.UnitTests;
+namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 
 /// <summary>
 /// Integration tests that verify workflow execution through the

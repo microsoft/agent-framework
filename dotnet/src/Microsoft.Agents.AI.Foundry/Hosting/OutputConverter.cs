@@ -1,17 +1,21 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
 
-namespace Microsoft.Agents.AI.Hosting.AzureAIResponses;
+namespace Microsoft.Agents.AI.Foundry.Hosting;
 
 /// <summary>
 /// Converts agent-framework <see cref="AgentResponseUpdate"/> streams into
