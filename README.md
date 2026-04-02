@@ -128,7 +128,9 @@ Create a simple Agent, using Microsoft Foundry with token-based auth, that write
 // Use `az login` to authenticate with Azure CLI
 using Azure.AI.Projects;
 using Azure.Identity;
-using Microsoft.Agents.AI;
+using System;
+using Azure.AI.Projects;
+using Azure.Identity;
 
 var endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-5.4-mini";
