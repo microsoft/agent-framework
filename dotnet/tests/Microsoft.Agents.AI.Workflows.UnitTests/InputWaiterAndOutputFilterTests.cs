@@ -28,6 +28,7 @@ public sealed class InputWaiterTests : IDisposable
         Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
 
         completed.Should().BeSameAs(waitTask, "the wait task should complete before the timeout");
+        await waitTask;
     }
 
     [Fact]
@@ -42,6 +43,7 @@ public sealed class InputWaiterTests : IDisposable
 
         Task completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(1)));
         completed.Should().BeSameAs(waitTask, "the wait task should complete after being signaled");
+        await waitTask;
     }
 
     [Fact]

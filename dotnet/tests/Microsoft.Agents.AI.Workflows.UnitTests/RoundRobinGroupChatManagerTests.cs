@@ -126,7 +126,8 @@ public class RoundRobinGroupChatManagerTests
     public void RoundRobinGroupChat_Constructor_ThrowsOnNullAgents()
     {
         FluentActions.Invoking(() => new RoundRobinGroupChatManager(null!))
-            .Should().Throw<System.ArgumentException>();
+            .Should().Throw<System.ArgumentNullException>()
+            .WithParameterName("agents");
     }
 
     [Fact]
