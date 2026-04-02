@@ -38,7 +38,7 @@ async def non_streaming_example() -> None:
 
     agent = Agent(
         client=OpenAIChatClient(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            model=os.getenv("AZURE_OPENAI_MODEL"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             credential=AzureCliCredential(),
@@ -60,7 +60,7 @@ async def streaming_example() -> None:
 
     agent = Agent(
         client=OpenAIChatClient(
-            model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            model=os.getenv("AZURE_OPENAI_MODEL"),
             azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
             credential=AzureCliCredential(),

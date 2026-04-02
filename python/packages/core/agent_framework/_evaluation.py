@@ -96,6 +96,7 @@ class ConversationSplitter(Protocol):
             # Fallback: split at last user message
             return EvalItem._split_last_turn_static(conversation)
 
+
         item.split_messages(split=split_before_memory)
     """
 
@@ -468,10 +469,7 @@ class EvalResults:
         """
         if not self.all_passed:
             errored = (self.result_counts or {}).get("errored", 0)
-            detail = msg or (
-                f"Eval run {self.run_id} {self.status}: "
-                f"{self.passed} passed, {self.failed} failed."
-            )
+            detail = msg or (f"Eval run {self.run_id} {self.status}: {self.passed} passed, {self.failed} failed.")
             if errored:
                 detail += f" {errored} errored."
             if self.report_url:
@@ -1188,8 +1186,7 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
                 score = float(d["score"])
             except (TypeError, ValueError) as exc:
                 raise TypeError(
-                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value:"
-                    f" {d['score']!r}"
+                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value: {d['score']!r}"
                 ) from exc
             # Honour an explicit 'passed' override; otherwise threshold-based.
             passed = bool(d["passed"]) if "passed" in d else score >= float(d.get("threshold", 0.5))

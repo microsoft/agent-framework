@@ -34,7 +34,7 @@ class _StubBedrockRuntime:
 def _make_client() -> BedrockChatClient:
     """Create a BedrockChatClient with a stub runtime for unit tests."""
     return BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=_StubBedrockRuntime(),
     )
@@ -43,7 +43,7 @@ def _make_client() -> BedrockChatClient:
 async def test_get_response_invokes_bedrock_runtime() -> None:
     stub = _StubBedrockRuntime()
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=stub,
     )
@@ -65,7 +65,7 @@ async def test_get_response_invokes_bedrock_runtime() -> None:
 
 def test_build_request_requires_non_system_messages() -> None:
     client = BedrockChatClient(
-        model_id="amazon.titan-text",
+        model="amazon.titan-text",
         region="us-west-2",
         client=_StubBedrockRuntime(),
     )

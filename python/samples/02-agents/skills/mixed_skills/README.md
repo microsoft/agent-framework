@@ -61,7 +61,7 @@ Set environment variables (or create a `.env` file):
 
 ```
 FOUNDRY_PROJECT_ENDPOINT=https://your-project.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_OPENAI_MODEL=gpt-4o-mini
 ```
 
 Authenticate with Azure CLI:

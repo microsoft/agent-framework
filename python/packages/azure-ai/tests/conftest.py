@@ -29,7 +29,7 @@ def azure_ai_unit_test_env(monkeypatch, exclude_list, override_env_param_dict): 
 
     env_vars = {
         "AZURE_AI_PROJECT_ENDPOINT": "https://test-project.cognitiveservices.azure.com/",
-        "AZURE_AI_MODEL_DEPLOYMENT_NAME": "test-gpt-4o",
+        "AZURE_AI_MODEL": "test-gpt-4o",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore

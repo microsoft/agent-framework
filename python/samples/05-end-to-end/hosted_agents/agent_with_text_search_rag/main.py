@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import Agent, AgentSession, BaseContextProvider, Message, SessionContext
+from agent_framework import Agent, AgentSession, ContextProvider, Message, SessionContext
 from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
@@ -28,7 +28,7 @@ class TextSearchResult:
     text: str
 
 
-class TextSearchContextProvider(BaseContextProvider):
+class TextSearchContextProvider(ContextProvider):
     """A simple context provider that simulates text search results based on keywords in the user's message."""
 
     def __init__(self):

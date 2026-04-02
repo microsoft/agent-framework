@@ -114,7 +114,7 @@ class OpenAIChatCompletionOptions(ChatOptions[ResponseModelT], Generic[ResponseM
     Extends ChatOptions with options specific to OpenAI's Chat Completions API.
 
     Keys:
-        model_id: The model to use for the request,
+        model: The model to use for the request,
             translates to ``model`` in OpenAI API.
         temperature: Sampling temperature between 0 and 2.
         top_p: Nucleus sampling parameter.
@@ -155,7 +155,6 @@ OpenAIChatCompletionOptionsT = TypeVar(
 )
 
 OPTION_TRANSLATIONS: dict[str, str] = {
-    "model_id": "model",  # backward compat: accept model_id in options
     "allow_multiple_tool_calls": "parallel_tool_calls",
     "max_tokens": "max_completion_tokens",
 }
@@ -246,8 +245,8 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                reads ``AZURE_OPENAI_CHAT_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
             credential: Azure credential or token provider for Entra auth.
@@ -276,7 +275,6 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         self,
         model: str | None = None,
         *,
-        model_id: str | None = None,
         api_key: str | SecretString | Callable[[], str | Awaitable[str]] | None = None,
         credential: AzureCredentialTypes | AzureTokenProvider | None = None,
         org_id: str | None = None,
@@ -297,9 +295,7 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
                 reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
-                or ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
-            model_id: Deprecated alias for ``model``.
+                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure routing.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -339,15 +335,9 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
         """
-        if model_id is not None and model is None:
-            import warnings
-
-            warnings.warn("model_id is deprecated, use model instead", DeprecationWarning, stacklevel=2)
-            model = model_id
-
         settings, client, use_azure_client = load_openai_service_settings(
             model=model,
             api_key=api_key,
@@ -362,11 +352,11 @@ class RawOpenAIChatCompletionClient(  # type: ignore[misc]
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
             openai_model_fields=("chat_model", "model"),
-            azure_deployment_fields=("chat_deployment_name", "deployment_name"),
+            azure_model_fields=("chat_model", "model"),
         )
 
         self.client = client
-        self.model: str = settings.get("model") or settings.get("deployment_name") or ""
+        self.model: str = settings.get("model") or ""
 
         # Store configuration for serialization
         self.org_id = settings.get("org_id")
@@ -1098,8 +1088,8 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
 
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
-                reads ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME``.
+                reads ``AZURE_OPENAI_CHAT_MODEL`` and then
+                ``AZURE_OPENAI_MODEL``.
             azure_endpoint: Azure resource endpoint. When not provided explicitly, the constructor
                 reads ``AZURE_OPENAI_ENDPOINT``.
             credential: Azure credential or token provider for Entra auth.
@@ -1146,8 +1136,8 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
         Keyword Args:
             model: Model identifier to use for the request. When not provided, the constructor
                 reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI routing,
-                or ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`` and then
-                ``AZURE_OPENAI_DEPLOYMENT_NAME`` for Azure routing.
+                or ``AZURE_OPENAI_CHAT_MODEL`` and then
+                ``AZURE_OPENAI_MODEL`` for Azure routing.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -1186,8 +1176,8 @@ class OpenAIChatCompletionClient(  # type: ignore[misc]
             OpenAI routing reads ``OPENAI_API_KEY``, ``OPENAI_CHAT_MODEL``,
             ``OPENAI_MODEL``, ``OPENAI_ORG_ID``, and ``OPENAI_BASE_URL``. Azure routing
             reads ``AZURE_OPENAI_ENDPOINT``, ``AZURE_OPENAI_BASE_URL``,
-            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_DEPLOYMENT_NAME``,
-            ``AZURE_OPENAI_DEPLOYMENT_NAME``, and ``AZURE_OPENAI_API_VERSION``.
+            ``AZURE_OPENAI_API_KEY``, ``AZURE_OPENAI_CHAT_MODEL``,
+            ``AZURE_OPENAI_MODEL``, and ``AZURE_OPENAI_API_VERSION``.
 
         Examples:
             .. code-block:: python

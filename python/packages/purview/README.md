@@ -245,7 +245,7 @@ from azure.identity import DefaultAzureCredential
 credential = DefaultAzureCredential()
 
 client = OpenAIChatCompletionClient(
-	model=os.environ["AZURE_OPENAI_DEPLOYMENT_NAME"],
+	model=os.environ["AZURE_OPENAI_MODEL"],
 	azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
 	credential=credential,
 	middleware=[

@@ -45,4 +45,4 @@ This folder contains Azure AI Foundry and Foundry Local samples for Agent Framew
 
 ### Environment Variables
 
-- `FOUNDRY_LOCAL_MODEL_ID`: Optional model alias/ID to use by default when `model_id` is not passed to `FoundryLocalClient`.
+- `FOUNDRY_LOCAL_MODEL`: Optional model alias/ID to use by default when `model` is not passed to `FoundryLocalClient`.

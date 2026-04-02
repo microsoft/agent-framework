@@ -4,10 +4,10 @@
 // Server-side conversations persist on the Foundry service and are visible in the Foundry Project UI.
 // Use this when you need conversation history to be stored and accessible server-side.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.Identity;
 using Microsoft.Agents.AI;
-using Microsoft.Agents.AI.AzureAI;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
 string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME") ?? "gpt-4o-mini";
@@ -15,12 +15,20 @@ string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLO
 // WARNING: DefaultAzureCredential is convenient for development but requires careful consideration in production.
 // In production, consider using a specific credential (e.g., ManagedIdentityCredential) to avoid
 // latency issues, unintended credential probing, and potential security risks from fallback mechanisms.
-FoundryAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential())
+AIProjectClient aiProjectClient = new(new Uri(endpoint), new DefaultAzureCredential());
+
+ChatClientAgent agent = aiProjectClient
     .AsAIAgent(deploymentName, instructions: "You are good at telling jokes.", name: "JokerAgent");
+
+ProjectConversationsClient conversationsClient = aiProjectClient
+            .GetProjectOpenAIClient()
+            .GetProjectConversationsClient();
+
+ProjectConversation conversation = (await conversationsClient.CreateProjectConversationAsync().ConfigureAwait(false)).Value;
 
 // CreateConversationSessionAsync creates a server-side ProjectConversation
 // that persists on the Foundry service and is visible in the Foundry Project UI.
-AgentSession session = await agent.CreateConversationSessionAsync();
+AgentSession session = await agent.CreateSessionAsync(conversation.Id);
 
 Console.WriteLine(await agent.RunAsync("Tell me a joke about a pirate.", session));
 Console.WriteLine(await agent.RunAsync("Now add some emojis to the joke and tell it in the voice of a pirate's parrot.", session));

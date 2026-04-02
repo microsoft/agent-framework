@@ -79,11 +79,11 @@ def test_supports_web_search_only() -> None:
 
 
 def test_init_prefers_openai_chat_model(monkeypatch, openai_unit_test_env: dict[str, str]) -> None:
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model_id")
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
 
     open_ai_chat_completion = OpenAIChatCompletionClient()
 
-    assert open_ai_chat_completion.model == "test_chat_model_id"
+    assert open_ai_chat_completion.model == "test_chat_model"
 
 
 def test_init_validation_fail() -> None:
@@ -92,12 +92,12 @@ def test_init_validation_fail() -> None:
         OpenAIChatCompletionClient(api_key="34523", model={"test": "dict"})  # type: ignore
 
 
-def test_init_model_id_constructor(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_model_constructor(openai_unit_test_env: dict[str, str]) -> None:
     # Test successful initialization
-    model_id = "test_model_id"
-    open_ai_chat_completion = OpenAIChatCompletionClient(model=model_id)
+    model = "test_model"
+    open_ai_chat_completion = OpenAIChatCompletionClient(model=model)
 
-    assert open_ai_chat_completion.model == model_id
+    assert open_ai_chat_completion.model == model
     assert isinstance(open_ai_chat_completion, SupportsChatGetResponse)
 
 
@@ -141,18 +141,18 @@ def test_init_base_url_from_settings_env() -> None:
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_MODEL"]], indirect=True)
-def test_init_with_empty_model_id(openai_unit_test_env: dict[str, str]) -> None:
+def test_init_with_empty_model(openai_unit_test_env: dict[str, str]) -> None:
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient()
 
 
 @pytest.mark.parametrize("exclude_list", [["OPENAI_API_KEY"]], indirect=True)
 def test_init_with_empty_api_key(openai_unit_test_env: dict[str, str]) -> None:
-    model_id = "test_model_id"
+    model = "test_model"
 
     with pytest.raises(SettingNotFoundError):
         OpenAIChatCompletionClient(
-            model=model_id,
+            model=model,
         )
 
 
@@ -235,6 +235,63 @@ def test_unsupported_tool_handling(openai_unit_test_env: dict[str, str]) -> None
     dict_tool = {"type": "function", "name": "test"}
     result = client._prepare_tools_for_openai([dict_tool])  # type: ignore
     assert result["tools"] == [dict_tool]
+
+
+def test_mcp_tool_dict_passed_through_to_chat_api(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts are passed through unchanged by the chat client.
+
+    The Chat Completions API does not support "type": "mcp" tools. MCP tools
+    should be used with the Responses API client instead. This test documents
+    that the chat client passes dict-based tools through without filtering,
+    so callers must use the correct client for MCP tools.
+    """
+    client = OpenAIChatCompletionClient()
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    result = client._prepare_tools_for_openai(mcp_tool)
+    assert "tools" in result
+    assert len(result["tools"]) == 1
+    # The chat client passes dict tools through unchanged, including unsupported types
+    assert result["tools"][0]["type"] == "mcp"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_dict_causes_api_rejection(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that MCP tool dicts passed to the Chat Completions API cause a rejection.
+
+    The Chat Completions API only supports "type": "function" tools.
+    When an MCP tool dict reaches the API, it returns a 400 error.
+    This regression test for #4861 verifies the chat client does not
+    silently drop or transform MCP dicts, so callers get a clear error
+    rather than a silent no-op.
+    """
+    client = OpenAIChatCompletionClient()
+    messages = [Message(role="user", text="test message")]
+
+    mcp_tool = {
+        "type": "mcp",
+        "server_label": "Microsoft_Learn_MCP",
+        "server_url": "https://learn.microsoft.com/api/mcp",
+    }
+
+    mock_response = MagicMock()
+    mock_error = BadRequestError(
+        message="Invalid tool type: mcp",
+        response=mock_response,
+        body={"error": {"code": "invalid_request", "message": "Invalid tool type: mcp"}},
+    )
+    mock_error.code = "invalid_request"
+
+    with (
+        patch.object(client.client.chat.completions, "create", side_effect=mock_error),
+        pytest.raises(ChatClientException),
+    ):
+        await client._inner_get_response(messages=messages, options={"tools": mcp_tool})  # type: ignore
 
 
 def test_prepare_tools_with_single_function_tool(
@@ -1121,10 +1178,10 @@ def test_parse_text_with_refusal(openai_unit_test_env: dict[str, str]) -> None:
     assert message.contents[0].text == "I cannot provide that information."
 
 
-def test_prepare_options_without_model_id(openai_unit_test_env: dict[str, str]) -> None:
-    """Test that prepare_options raises error when model_id is not set."""
+def test_prepare_options_without_model(openai_unit_test_env: dict[str, str]) -> None:
+    """Test that prepare_options raises error when model is not set."""
     client = OpenAIChatCompletionClient()
-    client.model = None  # Remove model_id
+    client.model = None  # Remove model
 
     messages = [Message(role="user", text="test")]
 
@@ -1364,6 +1421,31 @@ def test_response_format_dict_passthrough(openai_unit_test_env: dict[str, str]) 
     assert prepared_options["response_format"] == custom_format
 
 
+def test_parse_response_with_dict_response_format(openai_unit_test_env: dict[str, str]) -> None:
+    """Chat completions should parse dict response_format values into response.value."""
+    client = OpenAIChatCompletionClient()
+    response = client._parse_response_from_openai(
+        ChatCompletion(
+            id="test-response",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4o-mini",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content='{"answer": "Hello"}'),
+                    finish_reason="stop",
+                )
+            ],
+        ),
+        options={"response_format": {"type": "object", "properties": {"answer": {"type": "string"}}}},
+    )
+
+    assert response.value is not None
+    assert isinstance(response.value, dict)
+    assert response.value["answer"] == "Hello"
+
+
 def test_multiple_function_calls_in_single_message(
     openai_unit_test_env: dict[str, str],
 ) -> None:
@@ -1578,12 +1660,10 @@ async def test_integration_options(
                 assert isinstance(response.value, OutputStruct)
                 assert "seattle" in response.value.location.lower()
             else:
-                # Runtime JSON schema
-                assert response.value is None, "No structured output, can't parse any json."
-                response_value = json.loads(response.text)
-                assert isinstance(response_value, dict)
-                assert "location" in response_value
-                assert "seattle" in response_value["location"].lower()
+                assert response.value is not None
+                assert isinstance(response.value, dict)
+                assert "location" in response.value
+                assert "seattle" in response.value["location"].lower()
 
 
 @pytest.mark.flaky

@@ -2,13 +2,17 @@
 
 """Foundry integration namespace for optional Agent Framework connectors.
 
-This module lazily re-exports objects from cloud Foundry and Foundry Local connector packages.
+This module lazily re-exports objects from:
+- ``agent-framework-anthropic``
+- ``agent-framework-foundry``
+- ``agent-framework-foundry-local``
 """
 
 import importlib
 from typing import Any
 
 _IMPORTS: dict[str, tuple[str, str]] = {
+    "AnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "FoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "FoundryChatOptions": ("agent_framework_foundry", "agent-framework-foundry"),
@@ -17,6 +21,7 @@ _IMPORTS: dict[str, tuple[str, str]] = {
     "FoundryLocalChatOptions": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalClient": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
     "FoundryLocalSettings": ("agent_framework_foundry_local", "agent-framework-foundry-local"),
+    "RawAnthropicFoundryClient": ("agent_framework_anthropic", "agent-framework-anthropic"),
     "RawFoundryAgent": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryAgentChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     "RawFoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),

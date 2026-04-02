@@ -108,7 +108,7 @@ class AGUIChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], tota
 
     Keys:
         # Inherited from ChatOptions (forwarded to remote server):
-        model_id: The model identifier (forwarded as-is to server).
+        model: The model identifier (forwarded as-is to server).
         temperature: Sampling temperature.
         top_p: Nucleus sampling parameter.
         max_tokens: Maximum tokens to generate.

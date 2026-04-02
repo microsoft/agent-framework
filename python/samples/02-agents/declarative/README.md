@@ -68,7 +68,7 @@ Illustrates a basic agent using Azure OpenAI with structured responses.
 
 **Key concepts**: Azure OpenAI integration, credential management, structured outputs
 
-### 5. **OpenAI Responses Agent** ([`openai_responses_agent.py`](./openai_responses_agent.py))
+### 5. **OpenAI Responses Agent** ([`openai_agent.py`](./openai_agent.py))
 
 Demonstrates the simplest possible agent using OpenAI directly.
 
@@ -159,7 +159,7 @@ agent_factory = AgentFactory(
         "MyProvider": {
             "package": "my_custom_module",
             "name": "MyCustomChatClient",
-            "model_id_field": "model_id",
+            "model_field": "model",
         }
     }
 )
@@ -176,7 +176,7 @@ agent = agent_factory.create_agent_from_yaml_path(Path("custom_provider.yaml"))
 This allows you to extend the declarative framework with custom chat client implementations. The mapping requires:
 - **package**: The Python package/module to import from
 - **name**: The class name of your SupportsChatGetResponse implementation
-- **model_id_field**: The constructor parameter name that accepts the value of the `model.id` field from the YAML
+- **model_field**: The constructor parameter name that accepts the value of the `model.id` field from the YAML
 
 You can reference your custom provider using either `Provider.ApiType` format or just `Provider` in your YAML configuration, as long as it matches the registered mapping.
 

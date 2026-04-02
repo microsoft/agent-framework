@@ -26,7 +26,7 @@ This folder contains Azure-backed samples for the generic OpenAI clients in
 Set these before running the Azure provider samples:
 
 - `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_DEPLOYMENT_NAME`
+- `AZURE_OPENAI_MODEL`
 
 Optionally, you can also set:
 
