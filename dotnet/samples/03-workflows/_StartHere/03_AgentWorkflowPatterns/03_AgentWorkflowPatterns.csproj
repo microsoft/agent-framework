@@ -6,6 +6,7 @@
 
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);MAAIW001</NoWarn> <!-- Handoff Orchestrations are Experimental -->
   </PropertyGroup>
 
   <ItemGroup>

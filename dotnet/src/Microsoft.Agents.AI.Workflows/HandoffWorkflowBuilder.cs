@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using Microsoft.Agents.AI.Workflows.Specialized;
 using Microsoft.Extensions.AI;
@@ -9,13 +10,21 @@ using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
+internal static class DiagnosticConstants
+{
+    public const string ExperimentalFeatureDiagnostic = "MAAIW001";
+}
+
 /// <inheritdoc/>
 [Obsolete("Prefer HandoffWorkflowBuilder (no 's') instead, which has the same API but the preferred name. This will be removed in a future release before GA.")]
+#pragma warning disable MAAIW001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 public sealed class HandoffsWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore<HandoffsWorkflowBuilder>(initialAgent)
+#pragma warning restore MAAIW001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
 {
 }
 
 /// <inheritdoc/>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkflowBuilderCore<HandoffWorkflowBuilder>(initialAgent)
 {
 }
@@ -23,6 +32,7 @@ public sealed class HandoffWorkflowBuilder(AIAgent initialAgent) : HandoffWorkfl
 /// <summary>
 /// Provides a builder for specifying the handoff relationships between agents and building the resulting workflow.
 /// </summary>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 public class HandoffWorkflowBuilderCore<TBuilder> where TBuilder : HandoffWorkflowBuilderCore<TBuilder>
 {
     /// <summary>
