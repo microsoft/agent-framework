@@ -2520,6 +2520,8 @@ def test_streaming_annotation_added_with_url_citation() -> None:
     assert annotation["type"] == "citation"
     assert annotation["title"] == "doc.pdf"
     assert annotation["url"] == "https://example.sharepoint.com/sites/my-site/doc.pdf"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert annotation["raw_representation"] == mock_event.annotation
     assert annotation["annotated_regions"] is not None
     assert len(annotation["annotated_regions"]) == 1
     region = annotation["annotated_regions"][0]
@@ -2545,6 +2547,32 @@ def test_streaming_annotation_added_with_url_citation_no_url() -> None:
     response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
 
     assert len(response.contents) == 0
+
+
+def test_streaming_annotation_added_with_url_citation_no_indices() -> None:
+    """Test streaming annotation with url_citation that has url but no start_index/end_index."""
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+    chat_options = ChatOptions()
+    function_call_ids: dict[int, tuple[str, str]] = {}
+
+    mock_event = MagicMock()
+    mock_event.type = "response.output_text.annotation.added"
+    mock_event.annotation_index = 0
+    mock_event.annotation = {
+        "type": "url_citation",
+        "url": "https://example.com",
+        "title": "Example",
+    }
+
+    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
+
+    assert len(response.contents) == 1
+    annotation = response.contents[0].annotations[0]
+    assert annotation["type"] == "citation"
+    assert annotation["title"] == "Example"
+    assert annotation["url"] == "https://example.com"
+    assert annotation["additional_properties"]["annotation_index"] == 0
+    assert "annotated_regions" not in annotation
 
 
 def test_streaming_annotation_added_with_unknown_type() -> None:

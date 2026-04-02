@@ -2424,7 +2424,8 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                             type="citation",
                             title=_get_ann_value("title") or "",
                             url=str(ann_url),
-                            raw_representation=event,
+                            additional_properties={"annotation_index": event.annotation_index},
+                            raw_representation=annotation,
                         )
                         if ann_start is not None and ann_end is not None:
                             annotation_obj["annotated_regions"] = [
