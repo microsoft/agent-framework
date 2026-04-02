@@ -1123,6 +1123,53 @@ def test_parse_contents_from_anthropic_input_json_delta_no_duplicate_name(
     assert result[0].arguments == '"San Francisco"}'
 
 
+def test_parse_contents_server_tool_use_input_json_delta_ignored(
+    mock_anthropic_client: MagicMock,
+) -> None:
+    """Regression test: input_json_delta events are ignored after a server_tool_use block.
+
+    Server-managed tools have their execution handled server-side, so streaming
+    input_json_delta events must not produce Content.from_function_call(name='')
+    entries that would cause Anthropic API 400 errors on subsequent turns.
+    """
+    client = create_test_anthropic_client(mock_anthropic_client)
+
+    # Simulate a server_tool_use event that sets _last_call_content_type
+    server_tool_content = MagicMock()
+    server_tool_content.type = "server_tool_use"
+    server_tool_content.id = "srvtool_abc"
+    server_tool_content.name = "web_search"
+    server_tool_content.input = {}
+
+    result = client._parse_contents_from_anthropic([server_tool_content])
+    # server_tool_use falls through to function_call (not mcp_tool_use / code_execution)
+    assert len(result) == 1
+    assert result[0].type == "function_call"
+    assert client._last_call_content_type == "server_tool_use"  # type: ignore[attr-defined]
+
+    # input_json_delta events after server_tool_use must be silently ignored
+    delta_content = MagicMock()
+    delta_content.type = "input_json_delta"
+    delta_content.partial_json = '{"query": "latest news"}'
+
+    result = client._parse_contents_from_anthropic([delta_content])
+    assert result == [], (
+        "input_json_delta after server_tool_use should produce no content, "
+        "but got: %r" % result
+    )
+
+    # A second delta must also be ignored
+    delta_content_2 = MagicMock()
+    delta_content_2.type = "input_json_delta"
+    delta_content_2.partial_json = '{"extra": true}'
+
+    result = client._parse_contents_from_anthropic([delta_content_2])
+    assert result == [], (
+        "subsequent input_json_delta after server_tool_use should also be ignored, "
+        "but got: %r" % result
+    )
+
+
 # Stream Processing Tests
 
 
