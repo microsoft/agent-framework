@@ -142,7 +142,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 Create a simple Agent, using OpenAI Responses, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
+// dotnet add package Microsoft.Agents.AI.OpenAI
 using System;
 using OpenAI;
 using OpenAI.Responses;
