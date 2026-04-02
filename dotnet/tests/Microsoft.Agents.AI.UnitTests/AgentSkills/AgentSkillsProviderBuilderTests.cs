@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) Microsoft. All rights reserved.
 
 using System;
 using System.Collections.Generic;
@@ -176,6 +176,23 @@ public sealed class AgentSkillsProviderBuilderTests
         var provider = new AgentSkillsProviderBuilder()
             .UseSource(source)
             .UseOptions(opts => opts.ScriptApproval = true)
+            .Build();
+
+        // Assert
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Build_IncludeSkillInstructions_ConfiguresOptions()
+    {
+        // Arrange
+        var source = new TestAgentSkillsSource(
+            new TestAgentSkill("test", "Test", "Instructions."));
+
+        // Act
+        var provider = new AgentSkillsProviderBuilder()
+            .UseSource(source)
+            .IncludeSkillInstructions(false)
             .Build();
 
         // Assert
