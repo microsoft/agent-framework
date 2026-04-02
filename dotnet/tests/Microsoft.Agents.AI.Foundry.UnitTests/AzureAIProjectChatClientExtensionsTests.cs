@@ -187,7 +187,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region AsAIAgent(AIProjectClient, AgentRecord) Tests
+    #region AsAIAgent(AIProjectClient, ProjectsAgentRecord) Tests
 
     /// <summary>
     /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
@@ -197,7 +197,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient? client = null;
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
@@ -217,20 +217,20 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.AsAIAgent((AgentRecord)null!));
+            mockClient.Object.AsAIAgent((ProjectsAgentRecord)null!));
 
         Assert.Equal("agentRecord", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentRecord creates a valid agent.
+    /// Verify that AsAIAgent with ProjectsAgentRecord creates a valid agent.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentRecord_CreatesValidAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -243,14 +243,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentRecord and clientFactory applies the factory.
+    /// Verify that AsAIAgent with ProjectsAgentRecord and clientFactory applies the factory.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentRecord_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
         TestChatClient? testChatClient = null;
 
         // Act
@@ -267,7 +267,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region AsAIAgent(AIProjectClient, AgentVersion) Tests
+    #region AsAIAgent(AIProjectClient, ProjectsAgentVersion) Tests
 
     /// <summary>
     /// Verify that AsAIAgent throws ArgumentNullException when AIProjectClient is null.
@@ -277,7 +277,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient? client = null;
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
@@ -297,20 +297,20 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act & Assert
         var exception = Assert.Throws<ArgumentNullException>(() =>
-            mockClient.Object.AsAIAgent((AgentVersion)null!));
+            mockClient.Object.AsAIAgent((ProjectsAgentVersion)null!));
 
         Assert.Equal("agentVersion", exception.ParamName);
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentVersion creates a valid agent.
+    /// Verify that AsAIAgent with ProjectsAgentVersion creates a valid agent.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentVersion_CreatesValidAgent()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
@@ -323,14 +323,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentVersion and clientFactory applies the factory.
+    /// Verify that AsAIAgent with ProjectsAgentVersion and clientFactory applies the factory.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentVersion_WithClientFactory_AppliesFactoryCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
         TestChatClient? testChatClient = null;
 
         // Act
@@ -353,7 +353,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
         var tools = new List<AITool>
         {
             AIFunctionFactory.Create(() => "test", "test_function", "A test function")
@@ -375,7 +375,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act - should not throw even without tools when requireInvocableTools is false
         var agent = client.AsAIAgent(agentVersion);
@@ -439,7 +439,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region AsAIAgent(AIProjectClient, AgentRecord) with tools Tests
+    #region AsAIAgent(AIProjectClient, ProjectsAgentRecord) with tools Tests
 
     /// <summary>
     /// Verify that AsAIAgent with additional tools when the definition has no tools does not throw and results in an agent with no tools.
@@ -449,7 +449,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
         var tools = new List<AITool>
         {
             AIFunctionFactory.Create(() => "test", "test_function", "A test function")
@@ -463,9 +463,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
-        var agentVersion = chatClient.GetService<AgentVersion>();
+        var agentVersion = chatClient.GetService<ProjectsAgentVersion>();
         Assert.NotNull(agentVersion);
-        var definition = Assert.IsType<PromptAgentDefinition>(agentVersion.Definition);
+        var definition = Assert.IsType<DeclarativeAgentDefinition>(agentVersion.Definition);
         Assert.Empty(definition.Tools);
     }
 
@@ -477,7 +477,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent = client.AsAIAgent(agentRecord, tools: null);
@@ -502,7 +502,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         var agentVersion = this.CreateTestAgentVersion();
 
         // Manually add tools to the definition to simulate inline tools
-        if (agentVersion.Definition is PromptAgentDefinition promptDef)
+        if (agentVersion.Definition is DeclarativeAgentDefinition promptDef)
         {
             promptDef.Tools.Add(ResponseTool.CreateFunctionTool("inline_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
         }
@@ -513,9 +513,9 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Act & Assert
         var agent = client.AsAIAgent(agentVersion, tools: [invocableInlineAITool, shouldBeIgnoredTool]);
         Assert.NotNull(agent);
-        var version = agent.GetService<AgentVersion>();
+        var version = agent.GetService<ProjectsAgentVersion>();
         Assert.NotNull(version);
-        var definition = Assert.IsType<PromptAgentDefinition>(version.Definition);
+        var definition = Assert.IsType<DeclarativeAgentDefinition>(version.Definition);
         Assert.NotEmpty(definition.Tools);
         Assert.NotNull(GetAgentChatOptions(agent));
         Assert.NotNull(GetAgentChatOptions(agent)!.Tools);
@@ -535,7 +535,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
         var tools = new List<AITool>
         {
             AIFunctionFactory.Create(() => "tool1", "param_tool_1", "First parameter tool"),
@@ -550,7 +550,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         Assert.IsType<FoundryAgent>(agent);
         var chatClient = agent.GetService<IChatClient>();
         Assert.NotNull(chatClient);
-        var agentVersion = chatClient.GetService<AgentVersion>();
+        var agentVersion = chatClient.GetService<ProjectsAgentVersion>();
         Assert.NotNull(agentVersion);
     }
 
@@ -565,7 +565,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task CreateAIAgentAsync_WithResponseToolsInDefinition_CreatesAgentSuccessfullyAsync()
     {
         // Arrange
-        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test instructions" };
+        var definition = new DeclarativeAgentDefinition("test-model") { Instructions = "Test instructions" };
 
         var fabricToolOptions = new FabricDataAgentToolOptions();
         fabricToolOptions.ProjectConnections.Add(new ToolProjectConnection("connection-id"));
@@ -577,33 +577,33 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
-        definition.Tools.Add(AgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateSharepointTool(sharepointOptions));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateStructuredOutputsTool(structuredOutputs));
-        definition.Tools.Add((ResponseTool)AgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(new BingCustomSearchToolOptions([new BingCustomSearchConfiguration("connection-id", "instance-name")])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionParameters("id"))));
+        definition.Tools.Add(ProjectsAgentTool.CreateA2ATool(new Uri("https://test-uri.microsoft.com")));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchConfiguration("connection-id")])));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateMicrosoftFabricTool(fabricToolOptions));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(new OpenApiFunctionDefinition("name", BinaryData.FromString(OpenAPISpec), new OpenAPIAnonymousAuthenticationDetails())));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateSharepointTool(sharepointOptions));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateStructuredOutputsTool(structuredOutputs));
+        definition.Tools.Add((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(new AzureAISearchToolOptions([new AzureAISearchToolIndex() { IndexName = "name" }])));
 
         // Generate agent definition response with the tools
         var definitionResponse = GeneratePromptDefinitionResponse(definition, definition.Tools.Select(t => t.AsAITool()).ToList());
 
         using var testClient = CreateTestAgentClientWithHandler(agentDefinitionResponse: definitionResponse);
 
-        var options = new AgentVersionCreationOptions(definition);
+        var options = new ProjectsAgentVersionCreationOptions(definition);
 
         // Act
-        var agentVersion = (await testClient.Client.Agents.CreateAgentVersionAsync("test-agent", options)).Value;
+        var agentVersion = (await testClient.Client.AgentAdministrationClient.CreateAgentVersionAsync("test-agent", options)).Value;
         var agent = testClient.Client.AsAIAgent(agentVersion);
 
         // Assert
         Assert.NotNull(agent);
         Assert.IsType<FoundryAgent>(agent);
-        var agentVersion2 = agent.GetService<AgentVersion>()!;
+        var agentVersion2 = agent.GetService<ProjectsAgentVersion>()!;
         Assert.NotNull(agentVersion);
-        if (agentVersion2.Definition is PromptAgentDefinition promptDef)
+        if (agentVersion2.Definition is DeclarativeAgentDefinition promptDef)
         {
             Assert.NotEmpty(promptDef.Tools);
             Assert.Equal(10, promptDef.Tools.Count);
@@ -624,19 +624,19 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             functionDescription: "Gets the user's name, as used for friendly address."
         );
 
-        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var definition = new DeclarativeAgentDefinition("test-model") { Instructions = "Test" };
         definition.Tools.Add(functionTool);
 
         // Generate response with the declarative function
-        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var definitionResponse = new DeclarativeAgentDefinition("test-model") { Instructions = "Test" };
         definitionResponse.Tools.Add(functionTool);
 
         using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
-        var options = new AgentVersionCreationOptions(definition);
+        var options = new ProjectsAgentVersionCreationOptions(definition);
 
         // Act
-        var agentVersion = (await testClient.Client.Agents.CreateAgentVersionAsync("test-agent", options)).Value;
+        var agentVersion = (await testClient.Client.AgentAdministrationClient.CreateAgentVersionAsync("test-agent", options)).Value;
         var agent = testClient.Client.AsAIAgent(agentVersion);
 
         // Assert
@@ -652,7 +652,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         using var testClient = CreateTestAgentClientWithHandler();
-        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var definition = new DeclarativeAgentDefinition("test-model") { Instructions = "Test" };
 
         // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
         using var doc = JsonDocument.Parse("{}");
@@ -661,10 +661,10 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Add to definition
         definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
-        var options = new AgentVersionCreationOptions(definition);
+        var options = new ProjectsAgentVersionCreationOptions(definition);
 
         // Act
-        var agentVersion = (await testClient.Client.Agents.CreateAgentVersionAsync("test-agent", options)).Value;
+        var agentVersion = (await testClient.Client.AgentAdministrationClient.CreateAgentVersionAsync("test-agent", options)).Value;
         var agent = testClient.Client.AsAIAgent(agentVersion);
 
         // Assert
@@ -679,7 +679,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public async Task AsAIAgent_WithDeclarativeFunctionInDefinition_AcceptsDeclarativeFunctionAsync()
     {
         // Arrange
-        var definition = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var definition = new DeclarativeAgentDefinition("test-model") { Instructions = "Test" };
 
         // Create a declarative function (not invocable) using AIFunctionFactory.CreateDeclaration
         using var doc = JsonDocument.Parse("{}");
@@ -689,15 +689,15 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         definition.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
         // Generate response with the declarative function
-        var definitionResponse = new PromptAgentDefinition("test-model") { Instructions = "Test" };
+        var definitionResponse = new DeclarativeAgentDefinition("test-model") { Instructions = "Test" };
         definitionResponse.Tools.Add(declarativeFunction.AsOpenAIResponseTool() ?? throw new InvalidOperationException());
 
         using var testClient = CreateTestAgentClientWithHandler(agentName: "test-agent", agentDefinitionResponse: definitionResponse);
 
-        var options = new AgentVersionCreationOptions(definition);
+        var options = new ProjectsAgentVersionCreationOptions(definition);
 
         // Act
-        var agentVersion = (await testClient.Client.Agents.CreateAgentVersionAsync("test-agent", options)).Value;
+        var agentVersion = (await testClient.Client.AgentAdministrationClient.CreateAgentVersionAsync("test-agent", options)).Value;
         var agent = testClient.Client.AsAIAgent(agentVersion);
 
         // Assert
@@ -758,7 +758,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
         int factoryCallCount = 0;
 
         // Act
@@ -785,7 +785,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent1 = client.AsAIAgent(
@@ -904,7 +904,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Arrange
         var aiProjectClient = new AIProjectClient(new Uri("https://test.openai.azure.com/"), new FakeAuthenticationTokenProvider(), new() { Transport = new HttpClientPipelineTransport(httpClient) });
 
-        var agentVersion = (await aiProjectClient.Agents.CreateAgentVersionAsync("test-agent", new AgentVersionCreationOptions(new PromptAgentDefinition("test-model") { Instructions = "Test instructions" }))).Value;
+        var agentVersion = (await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync("test-agent", new ProjectsAgentVersionCreationOptions(new DeclarativeAgentDefinition("test-model") { Instructions = "Test instructions" }))).Value;
 
         // Act
         var agent = aiProjectClient.AsAIAgent(agentVersion);
@@ -1043,21 +1043,21 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region GetService<AgentRecord> Tests
+    #region GetService<ProjectsAgentRecord> Tests
 
     /// <summary>
-    /// Verify that GetService returns AgentRecord for agents created from AgentRecord.
+    /// Verify that GetService returns ProjectsAgentRecord for agents created from ProjectsAgentRecord.
     /// </summary>
     [Fact]
     public void GetService_WithAgentRecord_ReturnsAgentRecord()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
-        var retrievedRecord = agent.GetService<AgentRecord>();
+        var retrievedRecord = agent.GetService<ProjectsAgentRecord>();
 
         // Assert
         Assert.NotNull(retrievedRecord);
@@ -1065,7 +1065,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetService returns null for AgentRecord when agent is created from AgentReference.
+    /// Verify that GetService returns null for ProjectsAgentRecord when agent is created from AgentReference.
     /// </summary>
     [Fact]
     public void GetService_WithAgentReference_ReturnsNullForAgentRecord()
@@ -1076,7 +1076,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act
         var agent = client.AsAIAgent(agentReference);
-        var retrievedRecord = agent.GetService<AgentRecord>();
+        var retrievedRecord = agent.GetService<ProjectsAgentRecord>();
 
         // Assert
         Assert.Null(retrievedRecord);
@@ -1084,21 +1084,21 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
     #endregion
 
-    #region GetService<AgentVersion> Tests
+    #region GetService<ProjectsAgentVersion> Tests
 
     /// <summary>
-    /// Verify that GetService returns AgentVersion for agents created from AgentVersion.
+    /// Verify that GetService returns ProjectsAgentVersion for agents created from ProjectsAgentVersion.
     /// </summary>
     [Fact]
     public void GetService_WithAgentVersion_ReturnsAgentVersion()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
-        var retrievedVersion = agent.GetService<AgentVersion>();
+        var retrievedVersion = agent.GetService<ProjectsAgentVersion>();
 
         // Assert
         Assert.NotNull(retrievedVersion);
@@ -1106,7 +1106,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetService returns null for AgentVersion when agent is created from AgentReference.
+    /// Verify that GetService returns null for ProjectsAgentVersion when agent is created from AgentReference.
     /// </summary>
     [Fact]
     public void GetService_WithAgentReference_ReturnsNullForAgentVersion()
@@ -1117,7 +1117,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
 
         // Act
         var agent = client.AsAIAgent(agentReference);
-        var retrievedVersion = agent.GetService<AgentVersion>();
+        var retrievedVersion = agent.GetService<ProjectsAgentVersion>();
 
         // Assert
         Assert.Null(retrievedVersion);
@@ -1128,14 +1128,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region ChatClientMetadata Tests
 
     /// <summary>
-    /// Verify that ChatClientMetadata is properly populated for agents created from AgentRecord.
+    /// Verify that ChatClientMetadata is properly populated for agents created from ProjectsAgentRecord.
     /// </summary>
     [Fact]
     public void ChatClientMetadata_WithAgentRecord_IsPopulatedCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -1147,18 +1147,18 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that ChatClientMetadata.DefaultModelId is set from PromptAgentDefinition model property.
+    /// Verify that ChatClientMetadata.DefaultModelId is set from DeclarativeAgentDefinition model property.
     /// </summary>
     [Fact]
     public void ChatClientMetadata_WithPromptAgentDefinition_SetsDefaultModelIdFromModel()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        var definition = new PromptAgentDefinition("gpt-4-turbo")
+        var definition = new DeclarativeAgentDefinition("gpt-4-turbo")
         {
             Instructions = "Test instructions"
         };
-        AgentRecord agentRecord = this.CreateTestAgentRecord(definition);
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord(definition);
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -1172,14 +1172,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that ChatClientMetadata is properly populated for agents created from AgentVersion.
+    /// Verify that ChatClientMetadata is properly populated for agents created from ProjectsAgentVersion.
     /// </summary>
     [Fact]
     public void ChatClientMetadata_WithAgentVersion_IsPopulatedCorrectly()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
@@ -1188,7 +1188,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         // Assert
         Assert.NotNull(metadata);
         Assert.NotNull(metadata.DefaultModelId);
-        Assert.Equal((agentVersion.Definition as PromptAgentDefinition)!.Model, metadata.DefaultModelId);
+        Assert.Equal((agentVersion.Definition as DeclarativeAgentDefinition)!.Model, metadata.DefaultModelId);
     }
 
     #endregion
@@ -1216,14 +1216,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetService returns null for AgentReference when agent is created from AgentRecord.
+    /// Verify that GetService returns null for AgentReference when agent is created from ProjectsAgentRecord.
     /// </summary>
     [Fact]
     public void GetService_WithAgentRecord_ReturnsAlsoAgentReference()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentRecord agentRecord = this.CreateTestAgentRecord();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecord();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -1235,14 +1235,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that GetService returns null for AgentReference when agent is created from AgentVersion.
+    /// Verify that GetService returns null for AgentReference when agent is created from ProjectsAgentVersion.
     /// </summary>
     [Fact]
     public void GetService_WithAgentVersion_ReturnsAlsoAgentReference()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = this.CreateTestAgentVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
@@ -1278,14 +1278,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     #region Empty Version and ID Handling Tests
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentRecord handles empty version by using "latest" as fallback.
+    /// Verify that AsAIAgent with ProjectsAgentRecord handles empty version by using "latest" as fallback.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentRecordEmptyVersion_CreatesAgentWithGeneratedId()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClientWithEmptyVersion();
-        AgentRecord agentRecord = this.CreateTestAgentRecordWithEmptyVersion();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecordWithEmptyVersion();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -1297,14 +1297,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentVersion handles empty version by using "latest" as fallback.
+    /// Verify that AsAIAgent with ProjectsAgentVersion handles empty version by using "latest" as fallback.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentVersionEmptyVersion_CreatesAgentWithGeneratedId()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClientWithEmptyVersion();
-        AgentVersion agentVersion = this.CreateTestAgentVersionWithEmptyVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersionWithEmptyVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
@@ -1316,14 +1316,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentRecord handles whitespace-only version by using "latest" as fallback.
+    /// Verify that AsAIAgent with ProjectsAgentRecord handles whitespace-only version by using "latest" as fallback.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentRecordWhitespaceVersion_CreatesAgentWithGeneratedId()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClientWithWhitespaceVersion();
-        AgentRecord agentRecord = this.CreateTestAgentRecordWithWhitespaceVersion();
+        ProjectsAgentRecord agentRecord = this.CreateTestAgentRecordWithWhitespaceVersion();
 
         // Act
         var agent = client.AsAIAgent(agentRecord);
@@ -1335,14 +1335,14 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Verify that AsAIAgent with AgentVersion handles whitespace-only version by using "latest" as fallback.
+    /// Verify that AsAIAgent with ProjectsAgentVersion handles whitespace-only version by using "latest" as fallback.
     /// </summary>
     [Fact]
     public void AsAIAgent_WithAgentVersionWhitespaceVersion_CreatesAgentWithGeneratedId()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClientWithWhitespaceVersion();
-        AgentVersion agentVersion = this.CreateTestAgentVersionWithWhitespaceVersion();
+        ProjectsAgentVersion agentVersion = this.CreateTestAgentVersionWithWhitespaceVersion();
 
         // Act
         var agent = client.AsAIAgent(agentVersion);
@@ -1364,11 +1364,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     public void AsAIAgent_WithServerHostedTools_AddsToolsToAgentOptions()
     {
         // Arrange
-        PromptAgentDefinition definition = new("test-model") { Instructions = "Test" };
+        DeclarativeAgentDefinition definition = new("test-model") { Instructions = "Test" };
         definition.Tools.Add(new HostedWebSearchTool().GetService<ResponseTool>() ?? new HostedWebSearchTool().AsOpenAIResponseTool());
 
         AIProjectClient client = this.CreateTestAgentClient();
-        AgentVersion agentVersion = ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson(agentDefinition: definition)))!;
+        ProjectsAgentVersion agentVersion = ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson(agentDefinition: definition)))!;
 
         // Act - no tools provided, but requireInvocableTools is false when no tools param is passed
         FoundryAgent agent = client.AsAIAgent(agentVersion);
@@ -1385,7 +1385,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// <summary>
     /// Creates a test AIProjectClient with fake behavior.
     /// </summary>
-    private FakeAgentClient CreateTestAgentClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
+    private FakeAgentClient CreateTestAgentClient(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null)
     {
         return new FakeAgentClient(agentName, instructions, description, agentDefinitionResponse);
     }
@@ -1395,7 +1395,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Used for tests that exercise the protocol-method code path (CreateAgentVersion).
     /// The returned client must be disposed to clean up the underlying HttpClient/handler.
     /// </summary>
-    private static DisposableTestClient CreateTestAgentClientWithHandler(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
+    private static DisposableTestClient CreateTestAgentClientWithHandler(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null)
     {
         var responseJson = TestDataUtil.GetAgentVersionResponseJson(agentName, agentDefinitionResponse, instructions, description);
 
@@ -1439,59 +1439,59 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     }
 
     /// <summary>
-    /// Creates a test AgentRecord for testing.
+    /// Creates a test ProjectsAgentRecord for testing.
     /// </summary>
-    private AgentRecord CreateTestAgentRecord(AgentDefinition? agentDefinition = null)
+    private ProjectsAgentRecord CreateTestAgentRecord(ProjectsAgentDefinition? agentDefinition = null)
     {
-        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJson(agentDefinition: agentDefinition)))!;
+        return ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJson(agentDefinition: agentDefinition)))!;
     }
 
     /// <summary>
     /// Creates a test AIProjectClient with empty version fields for testing hosted MCP agents.
     /// </summary>
-    private FakeAgentClient CreateTestAgentClientWithEmptyVersion(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
+    private FakeAgentClient CreateTestAgentClientWithEmptyVersion(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null)
     {
         return new FakeAgentClient(agentName, instructions, description, agentDefinitionResponse, useEmptyVersion: true);
     }
 
     /// <summary>
-    /// Creates a test AgentRecord with empty version for testing hosted MCP agents.
+    /// Creates a test ProjectsAgentRecord with empty version for testing hosted MCP agents.
     /// </summary>
-    private AgentRecord CreateTestAgentRecordWithEmptyVersion(AgentDefinition? agentDefinition = null)
+    private ProjectsAgentRecord CreateTestAgentRecordWithEmptyVersion(ProjectsAgentDefinition? agentDefinition = null)
     {
-        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJsonWithEmptyVersion(agentDefinition: agentDefinition)))!;
+        return ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJsonWithEmptyVersion(agentDefinition: agentDefinition)))!;
     }
 
     /// <summary>
-    /// Creates a test AgentVersion with empty version for testing hosted MCP agents.
+    /// Creates a test ProjectsAgentVersion with empty version for testing hosted MCP agents.
     /// </summary>
-    private AgentVersion CreateTestAgentVersionWithEmptyVersion()
+    private ProjectsAgentVersion CreateTestAgentVersionWithEmptyVersion()
     {
-        return ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJsonWithEmptyVersion()))!;
+        return ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJsonWithEmptyVersion()))!;
     }
 
     /// <summary>
     /// Creates a test AIProjectClient with whitespace-only version fields for testing hosted MCP agents.
     /// </summary>
-    private FakeAgentClient CreateTestAgentClientWithWhitespaceVersion(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null)
+    private FakeAgentClient CreateTestAgentClientWithWhitespaceVersion(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null)
     {
         return new FakeAgentClient(agentName, instructions, description, agentDefinitionResponse, versionMode: VersionMode.Whitespace);
     }
 
     /// <summary>
-    /// Creates a test AgentRecord with whitespace-only version for testing hosted MCP agents.
+    /// Creates a test ProjectsAgentRecord with whitespace-only version for testing hosted MCP agents.
     /// </summary>
-    private AgentRecord CreateTestAgentRecordWithWhitespaceVersion(AgentDefinition? agentDefinition = null)
+    private ProjectsAgentRecord CreateTestAgentRecordWithWhitespaceVersion(ProjectsAgentDefinition? agentDefinition = null)
     {
-        return ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJsonWithWhitespaceVersion(agentDefinition: agentDefinition)))!;
+        return ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(TestDataUtil.GetAgentResponseJsonWithWhitespaceVersion(agentDefinition: agentDefinition)))!;
     }
 
     /// <summary>
-    /// Creates a test AgentVersion with whitespace-only version for testing hosted MCP agents.
+    /// Creates a test ProjectsAgentVersion with whitespace-only version for testing hosted MCP agents.
     /// </summary>
-    private AgentVersion CreateTestAgentVersionWithWhitespaceVersion()
+    private ProjectsAgentVersion CreateTestAgentVersionWithWhitespaceVersion()
     {
-        return ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJsonWithWhitespaceVersion()))!;
+        return ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJsonWithWhitespaceVersion()))!;
     }
 
     private const string OpenAPISpec = """
@@ -1525,11 +1525,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
         """;
 
     /// <summary>
-    /// Creates a test AgentVersion for testing.
+    /// Creates a test ProjectsAgentVersion for testing.
     /// </summary>
-    private AgentVersion CreateTestAgentVersion()
+    private ProjectsAgentVersion CreateTestAgentVersion()
     {
-        return ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))!;
+        return ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(TestDataUtil.GetAgentVersionResponseJson()))!;
     }
 
     /// <summary>
@@ -1547,11 +1547,11 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// </summary>
     private sealed class FakeAgentClient : AIProjectClient
     {
-        public FakeAgentClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, bool useEmptyVersion = false, VersionMode versionMode = VersionMode.Normal)
+        public FakeAgentClient(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null, bool useEmptyVersion = false, VersionMode versionMode = VersionMode.Normal)
         {
             // Handle backward compatibility with bool parameter
             var effectiveVersionMode = useEmptyVersion ? VersionMode.Empty : versionMode;
-            this.Agents = new FakeAgentsClient(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
+            this.AgentAdministrationClient = new FakeAgentsClient(agentName, instructions, description, agentDefinitionResponse, effectiveVersionMode);
         }
 
         public override ClientConnection GetConnection(string connectionId)
@@ -1559,17 +1559,17 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             return new ClientConnection("fake-connection-id", "http://localhost", ClientPipeline.Create(), CredentialKind.None);
         }
 
-        public override AgentsClient Agents { get; }
+        public override AgentAdministrationClient AgentAdministrationClient { get; }
 
-        private sealed class FakeAgentsClient : AgentsClient
+        private sealed class FakeAgentsClient : AgentAdministrationClient
         {
             private readonly string? _agentName;
             private readonly string? _instructions;
             private readonly string? _description;
-            private readonly AgentDefinition? _agentDefinition;
+            private readonly ProjectsAgentDefinition? _agentDefinition;
             private readonly VersionMode _versionMode;
 
-            public FakeAgentsClient(string? agentName = null, string? instructions = null, string? description = null, AgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
+            public FakeAgentsClient(string? agentName = null, string? instructions = null, string? description = null, ProjectsAgentDefinition? agentDefinitionResponse = null, VersionMode versionMode = VersionMode.Normal)
             {
                 this._agentName = agentName;
                 this._instructions = instructions;
@@ -1601,44 +1601,44 @@ public sealed class AzureAIProjectChatClientExtensionsTests
             public override ClientResult GetAgent(string agentName, RequestOptions options)
             {
                 var responseJson = this.GetAgentResponseJson();
-                return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson)));
+                return ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson)));
             }
 
-            public override ClientResult<AgentRecord> GetAgent(string agentName, CancellationToken cancellationToken = default)
+            public override ClientResult<ProjectsAgentRecord> GetAgent(string agentName, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentResponseJson();
-                return ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
+                return ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
             }
 
             public override Task<ClientResult> GetAgentAsync(string agentName, RequestOptions options)
             {
                 var responseJson = this.GetAgentResponseJson();
-                return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson))));
+                return Task.FromResult<ClientResult>(ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200, BinaryData.FromString(responseJson))));
             }
 
-            public override Task<ClientResult<AgentRecord>> GetAgentAsync(string agentName, CancellationToken cancellationToken = default)
+            public override Task<ClientResult<ProjectsAgentRecord>> GetAgentAsync(string agentName, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentResponseJson();
-                return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
+                return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentRecord>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
             }
 
-            public override ClientResult<AgentVersion> CreateAgentVersion(string agentName, AgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
+            public override ClientResult<ProjectsAgentVersion> CreateAgentVersion(string agentName, ProjectsAgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentVersionResponseJson();
-                return ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
+                return ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200));
             }
 
-            public override Task<ClientResult<AgentVersion>> CreateAgentVersionAsync(string agentName, AgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
+            public override Task<ClientResult<ProjectsAgentVersion>> CreateAgentVersionAsync(string agentName, ProjectsAgentVersionCreationOptions? options = null, string? foundryFeatures = null, CancellationToken cancellationToken = default)
             {
                 var responseJson = this.GetAgentVersionResponseJson();
-                return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<AgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
+                return Task.FromResult(ClientResult.FromValue(ModelReaderWriter.Read<ProjectsAgentVersion>(BinaryData.FromString(responseJson))!, new MockPipelineResponse(200)));
             }
         }
     }
 
-    private static PromptAgentDefinition GeneratePromptDefinitionResponse(PromptAgentDefinition inputDefinition, List<AITool>? tools)
+    private static DeclarativeAgentDefinition GeneratePromptDefinitionResponse(DeclarativeAgentDefinition inputDefinition, List<AITool>? tools)
     {
-        var definitionResponse = new PromptAgentDefinition(inputDefinition.Model) { Instructions = inputDefinition.Instructions };
+        var definitionResponse = new DeclarativeAgentDefinition(inputDefinition.Model) { Instructions = inputDefinition.Instructions };
         if (tools is not null)
         {
             foreach (var tool in tools)

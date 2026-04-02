@@ -125,9 +125,9 @@ internal sealed class Program
             agentDescription: "Provides information based on search results");
     }
 
-    private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration)
+    private static DeclarativeAgentDefinition DefineSearchAgent(IConfiguration configuration)
     {
-        return new PromptAgentDefinition(configuration.GetValue(Application.Settings.FoundryModel))
+        return new DeclarativeAgentDefinition(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

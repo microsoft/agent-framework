@@ -19,8 +19,8 @@ namespace Foundry.IntegrationTests;
 
 /// <summary>
 /// Integration test fixture that creates versioned Foundry agents via
-/// <c>AIProjectClient.Agents.CreateAgentVersionAsync</c> and wraps them
-/// with <c>AIProjectClient.AsAIAgent(AgentVersion)</c>.
+/// <c>AIProjectClient.AgentAdministrationClient.CreateAgentVersionAsync</c> and wraps them
+/// with <c>AIProjectClient.AsAIAgent(ProjectsAgentVersion)</c>.
 /// </summary>
 public class FoundryVersionedAgentFixture : IChatClientAgentFixture
 {
@@ -121,7 +121,7 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
         string instructions = "You are a helpful assistant.",
         IList<AITool>? aiTools = null)
     {
-        var definition = new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+        var definition = new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = instructions
         };
@@ -139,9 +139,9 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
             }
         }
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             GenerateUniqueAgentName(name),
-            new AgentVersionCreationOptions(definition));
+            new ProjectsAgentVersionCreationOptions(definition));
 
         return this._client.AsAIAgent(agentVersion, tools: aiTools).GetService<ChatClientAgent>()!;
     }
@@ -150,15 +150,15 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
     {
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        var definition = new PromptAgentDefinition(
+        var definition = new DeclarativeAgentDefinition(
             options.ChatOptions?.ModelId ?? TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = options.ChatOptions?.Instructions
         };
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             options.Name,
-            new AgentVersionCreationOptions(definition) { Description = options.Description });
+            new ProjectsAgentVersionCreationOptions(definition) { Description = options.Description });
 
         var agent = this._client.AsAIAgent(agentVersion, tools: options.ChatOptions?.Tools);
 
@@ -169,7 +169,7 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
         $"{baseName}-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
 
     public Task DeleteAgentAsync(ChatClientAgent agent) =>
-        this._client.Agents.DeleteAgentAsync(agent.Name);
+        this._client.AgentAdministrationClient.DeleteAgentAsync(agent.Name);
 
     public async Task DeleteSessionAsync(AgentSession session)
     {
@@ -201,7 +201,7 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
 
         if (this._client is not null && this._agent is not null)
         {
-            return new ValueTask(this._client.Agents.DeleteAgentAsync(this._agent.Name));
+            return new ValueTask(this._client.AgentAdministrationClient.DeleteAgentAsync(this._agent.Name));
         }
 
         return default;
@@ -211,10 +211,10 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
     {
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             GenerateUniqueAgentName("HelpfulAssistant"),
-            new AgentVersionCreationOptions(
-                new PromptAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
+            new ProjectsAgentVersionCreationOptions(
+                new DeclarativeAgentDefinition(TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
                 {
                     Instructions = "You are a helpful assistant."
                 }));
@@ -227,15 +227,15 @@ public class FoundryVersionedAgentFixture : IChatClientAgentFixture
         this._client = new(new Uri(TestConfiguration.GetRequiredValue(TestSettings.AzureAIProjectEndpoint)), TestAzureCliCredentials.CreateAzureCliCredential());
         options.Name ??= GenerateUniqueAgentName("HelpfulAssistant");
 
-        var definition = new PromptAgentDefinition(
+        var definition = new DeclarativeAgentDefinition(
             options.ChatOptions?.ModelId ?? TestConfiguration.GetRequiredValue(TestSettings.AzureAIModelDeploymentName))
         {
             Instructions = options.ChatOptions?.Instructions
         };
 
-        var agentVersion = await this._client.Agents.CreateAgentVersionAsync(
+        var agentVersion = await this._client.AgentAdministrationClient.CreateAgentVersionAsync(
             options.Name,
-            new AgentVersionCreationOptions(definition) { Description = options.Description });
+            new ProjectsAgentVersionCreationOptions(definition) { Description = options.Description });
 
         this._agent = this._client.AsAIAgent(agentVersion, tools: options.ChatOptions?.Tools);
     }
