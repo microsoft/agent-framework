@@ -4068,3 +4068,87 @@ def test_oauth_consent_request_serialization_roundtrip():
 
 
 # endregion
+
+
+# region prepend_instructions_to_messages tests
+
+
+def test_prepend_instructions_basic():
+    """Test that instructions are prepended as system message."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
+    assert len(result) == 2
+    assert result[0].role == "system"
+    assert result[0].text == "You are helpful."
+    assert result[1].role == "user"
+
+
+def test_prepend_instructions_none():
+    """Test that None instructions returns messages unchanged."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, None)
+    assert result is messages
+
+
+def test_prepend_instructions_skips_duplicate():
+    """Test that duplicate system instructions are not prepended again."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["You are helpful."]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "You are helpful.")
+    assert len(result) == 2
+    assert result[0].role == "system"
+    assert result[0].text == "You are helpful."
+    assert result[1].role == "user"
+
+
+def test_prepend_instructions_skips_duplicate_list():
+    """Test deduplication with a list of instructions."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["First instruction"]),
+        Message("system", ["Second instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, ["First instruction", "Second instruction"])
+    assert len(result) == 3
+    assert result[0].text == "First instruction"
+    assert result[1].text == "Second instruction"
+    assert result[2].text == "Hello"
+
+
+def test_prepend_instructions_adds_when_different():
+    """Test that different instructions are still prepended."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [
+        Message("system", ["Old instruction"]),
+        Message("user", ["Hello"]),
+    ]
+    result = prepend_instructions_to_messages(messages, "New instruction")
+    assert len(result) == 3
+    assert result[0].role == "system"
+    assert result[0].text == "New instruction"
+    assert result[1].text == "Old instruction"
+    assert result[2].text == "Hello"
+
+
+def test_prepend_instructions_custom_role():
+    """Test prepending with a custom role."""
+    from agent_framework._types import prepend_instructions_to_messages
+
+    messages = [Message("user", ["Hello"])]
+    result = prepend_instructions_to_messages(messages, "Be concise.", role="developer")
+    assert len(result) == 2
+    assert result[0].role == "developer"
+
+
+# endregion

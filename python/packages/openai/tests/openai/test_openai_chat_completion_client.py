@@ -1233,6 +1233,32 @@ def test_prepare_options_with_instructions(
     assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
 
 
+def test_prepare_options_with_instructions_no_duplicate(
+    openai_unit_test_env: dict[str, str],
+) -> None:
+    """Test that duplicate system message from instructions is not added again.
+
+    Regression test for https://github.com/microsoft/agent-framework/issues/5049
+    """
+    client = OpenAIChatCompletionClient()
+
+    # Simulate messages that already contain the system instruction
+    messages = [
+        Message(role="system", text="You are a helpful assistant."),
+        Message(role="user", text="Hello"),
+    ]
+    options = {"instructions": "You are a helpful assistant."}
+
+    prepared_options = client._prepare_options(messages, options)
+
+    # Should NOT duplicate the system message
+    assert "messages" in prepared_options
+    assert len(prepared_options["messages"]) == 2
+    assert prepared_options["messages"][0]["role"] == "system"
+    assert prepared_options["messages"][0]["content"] == "You are a helpful assistant."
+    assert prepared_options["messages"][1]["role"] == "user"
+
+
 def test_prepare_message_with_author_name(openai_unit_test_env: dict[str, str]) -> None:
     """Test that author_name is included in prepared message."""
     client = OpenAIChatCompletionClient()

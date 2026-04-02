@@ -1796,7 +1796,19 @@ def prepend_instructions_to_messages(
     if isinstance(instructions, str):
         instructions = [instructions]
 
-    instruction_messages = [Message(role, [instr]) for instr in instructions]
+    # Skip instructions that are already present as leading messages with the
+    # same role and text.  This prevents duplicate system messages when
+    # instructions are injected by multiple layers (e.g. Agent + chat client).
+    deduplicated: list[str] = []
+    for idx, instr in enumerate(instructions):
+        if idx < len(messages) and messages[idx].role == role and messages[idx].text == instr:
+            continue
+        deduplicated.append(instr)
+
+    if not deduplicated:
+        return messages
+
+    instruction_messages = [Message(role, [instr]) for instr in deduplicated]
     return [*instruction_messages, *messages]
 
 
