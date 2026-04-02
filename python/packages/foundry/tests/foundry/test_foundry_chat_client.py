@@ -15,13 +15,12 @@ from agent_framework import ChatResponse, Content, Message, SupportsChatGetRespo
 from agent_framework._telemetry import AGENT_FRAMEWORK_USER_AGENT
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
 from agent_framework_openai import OpenAIContentFilterException
+from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 from openai import BadRequestError
 from pydantic import BaseModel
 from pytest import param
-
-from agent_framework_openai._chat_client import RawOpenAIChatClient
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 
@@ -897,7 +896,6 @@ def test_parse_chunk_handles_missing_consent_link() -> None:
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent_contents) == 0
-
 
 
 def test_parse_chunk_handles_empty_string_consent_link() -> None:

@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agent_framework import AgentResponse, ChatContext, ChatMiddleware, Message, tool
-from azure.core.exceptions import ResourceNotFoundError
 from agent_framework_openai._chat_client import RawOpenAIChatClient
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import AzureCliCredential
 
 from agent_framework_foundry._agent import (
@@ -547,7 +547,6 @@ def test_parse_chunk_handles_missing_consent_link() -> None:
 
     consent_contents = [c for c in update.contents if c.type == "oauth_consent_request"]
     assert len(consent_contents) == 0
-
 
 
 def test_parse_chunk_handles_empty_string_consent_link() -> None:

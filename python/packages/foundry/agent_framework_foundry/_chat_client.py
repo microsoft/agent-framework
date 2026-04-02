@@ -20,8 +20,6 @@ from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework.observability import ChatTelemetryLayer
 from agent_framework_openai._chat_client import OpenAIChatOptions, RawOpenAIChatClient
 from azure.ai.projects.aio import AIProjectClient
-
-from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 from azure.ai.projects.models import (
     AutoCodeInterpreterToolParam,
     CodeInterpreterTool,
@@ -34,6 +32,8 @@ from azure.ai.projects.models import FileSearchTool as ProjectsFileSearchTool
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
+
+from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # type: ignore # pragma: no cover
