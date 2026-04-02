@@ -143,7 +143,7 @@ Create a simple Agent, using OpenAI Responses, that writes a haiku about the Mic
 
 ```c#
 // dotnet add package Microsoft.Agents.AI.OpenAI --prerelease
-using Microsoft.Agents.AI;
+using System;
 using OpenAI;
 using OpenAI.Responses;
 
