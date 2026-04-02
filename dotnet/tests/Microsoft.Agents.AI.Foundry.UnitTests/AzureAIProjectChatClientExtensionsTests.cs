@@ -1150,7 +1150,7 @@ public sealed class AzureAIProjectChatClientExtensionsTests
     /// Verify that ChatClientMetadata.DefaultModelId is set from DeclarativeAgentDefinition model property.
     /// </summary>
     [Fact]
-    public void ChatClientMetadata_WithPromptAgentDefinition_SetsDefaultModelIdFromModel()
+    public void ChatClientMetadata_WithDeclarativeAgentDefinition_SetsDefaultModelIdFromModel()
     {
         // Arrange
         AIProjectClient client = this.CreateTestAgentClient();

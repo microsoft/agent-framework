@@ -17,7 +17,7 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class wraps <see cref="ProjectsAgentTool"/> (Azure.AI.Projects.OpenAI) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
+/// This class wraps <see cref="ProjectsAgentTool"/> (Azure.AI.Projects.Agents) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
 /// returning <see cref="AITool"/> directly — eliminating the need for manual casting and <c>.AsAITool()</c> calls.
 /// </para>
 /// <para>

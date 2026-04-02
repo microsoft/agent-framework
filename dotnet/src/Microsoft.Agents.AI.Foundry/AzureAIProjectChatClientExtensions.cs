@@ -293,14 +293,14 @@ public static partial class AzureAIProjectChatClientExtensions
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
     private static ChatClientAgent AsChatClientAgent(
-        AIProjectClient AIProjectClient,
+        AIProjectClient aiProjectClient,
         ProjectsAgentVersion agentVersion,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
         => AsChatClientAgent(
-            AIProjectClient,
+            aiProjectClient,
             agentVersion,
             CreateChatClientAgentOptions(agentVersion, new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
@@ -308,14 +308,14 @@ public static partial class AzureAIProjectChatClientExtensions
 
     /// <summary>This method creates an <see cref="ChatClientAgent"/> with a auto-generated ChatClientAgentOptions from the specified configuration parameters.</summary>
     private static ChatClientAgent AsChatClientAgent(
-        AIProjectClient AIProjectClient,
+        AIProjectClient aiProjectClient,
         ProjectsAgentRecord agentRecord,
         IList<AITool>? tools,
         Func<IChatClient, IChatClient>? clientFactory,
         bool requireInvocableTools,
         IServiceProvider? services)
         => AsChatClientAgent(
-            AIProjectClient,
+            aiProjectClient,
             agentRecord,
             CreateChatClientAgentOptions(agentRecord.GetLatestVersion(), new ChatOptions() { Tools = tools }, requireInvocableTools),
             clientFactory,
