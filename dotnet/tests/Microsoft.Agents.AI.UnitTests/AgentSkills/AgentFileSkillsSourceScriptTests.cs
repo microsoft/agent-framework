@@ -114,9 +114,10 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task GetSkillsAsync_ScriptsOutsideScriptsDir_AreAlsoDiscoveredAsync()
+    public async Task GetSkillsAsync_ScriptsOutsideScriptsDir_AreNotDiscoveredAsync()
     {
-        // Arrange — scripts at any depth in the skill directory are discovered
+        // Arrange — scripts outside configured folders are not discovered; only files directly
+        // inside the configured folder are picked up (no subdirectory recursion)
         string skillDir = CreateSkillDir(this._testRoot, "root-scripts", "Root scripts skill", "Body.");
         CreateFile(skillDir, "convert.py", "print('root')");
         CreateFile(skillDir, "tools/helper.sh", "echo 'helper'");
@@ -125,12 +126,9 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         // Act
         var skills = await source.GetSkillsAsync(CancellationToken.None);
 
-        // Assert
+        // Assert — neither file is in the default scripts/ folder, so no scripts are discovered
         Assert.Single(skills);
-        var scriptNames = skills[0].Scripts!.Select(s => s.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
-        Assert.Equal(2, scriptNames.Count);
-        Assert.Contains("convert.py", scriptNames);
-        Assert.Contains("tools/helper.sh", scriptNames);
+        Assert.Empty(skills[0].Scripts!);
     }
 
     [Fact]
@@ -228,6 +226,46 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
         Assert.NotNull(capturedArgs);
         Assert.Equal(26.2, capturedArgs["value"]);
         Assert.Equal(1.60934, capturedArgs["factor"]);
+    }
+
+    [Fact]
+    public async Task GetSkillsAsync_ScriptFoldersWithNestedPath_DiscoversScriptsAsync()
+    {
+        // Arrange — ScriptFolders configured with a multi-segment relative path (f1/f2/f3)
+        string skillDir = CreateSkillDir(this._testRoot, "nested-script-skill", "Nested script folder", "Body.");
+        CreateFile(skillDir, "f1/f2/f3/run.py", "print('nested')");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor,
+            new AgentFileSkillsSourceOptions { ScriptFolders = ["f1/f2/f3"] });
+
+        // Act
+        var skills = await source.GetSkillsAsync(CancellationToken.None);
+
+        // Assert — script file inside the deeply nested folder is discovered
+        Assert.Single(skills);
+        Assert.Single(skills[0].Scripts!);
+        Assert.Equal("f1/f2/f3/run.py", skills[0].Scripts![0].Name);
+    }
+
+    [Theory]
+    [InlineData("./scripts")]
+    [InlineData("./scripts/f1")]
+    public async Task GetSkillsAsync_ScriptFolderWithDotSlashPrefix_DiscoversScriptsAsync(string folder)
+    {
+        // Arrange — "./scripts" and "./scripts/f1" are equivalent to "scripts" and "scripts/f1";
+        // the leading "./" is transparently normalized by Path.GetFullPath during file enumeration.
+        string folderWithoutDotSlash = folder.Substring(2); // strip "./"
+        string skillDir = CreateSkillDir(this._testRoot, "dotslash-script-skill", "Dot-slash prefix", "Body.");
+        CreateFile(skillDir, $"{folderWithoutDotSlash}/run.py", "print('dotslash')");
+        var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor,
+            new AgentFileSkillsSourceOptions { ScriptFolders = [folder] });
+
+        // Act
+        var skills = await source.GetSkillsAsync(CancellationToken.None);
+
+        // Assert — script is discovered with a name identical to using the folder without "./"
+        Assert.Single(skills);
+        Assert.Single(skills[0].Scripts!);
+        Assert.Equal($"{folderWithoutDotSlash}/run.py", skills[0].Scripts![0].Name);
     }
 
     private static string CreateSkillDir(string root, string name, string description, string body)

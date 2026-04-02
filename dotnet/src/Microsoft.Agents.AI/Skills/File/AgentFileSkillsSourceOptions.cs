@@ -30,4 +30,22 @@ public sealed class AgentFileSkillsSourceOptions
     /// <c>.ps1</c>, <c>.cs</c>, <c>.csx</c>.
     /// </summary>
     public IEnumerable<string>? AllowedScriptExtensions { get; set; }
+
+    /// <summary>
+    /// Gets or sets the sub-folder names to scan for script files, relative to the skill directory.
+    /// Use <c>"."</c> to include files directly at the skill root.
+    /// When <see langword="null"/>, defaults to <c>scripts</c> (per the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
+    /// When set, replaces the defaults entirely.
+    /// </summary>
+    public IEnumerable<string>? ScriptFolders { get; set; }
+
+    /// <summary>
+    /// Gets or sets the sub-folder names to scan for resource files, relative to the skill directory.
+    /// Use <c>"."</c> to include files directly at the skill root.
+    /// When <see langword="null"/>, defaults to <c>references</c> and <c>assets</c> (per the
+    /// <see href="https://agentskills.io/specification">Agent Skills specification</see>).
+    /// When set, replaces the defaults entirely.
+    /// </summary>
+    public IEnumerable<string>? ResourceFolders { get; set; }
 }
