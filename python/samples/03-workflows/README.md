@@ -115,7 +115,9 @@ Orchestration-focused samples (Sequential, Concurrent, Handoff, GroupChat, Magen
 | Sample                           | File                                                                                             | Concepts                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
 | State with Agents                | [state-management/state_with_agents.py](./state-management/state_with_agents.py) | Store in state once and later reuse across agents                 |
-| Workflow Kwargs (Custom Context) | [state-management/workflow_kwargs.py](./state-management/workflow_kwargs.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools |
+| Workflow Kwargs - Global Context | [state-management/workflow_kwargs_global.py](./state-management/workflow_kwargs_global.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in all agents |
+| Workflow Kwargs - Per Agent | [state-management/workflow_kwargs_per_agent.py](./state-management/workflow_kwargs_per_agent.py)                     | Pass custom context (data, user tokens) via kwargs to `@tool` tools in individual agents |
+
 
 ### visualization
 
