@@ -1,17 +1,22 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.AI.Projects;
 using Microsoft.Extensions.AI.Evaluation;
 using OpenAI.Evals;
 
 #pragma warning disable OPENAI001 // EvaluationClient is experimental
 
-namespace Microsoft.Agents.AI.AzureAI;
+namespace Microsoft.Agents.AI.Foundry;
 
 /// <summary>
 /// Azure AI Foundry evaluator provider that calls the Foundry Evals API.

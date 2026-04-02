@@ -1,8 +1,11 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.AI;
 
-namespace Microsoft.Agents.AI.AzureAI;
+namespace Microsoft.Agents.AI.Foundry;
 
 /// <summary>
 /// Converts MEAI <see cref="ChatMessage"/> objects to the Foundry evaluator JSON format.
