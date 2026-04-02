@@ -34,7 +34,6 @@
     <Project Path="samples/02-agents/AgentProviders/Agent_With_GoogleGemini/Agent_With_GoogleGemini.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_Ollama/Agent_With_Ollama.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_ONNX/Agent_With_ONNX.csproj" />
-    <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIAssistants/Agent_With_OpenAIAssistants.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion/Agent_With_OpenAIChatCompletion.csproj" />
     <Project Path="samples/02-agents/AgentProviders/Agent_With_OpenAIResponses/Agent_With_OpenAIResponses.csproj" />
   </Folder>
