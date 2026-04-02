@@ -1271,8 +1271,8 @@ class RawAnthropicClient(
                         )
                     )
                 case "input_json_delta":
-                    # Skip argument deltas for MCP tools — execution is handled server-side.
-                    if self._last_call_content_type == "mcp_tool_use":
+                    # Skip argument deltas for MCP and server tools — execution is handled server-side.
+                    if self._last_call_content_type in ("mcp_tool_use", "server_tool_use"):
                         pass
                     else:
                         call_id = self._last_call_id_name[0] if self._last_call_id_name else ""
