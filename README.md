@@ -124,7 +124,7 @@ Create a simple Agent, using Microsoft Foundry with token-based auth, that write
 
 ```c#
 // dotnet add package Microsoft.Agents.AI.AzureAI --prerelease
-// dotnet add package Azure.Identity
+// dotnet add package Microsoft.Agents.AI.Foundry
 // Use `az login` to authenticate with Azure CLI
 using Azure.AI.Projects;
 using Azure.Identity;
