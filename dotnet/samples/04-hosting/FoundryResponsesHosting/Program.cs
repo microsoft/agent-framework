@@ -16,7 +16,6 @@
 //   - AZURE_OPENAI_DEPLOYMENT - the model deployment name (default: "gpt-4o")
 
 using System.ComponentModel;
-using Azure.AI.AgentServer.Responses;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -27,11 +26,6 @@ using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// ---------------------------------------------------------------------------
-// 1. Register the Azure AI Responses Server SDK
-// ---------------------------------------------------------------------------
-builder.Services.AddResponsesServer();
 
 // ---------------------------------------------------------------------------
 // 2. Create the shared Azure OpenAI chat client
@@ -113,9 +107,9 @@ builder.AddAIAgent("triage-workflow", (_, key) =>
     triageWorkflow.AsAIAgent(name: key));
 
 // ---------------------------------------------------------------------------
-// 5. Wire up the agent-framework handler as the IResponseHandler
+// 5. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
-builder.Services.AddAgentFrameworkHandler();
+builder.Services.AddFoundryResponses();
 
 var app = builder.Build();
 
@@ -127,7 +121,7 @@ app.Lifetime.ApplicationStopping.Register(() =>
 // 6. Routes
 // ---------------------------------------------------------------------------
 app.MapGet("/ready", () => Results.Ok("ready"));
-app.MapResponsesServer();
+app.MapFoundryResponses();
 
 app.MapGet("/", () => Results.Content(Pages.Home, "text/html"));
 app.MapGet("/tool-demo", () => Results.Content(Pages.ToolDemo, "text/html"));
