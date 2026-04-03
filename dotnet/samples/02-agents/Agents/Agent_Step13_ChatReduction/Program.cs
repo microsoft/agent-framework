@@ -3,7 +3,7 @@
 // This sample shows how to use a chat history reducer to keep the context within model size limits.
 // Any implementation of Microsoft.Extensions.AI.IChatReducer can be used to customize how the chat history is reduced.
 // NOTE: this feature is only supported where the chat history is stored locally, such as with OpenAI Chat Completion.
-// Where the chat history is stored server side, such as with Azure Foundry Agents, the service must manage the chat history size.
+// Where the chat history is stored server side, such as with Microsoft Foundry Agents, the service must manage the chat history size.
 
 using Azure.AI.OpenAI;
 using Azure.Identity;

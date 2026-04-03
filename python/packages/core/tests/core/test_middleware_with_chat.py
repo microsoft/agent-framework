@@ -43,7 +43,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [LoggingChatMiddleware()]
 
         # Execute chat client directly
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(messages)
 
         # Verify response
@@ -68,7 +68,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [logging_chat_middleware]
 
         # Execute chat client directly
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(messages)
 
         # Verify response
@@ -87,14 +87,14 @@ class TestChatMiddleware:
             # Modify the first message by adding a prefix
             if context.messages and len(context.messages) > 0:
                 original_text = context.messages[0].text or ""
-                context.messages[0] = Message(role=context.messages[0].role, text=f"MODIFIED: {original_text}")
+                context.messages[0] = Message(role=context.messages[0].role, contents=[f"MODIFIED: {original_text}"])
             await call_next()
 
         # Add middleware to chat client
         chat_client_base.chat_middleware = [message_modifier_middleware]
 
         # Execute chat client
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(messages)
 
         # Verify that the message was modified (MockChatClient echoes back the input)
@@ -110,7 +110,7 @@ class TestChatMiddleware:
         async def response_override_middleware(context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
             # Override the response without calling next()
             context.result = ChatResponse(
-                messages=[Message(role="assistant", text="MiddlewareTypes overridden response")],
+                messages=[Message(role="assistant", contents=["MiddlewareTypes overridden response"])],
                 response_id="middleware-response-123",
             )
             context.terminate = True
@@ -119,7 +119,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [response_override_middleware]
 
         # Execute chat client
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(messages)
 
         # Verify that the response was overridden
@@ -148,7 +148,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [first_middleware, second_middleware]
 
         # Execute chat client
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(messages)
 
         # Verify response
@@ -179,7 +179,7 @@ class TestChatMiddleware:
         agent = Agent(client=client, middleware=[agent_level_chat_middleware])
 
         # Execute the agent
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await agent.run(messages)
 
         # Verify response
@@ -213,7 +213,7 @@ class TestChatMiddleware:
         agent = Agent(client=chat_client_base, middleware=[first_middleware, second_middleware])
 
         # Execute the agent
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await agent.run(messages)
 
         # Verify response
@@ -252,7 +252,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [streaming_middleware]
 
         # Execute streaming response
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         updates: list[object] = []
         async for update in chat_client_base.get_response(messages, stream=True):
             updates.append(update)
@@ -274,7 +274,7 @@ class TestChatMiddleware:
             await call_next()
 
         # First call with run-level middleware
-        messages = [Message(role="user", text="first message")]
+        messages = [Message(role="user", contents=["first message"])]
         response1 = await chat_client_base.get_response(
             messages,
             client_kwargs={"middleware": [counting_middleware]},
@@ -283,13 +283,13 @@ class TestChatMiddleware:
         assert execution_count["count"] == 1
 
         # Second call WITHOUT run-level middleware - should not execute the middleware
-        messages = [Message(role="user", text="second message")]
+        messages = [Message(role="user", contents=["second message"])]
         response2 = await chat_client_base.get_response(messages)
         assert response2 is not None
         assert execution_count["count"] == 1  # Should still be 1, not 2
 
         # Third call with run-level middleware again - should execute
-        messages = [Message(role="user", text="third message")]
+        messages = [Message(role="user", contents=["third message"])]
         response3 = await chat_client_base.get_response(
             messages,
             client_kwargs={"middleware": [counting_middleware]},
@@ -310,7 +310,7 @@ class TestChatMiddleware:
 
         async def fake_inner_get_response(**kwargs: Any) -> ChatResponse:
             assert "middleware" not in kwargs
-            return ChatResponse(messages=[Message(role="assistant", text="ok")])
+            return ChatResponse(messages=[Message(role="assistant", contents=["ok"])])
 
         with patch.object(
             chat_client_base,
@@ -318,7 +318,7 @@ class TestChatMiddleware:
             side_effect=fake_inner_get_response,
         ) as mock_inner_get_response:
             response = await chat_client_base.get_response(
-                [Message(role="user", text="hello")],
+                [Message(role="user", contents=["hello"])],
                 client_kwargs={"middleware": [inspecting_middleware], "trace_id": "trace-123"},
             )
 
@@ -350,7 +350,7 @@ class TestChatMiddleware:
         chat_client_base.chat_middleware = [kwargs_middleware]
 
         # Execute chat client with runtime options
-        messages = [Message(role="user", text="test message")]
+        messages = [Message(role="user", contents=["test message"])]
         response = await chat_client_base.get_response(
             messages,
             options={"temperature": 0.7, "max_tokens": 100, "custom_param": "test_value"},
@@ -493,12 +493,12 @@ class TestChatMiddleware:
             ]
         )
         final_response = ChatResponse(
-            messages=[Message(role="assistant", text="Based on the weather data, it's sunny!")]
+            messages=[Message(role="assistant", contents=["Based on the weather data, it's sunny!"])]
         )
 
         client.run_responses = [function_call_response, final_response]
         # Execute the chat client directly with tools - this should trigger function invocation and middleware
-        messages = [Message(role="user", text="What's the weather in San Francisco?")]
+        messages = [Message(role="user", contents=["What's the weather in San Francisco?"])]
         response = await client.get_response(messages, options={"tools": [sample_tool_wrapped]})
 
         # Verify response
@@ -557,7 +557,7 @@ class TestChatMiddleware:
         client.run_responses = [function_call_response]
 
         # Execute the chat client directly with run-level middleware and tools
-        messages = [Message(role="user", text="What's the weather in New York?")]
+        messages = [Message(role="user", contents=["What's the weather in New York?"])]
         response = await client.get_response(
             messages,
             options={"tools": [sample_tool_wrapped]},
@@ -627,11 +627,11 @@ class TestChatMiddleware:
                     )
                 ]
             ),
-            ChatResponse(messages=[Message(role="assistant", text="Based on the weather data, it's sunny!")]),
+            ChatResponse(messages=[Message(role="assistant", contents=["Based on the weather data, it's sunny!"])]),
         ]
 
         response = await client.get_response(
-            [Message(role="user", text="What's the weather in Seattle?")],
+            [Message(role="user", contents=["What's the weather in Seattle?"])],
             options={"tools": [sample_tool_wrapped]},
             client_kwargs={"middleware": [run_level_chat_middleware, run_level_function_middleware]},
         )
@@ -710,7 +710,7 @@ class TestChatMiddleware:
 
         updates: list[ChatResponseUpdate] = []
         async for update in client.get_response(
-            [Message(role="user", text="What's the weather in Seattle?")],
+            [Message(role="user", contents=["What's the weather in Seattle?"])],
             options={"tools": [sample_tool_wrapped]},
             client_kwargs={"middleware": [run_level_chat_middleware, run_level_function_middleware]},
             stream=True,

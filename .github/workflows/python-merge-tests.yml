@@ -37,7 +37,7 @@ jobs:
       azureChanged: ${{ steps.filter.outputs.azure }}
       miscChanged: ${{ steps.filter.outputs.misc }}
       functionsChanged: ${{ steps.filter.outputs.functions }}
-      azureAiChanged: ${{ steps.filter.outputs.azure-ai }}
+      foundryChanged: ${{ steps.filter.outputs.foundry }}
       cosmosChanged: ${{ steps.filter.outputs.cosmos }}
     steps:
       - uses: actions/checkout@v6
@@ -75,10 +75,10 @@ jobs:
             functions:
               - 'python/packages/azurefunctions/**'
               - 'python/packages/durabletask/**'
-            azure-ai:
-              - 'python/packages/azure-ai/**'
+            foundry:
               - 'python/packages/foundry/**'
               - 'python/samples/**/providers/foundry/**'
+              - 'python/samples/02-agents/embeddings/foundry_embeddings.py'
             cosmos:
               - 'python/packages/azure-cosmos/**'
       # run only if 'python' files were changed
@@ -139,8 +139,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
@@ -192,10 +192,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: integration
     env:
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
     defaults:
       run:
@@ -255,7 +255,7 @@ jobs:
     environment: integration
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -330,14 +330,15 @@ jobs:
     environment: integration
     env:
       UV_PYTHON: "3.11"
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FUNCTIONS_WORKER_RUNTIME: "python"
@@ -392,13 +393,11 @@ jobs:
       github.event_name != 'pull_request' &&
       needs.paths-filter.outputs.pythonChanges == 'true' &&
       (github.event_name != 'merge_group' ||
-       needs.paths-filter.outputs.azureAiChanged == 'true' ||
+       needs.paths-filter.outputs.foundryChanged == 'true' ||
        needs.paths-filter.outputs.coreChanged == 'true')
     runs-on: ubuntu-latest
     environment: integration
     env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
@@ -431,11 +430,6 @@ jobs:
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
           --retries 2 --retry-delay 5
-        working-directory: ./python
-      - name: Test Azure AI samples
-        timeout-minutes: 10
-        if: env.RUN_SAMPLES_TESTS == 'true'
-        run: uv run pytest tests/samples/ -m "azure-ai"
         working-directory: ./python
       - name: Surface failing tests
         if: always()

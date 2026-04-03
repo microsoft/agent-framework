@@ -10,7 +10,7 @@ See ``evaluate_tool_calls_sample.py`` for tool-call accuracy evaluation.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio

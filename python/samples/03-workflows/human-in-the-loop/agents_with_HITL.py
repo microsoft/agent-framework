@@ -103,7 +103,8 @@ class Coordinator(Executor):
             # Human approved the draft as-is; forward it unchanged.
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=original_request.conversation + [Message("user", text="The draft is approved as-is.")],
+                    messages=original_request.conversation
+                    + [Message("user", contents=["The draft is approved as-is."])],
                     should_respond=True,
                 ),
                 target_id=self.final_editor_name,
@@ -118,7 +119,7 @@ class Coordinator(Executor):
             "Rewrite the draft from the previous assistant message into a polished final version. "
             "Keep the response under 120 words and reflect any requested tone adjustments."
         )
-        conversation.append(Message("user", text=instruction))
+        conversation.append(Message("user", contents=[instruction]))
         await ctx.send_message(
             AgentExecutorRequest(messages=conversation, should_respond=True),
             target_id=self.writer_name,

@@ -7,7 +7,7 @@ by using ``FoundryEvals.evaluate()`` with ``TOOL_CALL_ACCURACY``.
 
 Prerequisites:
 - An Azure AI Foundry project with a deployed model
-- Set FOUNDRY_PROJECT_ENDPOINT and AZURE_AI_MODEL_DEPLOYMENT_NAME in .env
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL in .env
 """
 
 import asyncio
@@ -39,7 +39,7 @@ def get_flight_price(origin: str, destination: str) -> str:
 async def main() -> None:
     chat_client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-4o"),
+        model=os.environ.get("FOUNDRY_MODEL", "gpt-4o"),
         credential=AzureCliCredential(),
     )
 
@@ -48,8 +48,7 @@ async def main() -> None:
         client=chat_client,
         name="travel-assistant",
         instructions=(
-            "You are a helpful travel assistant. "
-            "Use your tools to answer questions about weather and flights."
+            "You are a helpful travel assistant. Use your tools to answer questions about weather and flights."
         ),
         tools=[get_weather, get_flight_price],
     )

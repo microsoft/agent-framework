@@ -14,12 +14,10 @@ load_dotenv(override=True)
 
 # Configure these for your Foundry project
 # Read the explicit variables present in the .env file
-PROJECT_ENDPOINT = os.getenv(
-    "PROJECT_ENDPOINT"
+FOUNDRY_PROJECT_ENDPOINT = os.getenv(
+    "FOUNDRY_PROJECT_ENDPOINT"
 )  # e.g., "https://<project>.services.ai.azure.com/api/projects/<project-name>"
-MODEL_DEPLOYMENT_NAME = os.getenv(
-    "MODEL_DEPLOYMENT_NAME", "gpt-4.1-mini"
-)  # Your model deployment name e.g., "gpt-4.1-mini"
+FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "gpt-4.1-mini")  # Your model deployment name e.g., "gpt-4.1-mini"
 
 
 def get_credential():
@@ -31,8 +29,8 @@ def get_credential():
 async def create_agents():
     async with get_credential() as credential:
         client = FoundryChatClient(
-            project_endpoint=PROJECT_ENDPOINT,
-            model=MODEL_DEPLOYMENT_NAME,
+            project_endpoint=FOUNDRY_PROJECT_ENDPOINT,
+            model=FOUNDRY_MODEL,
             credential=credential,
         )
         writer = Agent(
@@ -60,8 +58,8 @@ async def main() -> None:
     The writer and reviewer multi-agent workflow.
 
     Environment variables required:
-    - PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
-    - MODEL_DEPLOYMENT_NAME: Your Microsoft Foundry model deployment name
+    - FOUNDRY_PROJECT_ENDPOINT: Your Microsoft Foundry project endpoint
+    - FOUNDRY_MODEL: Your Microsoft Foundry model deployment name
     """
 
     async with create_agents() as (writer, reviewer):

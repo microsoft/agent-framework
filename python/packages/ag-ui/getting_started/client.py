@@ -44,7 +44,7 @@ async def main():
                 metadata = {"thread_id": thread_id} if thread_id else None
 
                 stream = client.get_response(
-                    [Message(role="user", text=message)],
+                    [Message(role="user", contents=[message])],
                     stream=True,
                     options={"metadata": metadata} if metadata else None,
                 )

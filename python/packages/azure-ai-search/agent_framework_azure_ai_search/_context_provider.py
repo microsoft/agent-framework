@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Azure AI Search context provider using BaseContextProvider.
+"""New-pattern Azure AI Search context provider using ContextProvider.
 
 This module provides ``AzureAISearchContextProvider``, built on the new
-:class:`BaseContextProvider` hooks pattern.
+:class:`ContextProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentSession,
     Annotation,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     Message,
     SecretString,
     SessionContext,
@@ -154,8 +154,8 @@ class AzureAISearchSettings(TypedDict, total=False):
     api_key: SecretString | None
 
 
-class AzureAISearchContextProvider(BaseContextProvider):
-    """Azure AI Search context provider using the new BaseContextProvider hooks pattern.
+class AzureAISearchContextProvider(ContextProvider):
+    """Azure AI Search context provider using the new ContextProvider hooks pattern.
 
     Retrieves relevant context from Azure AI Search using semantic or agentic search
     modes.
@@ -180,8 +180,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -206,8 +205,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Unused in semantic mode.
-            model_deployment_name: Unused in semantic mode.
-            model_name: Unused in semantic mode.
+            model: Unused in semantic mode.
             knowledge_base_name: Must be ``None`` for this overload.
             retrieval_instructions: Unused in semantic mode.
             azure_openai_api_key: Unused in semantic mode.
@@ -235,8 +233,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str,
-        model_deployment_name: str,
-        model_name: str | None = None,
+        model: str,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -261,8 +258,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base creation.
-            model_deployment_name: Azure OpenAI deployment used by the generated Knowledge Base.
-            model_name: Underlying model name for the Knowledge Base model configuration.
+            model: Model used by the generated Knowledge Base.
             knowledge_base_name: Must be ``None`` for this overload.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
@@ -290,8 +286,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: str,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -317,8 +312,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Unused when connecting to an existing Knowledge Base.
-            model_deployment_name: Unused when connecting to an existing Knowledge Base.
-            model_name: Unused when connecting to an existing Knowledge Base.
+            model: Unused when connecting to an existing Knowledge Base.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Unused when connecting to an existing Knowledge Base.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
@@ -345,8 +339,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -375,8 +368,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             embedding_function: Embedding provider used for vector search.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL when creating a Knowledge Base from an index.
-            model_deployment_name: Azure OpenAI deployment when creating a Knowledge Base from an index.
-            model_name: Underlying model name for Knowledge Base model configuration.
+            model: Model used when creating a Knowledge Base from an index.
             knowledge_base_name: Resolved from ``env_file_path`` or ``AZURE_SEARCH_KNOWLEDGE_BASE_NAME``.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Optional Azure OpenAI API key for Knowledge Base creation.
@@ -403,8 +395,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         embedding_function: EmbeddingFunction | None = None,
         context_prompt: str | None = None,
         azure_openai_resource_url: str | None = None,
-        model_deployment_name: str | None = None,
-        model_name: str | None = None,
+        model: str | None = None,
         knowledge_base_name: str | None = None,
         retrieval_instructions: str | None = None,
         azure_openai_api_key: str | None = None,
@@ -432,11 +423,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
             embedding_function: Async function to generate embeddings or a SupportsGetEmbeddings instance.
             context_prompt: Custom prompt to prepend to retrieved context.
             azure_openai_resource_url: Azure OpenAI resource URL for Knowledge Base.
-            model_deployment_name: Model deployment name in Azure OpenAI.
-            model_name: The underlying model name.
-            knowledge_base_name: Name of an existing Knowledge Base to use. In agentic mode,
-                providing this explicitly selects the Knowledge Base-backed setup and ignores any
-                environment-provided index name.
+            model: Model name to use for Azure OpenAI vectorization.
+            knowledge_base_name: Name of an existing Knowledge Base to use.
             retrieval_instructions: Custom instructions for Knowledge Base retrieval.
             azure_openai_api_key: Azure OpenAI API key.
             knowledge_base_output_mode: Output mode for Knowledge Base retrieval.
@@ -483,10 +471,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
         if ignored_agentic_field is not None:
             settings[ignored_agentic_field] = None
 
-        if mode == "agentic" and settings.get("index_name") and not model_deployment_name:
-            raise ValueError(
-                "model_deployment_name is required for agentic mode when creating Knowledge Base from index."
-            )
+        if mode == "agentic" and settings.get("index_name") and not model:
+            raise ValueError("model is required for agentic mode when creating Knowledge Base from index.")
 
         resolved_credential: AzureKeyCredential | AsyncTokenCredential
         if credential:
@@ -512,8 +498,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
         self.context_prompt = context_prompt or self._DEFAULT_SEARCH_CONTEXT_PROMPT
 
         self.azure_openai_resource_url = azure_openai_resource_url
-        self.azure_openai_deployment_name = model_deployment_name
-        self.model_name = model_name or model_deployment_name
+        self.azure_openai_model = model
         self.knowledge_base_name = settings.get("knowledge_base_name")
         self.retrieval_instructions = retrieval_instructions
         self.azure_openai_api_key = azure_openai_api_key
@@ -619,7 +604,9 @@ class AzureAISearchContextProvider(BaseContextProvider):
         if not result_messages:
             return
 
-        context.extend_messages(self.source_id, [Message(role="user", text=self.context_prompt), *result_messages])
+        context.extend_messages(
+            self.source_id, [Message(role="user", contents=[self.context_prompt]), *result_messages]
+        )
 
     def _find_vector_fields(self, index: Any) -> list[str]:
         """Find all fields that can store vectors."""
@@ -734,7 +721,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             doc_id = doc.get("id") or doc.get("@search.id")  # type: ignore[reportUnknownVariableType]
             doc_text: str = self._extract_document_text(doc, doc_id=doc_id)  # type: ignore[reportUnknownArgumentType]
             if doc_text:
-                result_messages.append(Message(role="user", text=doc_text))  # type: ignore[reportUnknownArgumentType]
+                result_messages.append(Message(role="user", contents=[doc_text]))  # type: ignore[reportUnknownArgumentType]
         return result_messages
 
     async def _ensure_knowledge_base(self) -> None:
@@ -762,8 +749,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
             raise ValueError("Index client is required when creating Knowledge Base from index")
         if not self.azure_openai_resource_url:
             raise ValueError("azure_openai_resource_url is required when creating Knowledge Base from index")
-        if not self.azure_openai_deployment_name:
-            raise ValueError("model_deployment_name is required when creating Knowledge Base from index")
+        if not self.azure_openai_model:
+            raise ValueError("model is required when creating Knowledge Base from index")
         if not self.index_name:
             raise ValueError("index_name is required when creating Knowledge Base from index")
 
@@ -782,8 +769,8 @@ class AzureAISearchContextProvider(BaseContextProvider):
 
         aoai_params = AzureOpenAIVectorizerParameters(
             resource_url=self.azure_openai_resource_url,
-            deployment_name=self.azure_openai_deployment_name,
-            model_name=self.model_name,
+            deployment_name=self.azure_openai_model,
+            model_name=self.azure_openai_model,
             api_key=self.azure_openai_api_key,
         )
 
@@ -966,7 +953,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
             List of Messages, or a single default Message if no results found.
         """
         if not retrieval_result.response:
-            return [Message(role="assistant", text="No results found from Knowledge Base.")]
+            return [Message(role="assistant", contents=["No results found from Knowledge Base."])]
 
         annotations = AzureAISearchContextProvider._parse_references_to_annotations(retrieval_result.references)
 
@@ -987,7 +974,7 @@ class AzureAISearchContextProvider(BaseContextProvider):
                 result_messages.append(Message(role=kb_msg.role or "assistant", contents=contents))
 
         if not result_messages:
-            return [Message(role="assistant", text="No results found from Knowledge Base.")]
+            return [Message(role="assistant", contents=["No results found from Knowledge Base."])]
         return result_messages
 
     def _extract_document_text(self, doc: dict[str, Any], doc_id: str | None = None) -> str:

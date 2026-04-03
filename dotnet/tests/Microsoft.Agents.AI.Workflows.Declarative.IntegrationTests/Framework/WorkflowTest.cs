@@ -94,7 +94,7 @@ public abstract class WorkflowTest(ITestOutputHelper output) : IntegrationTest(o
 
         while (current is not null)
         {
-            if (Directory.Exists(Path.Combine(current.FullName, "workflow-samples")))
+            if (Directory.Exists(Path.Combine(current.FullName, "declarative-agents", "workflow-samples")))
             {
                 return current.FullName;
             }

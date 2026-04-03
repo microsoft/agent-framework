@@ -65,7 +65,7 @@ class DummyAgent(BaseAgent):
                 if isinstance(m, Message):
                     norm.append(m)
                 elif isinstance(m, str):
-                    norm.append(Message(role="user", text=m))
+                    norm.append(Message(role="user", contents=[m]))
         return AgentResponse(messages=norm)
 
     async def _run_stream_impl(self) -> AsyncIterator[AgentResponseUpdate]:

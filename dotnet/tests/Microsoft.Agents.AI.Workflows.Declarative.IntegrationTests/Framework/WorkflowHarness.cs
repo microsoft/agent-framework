@@ -126,6 +126,13 @@ internal sealed class WorkflowHarness(Workflow workflow, string runId)
                     {
                         hasRequest = true;
                     }
+                    else
+                    {
+                        // This is a republished event for the request we're already responding to
+                        // (emitted by RepublishUnservicedRequestsAsync during checkpoint resume).
+                        // Skip yielding it so downstream code doesn't treat it as a new pending request.
+                        continue;
+                    }
                     break;
 
                 case ConversationUpdateEvent conversationEvent:

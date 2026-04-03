@@ -783,19 +783,6 @@ internal static class AgentsSamples
 
         new SampleDefinition
         {
-            Name = "Agent_With_OpenAIAssistants",
-            ProjectPath = "samples/02-agents/AgentProviders/Agent_With_OpenAIAssistants",
-            RequiredEnvironmentVariables = ["OPENAI_API_KEY"],
-            OptionalEnvironmentVariables = ["OPENAI_CHAT_MODEL_NAME"],
-            ExpectedOutputDescription =
-            [
-                "The output should contain a joke about a pirate from the OpenAI Assistants API.",
-                "The output should not contain error messages or stack traces.",
-            ],
-        },
-
-        new SampleDefinition
-        {
             Name = "Agent_With_OpenAIChatCompletion",
             ProjectPath = "samples/02-agents/AgentProviders/Agent_With_OpenAIChatCompletion",
             RequiredEnvironmentVariables = ["OPENAI_API_KEY"],

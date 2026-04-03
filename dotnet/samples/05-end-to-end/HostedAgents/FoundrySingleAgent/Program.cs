@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
-// Uses Microsoft Agent Framework with Azure AI Foundry.
+// Uses Microsoft Agent Framework with Microsoft Foundry.
 // Ready for deployment to Foundry Hosted Agent service.
 
 #pragma warning disable CA2252 // AIProjectClient and Agents API require opting into preview features
@@ -70,17 +70,19 @@ string GetAvailableHotels(
 
         // Build response
         var result = new StringBuilder();
-        result.AppendLine($"Available hotels in Seattle from {checkInDate} to {checkOutDate} ({nights} nights):");
-        result.AppendLine();
+        result
+            .AppendLine($"Available hotels in Seattle from {checkInDate} to {checkOutDate} ({nights} nights):")
+            .AppendLine();
 
         foreach (var hotel in availableHotels)
         {
             var totalCost = hotel.PricePerNight * nights;
-            result.AppendLine($"**{hotel.Name}**");
-            result.AppendLine($"   Location: {hotel.Location}");
-            result.AppendLine($"   Rating: {hotel.Rating}/5");
-            result.AppendLine($"   ${hotel.PricePerNight}/night (Total: ${totalCost})");
-            result.AppendLine();
+            result
+                .AppendLine($"**{hotel.Name}**")
+                .AppendLine($"   Location: {hotel.Location}")
+                .AppendLine($"   Rating: {hotel.Rating}/5")
+                .AppendLine($"   ${hotel.PricePerNight}/night (Total: ${totalCost})")
+                .AppendLine();
         }
 
         return result.ToString();

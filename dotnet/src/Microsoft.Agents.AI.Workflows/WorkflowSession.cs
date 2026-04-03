@@ -19,7 +19,14 @@ namespace Microsoft.Agents.AI.Workflows;
 internal sealed class WorkflowSession : AgentSession
 {
     private readonly Workflow _workflow;
-    private readonly IWorkflowExecutionEnvironment _executionEnvironment;
+
+    /// <summary>
+    /// The execution environment for this session. Concrete type is required because
+    /// <see cref="CreateOrResumeRunAsync"/> uses the internal
+    /// <see cref="InProcessExecutionEnvironment.ResumeStreamingInternalAsync"/> API.
+    /// </summary>
+    private readonly InProcessExecutionEnvironment _inProcEnvironment;
+
     private readonly bool _includeExceptionDetails;
     private readonly bool _includeWorkflowOutputsInResponse;
 
@@ -63,16 +70,21 @@ internal sealed class WorkflowSession : AgentSession
     public WorkflowSession(Workflow workflow, string sessionId, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false)
     {
         this._workflow = Throw.IfNull(workflow);
-        this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
 
-        if (VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
+        IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
+        if (VerifyCheckpointingConfiguration(env, out InProcessExecutionEnvironment? inProcEnv))
         {
             // We have an InProcessExecutionEnvironment which is not configured for checkpointing. Ensure it has an externalizable checkpoint manager,
             // since we are responsible for maintaining the state.
-            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
+            env = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
+
+        this._inProcEnvironment = env as InProcessExecutionEnvironment
+            ?? throw new InvalidOperationException(
+                $"WorkflowSession requires an {nameof(InProcessExecutionEnvironment)}, " +
+                $"but received {env.GetType().Name}.");
 
         this.SessionId = Throw.IfNullOrEmpty(sessionId);
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
@@ -86,23 +98,29 @@ internal sealed class WorkflowSession : AgentSession
     public WorkflowSession(Workflow workflow, JsonElement serializedSession, IWorkflowExecutionEnvironment executionEnvironment, bool includeExceptionDetails = false, bool includeWorkflowOutputsInResponse = false, JsonSerializerOptions? jsonSerializerOptions = null)
     {
         this._workflow = Throw.IfNull(workflow);
-        this._executionEnvironment = Throw.IfNull(executionEnvironment);
         this._includeExceptionDetails = includeExceptionDetails;
         this._includeWorkflowOutputsInResponse = includeWorkflowOutputsInResponse;
+
+        IWorkflowExecutionEnvironment env = Throw.IfNull(executionEnvironment);
 
         JsonMarshaller marshaller = new(jsonSerializerOptions);
         SessionState sessionState = marshaller.Marshal<SessionState>(serializedSession);
 
         this._inMemoryCheckpointManager = sessionState.CheckpointManager;
         if (this._inMemoryCheckpointManager != null &&
-            VerifyCheckpointingConfiguration(executionEnvironment, out InProcessExecutionEnvironment? inProcEnv))
+            VerifyCheckpointingConfiguration(env, out InProcessExecutionEnvironment? inProcEnv))
         {
-            this._executionEnvironment = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
+            env = inProcEnv.WithCheckpointing(this.EnsureExternalizedInMemoryCheckpointing());
         }
         else if (this._inMemoryCheckpointManager != null)
         {
             throw new ArgumentException("The session was saved with an externalized checkpoint manager, but the incoming execution environment does not support it.", nameof(executionEnvironment));
         }
+
+        this._inProcEnvironment = env as InProcessExecutionEnvironment
+            ?? throw new InvalidOperationException(
+                $"WorkflowSession requires an {nameof(InProcessExecutionEnvironment)}, " +
+                $"but received {env.GetType().Name}.");
 
         this.SessionId = sessionState.SessionId;
         this.ChatHistoryProvider = new WorkflowChatHistoryProvider();
@@ -160,10 +178,15 @@ internal sealed class WorkflowSession : AgentSession
         // and does not need to be checked again here.
         if (this.LastCheckpoint is not null)
         {
+            // Use the internal resume path that suppresses pending request republishing.
+            // WorkflowSession handles pending requests itself by converting matching responses
+            // via SendMessagesWithResponseConversionAsync, so event-stream republishing would
+            // cause unwanted duplicate events visible to the consumer.
             StreamingRun run =
-                await this._executionEnvironment
-                            .ResumeStreamingAsync(this._workflow,
+                await this._inProcEnvironment
+                            .ResumeStreamingInternalAsync(this._workflow,
                                                this.LastCheckpoint,
+                                               republishPendingEvents: false,
                                                cancellationToken)
                             .ConfigureAwait(false);
 
@@ -172,7 +195,7 @@ internal sealed class WorkflowSession : AgentSession
             return new ResumeRunResult(run, dispatchInfo);
         }
 
-        StreamingRun newRun = await this._executionEnvironment
+        StreamingRun newRun = await this._inProcEnvironment
                             .RunStreamingAsync(this._workflow,
                                          messages,
                                          this.SessionId,

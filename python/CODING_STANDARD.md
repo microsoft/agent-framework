@@ -325,14 +325,15 @@ python/
 │   │       ├── mem0/           # Lazy loads from agent-framework-mem0
 │   │       └── redis/          # Lazy loads from agent-framework-redis
 │   │
-│   ├── azure-ai/               # agent-framework-azure-ai
+│   ├── foundry/                # agent-framework-foundry
 │   │   ├── pyproject.toml
 │   │   ├── tests/
-│   │   └── agent_framework_azure_ai/
+│   │   └── agent_framework_foundry/
 │   │       ├── __init__.py     # Public exports
-│   │       ├── _chat_client.py # AzureAIClient implementation
-│   │       ├── _client.py      # AzureAIAgentClient implementation
-│   │       ├── _shared.py      # AzureAISettings and shared utilities
+│   │       ├── _chat_client.py # FoundryChatClient implementation
+│   │       ├── _agent.py       # FoundryAgent implementation
+│   │       ├── _embedding_client.py # FoundryEmbeddingClient implementation
+│   │       ├── _memory_provider.py # Foundry memory implementation
 │   │       └── py.typed        # PEP 561 marker
 │   ├── anthropic/              # agent-framework-anthropic
 │   ├── bedrock/                # agent-framework-bedrock
@@ -345,9 +346,9 @@ python/
 Provider folders in the core package use `__getattr__` to lazy load classes from their respective connector packages. This allows users to import from a consistent location while only loading dependencies when needed:
 
 ```python
-# In agent_framework/azure/__init__.py
+# In agent_framework/foundry/__init__.py
 _IMPORTS: dict[str, tuple[str, str]] = {
-    "AzureAIAgentClient": ("agent_framework_azure_ai", "agent-framework-azure-ai"),
+    "FoundryChatClient": ("agent_framework_foundry", "agent-framework-foundry"),
     # ...
 }
 
@@ -419,7 +420,7 @@ pip install agent-framework-core[all]
 pip install agent-framework
 
 # Install specific connector (pulls in core as dependency)
-pip install agent-framework-azure-ai
+pip install agent-framework-foundry
 ```
 
 ## Documentation
@@ -480,7 +481,7 @@ A more complete example with keyword arguments and code samples:
 
 ```python
 def create_client(
-    model_id: str | None = None,
+    model: str | None = None,
     *,
     timeout: float | None = None,
     env_file_path: str | None = None,
@@ -489,7 +490,7 @@ def create_client(
     """Create a new client with the specified configuration.
 
     Args:
-        model_id: The model ID to use. If not provided,
+        model: The model ID to use. If not provided,
             it will be loaded from settings.
 
     Keyword Args:
@@ -501,14 +502,14 @@ def create_client(
         A configured client instance.
 
     Raises:
-        ValueError: If the model_id is invalid.
+        ValueError: If the model is invalid.
 
     Examples:
 
         .. code-block:: python
 
             # Create a client with default settings:
-            client = create_client(model_id="gpt-4o")
+            client = create_client(model="gpt-4o")
 
             # Or load from environment:
             client = create_client(env_file_path=".env")

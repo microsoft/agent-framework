@@ -29,7 +29,8 @@ using types like `IChatClient`, `FunctionInvokingChatClient`, `AITool`, `AIFunct
 
 ## Key Conventions
 
-- **Encoding**: All new files must be saved with UTF-8 encoding with BOM (Byte Order Mark). This is required for `dotnet format` to work correctly.
+- **Command output capture**: When running `dotnet build`, `dotnet test`, `dotnet format`, or similar commands, redirect output to a temp file first (e.g., `dotnet build --tl:off 2>&1 | Out-File $env:TEMP\build.log`), then analyze the file as needed. This avoids re-running expensive commands when the initial analysis misses something.
+- **Encoding**: All new files must be saved with UTF-8 encoding with BOM (Byte Order Mark). This is required for `dotnet format` to work correctly. When using PowerShell `Set-Content`, always pass `-Encoding UTF8BOM` to preserve the BOM (e.g., `Set-Content $file $content -NoNewline -Encoding UTF8BOM`).
 - **Copyright header**: `// Copyright (c) Microsoft. All rights reserved.` at top of all `.cs` files
 - **XML docs**: Required for all public methods and classes
 - **Async**: Use `Async` suffix for methods returning `Task`/`ValueTask`
