@@ -28,7 +28,7 @@ Welcome to Microsoft's comprehensive multi-language framework for building, orch
 Python
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 # This will install all sub-packages, see `python/packages` for individual packages.
 # It may take a minute on first install on Windows.
 ```
