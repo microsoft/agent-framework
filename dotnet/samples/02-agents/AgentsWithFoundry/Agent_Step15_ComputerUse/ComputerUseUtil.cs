@@ -7,10 +7,14 @@ using OpenAI.Responses;
 namespace Demo.ComputerUse;
 
 /// <summary>
-/// Tracks the simulated browser state during the computer use loop.
-/// See the README for the full state machine and screenshot mapping.
+/// Enum for tracking the state of the simulated web search flow.
 /// </summary>
-internal enum SearchState { Initial, Typed, PressedEnter }
+internal enum SearchState
+{
+    Initial,        // Browser search page
+    Typed,          // Text entered in search box
+    PressedEnter   // Enter key pressed, transitioning to results
+}
 
 internal static class ComputerUseUtil
 {
