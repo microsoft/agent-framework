@@ -18,6 +18,11 @@ except importlib.metadata.PackageNotFoundError:
 __version__: Final[str] = _version
 
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
+from ._circuit_breaker import (
+    CircuitBreakerMiddleware,
+    CircuitBreakerState,
+    TokenBudgetMiddleware,
+)
 from ._clients import (
     BaseChatClient,
     BaseEmbeddingClient,
@@ -236,7 +241,9 @@ from ._workflows._workflow_executor import (
     WorkflowExecutor,
 )
 from .exceptions import (
+    CircuitBreakerOpenException,
     MiddlewareException,
+    TokenBudgetExceededException,
     UserInputRequiredException,
     WorkflowCheckpointException,
     WorkflowConvergenceException,
@@ -291,6 +298,9 @@ __all__ = [
     "ChatResponseUpdate",
     "CheckResult",
     "CheckpointStorage",
+    "CircuitBreakerMiddleware",
+    "CircuitBreakerOpenException",
+    "CircuitBreakerState",
     "CompactionProvider",
     "CompactionStrategy",
     "Content",
@@ -378,6 +388,8 @@ __all__ = [
     "SwitchCaseEdgeGroupDefault",
     "TextSpanRegion",
     "TokenBudgetComposedStrategy",
+    "TokenBudgetExceededException",
+    "TokenBudgetMiddleware",
     "TokenizerProtocol",
     "ToolMode",
     "ToolResultCompactionStrategy",

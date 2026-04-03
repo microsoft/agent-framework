@@ -219,6 +219,74 @@ class MiddlewareException(AgentFrameworkException):
     pass
 
 
+class TokenBudgetExceededException(MiddlewareException):
+    """The token budget has been exceeded.
+
+    Raised when cumulative token usage surpasses the configured limit,
+    preventing further LLM calls.
+
+    Args:
+        message: Human-readable description.
+        budget: The configured token budget limit that was exceeded.
+        used: The actual token count at the time of the breach.
+        inner_exception: Optional underlying exception.
+    """
+
+    def __init__(
+        self,
+        message: str = "Token budget exceeded.",
+        *,
+        budget: int | float,
+        used: int | float,
+        inner_exception: Exception | None = None,
+    ) -> None:
+        """Create a TokenBudgetExceededException.
+
+        Args:
+            message: Human-readable description.
+            budget: The configured token budget limit that was exceeded.
+            used: The actual token count at the time of the breach.
+            inner_exception: Optional underlying exception.
+        """
+        super().__init__(message, inner_exception=inner_exception, log_level=30)
+        self.budget = budget
+        self.used = used
+
+
+class CircuitBreakerOpenException(MiddlewareException):
+    """The circuit breaker is in the open state.
+
+    Raised when the circuit breaker has tripped due to consecutive failures,
+    preventing further LLM calls until the reset timeout elapses.
+
+    Args:
+        message: Human-readable description.
+        failure_count: Number of consecutive failures that caused the trip.
+        threshold: The configured failure threshold.
+        inner_exception: Optional underlying exception.
+    """
+
+    def __init__(
+        self,
+        message: str = "Circuit breaker is open.",
+        *,
+        failure_count: int,
+        threshold: int,
+        inner_exception: Exception | None = None,
+    ) -> None:
+        """Create a CircuitBreakerOpenException.
+
+        Args:
+            message: Human-readable description.
+            failure_count: Number of consecutive failures that caused the trip.
+            threshold: The configured failure threshold.
+            inner_exception: Optional underlying exception.
+        """
+        super().__init__(message, inner_exception=inner_exception, log_level=30)
+        self.failure_count = failure_count
+        self.threshold = threshold
+
+
 # endregion
 
 # region Settings Exceptions
