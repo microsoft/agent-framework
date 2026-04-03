@@ -7,7 +7,6 @@ Neo4j offers two context providers for the Agent Framework, each serving a diffe
 | **What it does** | Read-write memory — stores conversations, builds knowledge graphs, learns from interactions | Read-only retrieval from a pre-existing knowledge base with optional graph traversal |
 | **Data source** | Agent interactions (grows over time) | Pre-loaded documents and indexes |
 | **Python package** | [`neo4j-agent-memory`](https://pypi.org/project/neo4j-agent-memory/) | [`agent-framework-neo4j`](https://pypi.org/project/agent-framework-neo4j/) |
-| **.NET package** | — | [`Neo4j.AgentFramework.GraphRAG`](https://www.nuget.org/packages/Neo4j.AgentFramework.GraphRAG) |
 | **Database setup** | Empty — creates its own schema | Requires pre-indexed documents with vector or fulltext indexes |
 | **Example use case** | "Remember my preferences", "What did we discuss last time?" | "Search our documents", "What risks does Acme Corp face?" |
 
@@ -18,7 +17,3 @@ Neo4j offers two context providers for the Agent Framework, each serving a diffe
 **Use [Neo4j GraphRAG](../../../../05-end-to-end/neo4j_graphrag/README.md)** when your agent needs to search an existing knowledge base — documents, articles, product catalogs — and optionally enrich results by traversing graph relationships. The GraphRAG provider is read-only and does not modify your data.
 
 You can use both together: GraphRAG for domain knowledge retrieval, Memory for personalization and learning.
-
-## .NET Support
-
-The Neo4j GraphRAG provider is also available for .NET. See the [.NET Neo4j GraphRAG sample](../../../../../dotnet/samples/02-agents/AgentWithRAG/AgentWithRAG_Step05_Neo4jGraphRAG/README.md) for installation, code examples, and runnable samples.
