@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <IsReleased>true</IsReleased>
@@ -8,6 +8,7 @@
   <PropertyGroup>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectExperimentalAttributeOnLegacy>true</InjectExperimentalAttributeOnLegacy>
     <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
   </PropertyGroup>
 
