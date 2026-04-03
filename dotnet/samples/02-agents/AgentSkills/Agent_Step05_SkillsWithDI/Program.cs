@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates how to use Dependency Injection (DI) with Agent Skills.
 // It shows two approaches side-by-side, each handling a different conversion domain:
