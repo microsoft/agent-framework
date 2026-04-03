@@ -250,8 +250,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
 
         this.StepTracer.TraceActivated(receiverId);
 
-        // TODO: traceContext?
-        var tracelessContext = this.RunContext.BindWorkflowContext(receiverId);
+        // TODO: #5084 - Add delivery-level activity (max one per step per executor) to capture non-message
+        // specific invocations of executor logic.
+        IWorkflowContext tracelessContext = this.RunContext.BindWorkflowContext(receiverId);
 
         try
         {
