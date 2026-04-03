@@ -90,7 +90,7 @@ Still have questions? Join our [weekly office hours](./COMMUNITY.md#public-commu
 Create a simple Azure Responses Agent that writes a haiku about the Microsoft Agent Framework
 
 ```python
-# pip install agent-framework --pre
+# pip install agent-framework
 # Use `az login` to authenticate with Azure CLI
 import os
 import asyncio
