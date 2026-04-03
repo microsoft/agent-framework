@@ -18,6 +18,11 @@ internal sealed class VerifyOptions
     public string? CsvFilePath { get; init; }
 
     /// <summary>
+    /// Path to write a Markdown summary file, or <c>null</c> to skip.
+    /// </summary>
+    public string? MarkdownFilePath { get; init; }
+
+    /// <summary>
     /// Path to write a sequential log file, or <c>null</c> to skip.
     /// </summary>
     public string? LogFilePath { get; init; }
@@ -49,6 +54,7 @@ internal sealed class VerifyOptions
         var categoryFilter = ExtractArg(argList, "--category");
         var logFilePath = ExtractArg(argList, "--log");
         var csvFilePath = ExtractArg(argList, "--csv");
+        var markdownFilePath = ExtractArg(argList, "--md");
 
         int maxParallelism = 8;
         var parallelArg = ExtractArg(argList, "--parallel");
@@ -98,6 +104,7 @@ internal sealed class VerifyOptions
             MaxParallelism = maxParallelism,
             LogFilePath = logFilePath,
             CsvFilePath = csvFilePath,
+            MarkdownFilePath = markdownFilePath,
             Samples = samples,
         };
     }

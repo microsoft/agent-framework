@@ -13,6 +13,7 @@
 //   dotnet run -- --parallel 16                         # Run up to 16 samples concurrently
 //   dotnet run -- --log results.log                     # Write sequential log to file
 //   dotnet run -- --csv results.csv                     # Write CSV summary to file
+//   dotnet run -- --md results.md                       # Write Markdown summary to file
 //
 // Required environment variables (for AI-powered samples):
 //   AZURE_OPENAI_ENDPOINT
@@ -88,6 +89,13 @@ try
     {
         await CsvResultWriter.WriteAsync(options.CsvFilePath, orderedResults, run.Skipped, options.Samples);
         Console.WriteLine($"CSV written to: {options.CsvFilePath}");
+    }
+
+    // Write Markdown summary
+    if (options.MarkdownFilePath is not null)
+    {
+        await MarkdownResultWriter.WriteAsync(options.MarkdownFilePath, orderedResults, run.Skipped, stopwatch.Elapsed);
+        Console.WriteLine($"Markdown written to: {options.MarkdownFilePath}");
     }
 
     return orderedResults.Any(r => !r.Passed) ? 1 : 0;

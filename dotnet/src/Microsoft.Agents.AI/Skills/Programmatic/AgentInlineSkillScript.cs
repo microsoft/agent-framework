@@ -36,7 +36,7 @@ internal sealed class AgentInlineSkillScript : AgentSkillScript
     /// <summary>
     /// Gets the JSON schema describing the parameters accepted by this script, or <see langword="null"/> if not available.
     /// </summary>
-    public JsonElement? ParametersSchema => this._function.JsonSchema;
+    public override JsonElement? ParametersSchema => this._function.JsonSchema;
 
     /// <inheritdoc/>
     public override async Task<object?> RunAsync(AgentSkill skill, AIFunctionArguments arguments, CancellationToken cancellationToken = default)
