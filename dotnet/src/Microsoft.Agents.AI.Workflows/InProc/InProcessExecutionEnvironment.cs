@@ -185,6 +185,6 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         Run run = new(runHandle);
         await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
 
-        return run;
+        return new(runHandle);
     }
 }
