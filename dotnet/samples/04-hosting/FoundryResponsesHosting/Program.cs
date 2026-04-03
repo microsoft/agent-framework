@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates hosting agent-framework agents as Foundry Hosted Agents
 // using the Azure AI Responses Server SDK.
@@ -16,7 +16,6 @@
 //   - AZURE_OPENAI_DEPLOYMENT - the model deployment name (default: "gpt-4o")
 
 using System.ComponentModel;
-using Azure.AI.AgentServer.Responses;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Agents.AI;
@@ -29,22 +28,16 @@ using ModelContextProtocol.Client;
 var builder = WebApplication.CreateBuilder(args);
 
 // ---------------------------------------------------------------------------
-// 1. Register the Azure AI Responses Server SDK
+// 1. Create the shared Azure OpenAI chat client
 // ---------------------------------------------------------------------------
-builder.Services.AddResponsesServer();
-
-// ---------------------------------------------------------------------------
-// 2. Create the shared Azure OpenAI chat client
-// ---------------------------------------------------------------------------
-var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-    ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
+var endpoint = new Uri(Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set."));
 var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4o";
 
 var azureClient = new AzureOpenAIClient(endpoint, new DefaultAzureCredential());
 IChatClient chatClient = azureClient.GetChatClient(deployment).AsIChatClient();
 
 // ---------------------------------------------------------------------------
-// 3. DEMO 1: Tool Agent — local tools + Microsoft Learn MCP
+// 2. DEMO 1: Tool Agent — local tools + Microsoft Learn MCP
 // ---------------------------------------------------------------------------
 Console.WriteLine("Connecting to Microsoft Learn MCP server...");
 McpClient mcpClient = await McpClient.CreateAsync(new HttpClientTransport(new()
@@ -72,7 +65,7 @@ builder.AddAIAgent(
     .WithAITools(mcpTools.Cast<AITool>().ToArray());
 
 // ---------------------------------------------------------------------------
-// 4. DEMO 2: Triage Workflow — routes to specialist agents
+// 3. DEMO 2: Triage Workflow — routes to specialist agents
 // ---------------------------------------------------------------------------
 ChatClientAgent triageAgent = new(
     chatClient,
@@ -113,9 +106,9 @@ builder.AddAIAgent("triage-workflow", (_, key) =>
     triageWorkflow.AsAIAgent(name: key));
 
 // ---------------------------------------------------------------------------
-// 5. Wire up the agent-framework handler as the IResponseHandler
+// 4. Wire up the agent-framework handler and Responses Server SDK
 // ---------------------------------------------------------------------------
-builder.Services.AddAgentFrameworkHandler();
+builder.Services.AddFoundryResponses();
 
 var app = builder.Build();
 
@@ -124,10 +117,10 @@ app.Lifetime.ApplicationStopping.Register(() =>
     mcpClient.DisposeAsync().AsTask().GetAwaiter().GetResult());
 
 // ---------------------------------------------------------------------------
-// 6. Routes
+// 5. Routes
 // ---------------------------------------------------------------------------
 app.MapGet("/ready", () => Results.Ok("ready"));
-app.MapResponsesServer();
+app.MapFoundryResponses();
 
 app.MapGet("/", () => Results.Content(Pages.Home, "text/html"));
 app.MapGet("/tool-demo", () => Results.Content(Pages.ToolDemo, "text/html"));

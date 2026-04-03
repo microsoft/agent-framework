@@ -12,12 +12,12 @@ namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 public class ServiceCollectionExtensionsTests
 {
     [Fact]
-    public void AddAgentFrameworkHandler_RegistersResponseHandler()
+    public void AddFoundryResponses_RegistersResponseHandler()
     {
         var services = new ServiceCollection();
         services.AddLogging();
 
-        services.AddAgentFrameworkHandler();
+        services.AddFoundryResponses();
 
         var descriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(ResponseHandler));
@@ -26,33 +26,33 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddAgentFrameworkHandler_CalledTwice_RegistersOnce()
+    public void AddFoundryResponses_CalledTwice_RegistersOnce()
     {
         var services = new ServiceCollection();
         services.AddLogging();
 
-        services.AddAgentFrameworkHandler();
-        services.AddAgentFrameworkHandler();
+        services.AddFoundryResponses();
+        services.AddFoundryResponses();
 
         var count = services.Count(d => d.ServiceType == typeof(ResponseHandler));
         Assert.Equal(1, count);
     }
 
     [Fact]
-    public void AddAgentFrameworkHandler_NullServices_ThrowsArgumentNullException()
+    public void AddFoundryResponses_NullServices_ThrowsArgumentNullException()
     {
         Assert.Throws<ArgumentNullException>(
-            () => AgentFrameworkResponsesServiceCollectionExtensions.AddAgentFrameworkHandler(null!));
+            () => FoundryHostingExtensions.AddFoundryResponses(null!));
     }
 
     [Fact]
-    public void AddAgentFrameworkHandler_WithAgent_RegistersAgentAndHandler()
+    public void AddFoundryResponses_WithAgent_RegistersAgentAndHandler()
     {
         var services = new ServiceCollection();
         services.AddLogging();
         var mockAgent = new Mock<AIAgent>();
 
-        services.AddAgentFrameworkHandler(mockAgent.Object);
+        services.AddFoundryResponses(mockAgent.Object);
 
         var handlerDescriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(ResponseHandler));
@@ -64,10 +64,10 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddAgentFrameworkHandler_WithNullAgent_ThrowsArgumentNullException()
+    public void AddFoundryResponses_WithNullAgent_ThrowsArgumentNullException()
     {
         var services = new ServiceCollection();
         Assert.Throws<ArgumentNullException>(
-            () => services.AddAgentFrameworkHandler(null!));
+            () => services.AddFoundryResponses(null!));
     }
 }
