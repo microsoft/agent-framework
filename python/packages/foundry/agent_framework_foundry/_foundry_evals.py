@@ -40,6 +40,7 @@ from agent_framework._evaluation import (
     EvalResults,
     EvalScoreResult,
 )
+from agent_framework._feature_stage import ExperimentalFeature, experimental
 from openai import AsyncOpenAI
 
 from ._chat_client import FoundryChatClient
@@ -491,6 +492,7 @@ async def _evaluate_via_responses_impl(
 # ---------------------------------------------------------------------------
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class FoundryEvals:
     """Evaluation provider backed by Microsoft Foundry.
 
@@ -727,6 +729,7 @@ class FoundryEvals:
 # ---------------------------------------------------------------------------
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 async def evaluate_traces(
     *,
     evaluators: Sequence[str] | None = None,
@@ -817,6 +820,7 @@ async def evaluate_traces(
     return await _poll_eval_run(oai_client, eval_obj.id, run.id, poll_interval, timeout)
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 async def evaluate_foundry_target(
     *,
     target: dict[str, Any],

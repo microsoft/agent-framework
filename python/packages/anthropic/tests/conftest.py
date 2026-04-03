@@ -28,7 +28,7 @@ def anthropic_unit_test_env(monkeypatch, exclude_list, override_env_param_dict):
 
     env_vars = {
         "ANTHROPIC_API_KEY": "test-api-key-12345",
-        "ANTHROPIC_CHAT_MODEL_ID": "claude-3-5-sonnet-20241022",
+        "ANTHROPIC_CHAT_MODEL": "claude-3-5-sonnet-20241022",
     }
 
     env_vars.update(override_env_param_dict)  # type: ignore

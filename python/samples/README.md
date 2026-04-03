@@ -26,7 +26,7 @@ Start with `01-get-started/` and work through the numbered files:
 ## Prerequisites
 
 ```bash
-pip install agent-framework --pre
+pip install agent-framework
 ```
 
 ### Environment Variables
@@ -91,11 +91,11 @@ variable.
 | package | class | env var | example value |
 | --- | --- | --- | --- |
 | `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_API_KEY` | `sk-ant-api03-...` |
-| `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_CHAT_MODEL_ID` | `claude-sonnet-4-5-20250929` |
-| `agent-framework-azure-ai` | `AzureAIInferenceEmbeddingClient` | `AZURE_AI_INFERENCE_ENDPOINT` | `https://my-endpoint.inference.ai.azure.com` |
-| `agent-framework-azure-ai` | `AzureAIInferenceEmbeddingClient` | `AZURE_AI_INFERENCE_API_KEY` | `env-key` |
-| `agent-framework-azure-ai` | `AzureAIInferenceEmbeddingClient` | `AZURE_AI_INFERENCE_EMBEDDING_MODEL_ID` | `text-embedding-3-small` |
-| `agent-framework-azure-ai` | `AzureAIInferenceEmbeddingClient` | `AZURE_AI_INFERENCE_IMAGE_EMBEDDING_MODEL_ID` | `Cohere-embed-v3-english` |
+| `agent-framework-anthropic` | `AnthropicClient` | `ANTHROPIC_CHAT_MODEL` | `claude-sonnet-4-5-20250929` |
+| `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_MODELS_ENDPOINT` | `https://my-endpoint.inference.ai.azure.com` |
+| `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_MODELS_API_KEY` | `env-key` |
+| `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_EMBEDDING_MODEL` | `text-embedding-3-small` |
+| `agent-framework-foundry` | `FoundryEmbeddingClient` | `FOUNDRY_IMAGE_EMBEDDING_MODEL` | `Cohere-embed-v3-english` |
 | `agent-framework-azure-ai-search` | `AzureAISearchContextProvider` | `AZURE_SEARCH_ENDPOINT` | `https://my-search.search.windows.net` |
 | `agent-framework-azure-ai-search` | `AzureAISearchContextProvider` | `AZURE_SEARCH_API_KEY` | `search-key` |
 | `agent-framework-azure-ai-search` | `AzureAISearchContextProvider` | `AZURE_SEARCH_INDEX_NAME` | `hotels-index` |
@@ -105,9 +105,9 @@ variable.
 | `agent-framework-azure-cosmos` | `CosmosHistoryProvider` | `AZURE_COSMOS_CONTAINER_NAME` | `messages` |
 | `agent-framework-azure-cosmos` | `CosmosHistoryProvider` | `AZURE_COSMOS_KEY` | `C2F...==` |
 | `agent-framework-bedrock` | `BedrockChatClient` | `BEDROCK_REGION` | `us-east-1` |
-| `agent-framework-bedrock` | `BedrockChatClient` | `BEDROCK_CHAT_MODEL_ID` | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
+| `agent-framework-bedrock` | `BedrockChatClient` | `BEDROCK_CHAT_MODEL` | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
 | `agent-framework-bedrock` | `BedrockEmbeddingClient` | `BEDROCK_REGION` | `us-east-1` |
-| `agent-framework-bedrock` | `BedrockEmbeddingClient` | `BEDROCK_EMBEDDING_MODEL_ID` | `amazon.titan-embed-text-v2:0` |
+| `agent-framework-bedrock` | `BedrockEmbeddingClient` | `BEDROCK_EMBEDDING_MODEL` | `amazon.titan-embed-text-v2:0` |
 | `agent-framework-bedrock` | `BedrockChatClient / BedrockEmbeddingClient` | `AWS_ACCESS_KEY_ID` | `AKIAIOSFODNN7EXAMPLE` |
 | `agent-framework-bedrock` | `BedrockChatClient / BedrockEmbeddingClient` | `AWS_SECRET_ACCESS_KEY` | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
 | `agent-framework-bedrock` | `BedrockChatClient / BedrockEmbeddingClient` | `AWS_SESSION_TOKEN` | `IQoJb3JpZ2luX2VjEO7//////////wEaCXVzLXdlc3QtMiJHMEUCIQD...` |
@@ -141,11 +141,11 @@ variable.
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_LOG_LEVEL` | `info` |
 | `agent-framework-mem0` | `agent_framework_mem0 package import` | `MEM0_TELEMETRY` | `false` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_HOST` | `http://localhost:11434` |
-| `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_MODEL_ID` | `llama3.1:8b` |
+| `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_MODEL` | `llama3.1:8b` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_API_KEY` | `sk-proj-...` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_MODEL` | `gpt-4o-mini` |
-| `agent-framework-openai` | `OpenAIChatClient` | `OPENAI_RESPONSES_MODEL` | `gpt-4.1-mini` |
-| `agent-framework-openai` | `OpenAIChatCompletionClient` | `OPENAI_CHAT_MODEL` | `gpt-4o` |
+| `agent-framework-openai` | `OpenAIChatClient` | `OPENAI_CHAT_MODEL` | `gpt-4.1-mini` |
+| `agent-framework-openai` | `OpenAIChatCompletionClient` | `OPENAI_CHAT_COMPLETION_MODEL` | `gpt-4o` |
 | `agent-framework-openai` | `OpenAIEmbeddingClient` | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_BASE_URL` | `https://api.openai.com/v1/` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `OPENAI_ORG_ID` | `org_123456789` |
@@ -153,10 +153,10 @@ variable.
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_API_KEY` | `sk-azure-...` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_API_VERSION` | `2024-10-21` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_BASE_URL` | `https://my-resource.openai.azure.com/openai/v1/` |
-| `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_DEPLOYMENT_NAME` | `gpt-4o` |
-| `agent-framework-openai` | `OpenAIChatClient` | `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` | `gpt-4.1` |
-| `agent-framework-openai` | `OpenAIChatCompletionClient` | `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` | `gpt-4o-mini` |
-| `agent-framework-openai` | `OpenAIEmbeddingClient` | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME` | `text-embedding-3-large` |
+| `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_MODEL` | `gpt-4o` |
+| `agent-framework-openai` | `OpenAIChatClient` | `AZURE_OPENAI_CHAT_MODEL` | `gpt-4.1` |
+| `agent-framework-openai` | `OpenAIChatCompletionClient` | `AZURE_OPENAI_CHAT_COMPLETION_MODEL` | `gpt-4o-mini` |
+| `agent-framework-openai` | `OpenAIEmbeddingClient` | `AZURE_OPENAI_EMBEDDING_MODEL` | `text-embedding-3-large` |
 | `agent-framework-openai` | `OpenAIChatClient / OpenAIChatCompletionClient / OpenAIEmbeddingClient` | `AZURE_OPENAI_RESOURCE_URL` | `https://cognitiveservices.azure.com/` |
 
 `agent-framework-openai` supports the Azure OpenAI client-specific deployment aliases listed above; keep

@@ -256,7 +256,7 @@ async def main() -> None:
         """Result hook that wraps the response text in quotes."""
         if response.text:
             return ChatResponse(
-                messages=[Message(text=f'"{response.text}"', role="assistant")],
+                messages=[Message(contents=[f'"{response.text}"'], role="assistant")],
                 additional_properties=response.additional_properties,
             )
         return response
@@ -293,7 +293,7 @@ async def main() -> None:
         # In real code, this would create an AgentResponse
         text = "".join(u.text or "" for u in updates)
         return ChatResponse(
-            messages=[Message(text=f"[AGENT FINAL] {text}", role="assistant")],
+            messages=[Message(contents=[f"[AGENT FINAL] {text}"], role="assistant")],
             additional_properties={"layer": "agent"},
         )
 

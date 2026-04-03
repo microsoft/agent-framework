@@ -1727,7 +1727,7 @@ async def test_mcp_tool_sampling_callback_no_valid_content():
             ],
         )
     ]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1778,7 +1778,7 @@ async def test_mcp_tool_sampling_callback_no_response_and_successful_message_cre
 
     tool.client.get_response.return_value = Mock(
         messages=[Message(role="assistant", contents=[Content.from_text("Hello")])],
-        model_id="test-model",
+        model="test-model",
     )
 
     success = await tool.sampling_callback(Mock(), params)
@@ -1808,7 +1808,7 @@ async def test_mcp_tool_sampling_callback_forwards_system_prompt():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1843,7 +1843,7 @@ async def test_mcp_tool_sampling_callback_forwards_tools():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1889,7 +1889,7 @@ async def test_mcp_tool_sampling_callback_forwards_tool_choice():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1924,7 +1924,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_system_prompt():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1959,7 +1959,7 @@ async def test_mcp_tool_sampling_callback_forwards_empty_tools_list():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -1994,7 +1994,7 @@ async def test_mcp_tool_sampling_callback_forwards_generation_params_in_options(
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -2035,7 +2035,7 @@ async def test_mcp_tool_sampling_callback_omits_temperature_when_none():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client
@@ -2072,7 +2072,7 @@ async def test_mcp_tool_sampling_callback_always_passes_max_tokens():
     mock_chat_client = AsyncMock()
     mock_response = Mock()
     mock_response.messages = [Message(role="assistant", contents=[Content.from_text("response")])]
-    mock_response.model_id = "test-model"
+    mock_response.model = "test-model"
     mock_chat_client.get_response.return_value = mock_response
 
     tool.client = mock_chat_client

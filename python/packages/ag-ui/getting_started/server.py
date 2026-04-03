@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 # Read required configuration
 endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
-deployment_name = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME")
+model = os.environ.get("AZURE_OPENAI_MODEL")
 
 if not endpoint:
     raise ValueError("AZURE_OPENAI_ENDPOINT environment variable is required")
-if not deployment_name:
-    raise ValueError("AZURE_OPENAI_DEPLOYMENT_NAME environment variable is required")
+if not model:
+    raise ValueError("AZURE_OPENAI_MODEL environment variable is required")
 
 
 # ============================================================================
@@ -121,7 +121,7 @@ agent = Agent(
     instructions="You are a helpful assistant. Use get_weather for weather and get_time_zone for time zones.",
     client=OpenAIChatCompletionClient(
         azure_endpoint=endpoint,
-        model=deployment_name,
+        model=model,
     ),
     tools=[get_time_zone],  # ONLY server-side tools
 )

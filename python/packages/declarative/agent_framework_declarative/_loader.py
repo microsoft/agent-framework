@@ -46,7 +46,7 @@ else:
 class ProviderTypeMapping(TypedDict, total=True):
     package: str
     name: str
-    model_id_field: str
+    model_field: str
     endpoint_field: str | None
     api_key_field: str | None
 
@@ -55,63 +55,63 @@ PROVIDER_TYPE_OBJECT_MAPPING: dict[str, ProviderTypeMapping] = {
     "AzureOpenAI": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "azure_endpoint",
         "api_key_field": "api_key",
     },
     "AzureOpenAI.Chat": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatCompletionClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "azure_endpoint",
         "api_key_field": "api_key",
     },
     "AzureOpenAI.Responses": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "azure_endpoint",
         "api_key_field": "api_key",
     },
     "Foundry": {
         "package": "agent_framework.foundry",
         "name": "FoundryChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "project_endpoint",
         "api_key_field": None,
     },
     "OpenAI.Chat": {
         "package": "agent_framework.openai",
-        "name": "OpenAIChatClient",
-        "model_id_field": "model",
+        "name": "OpenAIChatCompletionClient",
+        "model_field": "model",
         "endpoint_field": "base_url",
         "api_key_field": "api_key",
     },
     "OpenAI.Responses": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "base_url",
         "api_key_field": "api_key",
     },
     "OpenAI": {
         "package": "agent_framework.openai",
         "name": "OpenAIChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "base_url",
         "api_key_field": "api_key",
     },
     "Foundry.Chat": {
         "package": "agent_framework.foundry",
         "name": "FoundryChatClient",
-        "model_id_field": "model",
+        "model_field": "model",
         "endpoint_field": "project_endpoint",
         "api_key_field": None,
     },
     "Anthropic.Chat": {
         "package": "agent_framework.anthropic",
         "name": "AnthropicChatClient",
-        "model_id_field": "model_id",
+        "model_field": "model",
         "endpoint_field": None,
         "api_key_field": "api_key",
     },
@@ -186,7 +186,7 @@ class AgentFactory:
         connections: Mapping[str, Any] | None = None,
         client_kwargs: Mapping[str, Any] | None = None,
         additional_mappings: Mapping[str, ProviderTypeMapping] | None = None,
-        default_provider: str = "OpenAI",
+        default_provider: str = "Foundry",
         safe_mode: bool = True,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -210,7 +210,7 @@ class AgentFactory:
                              "Provider.ApiType": {
                                  "package": "package.name",
                                  "name": "ClassName",
-                                 "model_id_field": "field_name_in_constructor",
+                                 "model_field": "field_name_in_constructor",
                                  "endpoint_field": "endpoint_kwarg_name_or_null",
                                  "api_key_field": "api_key_kwarg_name_or_null",
                              },
@@ -220,10 +220,10 @@ class AgentFactory:
                     Here, "Provider.ApiType" is the lookup key used when both provider and apiType are specified in the
                     model, "Provider" is also allowed.
                     Package refers to which model needs to be imported, Name is the class name of the
-                    SupportsChatGetResponse implementation, and model_id_field is the name of the field in the
+                    SupportsChatGetResponse implementation, and model_field is the name of the field in the
                     constructor that accepts the model.id value.
             default_provider: The default provider used when model.provider is not specified,
-                default is "OpenAI".
+                default is "Foundry", which uses the FoundryChatClient.
             safe_mode: Whether to run in safe mode, default is True.
                 When safe_mode is True, environment variables are not accessible in the powerfx expressions.
                 You can still use environment variables, but through the constructors of the classes.
@@ -264,7 +264,7 @@ class AgentFactory:
                         "CustomProvider.Chat": {
                             "package": "my_package.clients",
                             "name": "CustomChatClient",
-                            "model_id_field": "model_name",
+                            "model_field": "model",
                         },
                     },
                 )
@@ -690,7 +690,7 @@ class AgentFactory:
             # if prompt_agent.model is defined, but no id, use the supplied client
             if self.client:
                 return self.client
-            # or raise, since we cannot create a client without model id
+            # or raise, since we cannot create a client without a model
             raise DeclarativeLoaderError(
                 "ChatClient must be provided to create agent from PromptAgent, or define model.id in the PromptAgent."
             )
@@ -699,7 +699,7 @@ class AgentFactory:
         class_name = mapping["name"]
         module = __import__(module_name, fromlist=[class_name])
         agent_class = getattr(module, class_name)
-        setup_dict[mapping["model_id_field"]] = prompt_agent.model.id
+        setup_dict[mapping["model_field"]] = prompt_agent.model.id
         return agent_class(**setup_dict)  # type: ignore[no-any-return]
 
     def _parse_chat_options(self, model: Model | None) -> dict[str, Any]:
@@ -841,7 +841,7 @@ class AgentFactory:
             model: The Model instance containing provider and apiType information.
 
         Returns:
-            A dictionary containing the package, name, and model_id_field for the provider.
+            A dictionary containing the package, name, and model_field for the provider.
 
         Raises:
             ProviderLookupError: If the provider type is not supported or can't be found.

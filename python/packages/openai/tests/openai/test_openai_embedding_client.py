@@ -185,7 +185,7 @@ async def test_openai_base64_decoding(openai_unit_test_env: dict[str, str]) -> N
         assert abs(expected - actual) < 1e-6
 
 
-async def test_openai_error_when_no_model_id() -> None:
+async def test_openai_error_when_no_model() -> None:
     client = OpenAIEmbeddingClient.__new__(OpenAIEmbeddingClient)
     client.model = None
     client.client = MagicMock()

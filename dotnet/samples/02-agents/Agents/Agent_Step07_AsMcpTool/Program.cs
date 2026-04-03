@@ -19,10 +19,10 @@ var deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYME
 var aiProjectClient = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredential());
 
 // Create a server side agent and expose it as an AIAgent.
-AgentVersion agentVersion = await aiProjectClient.Agents.CreateAgentVersionAsync(
+ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
     "Joker",
-    new AgentVersionCreationOptions(
-        new PromptAgentDefinition(model: deploymentName)
+    new ProjectsAgentVersionCreationOptions(
+        new DeclarativeAgentDefinition(model: deploymentName)
         {
             Instructions = "You are good at telling jokes, and you always start each joke with 'Aye aye, captain!'.",
         })

@@ -13,7 +13,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Azure AI Foundry configuration from environment variables
+// Get Microsoft Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 

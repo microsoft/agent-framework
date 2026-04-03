@@ -26,7 +26,7 @@ Once completed, please proceed to the other samples listed below.
 
 | Sample | Concepts |
 |--------|----------|
-| [Foundry Agents in Workflows](./Agents/FoundryAgent) | Demonstrates using Azure Foundry agents in a workflow through `ChatClientAgent` |
+| [Foundry Agents in Workflows](./Agents/FoundryAgent) | Demonstrates using Microsoft Foundry agents in a workflow through `ChatClientAgent` |
 | [Custom Agent Executors](./Agents/CustomAgentExecutors) | Shows how to create a custom agent executor for more complex scenarios |
 | [Workflow as an Agent](./Agents/WorkflowAsAnAgent) | Illustrates how to encapsulate a workflow as an agent |
 | [Group Chat with Tool Approval](./Agents/GroupChatToolApproval) | Shows multi-agent group chat with tool approval requests and human-in-the-loop interaction |
