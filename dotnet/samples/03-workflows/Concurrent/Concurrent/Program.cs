@@ -140,17 +140,19 @@ internal sealed partial class ConcurrentAggregationExecutor() :
     public override async ValueTask HandleAsync(List<ChatMessage> message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
         this._messages.AddRange(message);
+    }
 
-        if (this._messages.Count == 2)
+    protected override ValueTask OnMessageDeliveryFinishedAsync(IWorkflowContext context, CancellationToken cancellationToken = default)
+    {
+        StringBuilder resultBuilder = new();
+        foreach (ChatMessage m in this._messages)
         {
-            StringBuilder resultBuilder = new();
-            foreach (ChatMessage m in this._messages)
-            {
-                resultBuilder.AppendLine($"{m.AuthorName}: {m.Text}");
-                resultBuilder.AppendLine();
-            }
-
-            await context.YieldOutputAsync(resultBuilder.ToString(), cancellationToken);
+            resultBuilder.AppendLine($"{m.AuthorName}: {m.Text}");
+            resultBuilder.AppendLine();
         }
+
+        this._messages.Clear();
+
+        return context.YieldOutputAsync(resultBuilder.ToString(), cancellationToken);
     }
 }
