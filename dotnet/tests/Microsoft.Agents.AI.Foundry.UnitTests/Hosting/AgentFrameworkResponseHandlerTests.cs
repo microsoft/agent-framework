@@ -538,7 +538,7 @@ public class AgentFrameworkResponseHandlerTests
     }
 
     [Fact]
-    public async Task CreateAsync_AgentThrows_ExceptionPropagates()
+    public async Task CreateAsync_AgentThrows_EmitsFailedEventWithErrorMessage()
     {
         // Arrange
         var agent = new ThrowingAgent(new InvalidOperationException("Agent crashed"));
@@ -561,13 +561,18 @@ public class AgentFrameworkResponseHandlerTests
         mockContext.Setup(x => x.GetInputItemsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<OutputItem>());
 
-        // Act & Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        // Act — collect all events
+        var events = new List<ResponseStreamEvent>();
+        await foreach (var evt in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
         {
-            await foreach (var _ in handler.CreateAsync(request, mockContext.Object, CancellationToken.None))
-            {
-            }
-        });
+            events.Add(evt);
+        }
+
+        // Assert — should contain created, in_progress, and failed (with real error message)
+        Assert.Contains(events, e => e is ResponseCreatedEvent);
+        Assert.Contains(events, e => e is ResponseInProgressEvent);
+        var failedEvent = Assert.Single(events.OfType<ResponseFailedEvent>());
+        Assert.Contains("Agent crashed", failedEvent.Response.Error.Message);
     }
 
     [Fact]

@@ -95,6 +95,7 @@ public class AgentFrameworkResponseHandler : ResponseHandler
             while (true)
             {
                 bool shutdownDetected = false;
+                ResponseStreamEvent? failedEvent = null;
                 ResponseStreamEvent? evt = null;
                 try
                 {
@@ -108,6 +109,26 @@ public class AgentFrameworkResponseHandler : ResponseHandler
                 catch (OperationCanceledException) when (context.IsShutdownRequested && !emittedTerminal)
                 {
                     shutdownDetected = true;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException && !emittedTerminal)
+                {
+                    // Catch agent execution errors and emit a proper failed event
+                    // with the real error message instead of letting the SDK emit
+                    // a generic "An internal server error occurred."
+                    if (this._logger.IsEnabled(LogLevel.Error))
+                    {
+                        this._logger.LogError(ex, "Agent execution failed for response {ResponseId}.", context.ResponseId);
+                    }
+
+                    failedEvent = stream.EmitFailed(
+                        ResponseErrorCode.ServerError,
+                        ex.Message);
+                }
+
+                if (failedEvent is not null)
+                {
+                    yield return failedEvent;
+                    yield break;
                 }
 
                 if (shutdownDetected)
