@@ -261,4 +261,31 @@ public sealed class WorkflowEvaluationTests
         Assert.Equal("42", result["agent-1"][0].Query);
         Assert.Equal("3.14", result["agent-1"][0].Response);
     }
+
+    [Fact]
+    public void ExtractAgentData_SkipsInternalExecutors()
+    {
+        var events = new List<WorkflowEvent>
+        {
+            new ExecutorInvokedEvent("_internal", "internal query"),
+            new ExecutorCompletedEvent("_internal", "internal response"),
+            new ExecutorInvokedEvent("input-conversation", "start"),
+            new ExecutorCompletedEvent("input-conversation", "done"),
+            new ExecutorInvokedEvent("end-conversation", "end query"),
+            new ExecutorCompletedEvent("end-conversation", "end response"),
+            new ExecutorInvokedEvent("end", "end query"),
+            new ExecutorCompletedEvent("end", "end response"),
+            new ExecutorInvokedEvent("real-agent", "real query"),
+            new ExecutorCompletedEvent("real-agent", "real response"),
+        };
+
+        var result = WorkflowEvaluationExtensions.ExtractAgentData(events, splitter: null);
+
+        Assert.Single(result);
+        Assert.True(result.ContainsKey("real-agent"));
+        Assert.DoesNotContain("_internal", result.Keys);
+        Assert.DoesNotContain("input-conversation", result.Keys);
+        Assert.DoesNotContain("end-conversation", result.Keys);
+        Assert.DoesNotContain("end", result.Keys);
+    }
 }

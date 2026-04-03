@@ -69,7 +69,7 @@ public sealed class FoundryEvals : IAgentEvaluator
         this._model = model;
         this._evaluatorNames = evaluators.Length > 0
             ? evaluators
-            : [Relevance, Coherence];
+            : [Relevance, Coherence, TaskAdherence];
     }
 
     /// <summary>
@@ -145,8 +145,12 @@ public sealed class FoundryEvals : IAgentEvaluator
         bool hasContext = dicts.Any(d => d.ContainsKey("context"));
         bool hasTools = dicts.Any(d => d.ContainsKey("tool_definitions"));
 
-        // Filter out tool evaluators if no items have tools
+        // Filter out tool evaluators if no items have tools; auto-add ToolCallAccuracy if tools present
         var evaluators = FilterToolEvaluators(this._evaluatorNames, hasTools);
+        if (hasTools && !evaluators.Any(e => FoundryEvalConverter.ToolEvaluators.Contains(e)))
+        {
+            evaluators = [.. evaluators, ToolCallAccuracy];
+        }
 
         // 2. Create the evaluation definition
         var createEvalPayload = new Dictionary<string, object>
@@ -205,15 +209,15 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // 4. Poll until complete
-        var (status, reportUrl, errorMessage) = await this.PollEvalRunAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+        var pollResult = await this.PollEvalRunAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
 
-        if (status is "failed" or "canceled")
+        if (pollResult.Status is "failed" or "canceled")
         {
             throw new InvalidOperationException(
-                $"Foundry evaluation run {runId} {status}: {errorMessage ?? "no details available"}");
+                $"Foundry evaluation run {runId} {pollResult.Status}: {pollResult.ErrorMessage ?? "no details available"}");
         }
 
-        if (status == "timeout")
+        if (pollResult.Status == "timeout")
         {
             throw new TimeoutException(
                 $"Foundry evaluation run {runId} did not complete within {this._timeoutSeconds}s. " +
@@ -221,19 +225,341 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         // 5. Fetch output items and build results
-        var evalResults = await this.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+        var fetchResult = await this.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
 
-        // Pad results if we got fewer than items (e.g. partial output)
-        while (evalResults.Count < items.Count)
+        // Pad MEAI results if we got fewer than items (e.g. partial output)
+        while (fetchResult.MeaiResults.Count < items.Count)
         {
-            evalResults.Add(new EvaluationResult());
+            fetchResult.MeaiResults.Add(new EvaluationResult());
         }
 
-        return new AgentEvaluationResults(this.Name, evalResults, inputItems: items)
+        return new AgentEvaluationResults(this.Name, fetchResult.MeaiResults, inputItems: items)
         {
-            ReportUrl = reportUrl is not null ? new Uri(reportUrl) : null,
+            ReportUrl = pollResult.ReportUrl is not null ? new Uri(pollResult.ReportUrl) : null,
             EvalId = evalId,
             RunId = runId,
+            Status = pollResult.Status,
+            Error = pollResult.ErrorMessage,
+            PerEvaluator = pollResult.PerEvaluator,
+            DetailedItems = fetchResult.DetailedItems,
+        };
+    }
+
+    // -----------------------------------------------------------------------
+    // Static evaluation methods (traces and targets)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Evaluates agent behavior from Responses API response IDs, OTel traces, or agent activity.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Foundry-specific method that works with any agent emitting OTel traces to App Insights.
+    /// Provide <paramref name="responseIds"/> for specific Responses API responses,
+    /// <paramref name="traceIds"/> for specific traces, or <paramref name="agentId"/> with
+    /// <paramref name="lookbackHours"/> to evaluate recent activity.
+    /// </para>
+    /// </remarks>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="responseIds">Evaluate specific Responses API response IDs.</param>
+    /// <param name="traceIds">Evaluate specific OTel trace IDs from App Insights.</param>
+    /// <param name="agentId">Filter traces by agent ID (used with <paramref name="lookbackHours"/>).</param>
+    /// <param name="lookbackHours">Hours of trace history to evaluate (default 24).</param>
+    /// <param name="evaluators">Evaluator names. Defaults to relevance, coherence, and task adherence.</param>
+    /// <param name="evalName">Display name for the evaluation.</param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Evaluation results with status, report URL, and per-item details.</returns>
+    public static async Task<AgentEvaluationResults> EvaluateTracesAsync(
+        AIProjectClient projectClient,
+        string model,
+        IEnumerable<string>? responseIds = null,
+        IEnumerable<string>? traceIds = null,
+        string? agentId = null,
+        int lookbackHours = 24,
+        string[]? evaluators = null,
+        string evalName = "Agent Framework Trace Eval",
+        double pollIntervalSeconds = 5.0,
+        double timeoutSeconds = 300.0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(projectClient);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+
+        var responseIdList = responseIds?.ToList();
+        var traceIdList = traceIds?.ToList();
+
+        if ((responseIdList is null || responseIdList.Count == 0)
+            && (traceIdList is null || traceIdList.Count == 0)
+            && string.IsNullOrEmpty(agentId))
+        {
+            throw new ArgumentException("Provide at least one of: responseIds, traceIds, or agentId.");
+        }
+
+        var evalClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
+        var resolvedEvaluators = evaluators is { Length: > 0 }
+            ? evaluators
+            : [Relevance, Coherence, TaskAdherence];
+
+        // Create the evaluation definition with the appropriate data source scenario
+        Dictionary<string, object> dataSourceConfig;
+        Dictionary<string, object> runDataSource;
+
+        if (responseIdList is { Count: > 0 })
+        {
+            // Responses API path
+            dataSourceConfig = new Dictionary<string, object>
+            {
+                ["type"] = "azure_ai_source",
+                ["scenario"] = "responses",
+            };
+
+            runDataSource = new Dictionary<string, object>
+            {
+                ["type"] = "azure_ai_responses",
+                ["item_generation_params"] = new Dictionary<string, object>
+                {
+                    ["type"] = "response_retrieval",
+                    ["data_mapping"] = new Dictionary<string, object> { ["response_id"] = "{{item.resp_id}}" },
+                    ["source"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "file_content",
+                        ["content"] = responseIdList.ConvertAll(id => (object)new Dictionary<string, object>
+                        {
+                            ["item"] = new Dictionary<string, object> { ["resp_id"] = id },
+                        }),
+                    },
+                },
+            };
+        }
+        else
+        {
+            // Traces path
+            dataSourceConfig = new Dictionary<string, object>
+            {
+                ["type"] = "azure_ai_source",
+                ["scenario"] = "traces",
+            };
+
+            var traceSource = new Dictionary<string, object>
+            {
+                ["type"] = "azure_ai_traces",
+                ["lookback_hours"] = lookbackHours,
+            };
+
+            if (traceIdList is { Count: > 0 })
+            {
+                traceSource["trace_ids"] = traceIdList;
+            }
+
+            if (!string.IsNullOrEmpty(agentId))
+            {
+                traceSource["agent_id"] = agentId;
+            }
+
+            runDataSource = traceSource;
+        }
+
+        var createEvalPayload = new Dictionary<string, object>
+        {
+            ["name"] = evalName,
+            ["data_source_config"] = dataSourceConfig,
+            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
+        };
+
+        var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
+        var createEvalResult = await evalClient.CreateEvaluationAsync(
+            BinaryContent.Create(BinaryData.FromString(createEvalJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string evalId;
+        using (var evalResponse = JsonDocument.Parse(createEvalResult.GetRawResponse().Content))
+        {
+            evalId = evalResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval creation returned a null ID.");
+        }
+
+        var createRunPayload = new Dictionary<string, object>
+        {
+            ["name"] = $"{evalName} Run",
+            ["data_source"] = runDataSource,
+        };
+
+        var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);
+        var createRunResult = await evalClient.CreateEvaluationRunAsync(
+            evalId,
+            BinaryContent.Create(BinaryData.FromString(createRunJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string runId;
+        using (var runResponse = JsonDocument.Parse(createRunResult.GetRawResponse().Content))
+        {
+            runId = runResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval run creation returned a null run ID.");
+        }
+
+        // Poll and fetch
+        var instance = new FoundryEvals(projectClient, model, null, pollIntervalSeconds, timeoutSeconds, resolvedEvaluators);
+        var pollResult = await instance.PollEvalRunAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        if (pollResult.Status is "failed" or "canceled")
+        {
+            throw new InvalidOperationException(
+                $"Foundry trace evaluation run {runId} {pollResult.Status}: {pollResult.ErrorMessage ?? "no details available"}");
+        }
+
+        if (pollResult.Status == "timeout")
+        {
+            throw new TimeoutException(
+                $"Foundry trace evaluation run {runId} did not complete within {timeoutSeconds}s.");
+        }
+
+        var fetchResult = await instance.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        return new AgentEvaluationResults("FoundryEvals", fetchResult.MeaiResults)
+        {
+            ReportUrl = pollResult.ReportUrl is not null ? new Uri(pollResult.ReportUrl) : null,
+            EvalId = evalId,
+            RunId = runId,
+            Status = pollResult.Status,
+            Error = pollResult.ErrorMessage,
+            PerEvaluator = pollResult.PerEvaluator,
+            DetailedItems = fetchResult.DetailedItems,
+        };
+    }
+
+    /// <summary>
+    /// Evaluates a Foundry-registered agent or model deployment.
+    /// </summary>
+    /// <remarks>
+    /// Foundry invokes the target, captures the output, and evaluates it.
+    /// Use this for scheduled evaluations, red teaming, and CI/CD quality gates.
+    /// </remarks>
+    /// <param name="projectClient">The Azure AI Foundry project client.</param>
+    /// <param name="model">Model deployment name for the LLM judge evaluator.</param>
+    /// <param name="target">Target configuration (must include a "type" key, e.g. "azure_ai_agent").</param>
+    /// <param name="testQueries">Queries for Foundry to send to the target.</param>
+    /// <param name="evaluators">Evaluator names. Defaults to relevance, coherence, and task adherence.</param>
+    /// <param name="evalName">Display name for the evaluation.</param>
+    /// <param name="pollIntervalSeconds">Seconds between status polls (default 5).</param>
+    /// <param name="timeoutSeconds">Maximum seconds to wait for completion (default 300).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Evaluation results with status, report URL, and per-item details.</returns>
+    public static async Task<AgentEvaluationResults> EvaluateFoundryTargetAsync(
+        AIProjectClient projectClient,
+        string model,
+        IDictionary<string, object> target,
+        IEnumerable<string> testQueries,
+        string[]? evaluators = null,
+        string evalName = "Agent Framework Target Eval",
+        double pollIntervalSeconds = 5.0,
+        double timeoutSeconds = 300.0,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(projectClient);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (!target.ContainsKey("type"))
+        {
+            throw new ArgumentException("Target must include a 'type' key (e.g., 'azure_ai_agent').", nameof(target));
+        }
+
+        var queryList = testQueries.ToList();
+        if (queryList.Count == 0)
+        {
+            throw new ArgumentException("At least one test query is required.", nameof(testQueries));
+        }
+
+        var evalClient = projectClient.GetProjectOpenAIClient().GetEvaluationClient();
+        var resolvedEvaluators = evaluators is { Length: > 0 }
+            ? evaluators
+            : [Relevance, Coherence, TaskAdherence];
+
+        var createEvalPayload = new Dictionary<string, object>
+        {
+            ["name"] = evalName,
+            ["data_source_config"] = new Dictionary<string, object>
+            {
+                ["type"] = "azure_ai_source",
+                ["scenario"] = "target_completions",
+            },
+            ["testing_criteria"] = FoundryEvalConverter.BuildTestingCriteria(resolvedEvaluators, model),
+        };
+
+        var createEvalJson = JsonSerializer.Serialize(createEvalPayload, s_jsonOptions);
+        var createEvalResult = await evalClient.CreateEvaluationAsync(
+            BinaryContent.Create(BinaryData.FromString(createEvalJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string evalId;
+        using (var evalResponse = JsonDocument.Parse(createEvalResult.GetRawResponse().Content))
+        {
+            evalId = evalResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval creation returned a null ID.");
+        }
+
+        var dataSource = new Dictionary<string, object>
+        {
+            ["type"] = "azure_ai_target_completions",
+            ["target"] = target,
+            ["source"] = new Dictionary<string, object>
+            {
+                ["type"] = "file_content",
+                ["content"] = queryList.ConvertAll(q => (object)new Dictionary<string, object>
+                {
+                    ["item"] = new Dictionary<string, object> { ["query"] = q },
+                }),
+            },
+        };
+
+        var createRunPayload = new Dictionary<string, object>
+        {
+            ["name"] = $"{evalName} Run",
+            ["data_source"] = dataSource,
+        };
+
+        var createRunJson = JsonSerializer.Serialize(createRunPayload, s_jsonOptions);
+        var createRunResult = await evalClient.CreateEvaluationRunAsync(
+            evalId,
+            BinaryContent.Create(BinaryData.FromString(createRunJson)),
+            new RequestOptions { CancellationToken = cancellationToken }).ConfigureAwait(false);
+
+        string runId;
+        using (var runResponse = JsonDocument.Parse(createRunResult.GetRawResponse().Content))
+        {
+            runId = runResponse.RootElement.GetProperty("id").GetString()
+                ?? throw new InvalidOperationException("Foundry eval run creation returned a null run ID.");
+        }
+
+        var instance = new FoundryEvals(projectClient, model, null, pollIntervalSeconds, timeoutSeconds, resolvedEvaluators);
+        var pollResult = await instance.PollEvalRunAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        if (pollResult.Status is "failed" or "canceled")
+        {
+            throw new InvalidOperationException(
+                $"Foundry target evaluation run {runId} {pollResult.Status}: {pollResult.ErrorMessage ?? "no details available"}");
+        }
+
+        if (pollResult.Status == "timeout")
+        {
+            throw new TimeoutException(
+                $"Foundry target evaluation run {runId} did not complete within {timeoutSeconds}s.");
+        }
+
+        var fetchResult = await instance.FetchOutputItemResultsAsync(evalId, runId, cancellationToken).ConfigureAwait(false);
+
+        return new AgentEvaluationResults("FoundryEvals", fetchResult.MeaiResults)
+        {
+            ReportUrl = pollResult.ReportUrl is not null ? new Uri(pollResult.ReportUrl) : null,
+            EvalId = evalId,
+            RunId = runId,
+            Status = pollResult.Status,
+            Error = pollResult.ErrorMessage,
+            PerEvaluator = pollResult.PerEvaluator,
+            DetailedItems = fetchResult.DetailedItems,
         };
     }
 
@@ -310,7 +636,7 @@ public sealed class FoundryEvals : IAgentEvaluator
     // Internal helpers
     // -----------------------------------------------------------------------
 
-    private async Task<(string Status, string? ReportUrl, string? ErrorMessage)> PollEvalRunAsync(
+    private async Task<PollResult> PollEvalRunAsync(
         string evalId,
         string runId,
         CancellationToken cancellationToken)
@@ -334,24 +660,54 @@ public sealed class FoundryEvals : IAgentEvaluator
             {
                 string? reportUrl = root.TryGetProperty("report_url", out var urlProp) ? urlProp.GetString() : null;
                 string? errorMessage = root.TryGetProperty("error", out var errProp) ? errProp.ToString() : null;
-                return (status, reportUrl, errorMessage);
+
+                // Extract per-evaluator breakdown
+                Dictionary<string, PerEvaluatorResult>? perEvaluator = null;
+                if (root.TryGetProperty("per_testing_criteria_results", out var criteriaArray)
+                    && criteriaArray.ValueKind == JsonValueKind.Array)
+                {
+                    perEvaluator = new Dictionary<string, PerEvaluatorResult>();
+                    foreach (var item in criteriaArray.EnumerateArray())
+                    {
+                        var name = item.TryGetProperty("testing_criteria", out var tcProp)
+                            ? tcProp.GetString()
+                            : null;
+                        if (name is not null)
+                        {
+                            int passed = item.TryGetProperty("passed", out var pp) && pp.ValueKind == JsonValueKind.Number
+                                ? pp.GetInt32() : 0;
+                            int failed = item.TryGetProperty("failed", out var fp) && fp.ValueKind == JsonValueKind.Number
+                                ? fp.GetInt32() : 0;
+                            perEvaluator[name] = new PerEvaluatorResult(passed, failed);
+                        }
+                    }
+                }
+
+                return new PollResult(status, reportUrl, errorMessage, perEvaluator);
             }
 
             if (DateTime.UtcNow >= deadline)
             {
-                return ("timeout", null, null);
+                return new PollResult("timeout", null, null, null);
             }
 
             await Task.Delay(TimeSpan.FromSeconds(this._pollIntervalSeconds), cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task<List<EvaluationResult>> FetchOutputItemResultsAsync(
+    private sealed record PollResult(
+        string Status,
+        string? ReportUrl,
+        string? ErrorMessage,
+        Dictionary<string, PerEvaluatorResult>? PerEvaluator);
+
+    private async Task<FetchResult> FetchOutputItemResultsAsync(
         string evalId,
         string runId,
         CancellationToken cancellationToken)
     {
-        var results = new List<EvaluationResult>();
+        var meaiResults = new List<EvaluationResult>();
+        var detailedItems = new List<EvalItemResult>();
         string? afterCursor = null;
 
         while (true)
@@ -371,7 +727,8 @@ public sealed class FoundryEvals : IAgentEvaluator
             {
                 foreach (var outputItem in dataArray.EnumerateArray())
                 {
-                    results.Add(ParseOutputItem(outputItem));
+                    meaiResults.Add(ParseOutputItem(outputItem));
+                    detailedItems.Add(ParseDetailedItem(outputItem));
                 }
             }
 
@@ -401,8 +758,12 @@ public sealed class FoundryEvals : IAgentEvaluator
             }
         }
 
-        return results;
+        return new FetchResult(meaiResults, detailedItems);
     }
+
+    private sealed record FetchResult(
+        List<EvaluationResult> MeaiResults,
+        List<EvalItemResult> DetailedItems);
 
     private static EvaluationResult ParseOutputItem(JsonElement outputItem)
     {
@@ -453,6 +814,111 @@ public sealed class FoundryEvals : IAgentEvaluator
         }
 
         return evalResult;
+    }
+
+    private static EvalItemResult ParseDetailedItem(JsonElement outputItem)
+    {
+        var itemId = outputItem.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+        var status = outputItem.TryGetProperty("status", out var statusProp) ? statusProp.GetString() ?? "" : "";
+
+        var scores = new List<EvalScoreResult>();
+        if (outputItem.TryGetProperty("results", out var itemResults))
+        {
+            foreach (var r in itemResults.EnumerateArray())
+            {
+                var name = r.TryGetProperty("name", out var np) ? np.GetString() ?? "unknown" : "unknown";
+                double score = r.TryGetProperty("score", out var sp) && sp.ValueKind == JsonValueKind.Number
+                    ? sp.GetDouble() : 0.0;
+                bool? passed = null;
+                if (r.TryGetProperty("passed", out var pp) && pp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    passed = pp.ValueKind == JsonValueKind.True;
+                }
+
+                scores.Add(new EvalScoreResult(name, score, passed));
+            }
+        }
+
+        var result = new EvalItemResult(itemId, status, scores);
+
+        // Extract error info from sample
+        if (outputItem.TryGetProperty("sample", out var sample))
+        {
+            if (sample.TryGetProperty("error", out var errObj))
+            {
+                result.ErrorCode = errObj.TryGetProperty("code", out var code) ? code.GetString() : null;
+                result.ErrorMessage = errObj.TryGetProperty("message", out var msg) ? msg.GetString() : null;
+            }
+
+            if (sample.TryGetProperty("usage", out var usage) && usage.TryGetProperty("total_tokens", out var tt) && tt.ValueKind == JsonValueKind.Number)
+            {
+                var tokenUsage = new Dictionary<string, int>();
+                if (usage.TryGetProperty("prompt_tokens", out var pt) && pt.ValueKind == JsonValueKind.Number)
+                {
+                    tokenUsage["prompt_tokens"] = pt.GetInt32();
+                }
+
+                if (usage.TryGetProperty("completion_tokens", out var ct) && ct.ValueKind == JsonValueKind.Number)
+                {
+                    tokenUsage["completion_tokens"] = ct.GetInt32();
+                }
+
+                tokenUsage["total_tokens"] = tt.GetInt32();
+                result.TokenUsage = tokenUsage;
+            }
+
+            // Extract input/output text
+            if (sample.TryGetProperty("input", out var inputArr) && inputArr.ValueKind == JsonValueKind.Array)
+            {
+                var parts = new List<string>();
+                foreach (var si in inputArr.EnumerateArray())
+                {
+                    if (si.TryGetProperty("role", out var role) && role.GetString() == "user"
+                        && si.TryGetProperty("content", out var content))
+                    {
+                        parts.Add(content.GetString() ?? "");
+                    }
+                }
+
+                if (parts.Count > 0)
+                {
+                    result.InputText = string.Join(" ", parts);
+                }
+            }
+
+            if (sample.TryGetProperty("output", out var outputArr) && outputArr.ValueKind == JsonValueKind.Array)
+            {
+                var parts = new List<string>();
+                foreach (var so in outputArr.EnumerateArray())
+                {
+                    if (so.TryGetProperty("role", out var role) && role.GetString() == "assistant"
+                        && so.TryGetProperty("content", out var content))
+                    {
+                        parts.Add(content.GetString() ?? "");
+                    }
+                }
+
+                if (parts.Count > 0)
+                {
+                    result.OutputText = string.Join(" ", parts);
+                }
+            }
+        }
+
+        // Extract response_id from datasource_item
+        if (outputItem.TryGetProperty("datasource_item", out var dsItem))
+        {
+            if (dsItem.TryGetProperty("resp_id", out var respId))
+            {
+                result.ResponseId = respId.GetString();
+            }
+            else if (dsItem.TryGetProperty("response_id", out var responseId))
+            {
+                result.ResponseId = responseId.GetString();
+            }
+        }
+
+        return result;
     }
 
     private static string[] FilterToolEvaluators(string[] evaluators, bool hasTools)

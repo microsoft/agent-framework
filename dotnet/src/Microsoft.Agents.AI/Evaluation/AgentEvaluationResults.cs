@@ -39,6 +39,12 @@ public sealed class AgentEvaluationResults
     /// <summary>Gets the Foundry evaluation run ID (Foundry only).</summary>
     public string? RunId { get; set; }
 
+    /// <summary>Gets the evaluation run status (e.g., "completed", "failed", "canceled", "timeout").</summary>
+    public string? Status { get; set; }
+
+    /// <summary>Gets error details when the evaluation run failed.</summary>
+    public string? Error { get; set; }
+
     /// <summary>Gets the per-item MEAI evaluation results.</summary>
     public IReadOnlyList<EvaluationResult> Items => this._items;
 
@@ -51,6 +57,15 @@ public sealed class AgentEvaluationResults
 
     /// <summary>Gets per-agent results for workflow evaluations.</summary>
     public IReadOnlyDictionary<string, AgentEvaluationResults>? SubResults { get; set; }
+
+    /// <summary>Gets per-evaluator pass/fail breakdown (Foundry only).</summary>
+    public IReadOnlyDictionary<string, PerEvaluatorResult>? PerEvaluator { get; set; }
+
+    /// <summary>
+    /// Gets detailed per-item results from the Foundry output_items API,
+    /// including individual evaluator scores, error info, and token usage.
+    /// </summary>
+    public IReadOnlyList<EvalItemResult>? DetailedItems { get; set; }
 
     /// <summary>Gets the number of items that passed.</summary>
     public int Passed => this._items.Count(ItemPassed);

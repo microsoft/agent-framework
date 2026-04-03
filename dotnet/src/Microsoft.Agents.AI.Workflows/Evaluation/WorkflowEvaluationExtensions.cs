@@ -108,6 +108,11 @@ public static class WorkflowEvaluationExtensions
         {
             if (evt is ExecutorInvokedEvent invokedEvent)
             {
+                if (IsInternalExecutor(invokedEvent.ExecutorId))
+                {
+                    continue;
+                }
+
                 invoked[invokedEvent.ExecutorId] = invokedEvent;
             }
             else if (evt is ExecutorCompletedEvent completedEvent
@@ -160,5 +165,11 @@ public static class WorkflowEvaluationExtensions
         }
 
         return agentData;
+    }
+
+    private static bool IsInternalExecutor(string executorId)
+    {
+        return executorId.StartsWith('_')
+            || executorId is "input-conversation" or "end-conversation" or "end";
     }
 }

@@ -1246,6 +1246,118 @@ public sealed class EvaluationTests
         Assert.False(result.Passed);
     }
 
+    [Fact]
+    public void ToolCalledCheck_AnyMode_PassesWhenAtLeastOneFound()
+    {
+        var check = EvalChecks.ToolCalledCheck(ToolCalledMode.Any, "get_weather", "get_time");
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User, "What time is it?"),
+                new(ChatRole.Assistant, [new FunctionCallContent("c1", "get_time")]),
+                new(ChatRole.Tool, [new FunctionResultContent("c1", "3pm")]),
+                new(ChatRole.Assistant, "It's 3pm."),
+            ]);
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCalledCheck_AnyMode_FailsWhenNoneFound()
+    {
+        var check = EvalChecks.ToolCalledCheck(ToolCalledMode.Any, "get_weather", "get_time");
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallArgsMatch_PassesWhenArgsSubsetMatch()
+    {
+        var check = EvalChecks.ToolCallArgsMatch();
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User, "Weather in NYC?"),
+                new(ChatRole.Assistant,
+                [
+                    new FunctionCallContent("c1", "get_weather", new Dictionary<string, object?> { ["location"] = "NYC", ["units"] = "F" }),
+                ]),
+                new(ChatRole.Tool, [new FunctionResultContent("c1", "72F")]),
+                new(ChatRole.Assistant, "72F."),
+            ])
+        {
+            ExpectedToolCalls = [new ExpectedToolCall("get_weather", new Dictionary<string, object> { ["location"] = "NYC" })],
+        };
+        var result = check(item);
+        Assert.True(result.Passed);
+        Assert.Equal("tool_call_args_match", result.CheckName);
+    }
+
+    [Fact]
+    public void ToolCallArgsMatch_FailsWhenArgsMismatch()
+    {
+        var check = EvalChecks.ToolCallArgsMatch();
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User, "Weather in NYC?"),
+                new(ChatRole.Assistant,
+                [
+                    new FunctionCallContent("c1", "get_weather", new Dictionary<string, object?> { ["location"] = "LA" }),
+                ]),
+                new(ChatRole.Tool, [new FunctionResultContent("c1", "90F")]),
+                new(ChatRole.Assistant, "90F."),
+            ])
+        {
+            ExpectedToolCalls = [new ExpectedToolCall("get_weather", new Dictionary<string, object> { ["location"] = "NYC" })],
+        };
+        var result = check(item);
+        Assert.False(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallArgsMatch_PassesWhenNoExpectedToolCalls()
+    {
+        var check = EvalChecks.ToolCallArgsMatch();
+        var item = new EvalItem(query: "hello", response: "world");
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallArgsMatch_NameOnlyMatch_PassesWhenArgsNull()
+    {
+        var check = EvalChecks.ToolCallArgsMatch();
+        var item = new EvalItem(
+            conversation:
+            [
+                new(ChatRole.User, "Run the tool"),
+                new(ChatRole.Assistant, [new FunctionCallContent("c1", "my_tool", new Dictionary<string, object?> { ["x"] = "1" })]),
+                new(ChatRole.Tool, [new FunctionResultContent("c1", "done")]),
+                new(ChatRole.Assistant, "Done."),
+            ])
+        {
+            // Expected tool call with no arguments constraint (name-only match)
+            ExpectedToolCalls = [new ExpectedToolCall("my_tool")],
+        };
+        var result = check(item);
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void ToolCallArgsMatch_FailsWhenToolNotCalled()
+    {
+        var check = EvalChecks.ToolCallArgsMatch();
+        var item = new EvalItem(query: "hello", response: "world")
+        {
+            ExpectedToolCalls = [new ExpectedToolCall("missing_tool")],
+        };
+        var result = check(item);
+        Assert.False(result.Passed);
+        Assert.Contains("not called", result.Reason);
+    }
+
     // ---------------------------------------------------------------
     // EvalItem constructor with splitter tests
     // ---------------------------------------------------------------

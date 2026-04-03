@@ -3,9 +3,22 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI;
+
+/// <summary>
+/// Specifies how <see cref="EvalChecks.ToolCalledCheck(ToolCalledMode, string[])"/> matches tool names.
+/// </summary>
+public enum ToolCalledMode
+{
+    /// <summary>All specified tools must have been called.</summary>
+    All,
+
+    /// <summary>At least one of the specified tools must have been called.</summary>
+    Any,
+}
 
 /// <summary>
 /// Built-in check functions for common evaluation patterns.
@@ -51,25 +64,44 @@ public static class EvalChecks
 
     /// <summary>
     /// Creates a check that verifies specific tools were called in the conversation.
+    /// All specified tools must have been called.
     /// </summary>
     /// <param name="toolNames">Tool names that must appear in the conversation.</param>
     /// <returns>An <see cref="EvalCheck"/> delegate.</returns>
     public static EvalCheck ToolCalledCheck(params string[] toolNames)
     {
+        return ToolCalledCheck(ToolCalledMode.All, toolNames);
+    }
+
+    /// <summary>
+    /// Creates a check that verifies specific tools were called in the conversation.
+    /// </summary>
+    /// <param name="mode">Whether <see cref="ToolCalledMode.All"/> or <see cref="ToolCalledMode.Any"/> of the specified tools must be called.</param>
+    /// <param name="toolNames">Tool names to check for.</param>
+    /// <returns>An <see cref="EvalCheck"/> delegate.</returns>
+    public static EvalCheck ToolCalledCheck(ToolCalledMode mode, params string[] toolNames)
+    {
         return (EvalItem item) =>
         {
             var calledTools = GetCalledTools(item);
 
-            var missing = toolNames
-                .Where(t => !calledTools.Contains(t))
-                .ToList();
+            if (mode == ToolCalledMode.Any)
+            {
+                var found = toolNames.Where(t => calledTools.Contains(t)).ToList();
+                var passed = found.Count > 0;
+                var reason = passed
+                    ? $"Called: {string.Join(", ", found)}"
+                    : $"None of expected tools called: {string.Join(", ", toolNames)}";
+                return new EvalCheckResult(passed, reason, "tool_called_check");
+            }
 
-            var passed = missing.Count == 0;
-            var reason = passed
+            var missing = toolNames.Where(t => !calledTools.Contains(t)).ToList();
+            var allPassed = missing.Count == 0;
+            var allReason = allPassed
                 ? $"All tools called: {string.Join(", ", toolNames)}"
                 : $"Missing tool calls: {string.Join(", ", missing)}";
 
-            return new EvalCheckResult(passed, reason, "tool_called_check");
+            return new EvalCheckResult(allPassed, allReason, "tool_called_check");
         };
     }
 
@@ -88,6 +120,80 @@ public static class EvalChecks
                 : "No tool calls found in conversation";
 
             return new EvalCheckResult(passed, reason, "tool_calls_present");
+        };
+    }
+
+    /// <summary>
+    /// A check that verifies expected tool calls match on name and optionally arguments.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For each expected tool call, finds matching calls in the conversation by name.
+    /// If <see cref="ExpectedToolCall.Arguments"/> is provided, checks that the actual
+    /// arguments contain all expected key-value pairs (subset match — extra actual arguments are OK).
+    /// </para>
+    /// <para>If no expected tool calls are set on the item, the check passes.</para>
+    /// </remarks>
+    /// <returns>An <see cref="EvalCheck"/> delegate.</returns>
+    public static EvalCheck ToolCallArgsMatch()
+    {
+        return (EvalItem item) =>
+        {
+            var expected = item.ExpectedToolCalls;
+            if (expected is null || expected.Count == 0)
+            {
+                return new EvalCheckResult(true, "No expected tool calls specified.", "tool_call_args_match");
+            }
+
+            var actualCalls = GetCalledToolsWithArgs(item);
+            int matched = 0;
+            var details = new List<string>();
+
+            foreach (var exp in expected)
+            {
+                var matching = actualCalls.Where(c => string.Equals(c.Name, exp.Name, StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (matching.Count == 0)
+                {
+                    details.Add($"  {exp.Name}: not called");
+                    continue;
+                }
+
+                if (exp.Arguments is null)
+                {
+                    matched++;
+                    details.Add($"  {exp.Name}: called (args not checked)");
+                    continue;
+                }
+
+                // Subset match — all expected keys present with expected values
+                bool found = false;
+                foreach (var call in matching)
+                {
+                    if (call.Arguments is not null
+                        && exp.Arguments.All(kvp =>
+                            call.Arguments.TryGetValue(kvp.Key, out var actual)
+                            && Equals(actual, kvp.Value)))
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found)
+                {
+                    matched++;
+                    details.Add($"  {exp.Name}: args match");
+                }
+                else
+                {
+                    details.Add($"  {exp.Name}: args mismatch");
+                }
+            }
+
+            var passed = matched == expected.Count;
+            var reason = $"Tool call args match: {matched}/{expected.Count}\n{string.Join("\n", details)}";
+            return new EvalCheckResult(passed, reason, "tool_call_args_match");
         };
     }
 
@@ -171,5 +277,52 @@ public static class EvalChecks
         }
 
         return calledTools;
+    }
+
+    private static List<(string Name, IReadOnlyDictionary<string, object>? Arguments)> GetCalledToolsWithArgs(EvalItem item)
+    {
+        var calls = new List<(string Name, IReadOnlyDictionary<string, object>? Arguments)>();
+
+        foreach (var message in item.Conversation)
+        {
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionCallContent functionCall)
+                {
+                    IDictionary<string, object?>? rawArgs = functionCall.Arguments;
+                    IReadOnlyDictionary<string, object>? args = null;
+                    if (rawArgs is not null)
+                    {
+                        var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var kvp in rawArgs)
+                        {
+                            if (kvp.Value is not null)
+                            {
+                                // Normalize JsonElement values to their .NET equivalents for comparison
+                                dict[kvp.Key] = kvp.Value is JsonElement je ? UnwrapJsonElement(je) : kvp.Value;
+                            }
+                        }
+
+                        args = dict;
+                    }
+
+                    calls.Add((functionCall.Name, args));
+                }
+            }
+        }
+
+        return calls;
+    }
+
+    private static object UnwrapJsonElement(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString()!,
+            JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => element.ToString(),
+        };
     }
 }
