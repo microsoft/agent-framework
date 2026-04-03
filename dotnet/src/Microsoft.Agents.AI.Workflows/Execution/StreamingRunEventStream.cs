@@ -212,7 +212,11 @@ internal sealed class StreamingRunEventStream : IRunEventStream
         // Get the current epoch - we'll only respond to completion signals from this epoch or later
         int currentEpoch = Volatile.Read(ref this._completionEpoch);
 
-        bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages || this._runStatus == RunStatus.Running;
+        bool expectingFreshWork = this._stepRunner.HasUnprocessedMessages ||
+                                  this._stepRunner.HasUnservicedRequests ||
+                                  this._runStatus == RunStatus.Running ||
+                                  this._runStatus == RunStatus.PendingRequests;
+
         int myEpoch = expectingFreshWork ? currentEpoch + 1 : currentEpoch;
 
         // Use custom async enumerable to avoid exceptions on cancellation.
