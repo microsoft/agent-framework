@@ -1,4 +1,4 @@
-﻿<Solution>
+<Solution>
   <Configurations>
     <BuildType Name="Debug" />
     <BuildType Name="Publish" />
@@ -260,7 +260,9 @@
     <Project Path="samples/03-workflows/_StartHere/06_MixedWorkflowAgentsAndExecutors/06_MixedWorkflowAgentsAndExecutors.csproj" />
     <Project Path="samples/03-workflows/_StartHere/07_WriterCriticWorkflow/07_WriterCriticWorkflow.csproj" />
   </Folder>
-  <Folder Name="/Samples/04-hosting/" />
+  <Folder Name="/Samples/04-hosting/">
+    <Project Path="samples/04-hosting/FoundryResponsesRepl/FoundryResponsesRepl.csproj" />
+  </Folder>
   <Folder Name="/Samples/04-hosting/FoundryResponsesHosting/">
     <Project Path="samples/04-hosting/FoundryResponsesHosting/FoundryResponsesHosting.csproj" />
   </Folder>

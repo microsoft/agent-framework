@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "FoundryResponsesRepl": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:61980;http://localhost:61981"
+    }
+  }
+}

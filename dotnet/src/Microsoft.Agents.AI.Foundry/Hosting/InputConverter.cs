@@ -69,7 +69,10 @@ internal static class InputConverter
             Temperature = (float?)request.Temperature,
             TopP = (float?)request.TopP,
             MaxOutputTokens = (int?)request.MaxOutputTokens,
-            ModelId = request.Model,
+            // Note: We intentionally do NOT set ModelId from request.Model here.
+            // The hosted agent already has its own model configured, and passing
+            // the client-provided model would override it (causing failures when
+            // clients send placeholder values like "hosted-agent").
         };
     }
 
