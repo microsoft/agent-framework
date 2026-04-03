@@ -358,7 +358,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", text=self._format_result(entry["filename"], entry["result"])),
+                            Message(role="user", contents=[self._format_result(entry["filename"], entry["result"])]),
                         ],
                     )
                     context.extend_instructions(
@@ -626,7 +626,7 @@ class ContentUnderstandingContextProvider(ContextProvider):
                     context.extend_messages(
                         self,
                         [
-                            Message(role="user", text=self._format_result(entry["filename"], extracted)),
+                            Message(role="user", contents=[self._format_result(entry["filename"], extracted)]),
                         ],
                     )
                 context.extend_instructions(
