@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Foundry Memory Context Provider using BaseContextProvider.
+"""Foundry Memory Context Provider using ContextProvider.
 
 This module provides ``FoundryMemoryProvider``, built on
-:class:`BaseContextProvider`.
+:class:`ContextProvider`.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from agent_framework import (
     AGENT_FRAMEWORK_USER_AGENT,
     AgentSession,
-    BaseContextProvider,
+    ContextProvider,
     Message,
     SessionContext,
     load_settings,
@@ -46,8 +46,8 @@ class FoundryProjectSettings(TypedDict, total=False):
     project_endpoint: str | None
 
 
-class FoundryMemoryProvider(BaseContextProvider):
-    """Foundry Memory context provider using the new BaseContextProvider hooks pattern.
+class FoundryMemoryProvider(ContextProvider):
+    """Foundry Memory context provider using the new ContextProvider hooks pattern.
 
     Integrates Azure AI Foundry Memory Store for persistent semantic memory,
     searching and storing memories via the Azure AI Projects SDK.
@@ -219,7 +219,7 @@ class FoundryMemoryProvider(BaseContextProvider):
                 if line_separated_memories:
                     context.extend_messages(
                         self.source_id,
-                        [Message(role="user", text=f"{self.context_prompt}\n{line_separated_memories}")],
+                        [Message(role="user", contents=[f"{self.context_prompt}\n{line_separated_memories}"])],
                     )
         except Exception as e:
             # Log but don't fail - memory retrieval is non-critical

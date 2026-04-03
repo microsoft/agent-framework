@@ -4,8 +4,8 @@
 
 This module provides the core types for the context provider pipeline:
 - SessionContext: Per-invocation state passed through providers
-- BaseContextProvider: Base class for context providers (renamed to ContextProvider in PR2)
-- BaseHistoryProvider: Base class for history storage providers (renamed to HistoryProvider in PR2)
+- ContextProvider: Base class for context providers
+- HistoryProvider: Base class for history storage providers
 - AgentSession: Lightweight session state container
 - InMemoryHistoryProvider: Built-in in-memory history provider
 """
@@ -15,17 +15,32 @@ from __future__ import annotations
 import copy
 import uuid
 from abc import abstractmethod
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, cast
 
-from ._types import AgentResponse, Message
+from ._middleware import ChatContext, ChatMiddleware
+from ._types import AgentResponse, ChatResponse, Message, ResponseStream
+from .exceptions import ChatClientInvalidResponseException
 
 if TYPE_CHECKING:
     from ._agents import SupportsAgentRun
+    from ._middleware import MiddlewareTypes
 
 
 # Registry of known types for state deserialization
 _STATE_TYPE_REGISTRY: dict[str, type] = {}
+
+
+def _is_middleware_sequence(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[Sequence[MiddlewareTypes]]:
+    return isinstance(middleware, Sequence) and not isinstance(middleware, (str, bytes))
+
+
+def _is_single_middleware(
+    middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+) -> TypeGuard[MiddlewareTypes]:
+    return not _is_middleware_sequence(middleware)
 
 
 def register_state_type(cls: type) -> None:
@@ -131,6 +146,8 @@ class SessionContext:
             Maintains insertion order (provider execution order).
         instructions: Additional instructions added by providers.
         tools: Additional tools added by providers.
+        middleware: Dict mapping source_id -> chat/function middleware added by that provider.
+            Maintains insertion order (provider execution order).
         response: After invocation, contains the full AgentResponse, should not be changed.
         options: Options passed to agent.run() - read-only, for reflection only.
         metadata: Shared metadata dictionary for cross-provider communication.
@@ -145,6 +162,7 @@ class SessionContext:
         context_messages: dict[str, list[Message]] | None = None,
         instructions: list[str] | None = None,
         tools: list[Any] | None = None,
+        middleware: dict[str, list[MiddlewareTypes]] | None = None,
         options: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ):
@@ -157,6 +175,7 @@ class SessionContext:
             context_messages: Pre-populated context messages by source.
             instructions: Pre-populated instructions.
             tools: Pre-populated tools.
+            middleware: Pre-populated chat/function middleware by source.
             options: Options from agent.run() - read-only for providers.
             metadata: Shared metadata for cross-provider communication.
         """
@@ -166,6 +185,10 @@ class SessionContext:
         self.context_messages: dict[str, list[Message]] = context_messages or {}
         self.instructions: list[str] = instructions or []
         self.tools: list[Any] = tools or []
+        self.middleware: dict[str, list[MiddlewareTypes]] = {}
+        if middleware:
+            for source_id, provider_middleware in middleware.items():
+                self.extend_middleware(source_id, provider_middleware)
         self._response: AgentResponse | None = None
         self.options: dict[str, Any] = options or {}
         self.metadata: dict[str, Any] = metadata or {}
@@ -236,6 +259,40 @@ class SessionContext:
                     additional_properties["context_source"] = source_id
         self.tools.extend(tools)
 
+    def extend_middleware(
+        self,
+        source_id: str,
+        middleware: MiddlewareTypes | Sequence[MiddlewareTypes],
+    ) -> None:
+        """Add middleware to be applied for this invocation.
+
+        Args:
+            source_id: The provider source_id adding this middleware.
+            middleware: A single chat/function middleware object/callable or sequence of middleware.
+        """
+        from ._middleware import categorize_middleware
+        from .exceptions import MiddlewareException
+
+        if _is_middleware_sequence(middleware):
+            middleware_items = list(middleware)
+        elif _is_single_middleware(middleware):
+            middleware_items = [middleware]
+        else:
+            raise TypeError("middleware must be a middleware object or a sequence of middleware objects.")
+        middleware_list = categorize_middleware(middleware_items)
+        if middleware_list["agent"]:
+            raise MiddlewareException("Context providers may only add chat or function middleware.")
+        if source_id not in self.middleware:
+            self.middleware[source_id] = []
+        self.middleware[source_id].extend(middleware_items)
+
+    def get_middleware(self) -> list[MiddlewareTypes]:
+        """Get provider-added chat/function middleware in provider execution order."""
+        result: list[MiddlewareTypes] = []
+        for middleware_items in self.middleware.values():
+            result.extend(middleware_items)
+        return result
+
     def get_messages(
         self,
         *,
@@ -272,16 +329,11 @@ class SessionContext:
         return result
 
 
-class BaseContextProvider:
-    """Base class for context providers (hooks pattern).
+class ContextProvider:
+    """Base class for context providers.
 
     Context providers participate in the context engineering pipeline,
     adding context before model invocation and processing responses after.
-
-    Note:
-        This class uses a temporary name prefixed with ``_`` to avoid collision
-        with the existing ``ContextProvider`` in ``_memory.py``. It will be
-        renamed to ``ContextProvider`` in PR2 when the old class is removed.
 
     Attributes:
         source_id: Unique identifier for this provider instance (required).
@@ -312,7 +364,7 @@ class BaseContextProvider:
         Args:
             agent: The agent running this invocation.
             session: The current session.
-            context: The invocation context - add messages/instructions/tools here.
+            context: The invocation context - add messages/instructions/tools/chat/function middleware here.
             state: The provider-scoped mutable state dict for this provider.
                 Full cross-provider state remains available at ``session.state``.
         """
@@ -339,17 +391,13 @@ class BaseContextProvider:
         """
 
 
-class BaseHistoryProvider(BaseContextProvider):
+class HistoryProvider(ContextProvider):
     """Base class for conversation history storage providers.
 
     A single class configurable for different use cases:
     - Primary memory storage (loads + stores messages)
     - Audit/logging storage (stores only, doesn't load)
     - Evaluation storage (stores only for later analysis)
-
-    Note:
-        This class uses a temporary name prefixed with ``_`` to avoid collision
-        with existing types. It will be renamed to ``HistoryProvider`` in PR2.
 
     Subclasses only need to implement ``get_messages()`` and ``save_messages()``.
     The default ``before_run``/``after_run`` handle loading and storing based on
@@ -467,6 +515,183 @@ class BaseHistoryProvider(BaseContextProvider):
             await self.save_messages(context.session_id, messages_to_store, state=state)
 
 
+LOCAL_HISTORY_CONVERSATION_ID = "agent_framework_local_history_persistence"
+
+
+def is_local_history_conversation_id(conversation_id: str | None) -> bool:
+    """Return whether a conversation id is the local history-persistence sentinel."""
+    return conversation_id == LOCAL_HISTORY_CONVERSATION_ID
+
+
+def _response_contains_follow_up_request(response: ChatResponse) -> bool:
+    """Return whether a response requires another model call in the current run."""
+    return any(
+        item.type in {"function_call", "function_approval_request"}
+        for message in response.messages
+        for item in message.contents
+    )
+
+
+def _split_service_call_messages(messages: Sequence[Message]) -> tuple[list[Message], dict[str, list[Message]]]:
+    """Split service-call messages into input messages and attributed context messages."""
+    input_messages: list[Message] = []
+    context_messages: dict[str, list[Message]] = {}
+    for message in messages:
+        attribution = message.additional_properties.get("_attribution")
+        if isinstance(attribution, Mapping):
+            attribution_mapping = cast(Mapping[str, Any], attribution)
+            source_id = attribution_mapping.get("source_id")
+            if isinstance(source_id, str):
+                context_messages.setdefault(source_id, []).append(message)
+                continue
+        input_messages.append(message)
+    return input_messages, context_messages
+
+
+class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
+    """Persist local chat history after each service call when history is framework-managed.
+
+    This middleware runs around each model call when
+    ``require_per_service_call_history_persistence`` is enabled. It loads history providers
+    before the model call, persists them after the model call, and uses a local
+    sentinel conversation id so the function loop follows the existing
+    service-managed branch without forwarding that sentinel to the leaf client.
+    """
+
+    def __init__(
+        self,
+        *,
+        agent: SupportsAgentRun,
+        session: AgentSession,
+        providers: Sequence[HistoryProvider],
+    ) -> None:
+        """Initialize the middleware.
+
+        Args:
+            agent: The agent that owns the history providers.
+            session: The active session for the current run.
+            providers: The history providers participating in per-service-call persistence.
+        """
+        self._agent = agent
+        self._session = session
+        self._providers = list(providers)
+
+    async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
+        """Create a per-call SessionContext and load history providers into it."""
+        input_messages, context_messages = _split_service_call_messages(messages)
+        service_call_context = SessionContext(
+            session_id=self._session.session_id,
+            service_session_id=None,
+            input_messages=list(input_messages),
+        )
+        for source_id, source_messages in context_messages.items():
+            service_call_context.extend_messages(source_id, source_messages)
+        for provider in self._providers:
+            if not provider.load_messages:
+                continue
+            await provider.before_run(
+                agent=self._agent,
+                session=self._session,
+                context=service_call_context,
+                state=self._session.state.setdefault(provider.source_id, {}),
+            )
+        return service_call_context
+
+    async def _persist_service_call_response(
+        self,
+        *,
+        service_call_context: SessionContext,
+        response: ChatResponse,
+    ) -> None:
+        """Persist a single model-call response through the configured history providers."""
+        service_call_context._response = AgentResponse(  # type: ignore[assignment]
+            messages=response.messages,
+            response_id=None,
+        )
+        for provider in reversed(self._providers):
+            await provider.after_run(
+                agent=self._agent,
+                session=self._session,
+                context=service_call_context,
+                state=self._session.state.setdefault(provider.source_id, {}),
+            )
+
+    def _strip_local_conversation_id(self, context: ChatContext) -> None:
+        """Remove the local sentinel before the leaf chat client is invoked."""
+        if is_local_history_conversation_id(cast(str | None, context.kwargs.get("conversation_id"))):
+            context.kwargs.pop("conversation_id", None)
+
+        if context.options is None:
+            return
+
+        mutable_options = dict(context.options)
+        if is_local_history_conversation_id(cast(str | None, mutable_options.get("conversation_id"))):
+            mutable_options.pop("conversation_id", None)
+        context.options = mutable_options
+
+    async def _finalize_response(
+        self,
+        *,
+        service_call_context: SessionContext,
+        response: ChatResponse,
+    ) -> ChatResponse:
+        """Persist a model response and apply the local follow-up sentinel when needed."""
+        if response.conversation_id is not None and not is_local_history_conversation_id(response.conversation_id):
+            raise ChatClientInvalidResponseException(
+                "require_per_service_call_history_persistence cannot be used "
+                "when the chat client returns a real conversation_id."
+            )
+
+        await self._persist_service_call_response(
+            service_call_context=service_call_context,
+            response=response,
+        )
+        if _response_contains_follow_up_request(response):
+            response.mark_internal_conversation_id()
+            response.conversation_id = LOCAL_HISTORY_CONVERSATION_ID
+        return response
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        """Load and persist history providers around a single model call.
+
+        Args:
+            context: The chat invocation context for the current model call.
+            call_next: The next middleware or the leaf chat client.
+
+        Raises:
+            ChatClientInvalidResponseException: If the leaf client returns a real
+                service-managed conversation id while local per-service-call persistence is enabled.
+            ValueError: If the downstream middleware contract returns the wrong
+                result type for streaming or non-streaming execution.
+        """
+        service_call_context = await self._prepare_service_call_context(context.messages)
+        context.messages = service_call_context.get_messages(include_input=True)
+        self._strip_local_conversation_id(context)
+
+        await call_next()
+
+        if context.result is None:
+            return
+
+        if context.stream:
+            if not isinstance(context.result, ResponseStream):
+                raise ValueError("Streaming chat middleware requires a ResponseStream result.")
+            context.result = context.result.with_result_hook(
+                lambda response: self._finalize_response(
+                    service_call_context=service_call_context,
+                    response=response,
+                )
+            )
+            return
+
+        if isinstance(context.result, ResponseStream):
+            raise ValueError("Non-streaming chat middleware requires a ChatResponse result.")
+        context.result = await self._finalize_response(
+            service_call_context=service_call_context,
+            response=context.result,
+        )
+
+
 class AgentSession:
     """A conversation session with an agent.
 
@@ -535,7 +760,7 @@ class AgentSession:
         return session
 
 
-class InMemoryHistoryProvider(BaseHistoryProvider):
+class InMemoryHistoryProvider(HistoryProvider):
     """Built-in history provider that stores messages in session.state.
 
     Messages are stored in ``state["messages"]`` as a list of

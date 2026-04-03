@@ -71,10 +71,12 @@ class PreTerminationMiddleware(AgentMiddleware):
                         messages=[
                             Message(
                                 role="assistant",
-                                text=(
-                                    f"Sorry, I cannot process requests containing '{blocked_word}'. "
-                                    "Please rephrase your question."
-                                ),
+                                contents=[
+                                    (
+                                        f"Sorry, I cannot process requests containing '{blocked_word}'. "
+                                        "Please rephrase your question."
+                                    )
+                                ],
                             )
                         ]
                     )

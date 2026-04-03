@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Specialized;
@@ -154,6 +155,7 @@ public static partial class AgentWorkflowBuilder
     /// The <see cref="AIAgent"/> must be capable of understanding those <see cref="AgentRunOptions"/> provided. If the agent
     /// ignores the tools or is otherwise unable to advertize them to the underlying provider, handoffs will not occur.
     /// </remarks>
+    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     public static HandoffWorkflowBuilder CreateHandoffBuilderWith(AIAgent initialAgent)
     {
         Throw.IfNull(initialAgent);

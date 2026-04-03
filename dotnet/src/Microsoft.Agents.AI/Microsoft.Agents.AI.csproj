@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <IsReleased>true</IsReleased>
     <NoWarn>$(NoWarn);MEAI001;MAAI001</NoWarn>
   </PropertyGroup>
 

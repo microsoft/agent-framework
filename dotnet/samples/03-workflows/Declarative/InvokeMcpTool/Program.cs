@@ -30,7 +30,7 @@ namespace Demo.Workflows.Declarative.InvokeMcpTool;
 /// <item>Integrating with MCP-compatible services</item>
 /// </list>
 /// <para>
-/// This sample uses the Microsoft Learn MCP server to search Azure documentation and the Azure foundry MCP server to get AI model details.
+/// This sample uses the Microsoft Learn MCP server to search Azure documentation and the Microsoft Foundry MCP server to get AI model details.
 /// When you run the sample, provide an AI model (e.g. gpt-4.1-mini) as input,
 /// The workflow will use the MCP tools to find relevant information about the model from Microsoft Learn and foundry, then an agent will summarize the results.
 /// </para>
@@ -125,9 +125,9 @@ internal sealed class Program
             agentDescription: "Provides information based on search results");
     }
 
-    private static PromptAgentDefinition DefineSearchAgent(IConfiguration configuration)
+    private static DeclarativeAgentDefinition DefineSearchAgent(IConfiguration configuration)
     {
-        return new PromptAgentDefinition(configuration.GetValue(Application.Settings.FoundryModel))
+        return new DeclarativeAgentDefinition(configuration.GetValue(Application.Settings.FoundryModel))
         {
             Instructions =
                 """

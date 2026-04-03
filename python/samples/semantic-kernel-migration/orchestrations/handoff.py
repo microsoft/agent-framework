@@ -11,15 +11,14 @@
 """Side-by-side handoff orchestrations for Semantic Kernel and Agent Framework."""
 
 import asyncio
-import sys
-from collections.abc import AsyncIterable, Iterator, Sequence
+from collections.abc import AsyncIterable, Callable, Iterator, Sequence
 
 from agent_framework import (
     Agent,
     Message,
     WorkflowEvent,
 )
-from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework.orchestrations import HandoffAgentUserRequest, HandoffBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -35,11 +34,6 @@ from semantic_kernel.contents import (
     StreamingChatMessageContent,
 )
 from semantic_kernel.functions import kernel_function
-
-if sys.version_info >= (3, 12):
-    pass  # pragma: no cover
-else:
-    pass  # pragma: no cover
 
 # Load environment variables from .env file
 load_dotenv()
@@ -149,7 +143,7 @@ def _sk_streaming_callback(message: StreamingChatMessageContent, is_final: bool)
         _sk_new_message = True
 
 
-def _make_sk_human_responder(script: Iterator[str]) -> callable:
+def _make_sk_human_responder(script: Iterator[str]) -> Callable[[], ChatMessageContent]:
     def _responder() -> ChatMessageContent:
         try:
             user_text = next(script)
@@ -190,7 +184,7 @@ async def run_semantic_kernel_example(initial_task: str, scripted_responses: Seq
 ######################################################################
 
 
-def _create_af_agents(client: FoundryChatClient):
+def _create_af_agents(client: OpenAIChatCompletionClient):
     triage = Agent(
         client=client,
         name="triage_agent",
@@ -245,7 +239,7 @@ def _extract_final_conversation(events: list[WorkflowEvent]) -> list[Message]:
 
 
 async def run_agent_framework_example(initial_task: str, scripted_responses: Sequence[str]) -> str:
-    client = FoundryChatClient(credential=AzureCliCredential())
+    client = OpenAIChatCompletionClient(credential=AzureCliCredential())
     triage, refund, status, returns = _create_af_agents(client)
 
     workflow = (
@@ -272,7 +266,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
             user_reply = next(scripted_iter)
         except StopIteration:
             user_reply = "Thanks, that's all."
-        responses = {request.request_id: [Message(role="user", text=user_reply)] for request in pending}
+        responses = {request.request_id: [Message(role="user", contents=[user_reply])] for request in pending}
         final_events = await _drain_events(workflow.run(stream=True, responses=responses))
         pending = _collect_handoff_requests(final_events)
 
@@ -281,7 +275,7 @@ async def run_agent_framework_example(initial_task: str, scripted_responses: Seq
         return ""
 
     # Render final transcript succinctly.
-    lines = []
+    lines: list[str] = []
     for message in conversation:
         text = message.text or ""
         if not text.strip():

@@ -63,16 +63,16 @@ public static class ChatClientExtensions
             });
         }
 
-        // ServiceStoredSimulatingChatClient is only injected when SimulateServiceStoredChatHistory is enabled.
+        // PerServiceCallChatHistoryPersistingChatClient is only injected when RequirePerServiceCallChatHistoryPersistence is enabled.
         // It is registered after FunctionInvokingChatClient so that it sits between FIC and the leaf client.
         // ChatClientBuilder.Build applies factories in reverse order, making the first Use() call outermost.
         // By adding our decorator second, the resulting pipeline is:
-        //   FunctionInvokingChatClient → ServiceStoredSimulatingChatClient → leaf IChatClient
+        //   FunctionInvokingChatClient → PerServiceCallChatHistoryPersistingChatClient → leaf IChatClient
         // This allows the decorator to simulate service-stored chat history by loading history before
         // each service call, persisting after each call, and returning a sentinel ConversationId.
-        if (options?.SimulateServiceStoredChatHistory is true)
+        if (options?.RequirePerServiceCallChatHistoryPersistence is true)
         {
-            chatBuilder.Use(innerClient => new ServiceStoredSimulatingChatClient(innerClient));
+            chatBuilder.Use(innerClient => new PerServiceCallChatHistoryPersistingChatClient(innerClient));
         }
 
         var agentChatClient = chatBuilder.Build(services);

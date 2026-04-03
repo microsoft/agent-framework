@@ -53,6 +53,7 @@ from typing import (
     runtime_checkable,
 )
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._tools import FunctionTool
 from ._types import AgentResponse, Message
 
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class EvalNotPassedError(Exception):
     """Raised when evaluation results contain failures."""
 
@@ -71,6 +73,7 @@ class EvalNotPassedError(Exception):
 # region Core types
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @runtime_checkable
 class ConversationSplitter(Protocol):
     """Strategy for splitting a conversation into (query, response) messages.
@@ -96,12 +99,14 @@ class ConversationSplitter(Protocol):
             # Fallback: split at last user message
             return EvalItem._split_last_turn_static(conversation)
 
+
         item.split_messages(split=split_before_memory)
     """
 
     def __call__(self, conversation: list[Message]) -> tuple[list[Message], list[Message]]: ...
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class ConversationSplit(str, Enum):
     """Built-in conversation split strategies.
 
@@ -130,6 +135,7 @@ class ConversationSplit(str, Enum):
         return _BUILT_IN_SPLITTERS[self](conversation)
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @dataclass
 class ExpectedToolCall:
     """A tool call that an agent is expected to make.
@@ -172,6 +178,7 @@ _BUILT_IN_SPLITTERS: dict[ConversationSplit, Callable[[list[Message]], tuple[lis
 }
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class EvalItem:
     """A single item to be evaluated.
 
@@ -294,6 +301,7 @@ class EvalItem:
 # region Score and result types
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @dataclass
 class EvalScoreResult:
     """Result from a single evaluator on a single item.
@@ -311,6 +319,7 @@ class EvalScoreResult:
     sample: dict[str, Any] | None = None
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @dataclass
 class EvalItemResult:
     """Per-item result from an evaluation run.
@@ -357,6 +366,7 @@ class EvalItemResult:
         return self.status == "fail"
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class EvalResults:
     """Results from an evaluation run by a single provider.
 
@@ -468,10 +478,7 @@ class EvalResults:
         """
         if not self.all_passed:
             errored = (self.result_counts or {}).get("errored", 0)
-            detail = msg or (
-                f"Eval run {self.run_id} {self.status}: "
-                f"{self.passed} passed, {self.failed} failed."
-            )
+            detail = msg or (f"Eval run {self.run_id} {self.status}: {self.passed} passed, {self.failed} failed.")
             if errored:
                 detail += f" {errored} errored."
             if self.report_url:
@@ -495,6 +502,7 @@ class EvalResults:
 # region Evaluator protocol
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @runtime_checkable
 class Evaluator(Protocol):
     """Protocol for evaluation providers.
@@ -545,6 +553,7 @@ class Evaluator(Protocol):
 # region Converter
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class AgentEvalConverter:
     """Converts agent-framework types to evaluation format.
 
@@ -848,6 +857,7 @@ def _extract_overall_query(workflow_result: WorkflowRunResult) -> str | None:
 # region Local evaluation checks
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 @dataclass
 class CheckResult:
     """Result of a single check on a single evaluation item.
@@ -872,6 +882,7 @@ an awaitable ``CheckResult``; they will be awaited automatically by
 """
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def keyword_check(*keywords: str, case_sensitive: bool = False) -> EvalCheck:
     """Check that the response contains all specified keywords.
 
@@ -899,6 +910,7 @@ def keyword_check(*keywords: str, case_sensitive: bool = False) -> EvalCheck:
     return _check
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def tool_called_check(*tool_names: str, mode: Literal["all", "any"] = "all") -> EvalCheck:
     """Check that specific tools were called during the conversation.
 
@@ -981,6 +993,7 @@ def _extract_tool_calls(item: EvalItem) -> list[tuple[str, dict[str, Any] | None
     return calls
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def tool_calls_present(item: EvalItem) -> CheckResult:
     """Check that all expected tool calls were made (unordered, extras OK).
 
@@ -1022,6 +1035,7 @@ def tool_calls_present(item: EvalItem) -> CheckResult:
     )
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def tool_call_args_match(item: EvalItem) -> CheckResult:
     """Check that expected tool calls match on name and arguments.
 
@@ -1188,8 +1202,7 @@ def _coerce_result(value: Any, check_name: str) -> CheckResult:
                 score = float(d["score"])
             except (TypeError, ValueError) as exc:
                 raise TypeError(
-                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value:"
-                    f" {d['score']!r}"
+                    f"Function evaluator '{check_name}' returned dict with non-numeric 'score' value: {d['score']!r}"
                 ) from exc
             # Honour an explicit 'passed' override; otherwise threshold-based.
             passed = bool(d["passed"]) if "passed" in d else score >= float(d.get("threshold", 0.5))
@@ -1223,6 +1236,7 @@ def evaluator(fn: Callable[..., Any], /) -> EvalCheck: ...
 def evaluator(*, name: str | None = None) -> Callable[[Callable[..., Any]], EvalCheck]: ...
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 def evaluator(
     fn: Callable[..., Any] | None = None,
     *,
@@ -1325,6 +1339,7 @@ async def _run_check(check_fn: EvalCheck, item: EvalItem) -> CheckResult:
     return result
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 class LocalEvaluator:
     """Evaluation provider that runs checks locally without API calls.
 
@@ -1434,6 +1449,7 @@ class LocalEvaluator:
 # region Public orchestration functions
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 async def evaluate_agent(
     *,
     agent: SupportsAgentRun | None = None,
@@ -1637,6 +1653,7 @@ async def evaluate_agent(
     return await _run_evaluators(evaluators, items, eval_name=name)
 
 
+@experimental(feature_id=ExperimentalFeature.EVALS)
 async def evaluate_workflow(
     *,
     workflow: Workflow,

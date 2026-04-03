@@ -9,7 +9,7 @@ namespace Microsoft.Agents.AI.UnitTests;
 
 /// <summary>
 /// Contains unit tests that verify the end-to-end approval flow behavior of the
-/// <see cref="ChatClientAgent"/> class with <see cref="ServiceStoredSimulatingChatClient"/>,
+/// <see cref="ChatClientAgent"/> class with <see cref="PerServiceCallChatHistoryPersistingChatClient"/>,
 /// ensuring that chat history is correctly persisted across multi-turn approval interactions.
 /// </summary>
 public class ChatClientAgent_ApprovalsTests
@@ -48,7 +48,7 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                SimulateServiceStoredChatHistory = true,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);
@@ -260,7 +260,7 @@ public class ChatClientAgent_ApprovalsTests
             agentOptions: new()
             {
                 ChatOptions = new() { Tools = [approvalTool] },
-                SimulateServiceStoredChatHistory = true,
+                RequirePerServiceCallChatHistoryPersistence = true,
             },
             callIndex: callIndex,
             capturedInputs: capturedInputs);

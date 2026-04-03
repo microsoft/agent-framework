@@ -67,12 +67,12 @@ def main() -> None:
 
     # Validate environment
     project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("FOUNDRY_MODEL")
+    model = os.getenv("FOUNDRY_MODEL")
 
     if not project_endpoint:
         print("Error: FOUNDRY_PROJECT_ENDPOINT environment variable is not set.")
         sys.exit(1)
-    if not deployment_name:
+    if not model:
         print("Error: FOUNDRY_MODEL environment variable is not set.")
         sys.exit(1)
 
@@ -80,7 +80,7 @@ def main() -> None:
     credential = AzureCliCredential()
     client = FoundryChatClient(
         project_endpoint=project_endpoint,
-        model=deployment_name,
+        model=model,
         credential=credential,
     )
 

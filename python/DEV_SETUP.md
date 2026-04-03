@@ -58,7 +58,7 @@ You can then run the following commands manually:
 # Install Python 3.10, 3.11, 3.12, and 3.13
 uv python install 3.10 3.11 3.12 3.13
 # Create a virtual environment with Python 3.10 (you can change this to 3.11, 3.12 or 3.13)
-$PYTHON_VERSION = "3.10"
+PYTHON_VERSION="3.10"
 uv venv --python $PYTHON_VERSION
 # Install AF and all dependencies
 uv sync --dev
@@ -180,7 +180,7 @@ This will show you which files are not covered by the tests, including the speci
 
 ## Catching up with the latest changes
 
-There are many people committing to Semantic Kernel, so it is important to keep your local repository up to date. To do this, you can run the following commands:
+There are many people committing to Agent Framework, so it is important to keep your local repository up to date. To do this, you can run the following commands:
 
 ```bash
     git fetch upstream main

@@ -4,6 +4,7 @@ import asyncio
 
 from agent_framework import Agent, AgentSession
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.openai import OpenAIChatCompletionClient
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -62,7 +63,7 @@ async def suspend_resume_in_memory_session() -> None:
     # OpenAI Chat Client is used as an example here,
     # other chat clients can be used as well.
     agent = Agent(
-        client=FoundryChatClient(),
+        client=OpenAIChatCompletionClient(),
         name="MemoryBot",
         instructions="You are a helpful assistant that remembers our conversation.",
     )

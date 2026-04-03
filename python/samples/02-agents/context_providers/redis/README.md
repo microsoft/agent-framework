@@ -11,7 +11,7 @@ This folder contains an example demonstrating how to use the Redis context provi
 | [`azure_redis_conversation.py`](azure_redis_conversation.py) | Demonstrates conversation persistence with RedisHistoryProvider and Azure Redis with Azure AD (Entra ID) authentication using credential provider. |
 | [`redis_basics.py`](redis_basics.py) | Shows standalone provider usage and agent integration. Demonstrates writing messages to Redis, retrieving context via full‑text or hybrid vector search, and persisting preferences across threads. Also includes a simple tool example whose outputs are remembered. |
 | [`redis_conversation.py`](redis_conversation.py) | Simple example showing conversation persistence with RedisContextProvider using traditional connection string authentication. |
-| [`redis_sessions.py`](redis_sessions.py) | Demonstrates thread scoping. Includes: (1) global thread scope with a fixed `thread_id` shared across operations; (2) per‑operation thread scope where `scope_to_per_operation_thread_id=True` binds memory to a single thread for the provider's lifetime; and (3) multiple agents with isolated memory via different `agent_id` values. |
+| [`redis_sessions.py`](redis_sessions.py) | Demonstrates memory scoping strategies. Includes: (1) global memory scope with `application_id`, `agent_id`, and `user_id` shared across operations; (2) hybrid vector search using a custom OpenAI vectorizer for richer context retrieval; and (3) multiple agents with isolated memory via different `agent_id` values. |
 
 
 ## Prerequisites
@@ -51,8 +51,8 @@ See quickstart: `https://learn.microsoft.com/azure/redis/quickstart-create-manag
 
 ### Environment variables
 
-- `AZURE_AI_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `AzureOpenAIResponsesClient`
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` (required): Azure OpenAI Responses deployment name
+- `FOUNDRY_PROJECT_ENDPOINT` (required): Azure AI Foundry project endpoint for `FoundryChatClient`
+- `FOUNDRY_MODEL` (required): Foundry model deployment name
 - `OPENAI_API_KEY` (optional): Required only if you set `vectorizer_choice="openai"` to enable hybrid search.
 
 ### Provider configuration highlights
@@ -61,8 +61,7 @@ The provider supports both full‑text only and hybrid vector search:
 
 - Set `vectorizer_choice` to `"openai"` or `"hf"` to enable embeddings and hybrid search.
 - When using a vectorizer, also set `vector_field_name` (e.g., `"vector"`).
-- Partition fields for scoping memory: `application_id`, `agent_id`, `user_id`, `thread_id`.
-- Thread scoping: `scope_to_per_operation_thread_id=True` isolates memory per operation thread.
+- Partition fields for scoping memory: `application_id`, `agent_id`, `user_id`.
 - Index management: `index_name`, `overwrite_redis_index`, `drop_redis_index`.
 
 ## What the example does
@@ -73,7 +72,7 @@ The provider supports both full‑text only and hybrid vector search:
 2. Agent integration: teaches the agent a preference and verifies it is remembered across turns.
 3. Agent + tool: calls a sample tool (flight search) and then asks the agent to recall details remembered from the tool output.
 
-It uses `AzureOpenAIResponsesClient` (Foundry project endpoint setup) for chat and, in some steps, optional OpenAI embeddings for hybrid search.
+It uses `FoundryChatClient` for chat and, in some steps, optional OpenAI embeddings for hybrid search.
 
 ## How to run
 
@@ -82,8 +81,8 @@ It uses `AzureOpenAIResponsesClient` (Foundry project endpoint setup) for chat a
 2) Set Azure Foundry/OpenAI responses environment variables:
 
 ```bash
-export AZURE_AI_PROJECT_ENDPOINT="https://<resource>.services.ai.azure.com/api/projects/<project>"
-export AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME="<deployment-name>"
+export FOUNDRY_PROJECT_ENDPOINT="https://<resource>.services.ai.azure.com/api/projects/<project>"
+export FOUNDRY_MODEL="<deployment-name>"
 ```
 
 3) (Optional) Set your OpenAI key if using embeddings:
@@ -104,8 +103,8 @@ You should see the agent responses and, when using embeddings, context retrieved
 
 ### Memory scoping
 
-- Global scope: set `application_id`, `agent_id`, `user_id`, or `thread_id` on the provider to filter memory.
-- Per‑operation thread scope: set `scope_to_per_operation_thread_id=True` to isolate memory to the current thread created by the framework.
+- Global scope: set `application_id`, `agent_id`, or `user_id` on the provider to filter memory.
+- Agent isolation: use different `agent_id` values to keep memories separated for different agent personas.
 
 ### Hybrid vector search (optional)
 
@@ -118,7 +117,7 @@ You should see the agent responses and, when using embeddings, context retrieved
 
 ## Troubleshooting
 
-- Ensure at least one of `application_id`, `agent_id`, `user_id`, or `thread_id` is set; the provider requires a scope.
-- Verify `AZURE_AI_PROJECT_ENDPOINT` and `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME` are set for the chat client.
+- Ensure at least one of `application_id`, `agent_id`, or `user_id` is set; the provider requires a scope.
+- Verify `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_MODEL` are set for the chat client.
 - If using embeddings, verify `OPENAI_API_KEY` is set and reachable.
 - Make sure Redis exposes RediSearch (Redis Stack image or managed service with search enabled).

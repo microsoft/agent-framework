@@ -20,8 +20,8 @@ To use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector)
    MCP Inspector is up and running at http://127.0.0.1:6274
    ```
 1. Open a web browser and navigate to the URL displayed in the terminal. If not opened automatically, this will open the MCP Inspector interface.
-1. In the MCP Inspector interface, add the following environment variables to allow your MCP server to access Azure AI Foundry Project to create and run the agent:
-    - AZURE_AI_PROJECT_ENDPOINT = https://your-resource.openai.azure.com/ # Replace with your Azure AI Foundry Project endpoint
+1. In the MCP Inspector interface, add the following environment variables to allow your MCP server to access Microsoft Foundry Project to create and run the agent:
+    - AZURE_AI_PROJECT_ENDPOINT = https://your-resource.openai.azure.com/ # Replace with your Microsoft Foundry Project endpoint
     - AZURE_AI_MODEL_DEPLOYMENT_NAME = gpt-4o-mini # Replace with your model deployment name
 1. Find and click the `Connect` button in the MCP Inspector interface to connect to the MCP server.
 1. As soon as the connection is established, open the `Tools` tab in the MCP Inspector interface and select the `Joker` tool from the list.

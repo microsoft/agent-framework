@@ -3,8 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
@@ -27,8 +25,8 @@ namespace Microsoft.Agents.AI;
 public sealed class AgentInlineSkill : AgentSkill
 {
     private readonly string _instructions;
-    private List<AgentSkillResource>? _resources;
-    private List<AgentSkillScript>? _scripts;
+    private List<AgentInlineSkillResource>? _resources;
+    private List<AgentInlineSkillScript>? _scripts;
     private string? _cachedContent;
 
     /// <summary>
@@ -77,7 +75,7 @@ public sealed class AgentInlineSkill : AgentSkill
     public override AgentSkillFrontmatter Frontmatter { get; }
 
     /// <inheritdoc/>
-    public override string Content => this._cachedContent ??= this.BuildContent();
+    public override string Content => this._cachedContent ??= AgentInlineSkillContentBuilder.Build(this.Frontmatter.Name, this.Frontmatter.Description, this._instructions, this._resources, this._scripts);
 
     /// <inheritdoc/>
     public override IReadOnlyList<AgentSkillResource>? Resources => this._resources;
@@ -124,92 +122,5 @@ public sealed class AgentInlineSkill : AgentSkill
     {
         (this._scripts ??= []).Add(new AgentInlineSkillScript(name, method, description));
         return this;
-    }
-
-    private string BuildContent()
-    {
-        var sb = new StringBuilder();
-
-        sb.Append($"<name>{EscapeXmlString(this.Frontmatter.Name)}</name>\n")
-        .Append($"<description>{EscapeXmlString(this.Frontmatter.Description)}</description>\n\n")
-        .Append("<instructions>\n")
-        .Append(EscapeXmlString(this._instructions))
-        .Append("\n</instructions>");
-
-        if (this.Resources is { Count: > 0 })
-        {
-            sb.Append("\n\n<resources>\n");
-            foreach (var resource in this.Resources)
-            {
-                if (resource.Description is not null)
-                {
-                    sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\" description=\"{EscapeXmlString(resource.Description)}\"/>\n");
-                }
-                else
-                {
-                    sb.Append($"  <resource name=\"{EscapeXmlString(resource.Name)}\"/>\n");
-                }
-            }
-
-            sb.Append("</resources>");
-        }
-
-        if (this.Scripts is { Count: > 0 })
-        {
-            sb.Append("\n\n<scripts>\n");
-            foreach (var script in this.Scripts)
-            {
-                JsonElement? parametersSchema = ((AgentInlineSkillScript)script).ParametersSchema;
-
-                if (script.Description is null && parametersSchema is null)
-                {
-                    sb.Append($"  <script name=\"{EscapeXmlString(script.Name)}\"/>\n");
-                }
-                else
-                {
-                    sb.Append(script.Description is not null
-                        ? $"  <script name=\"{EscapeXmlString(script.Name)}\" description=\"{EscapeXmlString(script.Description)}\">\n"
-                        : $"  <script name=\"{EscapeXmlString(script.Name)}\">\n");
-
-                    if (parametersSchema is not null)
-                    {
-                        sb.Append($"    <parameters_schema>{EscapeXmlString(parametersSchema.Value.GetRawText(), preserveQuotes: true)}</parameters_schema>\n");
-                    }
-
-                    sb.Append("  </script>\n");
-                }
-            }
-
-            sb.Append("</scripts>");
-        }
-
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// Escapes XML special characters: always escapes <c>&amp;</c>, <c>&lt;</c>, <c>&gt;</c>,
-    /// <c>&quot;</c>, and <c>&apos;</c>. When <paramref name="preserveQuotes"/> is <see langword="true"/>,
-    /// quotes are left unescaped to preserve readability of embedded content such as JSON.
-    /// </summary>
-    /// <param name="value">The string to escape.</param>
-    /// <param name="preserveQuotes">
-    /// When <see langword="true"/>, leaves <c>"</c> and <c>'</c> unescaped for use in XML element content (e.g., JSON).
-    /// When <see langword="false"/> (default), escapes all XML special characters including quotes.
-    /// </param>
-    private static string EscapeXmlString(string value, bool preserveQuotes = false)
-    {
-        var result = value
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;");
-
-        if (!preserveQuotes)
-        {
-            result = result
-                .Replace("\"", "&quot;")
-                .Replace("'", "&apos;");
-        }
-
-        return result;
     }
 }

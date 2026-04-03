@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft. All rights reserved.
 
-"""New-pattern Redis history provider using BaseHistoryProvider.
+"""New-pattern Redis history provider using HistoryProvider.
 
 This module provides ``RedisHistoryProvider``, built on the new
-:class:`BaseHistoryProvider` hooks pattern.
+:class:`HistoryProvider` hooks pattern.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from typing import Any, ClassVar
 
 import redis.asyncio as redis
 from agent_framework import Message
-from agent_framework._sessions import BaseHistoryProvider
+from agent_framework._sessions import HistoryProvider
 from redis.credentials import CredentialProvider
 
 
-class RedisHistoryProvider(BaseHistoryProvider):
-    """Redis-backed history provider using the new BaseHistoryProvider hooks pattern.
+class RedisHistoryProvider(HistoryProvider):
+    """Redis-backed history provider using the new HistoryProvider hooks pattern.
 
     Stores conversation history in Redis Lists, with each session isolated by a
     unique Redis key.

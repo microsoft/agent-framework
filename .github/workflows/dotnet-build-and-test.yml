@@ -82,7 +82,7 @@ jobs:
               .github
               dotnet
               python
-              workflow-samples
+              declarative-agents
 
       - name: Setup dotnet
         uses: actions/setup-dotnet@v5.2.0
@@ -152,7 +152,7 @@ jobs:
               .github
               dotnet
               python
-              workflow-samples
+              declarative-agents
 
       # Start Cosmos DB Emulator for all integration tests and only for unit tests when CosmosDB changes happened)
       - name: Start Azure Cosmos DB Emulator

@@ -78,6 +78,7 @@ from ._evaluation import (
     tool_called_check,
     tool_calls_present,
 )
+from ._feature_stage import ExperimentalFeature, ReleaseCandidateFeature
 from ._mcp import MCPStdioTool, MCPStreamableHTTPTool, MCPWebsocketTool
 from ._middleware import (
     AgentContext,
@@ -101,8 +102,8 @@ from ._middleware import (
 )
 from ._sessions import (
     AgentSession,
-    BaseContextProvider,
-    BaseHistoryProvider,
+    ContextProvider,
+    HistoryProvider,
     InMemoryHistoryProvider,
     SessionContext,
     register_state_type,
@@ -277,9 +278,7 @@ __all__ = [
     "Annotation",
     "BaseAgent",
     "BaseChatClient",
-    "BaseContextProvider",
     "BaseEmbeddingClient",
-    "BaseHistoryProvider",
     "Case",
     "CharacterEstimatorTokenizer",
     "ChatAndFunctionMiddlewareTypes",
@@ -295,6 +294,7 @@ __all__ = [
     "CompactionProvider",
     "CompactionStrategy",
     "Content",
+    "ContextProvider",
     "ContinuationToken",
     "ConversationSplit",
     "ConversationSplitter",
@@ -314,6 +314,7 @@ __all__ = [
     "Evaluator",
     "Executor",
     "ExpectedToolCall",
+    "ExperimentalFeature",
     "FanInEdgeGroup",
     "FanOutEdgeGroup",
     "FileCheckpointStorage",
@@ -329,6 +330,7 @@ __all__ = [
     "FunctionTool",
     "GeneratedEmbeddings",
     "GraphConnectivityError",
+    "HistoryProvider",
     "InMemoryCheckpointStorage",
     "InMemoryHistoryProvider",
     "InProcRunnerContext",
@@ -344,6 +346,7 @@ __all__ = [
     "OuterFinalT",
     "OuterUpdateT",
     "RawAgent",
+    "ReleaseCandidateFeature",
     "ResponseStream",
     "Role",
     "RoleLiteral",

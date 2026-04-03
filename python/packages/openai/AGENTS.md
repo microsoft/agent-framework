@@ -11,9 +11,7 @@ agent_framework_openai/
 ├── _chat_completion_client.py  # OpenAIChatCompletionClient (Chat Completions API) + RawOpenAIChatCompletionClient
 ├── _embedding_client.py        # OpenAIEmbeddingClient
 ├── _exceptions.py              # OpenAI-specific exceptions
-├── _shared.py                  # OpenAIBase, OpenAIConfigMixin, OpenAISettings
-├── _assistants_client.py       # OpenAIAssistantsClient (DEPRECATED)
-└── _assistant_provider.py      # OpenAIAssistantProvider (DEPRECATED)
+└── _shared.py                  # OpenAISettings and shared config helpers
 ```
 
 ## Key Classes
@@ -23,7 +21,6 @@ agent_framework_openai/
 | `OpenAIChatClient` | Responses API | Primary |
 | `OpenAIChatCompletionClient` | Chat Completions API | Primary |
 | `OpenAIEmbeddingClient` | Embeddings API | Primary |
-| `OpenAIAssistantsClient` | Assistants API | Deprecated |
 
 All clients follow the Raw + Full-Featured pattern (e.g., `RawOpenAIChatClient` + `OpenAIChatClient`).
 
@@ -35,4 +32,3 @@ explicit Azure inputs (`credential`, `azure_endpoint`, `api_version`) → OpenAI
 
 - `agent-framework-core` — core abstractions
 - `openai` — OpenAI Python SDK
-- `packaging` — version checking
