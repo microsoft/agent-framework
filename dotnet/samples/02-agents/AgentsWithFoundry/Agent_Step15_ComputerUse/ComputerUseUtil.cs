@@ -1,98 +1,84 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System.ClientModel;
+using OpenAI.Files;
 using OpenAI.Responses;
 
 namespace Demo.ComputerUse;
 
 /// <summary>
-/// Enum for tracking the state of the simulated web search flow.
+/// Tracks the simulated browser state during the computer use loop.
+/// See the README for the full state machine and screenshot mapping.
 /// </summary>
-internal enum SearchState
-{
-    Initial,        // Browser search page
-    Typed,          // Text entered in search box
-    PressedEnter   // Enter key pressed, transitioning to results
-}
+internal enum SearchState { Initial, Typed, PressedEnter }
 
 internal static class ComputerUseUtil
 {
-    /// <summary>
-    /// Load and convert screenshot images to base64 data URLs.
-    /// </summary>
-    internal static Dictionary<string, byte[]> LoadScreenshotAssets()
+    internal static async Task<Dictionary<string, string>> UploadScreenshotAssetsAsync(OpenAIFileClient fileClient)
     {
-        string baseDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
+        string assetsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
 
-        ReadOnlySpan<(string key, string fileName)> screenshotFiles =
-            [
-                ("browser_search", "cua_browser_search.png"),
-                ("search_typed", "cua_search_typed.png"),
-                ("search_results", "cua_search_results.png")
-            ];
+        (string key, string fileName)[] files =
+        [
+            ("browser_search", "cua_browser_search.jpg"),
+            ("search_typed", "cua_search_typed.jpg"),
+            ("search_results", "cua_search_results.jpg")
+        ];
 
-        Dictionary<string, byte[]> screenshots = [];
-        foreach (var (key, fileName) in screenshotFiles)
+        Dictionary<string, string> screenshots = [];
+
+        foreach (var (key, fileName) in files)
         {
-            string fullPath = Path.GetFullPath(Path.Combine(baseDir, fileName));
-            screenshots[key] = File.ReadAllBytes(fullPath);
+            ClientResult<OpenAIFile> result = await fileClient.UploadFileAsync(
+                Path.Combine(assetsDir, fileName), FileUploadPurpose.Assistants);
+            screenshots[key] = result.Value.Id;
         }
 
         return screenshots;
     }
 
+    internal static async Task DeleteScreenshotAssetsAsync(OpenAIFileClient fileClient, Dictionary<string, string> screenshots)
+    {
+        foreach (var (_, fileId) in screenshots)
+        {
+            await fileClient.DeleteFileAsync(fileId);
+        }
+    }
+
     /// <summary>
-    /// Process a computer action and simulate its execution.
+    /// Simulates executing a computer action by advancing the state
+    /// and returning the screenshot file ID for the new state.
     /// </summary>
-    internal static (SearchState CurrentState, byte[] ImageBytes) HandleComputerActionAndTakeScreenshot(
+    internal static async Task<(SearchState State, string FileId)> GetScreenshotAsync(
         ComputerCallAction action,
         SearchState currentState,
-        Dictionary<string, byte[]> screenshots)
+        Dictionary<string, string> screenshots)
     {
-        Console.WriteLine($"Simulating the execution of computer action: {action.Kind}");
-
-        SearchState newState = DetermineNextState(action, currentState);
-        string imageKey = GetImageKey(newState);
-
-        return (newState, screenshots[imageKey]);
-    }
-
-    private static SearchState DetermineNextState(ComputerCallAction action, SearchState currentState)
-    {
-        string actionType = action.Kind.ToString();
-
-        if (actionType.Equals("type", StringComparison.OrdinalIgnoreCase) && action.TypeText is not null)
+        if (action.Kind == ComputerCallActionKind.Wait)
         {
-            return SearchState.Typed;
+            await Task.Delay(TimeSpan.FromSeconds(5));
         }
 
-        if (IsEnterKeyAction(action, actionType))
+        SearchState nextState = action.Kind switch
         {
-            Console.WriteLine("  -> Detected ENTER key press");
-            return SearchState.PressedEnter;
-        }
+            ComputerCallActionKind.Click when currentState == SearchState.Typed => SearchState.PressedEnter,
+            ComputerCallActionKind.Type when action.TypeText is not null => SearchState.Typed,
+            ComputerCallActionKind.KeyPress when IsEnterKey(action) => SearchState.PressedEnter,
+            _ => currentState
+        };
 
-        if (actionType.Equals("click", StringComparison.OrdinalIgnoreCase) && currentState == SearchState.Typed)
+        string imageKey = nextState switch
         {
-            Console.WriteLine("  -> Detected click after typing");
-            return SearchState.PressedEnter;
-        }
+            SearchState.PressedEnter => "search_results",
+            SearchState.Typed => "search_typed",
+            _ => "browser_search"
+        };
 
-        return currentState;
+        return (nextState, screenshots[imageKey]);
     }
 
-    private static bool IsEnterKeyAction(ComputerCallAction action, string actionType)
-    {
-        return (actionType.Equals("key", StringComparison.OrdinalIgnoreCase) ||
-                actionType.Equals("keypress", StringComparison.OrdinalIgnoreCase)) &&
-               action.KeyPressKeyCodes is not null &&
-               (action.KeyPressKeyCodes.Contains("Return", StringComparer.OrdinalIgnoreCase) ||
-                action.KeyPressKeyCodes.Contains("Enter", StringComparer.OrdinalIgnoreCase));
-    }
-
-    private static string GetImageKey(SearchState state) => state switch
-    {
-        SearchState.PressedEnter => "search_results",
-        SearchState.Typed => "search_typed",
-        _ => "browser_search"
-    };
+    private static bool IsEnterKey(ComputerCallAction action) =>
+        action.KeyPressKeyCodes is not null &&
+        (action.KeyPressKeyCodes.Contains("Return", StringComparer.OrdinalIgnoreCase) ||
+         action.KeyPressKeyCodes.Contains("Enter", StringComparer.OrdinalIgnoreCase));
 }
