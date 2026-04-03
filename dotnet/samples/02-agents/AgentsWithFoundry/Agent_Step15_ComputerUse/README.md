@@ -45,6 +45,7 @@ Set the following environment variables:
 
 ```powershell
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-foundry-service.services.ai.azure.com/api/projects/your-foundry-project"
+$env:AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME="computer-use-preview"
 ```
 
 ## Run the sample

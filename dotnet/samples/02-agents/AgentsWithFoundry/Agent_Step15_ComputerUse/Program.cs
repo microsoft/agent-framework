@@ -12,21 +12,24 @@ using OpenAI.Files;
 using OpenAI.Responses;
 
 string endpoint = Environment.GetEnvironmentVariable("AZURE_AI_PROJECT_ENDPOINT") ?? throw new InvalidOperationException("AZURE_AI_PROJECT_ENDPOINT is not set.");
+string deploymentName = Environment.GetEnvironmentVariable("AZURE_AI_COMPUTER_USE_DEPLOYMENT_NAME") ?? "computer-use-preview";
 
 AIProjectClient projectClient = new(new Uri(endpoint), new DefaultAzureCredential());
 OpenAIFileClient fileClient = projectClient.GetProjectOpenAIClient().GetOpenAIFileClient();
 
 AIAgent agent = projectClient.AsAIAgent(
-    model: "computer-use-preview",
+    model: deploymentName,
     name: "ComputerAgent",
     instructions: "You are a computer automation assistant.",
     tools: [FoundryAITool.CreateComputerTool(ComputerToolEnvironment.Browser, 1026, 769)]);
 
-// Upload pre-captured screenshots that simulate browser state transitions.
-Dictionary<string, string> screenshots = await ComputerUseUtil.UploadScreenshotAssetsAsync(fileClient);
+Dictionary<string, string> screenshots = [];
 
 try
 {
+    // Upload pre-captured screenshots that simulate browser state transitions.
+    screenshots = await ComputerUseUtil.UploadScreenshotAssetsAsync(fileClient);
+
     // Enable auto-truncation for the Responses API.
     ChatClientAgentRunOptions runOptions = new()
     {

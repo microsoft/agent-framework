@@ -45,7 +45,13 @@ internal static class ComputerUseUtil
     {
         foreach (var (_, fileId) in screenshots)
         {
-            await fileClient.DeleteFileAsync(fileId);
+            try
+            {
+                await fileClient.DeleteFileAsync(fileId);
+            }
+            catch
+            {
+            }
         }
     }
 
