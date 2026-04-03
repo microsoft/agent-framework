@@ -8,11 +8,12 @@ from typing import Annotated
 from agent_framework import Message, tool
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.observability import enable_instrumentation
+from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 from opentelemetry._logs import set_logger_provider
 from opentelemetry.metrics import set_meter_provider
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogRecordExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -37,7 +38,7 @@ def setup_logging():
     # Create and set a global logger provider for the application.
     logger_provider = LoggerProvider(resource=resource)
     # Log processors are initialized with an exporter which is responsible
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter()))
     # Sets the global default logger provider
     set_logger_provider(logger_provider)
     # Create a logging handler to write logging records, in OTLP format, to the exporter.
@@ -115,11 +116,15 @@ async def run_chat_client() -> None:
         2 spans with gen_ai.operation.name=execute_tool
 
     """
-    client = FoundryChatClient()
+    client = FoundryChatClient(credential=AzureCliCredential())
     message = "What's the weather in Amsterdam and in Paris?"
     print(f"User: {message}")
     print("Assistant: ", end="")
-    async for chunk in client.get_response([Message(role="user", text=message)], tools=get_weather, stream=True):
+    async for chunk in client.get_response(
+        [Message(role="user", contents=[message])],
+        stream=True,
+        options={"tools": [get_weather]},
+    ):
         if chunk.text:
             print(chunk.text, end="")
     print("")

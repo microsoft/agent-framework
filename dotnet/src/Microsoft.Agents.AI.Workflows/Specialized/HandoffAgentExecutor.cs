@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -31,6 +32,7 @@ internal sealed class HandoffAgentExecutorOptions
     public HandoffToolCallFilteringBehavior ToolCallFilteringBehavior { get; set; } = HandoffToolCallFilteringBehavior.HandoffOnly;
 }
 
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffMessagesFilter
 {
     private readonly HandoffToolCallFilteringBehavior _filteringBehavior;
@@ -40,6 +42,7 @@ internal sealed class HandoffMessagesFilter
         this._filteringBehavior = filteringBehavior;
     }
 
+    [Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
     internal static bool IsHandoffFunctionName(string name)
     {
         return name.StartsWith(HandoffWorkflowBuilder.FunctionPrefix, StringComparison.Ordinal);
@@ -164,6 +167,7 @@ internal sealed class HandoffMessagesFilter
 }
 
 /// <summary>Executor used to represent an agent in a handoffs workflow, responding to <see cref="HandoffState"/> events.</summary>
+[Experimental(DiagnosticConstants.ExperimentalFeatureDiagnostic)]
 internal sealed class HandoffAgentExecutor(
     AIAgent agent,
     HandoffAgentExecutorOptions options) : Executor<HandoffState, HandoffState>(agent.GetDescriptiveId(), declareCrossRunShareable: true), IResettableExecutor

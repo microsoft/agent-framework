@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <NoWarn>$(NoWarn);MEAI001;OPENAI001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <InjectSharedThrow>true</InjectSharedThrow>
+    <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
+    <InjectTrimAttributesOnLegacy>true</InjectTrimAttributesOnLegacy>
+  </PropertyGroup>
+
+  <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />
+
+  <!-- Disable package validation baseline until the first release under the new package name -->
+  <PropertyGroup>
+    <PackageValidationBaselineVersion />
+    <EnablePackageValidation>false</EnablePackageValidation>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- NuGet Package Settings -->
+    <Title>Microsoft Agent Framework Declarative Workflows Foundry</Title>
+    <Description>Provides Microsoft Agent Framework support for declarative workflows for Microsoft Foundry Agents.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Agents.AI.Foundry\Microsoft.Agents.AI.Foundry.csproj" />
+    <ProjectReference Include="..\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Service Include="{508349b6-6b84-4df5-91f0-309beebad82d}" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.UnitTests" />
+    <InternalsVisibleTo Include="Microsoft.Agents.AI.Workflows.Declarative.IntegrationTests" />
+  </ItemGroup>
+</Project>

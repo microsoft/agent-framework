@@ -71,8 +71,6 @@ async def example_agent_scoped_memory() -> None:
     print("2. Agent-Scoped Memory Example:")
     print("-" * 40)
 
-    user_id = "user123"
-
     async with (
         AzureCliCredential() as credential,
         Agent(
@@ -83,34 +81,23 @@ async def example_agent_scoped_memory() -> None:
             context_providers=[
                 Mem0ContextProvider(
                     source_id="mem0",
-                    user_id=user_id,
                     agent_id="scoped_assistant",
                 )
             ],
         ) as scoped_agent,
     ):
-        # Store some information
-        query = "Remember that for this conversation, I'm working on a Python project about data analysis."
+        query = (
+            "Remember that I'm working on a Python project about data analysis "
+            "and I prefer using pandas and matplotlib."
+        )
         print(f"User: {query}")
         result = await scoped_agent.run(query)
         print(f"Agent: {result}\n")
 
-        # Test memory retrieval
-        query = "What project am I working on?"
-        print(f"User: {query}")
-        result = await scoped_agent.run(query)
-        print(f"Agent: {result}\n")
-
-        # Store more information
-        query = "Also remember that I prefer using pandas and matplotlib for this project."
-        print(f"User: {query}")
-        result = await scoped_agent.run(query)
-        print(f"Agent: {result}\n")
-
-        # Test comprehensive memory retrieval
+        new_session = scoped_agent.create_session()
         query = "What do you know about my current project and preferences?"
-        print(f"User: {query}")
-        result = await scoped_agent.run(query)
+        print(f"User (new session): {query}")
+        result = await scoped_agent.run(query, session=new_session)
         print(f"Agent: {result}\n")
 
 

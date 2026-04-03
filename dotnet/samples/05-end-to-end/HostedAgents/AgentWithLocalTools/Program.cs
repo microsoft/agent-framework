@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // Seattle Hotel Agent - A simple agent with a tool to find hotels in Seattle.
-// Uses Microsoft Agent Framework with Azure AI Foundry.
+// Uses Microsoft Agent Framework with Microsoft Foundry.
 // Ready for deployment to Foundry Hosted Agent service.
 
 using System.ClientModel.Primitives;

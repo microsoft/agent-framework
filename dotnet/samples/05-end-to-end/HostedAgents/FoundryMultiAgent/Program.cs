@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 // This sample demonstrates a multi-agent workflow with Writer and Reviewer agents
-// using Azure AI Foundry AIProjectClient and the Agent Framework WorkflowBuilder.
+// using Microsoft Foundry AIProjectClient and the Agent Framework WorkflowBuilder.
 
 #pragma warning disable CA2252 // AIProjectClient and Agents API require opting into preview features
 

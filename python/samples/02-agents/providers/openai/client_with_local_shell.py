@@ -18,6 +18,9 @@ This sample demonstrates implementing a local shell tool using get_shell_tool(fu
 that wraps Python's subprocess module. Unlike the hosted shell tool (get_shell_tool()),
 local shell execution runs commands on YOUR machine, not in a remote container.
 
+Currently not all models support the shell tool. Refer to the OpenAI documentation for the
+list of supported models: https://developers.openai.com/api/docs/models/
+
 SECURITY NOTE: This example executes real commands on your local machine.
 Only enable this when you trust the agent's actions. Consider implementing
 allowlists, sandboxing, or approval workflows for production use.
@@ -53,7 +56,10 @@ async def main() -> None:
     print("=== OpenAI Agent with Local Shell Tool Example ===")
     print("NOTE: Commands will execute on your local machine.\n")
 
-    client = OpenAIChatClient()
+    # Currently not all models support the shell tool. Refer to the OpenAI
+    # documentation for the list of supported models:
+    # https://developers.openai.com/api/docs/models/
+    client = OpenAIChatClient(model="gpt-5.4-nano")
     local_shell_tool = client.get_shell_tool(
         func=run_bash,
     )

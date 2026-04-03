@@ -36,7 +36,7 @@ def clean_conversation_for_handoff(conversation: list[Message]) -> list[Message]
 
         msg_copy = Message(
             role=msg.role,
-            text=" ".join(text_parts),
+            contents=[" ".join(text_parts)],
             author_name=msg.author_name,
             additional_properties=dict(msg.additional_properties) if msg.additional_properties else None,
         )
@@ -66,6 +66,6 @@ def create_completion_message(
     message_text = text or f"Conversation {reason}."
     return Message(
         role="assistant",
-        text=message_text,
+        contents=[message_text],
         author_name=author_name,
     )

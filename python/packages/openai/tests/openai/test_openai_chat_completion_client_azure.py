@@ -29,9 +29,7 @@ pytestmark = pytest.mark.azure
 
 skip_if_azure_openai_integration_tests_disabled = pytest.mark.skipif(
     os.getenv("AZURE_OPENAI_ENDPOINT", "") in ("", "https://test-endpoint.openai.azure.com")
-    or (
-        os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", "") == "" and os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "") == ""
-    ),
+    or (os.getenv("AZURE_OPENAI_CHAT_COMPLETION_MODEL", "") == "" and os.getenv("AZURE_OPENAI_MODEL", "") == ""),
     reason="No real Azure OpenAI endpoint or chat deployment provided; skipping integration tests.",
 )
 
@@ -43,9 +41,7 @@ def _with_azure_openai_debug() -> Any:
             try:
                 return await func(*args, **kwargs)
             except Exception as exc:
-                model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") or os.getenv(
-                    "AZURE_OPENAI_DEPLOYMENT_NAME", "<unset>"
-                )
+                model = os.getenv("AZURE_OPENAI_CHAT_COMPLETION_MODEL") or os.getenv("AZURE_OPENAI_MODEL", "<unset>")
                 api_version = os.getenv("AZURE_OPENAI_API_VERSION", "<unset>")
                 endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "<unset>")
                 debug_message = f"Azure OpenAI debug: endpoint={endpoint}, model={model}, api_version={api_version}"
@@ -82,7 +78,7 @@ async def get_weather(location: str) -> str:
 def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIChatCompletionClient(azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"))
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_COMPLETION_MODEL"]
     assert isinstance(client, SupportsChatGetResponse)
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.OTEL_PROVIDER_NAME == "azure.ai.openai"
@@ -93,7 +89,7 @@ def test_init_with_azure_endpoint(azure_openai_unit_test_env: dict[str, str]) ->
 def test_init_auto_detects_azure_env(azure_openai_unit_test_env: dict[str, str]) -> None:
     client = OpenAIChatCompletionClient()
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_COMPLETION_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
 
@@ -115,7 +111,7 @@ def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_
 
     client = OpenAIChatCompletionClient(credential=lambda: "token")
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_CHAT_COMPLETION_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
     assert client.azure_endpoint == azure_openai_unit_test_env["AZURE_OPENAI_ENDPOINT"]
 
@@ -123,34 +119,34 @@ def test_explicit_credential_wins_over_openai_api_key(monkeypatch, azure_openai_
 def test_init_falls_back_to_generic_azure_deployment_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_COMPLETION_MODEL", raising=False)
 
     client = OpenAIChatCompletionClient()
 
-    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_DEPLOYMENT_NAME"]
+    assert client.model == azure_openai_unit_test_env["AZURE_OPENAI_MODEL"]
     assert isinstance(client.client, AsyncAzureOpenAI)
 
 
 def test_init_does_not_fall_back_to_openai_chat_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
-    monkeypatch.setenv("OPENAI_CHAT_MODEL", "test_chat_model")
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_COMPLETION_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_CHAT_COMPLETION_MODEL", "test_chat_model")
 
-    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a model"):
         OpenAIChatCompletionClient()
 
 
 def test_init_does_not_fall_back_to_openai_model_for_azure_env(
     monkeypatch, azure_openai_unit_test_env: dict[str, str]
 ) -> None:
-    monkeypatch.delenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME", raising=False)
-    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT_NAME", raising=False)
-    monkeypatch.delenv("OPENAI_CHAT_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_CHAT_COMPLETION_MODEL", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_CHAT_COMPLETION_MODEL", raising=False)
     monkeypatch.setenv("OPENAI_MODEL", "gpt-5")
 
-    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a deployment name"):
+    with pytest.raises(SettingNotFoundError, match="Azure OpenAI client requires a model"):
         OpenAIChatCompletionClient()
 
 
@@ -199,14 +195,16 @@ async def test_azure_openai_chat_completion_client_response() -> None:
         messages = [
             Message(
                 role="user",
-                text=(
-                    "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-                    "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-                    "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-                    "of climate change."
-                ),
+                contents=[
+                    (
+                        "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
+                        "Bonded by their love for the natural world and shared curiosity, they uncovered a "
+                        "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
+                        "of climate change."
+                    )
+                ],
             ),
-            Message(role="user", text="who are Emily and David?"),
+            Message(role="user", contents=["who are Emily and David?"]),
         ]
 
         response = await client.get_response(messages=messages)
@@ -227,7 +225,7 @@ async def test_azure_openai_chat_completion_client_response_tools() -> None:
         client = OpenAIChatCompletionClient(credential=credential)
 
         response = await client.get_response(
-            messages=[Message(role="user", text="who are Emily and David?")],
+            messages=[Message(role="user", contents=["who are Emily and David?"])],
             options={"tools": [get_story_text], "tool_choice": "auto"},
         )
 
@@ -248,14 +246,16 @@ async def test_azure_openai_chat_completion_client_streaming() -> None:
             messages=[
                 Message(
                     role="user",
-                    text=(
-                        "Emily and David, two passionate scientists, met during a research expedition to Antarctica. "
-                        "Bonded by their love for the natural world and shared curiosity, they uncovered a "
-                        "groundbreaking phenomenon in glaciology that could potentially reshape our understanding "
-                        "of climate change."
-                    ),
+                    contents=[
+                        (
+                            "Emily and David, two passionate scientists, met during a research expedition to "
+                            "Antarctica. Bonded by their love for the natural world and shared curiosity, they "
+                            "uncovered a groundbreaking phenomenon in glaciology that could potentially reshape our "
+                            "understanding of climate change."
+                        )
+                    ],
                 ),
-                Message(role="user", text="who are Emily and David?"),
+                Message(role="user", contents=["who are Emily and David?"]),
             ],
             stream=True,
         )
@@ -281,7 +281,7 @@ async def test_azure_openai_chat_completion_client_streaming_tools() -> None:
         client = OpenAIChatCompletionClient(credential=credential)
 
         response = client.get_response(
-            messages=[Message(role="user", text="who are Emily and David?")],
+            messages=[Message(role="user", contents=["who are Emily and David?"])],
             stream=True,
             options={"tools": [get_story_text], "tool_choice": "auto"},
         )

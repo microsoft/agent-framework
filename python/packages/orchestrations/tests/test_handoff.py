@@ -8,10 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from agent_framework import (
     Agent,
-    BaseContextProvider,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    ContextProvider,
+    InMemoryHistoryProvider,
     Message,
     ResponseStream,
     WorkflowEvent,
@@ -268,7 +269,7 @@ async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
     second_events = await _drain(
         workflow.run(
             stream=True,
-            responses={first_request.request_id: [Message(role="user", text="Order 2939393")]},
+            responses={first_request.request_id: [Message(role="user", contents=["Order 2939393"])]},
         )
     )
     second_request = _latest_request_info_event(second_events)
@@ -279,7 +280,7 @@ async def test_resume_keeps_prior_user_context_for_same_agent() -> None:
     third_events = await _drain(
         workflow.run(
             stream=True,
-            responses={second_request.request_id: [Message(role="user", text="It arrived broken and unusable.")]},
+            responses={second_request.request_id: [Message(role="user", contents=["It arrived broken and unusable."])]},
         )
     )
     third_request = _latest_request_info_event(third_events)
@@ -369,7 +370,7 @@ async def test_tool_approval_responses_are_not_replayed_from_history() -> None:
     await _drain(
         workflow.run(
             stream=True,
-            responses={second_request.request_id: [Message(role="user", text="Thanks, what's next?")]},
+            responses={second_request.request_id: [Message(role="user", contents=["Thanks, what's next?"])]},
         )
     )
 
@@ -678,7 +679,7 @@ async def test_handoff_resume_preserves_approved_tool_output_for_stateless_runs(
     await _drain(
         workflow.run(
             stream=True,
-            responses={order_request.request_id: [Message(role="user", text="Please continue with refund.")]},
+            responses={order_request.request_id: [Message(role="user", contents=["Please continue with refund."])]},
         )
     )
 
@@ -693,6 +694,48 @@ def test_handoff_clone_disables_provider_side_storage() -> None:
     executor = workflow.executors[resolve_agent_id(triage)]
     assert isinstance(executor, HandoffAgentExecutor)
     assert executor._agent.default_options.get("store") is False
+
+
+async def test_handoff_clone_preserves_per_service_call_history_persistence() -> None:
+    """Handoff clones should keep per-service-call history persistence active for auto-handoff termination."""
+    triage_history = InMemoryHistoryProvider()
+    triage = Agent(
+        id="triage",
+        name="triage",
+        client=MockChatClient(name="triage", handoff_to="specialist"),
+        context_providers=[triage_history],
+        require_per_service_call_history_persistence=True,
+    )
+    specialist = Agent(
+        id="specialist",
+        name="specialist",
+        client=MockChatClient(name="specialist"),
+        default_options={"tool_choice": "none"},
+    )
+
+    workflow = (
+        HandoffBuilder(participants=[triage, specialist], termination_condition=lambda _: False)
+        .with_start_agent(triage)
+        .add_handoff(triage, [specialist])
+        .add_handoff(specialist, [triage])
+        .build()
+    )
+
+    await _drain(workflow.run("start", stream=True))
+
+    executor = workflow.executors[resolve_agent_id(triage)]
+    assert isinstance(executor, HandoffAgentExecutor)
+    assert executor._agent.require_per_service_call_history_persistence is True
+
+    provider_state = executor._session.state[triage_history.source_id]
+    stored_messages = await triage_history.get_messages(
+        executor._session.session_id,
+        state=provider_state,
+    )
+
+    assert [message.role for message in stored_messages] == ["user", "assistant"]
+    assert any(content.type == "function_call" for content in stored_messages[-1].contents)
+    assert all(message.role != "tool" for message in stored_messages)
 
 
 async def test_handoff_clears_stale_service_session_id_before_run() -> None:
@@ -724,7 +767,7 @@ def test_clean_conversation_for_handoff_keeps_text_only_history() -> None:
     )
 
     conversation = [
-        Message(role="user", text="My order arrived damaged."),
+        Message(role="user", contents=["My order arrived damaged."]),
         Message(
             role="assistant",
             contents=[
@@ -890,7 +933,7 @@ async def test_handoff_async_termination_condition() -> None:
 
     events = await _drain(
         workflow.run(
-            stream=True, responses={requests[-1].request_id: [Message(role="user", text="Second user message")]}
+            stream=True, responses={requests[-1].request_id: [Message(role="user", contents=["Second user message"])]}
         )
     )
     outputs = [ev for ev in events if ev.type == "output"]
@@ -968,7 +1011,7 @@ async def test_tool_choice_preserved_from_agent_config():
         if options:
             recorded_tool_choices.append(options.get("tool_choice"))
         return ChatResponse(
-            messages=[Message(role="assistant", text="Response")],
+            messages=[Message(role="assistant", contents=["Response"])],
             response_id="test_response",
         )
 
@@ -997,7 +1040,7 @@ async def test_context_provider_preserved_during_handoff():
     # Track whether context provider methods were called
     provider_calls: list[str] = []
 
-    class TestContextProvider(BaseContextProvider):
+    class TestContextProvider(ContextProvider):
         """A test context provider that tracks its invocations."""
 
         def __init__(self) -> None:

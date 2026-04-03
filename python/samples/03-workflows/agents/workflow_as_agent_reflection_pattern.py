@@ -84,15 +84,17 @@ class Reviewer(Executor):
         messages = [
             Message(
                 role="system",
-                text=(
-                    "You are a reviewer for an AI agent. Provide feedback on the "
-                    "exchange between a user and the agent. Indicate approval only if:\n"
-                    "- Relevance: response addresses the query\n"
-                    "- Accuracy: information is correct\n"
-                    "- Clarity: response is easy to understand\n"
-                    "- Completeness: response covers all aspects\n"
-                    "Do not approve until all criteria are satisfied."
-                ),
+                contents=[
+                    (
+                        "You are a reviewer for an AI agent. Provide feedback on the "
+                        "exchange between a user and the agent. Indicate approval only if:\n"
+                        "- Relevance: response addresses the query\n"
+                        "- Accuracy: information is correct\n"
+                        "- Clarity: response is easy to understand\n"
+                        "- Completeness: response covers all aspects\n"
+                        "Do not approve until all criteria are satisfied."
+                    )
+                ],
             )
         ]
         # Add conversation history.

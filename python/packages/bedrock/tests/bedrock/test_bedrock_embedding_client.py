@@ -39,17 +39,17 @@ async def test_bedrock_embedding_construction() -> None:
     """Test construction with explicit parameters."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
         client=stub,
     )
-    assert client.model_id == "amazon.titan-embed-text-v2:0"
+    assert client.model == "amazon.titan-embed-text-v2:0"
     assert client.region == "us-west-2"
 
 
 async def test_bedrock_embedding_construction_missing_model_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that missing model_id raises an error."""
-    monkeypatch.delenv("BEDROCK_EMBEDDING_MODEL_ID", raising=False)
+    """Test that missing model raises an error."""
+    monkeypatch.delenv("BEDROCK_EMBEDDING_MODEL", raising=False)
     from agent_framework.exceptions import SettingNotFoundError
 
     with pytest.raises(SettingNotFoundError):
@@ -60,7 +60,7 @@ async def test_bedrock_embedding_get_embeddings() -> None:
     """Test generating embeddings via the Bedrock invoke_model API."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
         client=stub,
     )
@@ -71,7 +71,7 @@ async def test_bedrock_embedding_get_embeddings() -> None:
     assert len(result) == 2
     assert len(result[0].vector) == 3
     assert len(result[1].vector) == 3
-    assert result[0].model_id == "amazon.titan-embed-text-v2:0"
+    assert result[0].model == "amazon.titan-embed-text-v2:0"
     assert result.usage == {"input_token_count": 10}
 
     # Two calls since Titan processes one input at a time
@@ -84,7 +84,7 @@ async def test_bedrock_embedding_get_embeddings_empty_input() -> None:
     """Test generating embeddings with empty input."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
         client=stub,
     )
@@ -100,7 +100,7 @@ async def test_bedrock_embedding_get_embeddings_with_options() -> None:
     """Test generating embeddings with custom options."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
         client=stub,
     )
@@ -120,16 +120,16 @@ async def test_bedrock_embedding_get_embeddings_with_options() -> None:
 
 
 async def test_bedrock_embedding_get_embeddings_no_model_raises() -> None:
-    """Test that missing model_id at call time raises ValueError."""
+    """Test that missing model at call time raises ValueError."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         region="us-west-2",
         client=stub,
     )
-    client.model_id = None  # type: ignore[assignment]
+    client.model = None  # type: ignore[assignment]
 
-    with pytest.raises(ValueError, match="model_id is required"):
+    with pytest.raises(ValueError, match="model is required"):
         await client.get_embeddings(["hello"])
 
 
@@ -137,7 +137,7 @@ async def test_bedrock_embedding_default_region() -> None:
     """Test that default region is us-east-1."""
     stub = _StubBedrockEmbeddingRuntime()
     client = BedrockEmbeddingClient(
-        model_id="amazon.titan-embed-text-v2:0",
+        model="amazon.titan-embed-text-v2:0",
         client=stub,
     )
     assert client.region == "us-east-1"
@@ -146,7 +146,7 @@ async def test_bedrock_embedding_default_region() -> None:
 # region: Integration Tests
 
 skip_if_bedrock_embedding_integration_tests_disabled = pytest.mark.skipif(
-    os.getenv("BEDROCK_EMBEDDING_MODEL_ID", "") in ("", "test-model")
+    os.getenv("BEDROCK_EMBEDDING_MODEL", "") in ("", "test-model")
     or not (os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("BEDROCK_ACCESS_KEY")),
     reason="No real Bedrock embedding model or AWS credentials provided; skipping integration tests.",
 )

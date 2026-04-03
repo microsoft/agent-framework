@@ -344,7 +344,7 @@ class TestWorkflowAgent:
         workflow = WorkflowBuilder(start_executor=yielding_executor).build()
 
         # Run directly - should return output event (type='output') in result
-        direct_result = await workflow.run([Message(role="user", text="hello")])
+        direct_result = await workflow.run([Message(role="user", contents=["hello"])])
         direct_outputs = direct_result.get_outputs()
         assert len(direct_outputs) == 1
         assert direct_outputs[0] == "processed: hello"
@@ -479,8 +479,8 @@ class TestWorkflowAgent:
         async def list_yielding_executor(messages: list[Message], ctx: WorkflowContext[Never, list[Message]]) -> None:
             # Yield a list of Messages (as SequentialBuilder does)
             msg_list = [
-                Message(role="user", text="first message"),
-                Message(role="assistant", text="second message"),
+                Message(role="user", contents=["first message"]),
+                Message(role="assistant", contents=["second message"]),
                 Message(
                     role="assistant",
                     contents=[Content.from_text(text="third"), Content.from_text(text="fourth")],

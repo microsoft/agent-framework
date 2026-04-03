@@ -39,7 +39,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_framework import Agent, SupportsAgentRun
-from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware
+from agent_framework._middleware import FunctionInvocationContext, FunctionMiddleware, MiddlewareTermination
 from agent_framework._sessions import AgentSession
 from agent_framework._tools import FunctionTool, tool
 from agent_framework._types import AgentResponse, Content, Message
@@ -138,8 +138,6 @@ class _AutoHandoffMiddleware(FunctionMiddleware):
             await call_next()
             return
 
-        from agent_framework._middleware import MiddlewareTermination
-
         # Short-circuit execution and provide deterministic response payload for the tool call.
         # Parse the result using the default parser to ensure in a form that can be passed directly to LLM APIs.
         context.result = FunctionTool.parse_result({
@@ -163,7 +161,7 @@ class HandoffAgentUserRequest:
         """Create a HandoffAgentUserRequest from a simple text response."""
         messages: list[Message] = []
         if isinstance(response, str):
-            messages.append(Message(role="user", text=response))
+            messages.append(Message(role="user", contents=[response]))
         elif isinstance(response, Message):
             messages.append(response)
         elif isinstance(response, list):
@@ -171,7 +169,7 @@ class HandoffAgentUserRequest:
                 if isinstance(item, Message):
                     messages.append(item)
                 elif isinstance(item, str):
-                    messages.append(Message(role="user", text=item))
+                    messages.append(Message(role="user", contents=[item]))
                 else:
                     raise TypeError("List items must be either str or Message instances")
         else:
@@ -375,6 +373,7 @@ class HandoffAgentExecutor(AgentExecutor):
             description=agent.description,
             context_providers=agent.context_providers,
             middleware=agent.agent_middleware,
+            require_per_service_call_history_persistence=agent.require_per_service_call_history_persistence,
             default_options=cloned_options,  # type: ignore[assignment]
         )
 
@@ -536,7 +535,7 @@ class HandoffAgentExecutor(AgentExecutor):
             # or a termination condition is met.
             # This allows the agent to perform long-running tasks without returning control
             # to the coordinator or user prematurely.
-            self._cache.extend([Message(role="user", text=self._autonomous_mode_prompt)])
+            self._cache.extend([Message(role="user", contents=[self._autonomous_mode_prompt])])
             self._autonomous_mode_turns += 1
             await self._run_agent_and_emit(ctx)
         else:

@@ -40,7 +40,7 @@ class SerializationProtocol(Protocol):
 
 
             # Message implements SerializationProtocol via SerializationMixin
-            user_msg = Message(role="user", text="What's the weather like today?")
+            user_msg = Message(role="user", contents=["What's the weather like today?"])
 
             # Serialize to dictionary - automatic type identification and nested serialization
             msg_dict = user_msg.to_dict()
@@ -431,7 +431,7 @@ class SerializationMixin:
                 # Serialized data contains only the model configuration
                 client_data = {
                     "type": "open_ai_chat_client",
-                    "model_id": "gpt-4o-mini",
+                    "model": "gpt-4o-mini",
                     # client is excluded from serialization
                 }
 

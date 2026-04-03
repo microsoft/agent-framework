@@ -608,7 +608,7 @@ async def test_tool_invoke_rejects_unexpected_runtime_kwargs() -> None:
         await simple_tool.invoke(
             arguments=args,
             api_token="secret-token",
-            options={"model_id": "dummy"},
+            options={"model": "dummy"},
         )
 
 
