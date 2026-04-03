@@ -157,7 +157,7 @@ public class InputConverterTests
         Assert.Equal(0.7f, options.Temperature);
         Assert.Equal(0.9f, options.TopP);
         Assert.Equal(1000, options.MaxOutputTokens);
-        Assert.Equal("gpt-4o", options.ModelId);
+        Assert.Null(options.ModelId);
     }
 
     [Fact]
@@ -659,12 +659,13 @@ public class InputConverterTests
     }
 
     [Fact]
-    public void ConvertToChatOptions_ModelId_SetFromRequest()
+    public void ConvertToChatOptions_ModelId_NotSetFromRequest()
     {
         var request = AzureAIAgentServerResponsesModelFactory.CreateResponse(model: "my-model");
 
         var options = InputConverter.ConvertToChatOptions(request);
 
-        Assert.Equal("my-model", options.ModelId);
+        // Model from the request is intentionally NOT propagated — the hosted agent uses its own model.
+        Assert.Null(options.ModelId);
     }
 }
