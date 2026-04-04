@@ -5,10 +5,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Agents.AI.Workflows.Checkpointing;
+
+internal record CheckpointFileIndexEntry(CheckpointInfo CheckpointInfo, string FileName);
 
 /// <summary>
 /// Provides a file system-based implementation of a JSON checkpoint store that persists checkpoint data and index
@@ -27,6 +30,8 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
 
     internal DirectoryInfo Directory { get; }
     internal HashSet<CheckpointInfo> CheckpointIndex { get; }
+
+    private static JsonTypeInfo<CheckpointFileIndexEntry> EntryTypeInfo => WorkflowsJsonUtilities.JsonContext.Default.CheckpointFileIndexEntry;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileSystemJsonCheckpointStore"/> class that uses the specified directory
@@ -64,9 +69,11 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             using StreamReader reader = new(this._indexFile, encoding: Encoding.UTF8, detectEncodingFromByteOrderMarks: false, BufferSize, leaveOpen: true);
             while (reader.ReadLine() is string line)
             {
-                if (JsonSerializer.Deserialize(line, KeyTypeInfo) is { } info)
+                if (JsonSerializer.Deserialize(line, EntryTypeInfo) is { } entry)
                 {
-                    this.CheckpointIndex.Add(info);
+                    // We never actually use the file names from the index entries since they can be derived from the CheckpointInfo, but it is useful to
+                    // have the UrlEncoded file names in the index file for human readability
+                    this.CheckpointIndex.Add(entry.CheckpointInfo);
                 }
             }
         }
@@ -93,8 +100,14 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
         }
     }
 
-    private string GetFileNameForCheckpoint(string sessionId, CheckpointInfo key)
-        => Path.Combine(this.Directory.FullName, $"{sessionId}_{key.CheckpointId}.json");
+    internal string GetFileNameForCheckpoint(string sessionId, CheckpointInfo key)
+    {
+        string protoPath = $"{sessionId}_{key.CheckpointId}.json";
+
+        // Escape the protoPath to ensure it is a valid file name, especially if sessionId or CheckpointId contain path separators, etc.
+        return Uri.EscapeDataString(protoPath) // This takes care of most of the invalid path characters
+                  .Replace(".", "%2E");        // This takes care of escaping the root folder, since EscapeDataString does not escape dots
+    }
 
     private CheckpointInfo GetUnusedCheckpointInfo(string sessionId)
     {
@@ -116,13 +129,16 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
 
         CheckpointInfo key = this.GetUnusedCheckpointInfo(sessionId);
         string fileName = this.GetFileNameForCheckpoint(sessionId, key);
+        string filePath = Path.Combine(this.Directory.FullName, fileName);
+
         try
         {
-            using Stream checkpointStream = File.Open(fileName, FileMode.Create, FileAccess.Write, FileShare.None);
+            using Stream checkpointStream = File.Open(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
             using Utf8JsonWriter jsonWriter = new(checkpointStream, new JsonWriterOptions() { Indented = false });
             value.WriteTo(jsonWriter);
 
-            JsonSerializer.Serialize(this._indexFile!, key, KeyTypeInfo);
+            CheckpointFileIndexEntry entry = new(key, fileName);
+            JsonSerializer.Serialize(this._indexFile!, entry, EntryTypeInfo);
             byte[] bytes = Encoding.UTF8.GetBytes(Environment.NewLine);
             await this._indexFile!.WriteAsync(bytes, 0, bytes.Length, CancellationToken.None).ConfigureAwait(false);
             await this._indexFile!.FlushAsync(CancellationToken.None).ConfigureAwait(false);
@@ -136,7 +152,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             try
             {
                 // try to clean up after ourselves
-                File.Delete(fileName);
+                File.Delete(filePath);
             }
             catch { }
 
@@ -149,6 +165,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
     {
         this.CheckDisposed();
         string fileName = this.GetFileNameForCheckpoint(sessionId, key);
+        string filePath = Path.Combine(this.Directory.FullName, fileName);
 
         if (!this.CheckpointIndex.Contains(key) ||
             !File.Exists(fileName))
@@ -156,7 +173,7 @@ public sealed class FileSystemJsonCheckpointStore : JsonCheckpointStore, IDispos
             throw new KeyNotFoundException($"Checkpoint '{key.CheckpointId}' not found in store at '{this.Directory.FullName}'.");
         }
 
-        using FileStream checkpointFileStream = File.Open(fileName, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using FileStream checkpointFileStream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         using JsonDocument document = await JsonDocument.ParseAsync(checkpointFileStream).ConfigureAwait(false);
 
         return document.RootElement.Clone();

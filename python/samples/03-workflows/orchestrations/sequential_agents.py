@@ -4,8 +4,8 @@ import asyncio
 import os
 from typing import cast
 
-from agent_framework import Message
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework import Agent, Message
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -29,26 +29,28 @@ Note on internal adapters:
   You can safely ignore them when focusing on agent progress.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity. Use AzureCliCredential and run az login before executing the sample.
 """
 
 
 async def main() -> None:
     # 1) Create agents
-    client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
-    writer = client.as_agent(
+    writer = Agent(
+        client=client,
         instructions=("You are a concise copywriter. Provide a single, punchy marketing sentence based on the prompt."),
         name="writer",
     )
 
-    reviewer = client.as_agent(
+    reviewer = Agent(
+        client=client,
         instructions=("You are a thoughtful reviewer. Give brief feedback on the previous assistant message."),
         name="reviewer",
     )

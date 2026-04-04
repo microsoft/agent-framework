@@ -21,7 +21,7 @@ def normalize_messages_input(
         return []
 
     if isinstance(messages, str):
-        return [Message(role="user", text=messages)]
+        return [Message(role="user", contents=[messages])]
 
     if isinstance(messages, Content):
         return [Message(role="user", contents=[messages])]
@@ -31,9 +31,7 @@ def normalize_messages_input(
 
     normalized: list[Message] = []
     for item in messages:
-        if isinstance(item, str):
-            normalized.append(Message(role="user", text=item))
-        elif isinstance(item, Content):
+        if isinstance(item, (str, Content)):
             normalized.append(Message(role="user", contents=[item]))
         elif isinstance(item, Message):
             normalized.append(item)

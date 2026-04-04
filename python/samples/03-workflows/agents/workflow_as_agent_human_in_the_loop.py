@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -48,8 +48,8 @@ to a human, receives the human response, and then forwards that response back
 to the Worker. The workflow completes when idle.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- OpenAI account configured and accessible for AzureOpenAIResponsesClient.
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Familiarity with WorkflowBuilder, Executor, and WorkflowContext from agent_framework.
 - Understanding of request-response message handling in executors.
 - (Optional) Review of reflection and escalation patterns, such as those in
@@ -110,20 +110,16 @@ async def main() -> None:
     # and escalation paths for human review.
     worker = Worker(
         id="worker",
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
     )
     reviewer = ReviewerWithHumanInTheLoop(worker_id="worker")
 
     agent = (
-        WorkflowBuilder(start_executor=worker)
-        .add_edge(worker, reviewer)  # Worker sends requests to Reviewer
-        .add_edge(reviewer, worker)  # Reviewer sends feedback to Worker
-        .build()
-        .as_agent()  # Convert workflow into an agent interface
+        WorkflowBuilder(start_executor=worker).add_edge(worker, reviewer).add_edge(reviewer, worker).build().as_agent()
     )
 
     print("Running workflow agent with user query...")
@@ -168,7 +164,8 @@ async def main() -> None:
         human_response = ReviewResponse(request_id=request_id, feedback="", approved=True)
 
         # Create the function call result object to send back to the agent.
-        human_review_function_result = Content.from_function_result(
+        human_review_function_result = Content(
+            "function_result",
             call_id=human_review_function_call.call_id,  # type: ignore
             result=human_response,
         )

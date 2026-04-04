@@ -3,8 +3,8 @@
 import asyncio
 import uuid
 
-from agent_framework import tool
-from agent_framework.azure import AzureAIAgentClient
+from agent_framework import Agent, tool
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.mem0 import Mem0ContextProvider
 from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
@@ -30,19 +30,17 @@ def retrieve_company_report(company_code: str, detailed: bool) -> str:
 
 async def main() -> None:
     """Example of memory usage with Mem0 context provider."""
-
     print("=== Mem0 Context Provider Example ===")
-
-    # Each record in Mem0 should be associated with agent_id or user_id or application_id or thread_id.
+    # Each record in Mem0 should be associated with agent_id or user_id or application_id.
     # In this example, we associate Mem0 records with user_id.
     user_id = str(uuid.uuid4())
-
     # For Azure authentication, run `az login` command in terminal or replace AzureCliCredential with preferred
     # authentication option.
     # For Mem0 authentication, set Mem0 API key via "api_key" parameter or MEM0_API_KEY environment variable.
     async with (
         AzureCliCredential() as credential,
-        AzureAIAgentClient(credential=credential).as_agent(
+        Agent(
+            client=FoundryChatClient(credential=credential),
             name="FriendlyAssistant",
             instructions="You are a friendly assistant.",
             tools=retrieve_company_report,
@@ -56,7 +54,6 @@ async def main() -> None:
         print(f"User: {query}")
         result = await agent.run(query)
         print(f"Agent: {result}\n")
-
         # Now tell the agent the company code and the report format that you want to use
         # and it should be able to invoke the tool and return the report.
         query = "I always work with CNTS and I always want a detailed report format. Please remember and retrieve it."
@@ -69,20 +66,18 @@ async def main() -> None:
         # In production, consider implementing retry logic or using Mem0's
         # eventual consistency handling instead of a fixed delay.
         print("Waiting for memories to be processed...")
-        await asyncio.sleep(12)  # Empirically determined delay for Mem0 indexing
-
+        await asyncio.sleep(15)  # Empirically determined delay for Mem0 indexing
         print("\nRequest within a new session:")
         # Create a new session for the agent.
         # The new session has no context of the previous conversation.
         session = agent.create_session()
-
         # Since we have the mem0 component in the session, the agent should be able to
         # retrieve the company report without asking for clarification, as it will
         # be able to remember the user preferences from Mem0 component.
         query = "Please retrieve my company report"
         print(f"User: {query}")
         result = await agent.run(query, session=session)
-        print(f"Agent: {result}\n")
+        print(f"Agent: {result}")
 
 
 if __name__ == "__main__":

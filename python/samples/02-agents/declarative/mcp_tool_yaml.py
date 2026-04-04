@@ -10,11 +10,11 @@ Key Features Demonstrated:
 1. Loading agent definitions from YAML using AgentFactory
 2. Configuring MCP tools with different authentication methods:
    - API key authentication (OpenAI.Responses provider)
-   - Azure AI Foundry connection references (AzureAI.ProjectProvider)
+   - Azure AI Foundry connection references (Foundry provider)
 
 Authentication Options:
 - OpenAI.Responses: Supports inline API key auth via headers
-- AzureAI.ProjectProvider: Uses Foundry connections for secure credential storage
+- Foundry: Uses project-backed chat with Foundry connections for secure credential storage
   (no secrets passed in API calls - connection name references pre-configured auth)
 
 Prerequisites:
@@ -79,7 +79,7 @@ instructions: |
 
 model:
   id: gpt-4o
-  provider: AzureAI.ProjectProvider
+  provider: Foundry
 
 tools:
   - kind: mcp
@@ -132,9 +132,9 @@ async def run_azure_ai_example():
     print("Example 2: Azure AI with Foundry Connection Reference")
     print("=" * 60)
 
-    from azure.identity import DefaultAzureCredential
+    from azure.identity import AzureCliCredential
 
-    factory = AgentFactory(client_kwargs={"credential": DefaultAzureCredential()})
+    factory = AgentFactory(client_kwargs={"credential": AzureCliCredential()})
 
     print("\nCreating agent from YAML definition...")
     # Use async method for provider-based agent creation

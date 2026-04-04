@@ -14,7 +14,7 @@ cp .env.example .env
 
 Required variables:
 - `AZURE_OPENAI_ENDPOINT`
-- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`
+- `AZURE_OPENAI_MODEL`
 - `AZURE_OPENAI_API_KEY` (optional if using Azure CLI authentication)
 - `ENDPOINT` (default: http://localhost:8080)
 - `TASKHUB` (default: default)
@@ -97,7 +97,7 @@ If you see "DTS emulator is not available":
 
 If you see authentication or deployment errors:
 - Verify your `AZURE_OPENAI_ENDPOINT` is correct
-- Confirm `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME` matches your deployment
+- Confirm `AZURE_OPENAI_MODEL` matches your deployment
 - If using API key, check `AZURE_OPENAI_API_KEY` is valid
 - If using Azure CLI, ensure you're logged in: `az login`
 

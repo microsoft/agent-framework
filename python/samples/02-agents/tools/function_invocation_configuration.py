@@ -3,8 +3,8 @@
 import asyncio
 from typing import Annotated
 
-from agent_framework import tool
-from agent_framework.openai import OpenAIResponsesClient
+from agent_framework import Agent, tool
+from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -28,12 +28,12 @@ def add(
 
 
 async def main():
-    client = OpenAIResponsesClient()
+    client = OpenAIChatClient()
     client.function_invocation_configuration["include_detailed_errors"] = True
     client.function_invocation_configuration["max_iterations"] = 40
     print(f"Function invocation configured as: \n{client.function_invocation_configuration}")
 
-    agent = client.as_agent(name="ToolAgent", instructions="Use the provided tools.", tools=add)
+    agent = Agent(client=client, name="ToolAgent", instructions="Use the provided tools.", tools=add)
 
     print("=" * 60)
     print("Call add(239847293, 29834)")

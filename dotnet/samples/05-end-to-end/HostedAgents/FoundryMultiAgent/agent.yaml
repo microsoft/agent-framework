@@ -4,7 +4,7 @@ name: FoundryMultiAgent
 displayName: "Foundry Multi-Agent Workflow"
 description: >
   A multi-agent workflow featuring a Writer and Reviewer that collaborate
-  to create and refine content using Azure AI Foundry PersistentAgentsClient.
+  to create and refine content using Microsoft Foundry PersistentAgentsClient.
 metadata:
   authors:
     - Microsoft Agent Framework Team

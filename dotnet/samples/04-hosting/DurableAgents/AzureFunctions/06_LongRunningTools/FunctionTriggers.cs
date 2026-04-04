@@ -35,13 +35,15 @@ public static class FunctionTriggers
         int iterationCount = 0;
         while (iterationCount++ < input.MaxReviewAttempts)
         {
+            // NOTE: CustomStatus has a 16 KB UTF-16 limit in Durable Functions.
+            // Only include short metadata here - the full content is passed via activity inputs/outputs.
             context.SetCustomStatus(
                 new
                 {
                     message = "Requesting human feedback.",
                     approvalTimeoutHours = input.ApprovalTimeoutHours,
                     iterationCount,
-                    content
+                    contentTitle = content.Title,
                 });
 
             // Step 2: Notify user to review the content
@@ -63,7 +65,6 @@ public static class FunctionTriggers
                     {
                         message = $"Human approval timed out after {input.ApprovalTimeoutHours} hour(s). Treating as rejection.",
                         iterationCount,
-                        content
                     });
                 throw new TimeoutException($"Human approval timed out after {input.ApprovalTimeoutHours} hour(s).");
             }
@@ -73,7 +74,7 @@ public static class FunctionTriggers
                 context.SetCustomStatus(new
                 {
                     message = "Content approved by human reviewer. Publishing content...",
-                    content
+                    contentTitle = content.Title,
                 });
 
                 // Step 4: Publish the approved content
@@ -83,7 +84,7 @@ public static class FunctionTriggers
                 {
                     message = $"Content published successfully at {context.CurrentUtcDateTime:s}",
                     humanFeedback = humanResponse,
-                    content
+                    contentTitle = content.Title,
                 });
                 return new { content = content.Content };
             }
@@ -92,7 +93,7 @@ public static class FunctionTriggers
             {
                 message = "Content rejected by human reviewer. Incorporating feedback and regenerating...",
                 humanFeedback = humanResponse,
-                content
+                contentTitle = content.Title,
             });
 
             // Incorporate human feedback and regenerate

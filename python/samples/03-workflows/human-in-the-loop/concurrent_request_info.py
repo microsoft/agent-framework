@@ -17,8 +17,8 @@ Demonstrate:
 - Injecting human guidance for specific agents before aggregation
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- Azure OpenAI configured for AzureOpenAIResponsesClient with required environment variables
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL must be set to your Azure OpenAI model deployment name.
 - Authentication via azure-identity (run az login before executing)
 """
 
@@ -28,11 +28,12 @@ from collections.abc import AsyncIterable
 from typing import Any
 
 from agent_framework import (
+    Agent,
     AgentExecutorResponse,
     Message,
     WorkflowEvent,
 )
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import AgentRequestInfoResponse, ConcurrentBuilder
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -41,7 +42,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Store chat client at module level for aggregator access
-_chat_client: AzureOpenAIResponsesClient | None = None
+_chat_client: FoundryChatClient | None = None
 
 
 async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
@@ -84,13 +85,15 @@ async def aggregate_with_synthesis(results: list[AgentExecutorResponse]) -> Any:
 
     system_msg = Message(
         "system",
-        text=(
-            "You are a synthesis expert. Consolidate the following analyst perspectives "
-            "into one cohesive, balanced summary (3-4 sentences). If human guidance is provided, "
-            "prioritize aspects as directed."
-        ),
+        contents=[
+            (
+                "You are a synthesis expert. Consolidate the following analyst perspectives "
+                "into one cohesive, balanced summary (3-4 sentences). If human guidance is provided, "
+                "prioritize aspects as directed."
+            )
+        ],
     )
-    user_msg = Message("user", text="\n\n".join(expert_sections) + guidance_text)
+    user_msg = Message("user", contents=["\n\n".join(expert_sections) + guidance_text])
 
     response = await _chat_client.get_response([system_msg, user_msg])
     return response.messages[-1].text if response.messages else ""
@@ -148,14 +151,15 @@ async def process_event_stream(stream: AsyncIterable[WorkflowEvent]) -> dict[str
 
 async def main() -> None:
     global _chat_client
-    _chat_client = AzureOpenAIResponsesClient(
-        project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-        deployment_name=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+    _chat_client = FoundryChatClient(
+        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 
     # Create agents that analyze from different perspectives
-    technical_analyst = _chat_client.as_agent(
+    technical_analyst = Agent(
+        client=_chat_client,
         name="technical_analyst",
         instructions=(
             "You are a technical analyst. When given a topic, provide a technical "
@@ -164,7 +168,8 @@ async def main() -> None:
         ),
     )
 
-    business_analyst = _chat_client.as_agent(
+    business_analyst = Agent(
+        client=_chat_client,
         name="business_analyst",
         instructions=(
             "You are a business analyst. When given a topic, provide a business "
@@ -173,7 +178,8 @@ async def main() -> None:
         ),
     )
 
-    user_experience_analyst = _chat_client.as_agent(
+    user_experience_analyst = Agent(
+        client=_chat_client,
         name="ux_analyst",
         instructions=(
             "You are a UX analyst. When given a topic, provide a user experience "

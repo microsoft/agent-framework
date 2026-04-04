@@ -5,8 +5,8 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from agent_framework import AgentSession, BaseContextProvider, Message, SessionContext
-from agent_framework.azure import AzureOpenAIChatClient
+from agent_framework import Agent, AgentSession, ContextProvider, Message, SessionContext
+from agent_framework.foundry import FoundryChatClient
 from azure.ai.agentserver.agentframework import from_agent_framework  # pyright: ignore[reportUnknownVariableType]
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
@@ -28,7 +28,7 @@ class TextSearchResult:
     text: str
 
 
-class TextSearchContextProvider(BaseContextProvider):
+class TextSearchContextProvider(ContextProvider):
     """A simple context provider that simulates text search results based on keywords in the user's message."""
 
     def __init__(self):
@@ -99,13 +99,14 @@ class TextSearchContextProvider(BaseContextProvider):
 
         context.extend_messages(
             self.source_id,
-            [Message(role="user", text="\n\n".join(json.dumps(result.__dict__, indent=2) for result in results))],
+            [Message(role="user", contents=["\n\n".join(json.dumps(result.__dict__, indent=2) for result in results)])],
         )
 
 
 def main():
     # Create an Agent using the Azure OpenAI Chat Client
-    agent = AzureOpenAIChatClient(credential=DefaultAzureCredential()).as_agent(
+    agent = Agent(
+        client=FoundryChatClient(credential=DefaultAzureCredential()),
         name="SupportSpecialist",
         instructions=(
             "You are a helpful support specialist for Contoso Outdoors. "

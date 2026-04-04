@@ -27,7 +27,7 @@
   
   <ItemGroup>
     <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative\Microsoft.Agents.AI.Workflows.Declarative.csproj" />
-    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.AzureAI\Microsoft.Agents.AI.Workflows.Declarative.AzureAI.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Microsoft.Agents.AI.Workflows.Declarative.Foundry\Microsoft.Agents.AI.Workflows.Declarative.Foundry.csproj" />
   </ItemGroup>
 
 </Project>

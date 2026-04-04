@@ -6,7 +6,7 @@ to build a `Workflow` that may be executed using the same pattern as any code-ba
 ## Configuration
 
 These samples must be configured to create and use agents your 
-[Azure Foundry Project](https://learn.microsoft.com/azure/ai-foundry).
+[Microsoft Foundry Project](https://learn.microsoft.com/azure/ai-foundry).
 
 ### Settings
 
@@ -18,9 +18,9 @@ The configuraton required by the samples is:
 
 |Setting Name| Description|
 |:--|:--|
-|AZURE_AI_PROJECT_ENDPOINT| The endpoint URL of your Azure Foundry Project.|
+|AZURE_AI_PROJECT_ENDPOINT| The endpoint URL of your Microsoft Foundry Project.|
 |AZURE_AI_MODEL_DEPLOYMENT_NAME| The name of the model deployment to use
-|AZURE_AI_BING_CONNECTION_ID| The name of the Bing Grounding connection configured in your Azure Foundry Project.|
+|AZURE_AI_BING_CONNECTION_ID| The name of the Bing Grounding connection configured in your Microsoft Foundry Project.|
 
 To set your secrets with .NET Secret Manager:
 
@@ -42,13 +42,13 @@ To set your secrets with .NET Secret Manager:
     dotnet user-secrets init
     ```
 
-4. Define setting that identifies your Azure Foundry Project (endpoint):
+4. Define setting that identifies your Microsoft Foundry Project (endpoint):
 
     ```
     dotnet user-secrets set "AZURE_AI_PROJECT_ENDPOINT" "https://..."
     ```
 
-5. Define setting that identifies your Azure Foundry Model Deployment (endpoint):
+5. Define setting that identifies your Microsoft Foundry Model Deployment (endpoint):
 
     ```
     dotnet user-secrets set "AZURE_AI_MODEL_DEPLOYMENT_NAME" "gpt-5"
@@ -70,7 +70,7 @@ $env:AZURE_AI_BING_CONNECTION_ID="mybinggrounding"
 
 ### Authorization
 
-Use [_Azure CLI_](https://learn.microsoft.com/cli/azure/authenticate-azure-cli) to authorize access to your Azure Foundry Project:
+Use [_Azure CLI_](https://learn.microsoft.com/cli/azure/authenticate-azure-cli) to authorize access to your Microsoft Foundry Project:
 
 ```
 az login

@@ -7,10 +7,10 @@ These samples demonstrate how to build and host AI agents in Python using the [A
 | Sample                                                                        | Description                                                                                           |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | [`agent_with_hosted_mcp`](./agent_with_hosted_mcp/)                           | Hosted MCP tool that connects to Microsoft Learn via `https://learn.microsoft.com/api/mcp`            |
-| [`agent_with_text_search_rag`](./agent_with_text_search_rag/)                 | Retrieval-augmented generation using a custom `BaseContextProvider` with Contoso Outdoors sample data |
+| [`agent_with_text_search_rag`](./agent_with_text_search_rag/)                 | Retrieval-augmented generation using a custom `ContextProvider` with Contoso Outdoors sample data |
 | [`agents_in_workflow`](./agents_in_workflow/)                                 | Concurrent workflow that combines researcher, marketer, and legal specialist agents                   |
 | [`agent_with_local_tools`](./agent_with_local_tools/)                         | Local Python tool execution for Seattle hotel search                                                  |
-| [`writer_reviewer_agents_in_workflow`](./writer_reviewer_agents_in_workflow/) | Writer/Reviewer workflow using `AzureOpenAIResponsesClient`                                           |
+| [`writer_reviewer_agents_in_workflow`](./writer_reviewer_agents_in_workflow/) | Writer/Reviewer workflow using `FoundryChatClient`                                                    |
 
 ## Common Prerequisites
 
@@ -76,14 +76,14 @@ Example `.env` for Azure OpenAI samples:
 
 ```dotenv
 AZURE_OPENAI_ENDPOINT=https://<your-openai-resource>.openai.azure.com/
-AZURE_OPENAI_CHAT_DEPLOYMENT_NAME=gpt-4.1
+AZURE_OPENAI_MODEL=gpt-4.1
 ```
 
 Example `.env` for Foundry project samples:
 
 ```dotenv
-PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
-MODEL_DEPLOYMENT_NAME=gpt-4.1
+FOUNDRY_PROJECT_ENDPOINT=https://<your-resource>.services.ai.azure.com/api/projects/<your-project>
+FOUNDRY_MODEL=gpt-4.1
 ```
 
 ## Interacting with the Agent
