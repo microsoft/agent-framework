@@ -472,7 +472,7 @@ async def test_foundry_agent_telemetry_defaults() -> None:
     mock_project = MagicMock()
     mock_openai = MagicMock()
     mock_project.get_openai_client.return_value = mock_openai
-    
+
     # Mock agents getter
     mock_agent_instance = MagicMock()
     mock_agent_instance.model = "gpt-telemetry-test"
@@ -483,10 +483,10 @@ async def test_foundry_agent_telemetry_defaults() -> None:
         agent_name="my-telemetry-agent",
         name=None  # Explicitly None to test fallback
     )
-    
+
     assert agent.name == "my-telemetry-agent"
     assert getattr(agent.client, "model", "unknown") == "unknown"
-    
+
     # Call prepare_options to trigger lazy load
     with patch(
         "agent_framework_openai._chat_client.RawOpenAIChatClient._prepare_options",
@@ -497,6 +497,6 @@ async def test_foundry_agent_telemetry_defaults() -> None:
             messages=[Message(role="user", contents="hi")],
             options={},
         )
-        
+
     assert agent.client.model == "gpt-telemetry-test"
     mock_project.agents.get_agent.assert_called_once_with("my-telemetry-agent")
