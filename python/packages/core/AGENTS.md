@@ -61,8 +61,8 @@ agent_framework/
 
 - **`AgentSession`** - Manages conversation state and session metadata
 - **`SessionContext`** - Context object for session-scoped data during agent runs
-- **`BaseContextProvider`** - Base class for context providers (RAG, memory systems)
-- **`BaseHistoryProvider`** - Base class for conversation history storage
+- **`ContextProvider`** - Base class for context providers (RAG, memory systems)
+- **`HistoryProvider`** - Base class for conversation history storage
 
 ### Skills (`_skills.py`)
 
@@ -70,7 +70,7 @@ agent_framework/
 - **`SkillResource`** - Named supplementary content attached to a skill; holds either static `content` or a dynamic `function` (sync or async). Exactly one must be provided.
 - **`SkillScript`** - An executable script attached to a skill; holds either an inline `function` (code-defined, runs in-process) or a `path` to a file on disk (file-based, delegated to a runner). Exactly one must be provided.
 - **`SkillScriptRunner`** - Protocol for file-based script execution. Any callable matching `(skill, script, args) -> Any` satisfies it. Code-defined scripts do not use a runner.
-- **`SkillsProvider`** - Context provider (extends `BaseContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts.
+- **`SkillsProvider`** - Context provider (extends `ContextProvider`) that discovers file-based skills from `SKILL.md` files and/or accepts code-defined `Skill` instances. Follows progressive disclosure: advertise → load → read resources / run scripts.
 
 ### Workflows (`_workflows/`)
 
@@ -82,13 +82,12 @@ agent_framework/
 
 ### OpenAI (`openai/`)
 
-- **`OpenAIChatClient`** - Chat client for OpenAI API
-- **`OpenAIResponsesClient`** - Client for OpenAI Responses API
+- **`OpenAIChatClient`** - Chat client for the OpenAI Responses API
+- **`OpenAIChatCompletionClient`** - Chat client for the OpenAI Chat Completions API
 
-### Azure OpenAI (`azure/`)
+### Foundry (`foundry/`)
 
-- **`AzureOpenAIChatClient`** - Chat client for Azure OpenAI
-- **`AzureOpenAIResponsesClient`** - Client for Azure OpenAI Responses API
+- **`FoundryChatClient`** - Chat client for Azure AI Foundry project endpoints
 
 ## Key Patterns
 
@@ -137,7 +136,7 @@ from agent_framework import BaseChatClient, ChatResponse, Message
 class MyClient(BaseChatClient):
     async def _inner_get_response(self, *, messages, options, **kwargs) -> ChatResponse:
         # Call your LLM here
-        return ChatResponse(messages=[Message(role="assistant", text="Hi!")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["Hi!"])])
 
     async def _inner_get_streaming_response(self, *, messages, options, **kwargs):
         yield ChatResponseUpdate(...)

@@ -11,10 +11,10 @@ Key features:
 
 Before running this sample, ensure you have:
 
-1. An Azure AI Foundry project set up
+1. A Microsoft Foundry project set up
 2. A deep research model deployment (e.g., o3-deep-research)
 3. A model deployment (e.g., gpt-4o)
-4. A Bing Connection configured in your Azure AI Foundry project
+4. A Bing Connection configured in your Microsoft Foundry project
 5. Azure CLI installed and authenticated
 
 **Important**: Please visit the following documentation for detailed setup instructions:
@@ -23,22 +23,24 @@ Before running this sample, ensure you have:
 
 Pay special attention to the purple `Note` boxes in the Azure documentation.
 
-**Note**: The Bing Connection ID must be from the **project**, not the resource. It has the following format:
+**Note**: The Bing Grounding Connection ID must be the **full ARM resource URI** from the project, not just the connection name. It has the following format:
 
 ```
-/subscriptions/<sub_id>/resourceGroups/<rg_name>/providers/<provider_name>/accounts/<account_name>/projects/<project_name>/connections/<connection_name>
+/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>
 ```
+
+You can find this in the Microsoft Foundry portal under **Management > Connected resources**, or retrieve it programmatically via the connections API (`.id` property).
 
 ## Environment Variables
 
 Set the following environment variables:
 
 ```powershell
-# Replace with your Azure AI Foundry project endpoint
+# Replace with your Microsoft Foundry project endpoint
 $env:AZURE_AI_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/"
 
-# Replace with your Bing connection ID from the project
-$env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/.../connections/your-bing-connection"
+# Replace with your Bing Grounding connection ID (full ARM resource URI)
+$env:AZURE_AI_BING_CONNECTION_ID="/subscriptions/<sub-id>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<account>/projects/<project>/connections/<connection-name>"
 
 # Optional, defaults to o3-deep-research
 $env:AZURE_AI_REASONING_DEPLOYMENT_NAME="o3-deep-research"

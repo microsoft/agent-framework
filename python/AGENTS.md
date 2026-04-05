@@ -11,6 +11,7 @@ Instructions for AI coding agents working in the Python codebase.
 - `python-development` — coding standards, type annotations, docstrings, logging, performance
 - `python-testing` — test structure, fixtures, async mode, running tests
 - `python-code-quality` — linting, formatting, type checking, prek hooks, CI workflow
+- `python-feature-lifecycle` — package vs feature lifecycle stages, decorators, enums, and promotion guidance
 - `python-package-management` — monorepo structure, lazy loading, versioning, new packages
 - `python-samples` — sample file structure, PEP 723, documentation guidelines
 
@@ -39,7 +40,7 @@ python/
 │   ├── core/                 # agent-framework-core (main package)
 │   │   ├── agent_framework/  # Public API exports
 │   │   └── tests/
-│   ├── azure-ai/             # agent-framework-azure-ai
+│   ├── foundry/              # agent-framework-foundry
 │   ├── anthropic/            # agent-framework-anthropic
 │   ├── ollama/               # agent-framework-ollama
 │   └── ...                   # Other provider packages
@@ -51,7 +52,7 @@ python/
 ### Package Relationships
 
 - `agent-framework-core` contains core abstractions and OpenAI/Azure OpenAI built-in
-- Provider packages (`azure-ai`, `anthropic`, etc.) extend core with specific integrations
+- Provider packages (`foundry`, `anthropic`, etc.) extend core with specific integrations
 - Core uses lazy loading via `__getattr__` in provider folders (e.g., `agent_framework/azure/`)
 
 ## Package Documentation
@@ -67,8 +68,9 @@ python/
 - [ollama](packages/ollama/AGENTS.md) - Local Ollama inference
 
 ### Azure Integrations
-- [azure-ai](packages/azure-ai/AGENTS.md) - Azure AI Foundry agents
+- [foundry](packages/foundry/README.md) - Microsoft Foundry chat, agent, memory, and embedding integrations
 - [azure-ai-search](packages/azure-ai-search/AGENTS.md) - Azure AI Search RAG
+- [azure-cosmos](packages/azure-cosmos/AGENTS.md) - Azure Cosmos DB-backed history provider
 - [azurefunctions](packages/azurefunctions/AGENTS.md) - Azure Functions hosting
 
 ### Protocols & UI

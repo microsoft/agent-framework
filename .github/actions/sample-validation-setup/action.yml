@@ -24,7 +24,9 @@ runs:
   using: "composite"
   steps:
     - name: Set up Node.js environment
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v6
+      with:
+        node-version: 22
 
     - name: Install Copilot CLI
       shell: bash
@@ -32,7 +34,7 @@ runs:
 
     - name: Test Copilot CLI
       shell: bash
-      run: copilot -p "What can you do in one sentence?"
+      run: copilot --version && copilot -p "What can you do in one sentence?"
 
     - name: Azure CLI Login
       uses: azure/login@v2

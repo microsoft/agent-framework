@@ -42,7 +42,7 @@ which provisions a REST API endpoint compatible with the OpenAI Responses protoc
 
 Before running this sample, ensure you have:
 
-1. **Azure AI Foundry Project**
+1. **Microsoft Foundry Project**
    - Project created.
    - Chat model deployed (e.g., `gpt-4o` or `gpt-4.1`)
    - Note your project endpoint URL and model deployment name

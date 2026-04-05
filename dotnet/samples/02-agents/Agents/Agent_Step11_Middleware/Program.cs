@@ -13,7 +13,7 @@ using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 
-// Get Azure AI Foundry configuration from environment variables
+// Get Microsoft Foundry configuration from environment variables
 var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
 var deploymentName = System.Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
 
@@ -189,9 +189,9 @@ async Task<AgentResponse> PIIMiddleware(IEnumerable<ChatMessage> messages, Agent
         // Regex patterns for PII detection (simplified for demonstration)
         Regex[] piiPatterns =
         [
-            new(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled), // Phone number (e.g., 123-456-7890)
-            new(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled), // Email address
-            new(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled) // Full name (e.g., John Doe)
+            MyRegex(), // Phone number (e.g., 123-456-7890)
+            EmailRegex(), // Email address
+            FullNameRegex() // Full name (e.g., John Doe)
         ];
 
         foreach (var pattern in piiPatterns)
@@ -308,4 +308,16 @@ internal sealed class DateTimeContextProvider : MessageAIContextProvider
                 new ChatMessage(ChatRole.User, $"For reference, the current date and time is: {DateTimeOffset.Now}")
             ]);
     }
+}
+
+internal partial class Program
+{
+    [GeneratedRegex(@"\b\d{3}-\d{3}-\d{4}\b", RegexOptions.Compiled)]
+    private static partial Regex MyRegex();
+
+    [GeneratedRegex(@"\b[\w\.-]+@[\w\.-]+\.\w+\b", RegexOptions.Compiled)]
+    private static partial Regex EmailRegex();
+
+    [GeneratedRegex(@"\b[A-Z][a-z]+\s[A-Z][a-z]+\b", RegexOptions.Compiled)]
+    private static partial Regex FullNameRegex();
 }

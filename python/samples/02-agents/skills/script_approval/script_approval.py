@@ -2,10 +2,15 @@
 
 import asyncio
 import os
+
+# Uncomment this filter to suppress the experimental Skills warning before
+# using the sample's Skills APIs.
+# import warnings
+# warnings.filterwarnings("ignore", message=r"\[SKILLS\].*", category=FutureWarning)
 from textwrap import dedent
 
 from agent_framework import Agent, Skill, SkillsProvider
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -29,8 +34,8 @@ How it works:
    an error if rejected.
 
 Prerequisites:
-- AZURE_AI_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
-- AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME (defaults to "gpt-4o-mini").
+- FOUNDRY_PROJECT_ENDPOINT must be your Azure AI Foundry Agent Service (V2) project endpoint.
+- FOUNDRY_MODEL (defaults to "gpt-4o-mini").
 """
 
 # Load environment variables from .env file
@@ -56,12 +61,12 @@ def deploy(version: str, environment: str = "staging") -> str:
 
 async def main() -> None:
     """Run the skill script approval demo."""
-    endpoint = os.environ["AZURE_AI_PROJECT_ENDPOINT"]
-    deployment = os.environ.get("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME", "gpt-4o-mini")
+    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    deployment = os.environ.get("FOUNDRY_MODEL", "gpt-4o-mini")
 
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=endpoint,
-        deployment_name=deployment,
+        model=deployment,
         credential=AzureCliCredential(),
     )
 

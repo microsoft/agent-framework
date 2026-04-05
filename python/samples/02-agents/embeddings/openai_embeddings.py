@@ -3,31 +3,32 @@
 # Run with: uv run samples/02-agents/embeddings/openai_embeddings.py
 
 import asyncio
+import os
 
 from agent_framework.openai import OpenAIEmbeddingClient
 from dotenv import load_dotenv
 
-load_dotenv()
-
-"""OpenAI Embedding Client Example
-
-This sample demonstrates how to generate embeddings using the OpenAI embedding client.
-It shows single and batch embedding generation, as well as custom dimensions.
+"""This sample demonstrates OpenAI embedding generation with explicit constructor settings.
 
 Prerequisites:
-    Set the OPENAI_API_KEY environment variable or add it to a .env file.
+    Set ``OPENAI_API_KEY`` in your environment or in a local ``.env`` file.
 """
+
+load_dotenv()
 
 
 async def main() -> None:
     """Generate embeddings with OpenAI."""
-    client = OpenAIEmbeddingClient(model_id="text-embedding-3-small")
+    client = OpenAIEmbeddingClient(
+        model="text-embedding-3-small",
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
 
     # 1. Generate a single embedding.
     result = await client.get_embeddings(["Hello, world!"])
     print(f"Single embedding dimensions: {result[0].dimensions}")
     print(f"First 5 values: {result[0].vector[:5]}")
-    print(f"Model: {result[0].model_id}")
+    print(f"Model: {result[0].model}")
     print(f"Usage: {result.usage}")
     print()
 
@@ -39,7 +40,7 @@ async def main() -> None:
     ]
     result = await client.get_embeddings(texts)
     print(f"Batch of {len(result)} embeddings, each with {result[0].dimensions} dimensions")
-    print(f"First embedding vector: {result[0].vector[:5]}")  # Print first 5 values of the first embedding
+    print(f"First embedding vector: {result[0].vector[:5]}")
     print()
 
     # 3. Generate embeddings with custom dimensions.

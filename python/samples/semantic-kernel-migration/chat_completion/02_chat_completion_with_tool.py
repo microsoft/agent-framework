@@ -23,7 +23,7 @@ load_dotenv()
 
 
 async def run_semantic_kernel() -> None:
-    from semantic_kernel.agents import ChatCompletionAgent, ChatHistoryAgentThread
+    from semantic_kernel.agents import ChatCompletionAgent
     from semantic_kernel.connectors.ai.open_ai import OpenAIChatCompletion
     from semantic_kernel.functions import kernel_function
 
@@ -39,16 +39,12 @@ async def run_semantic_kernel() -> None:
         instructions="Answer menu questions accurately.",
         plugins=[SpecialsPlugin()],
     )
-    thread = ChatHistoryAgentThread()
-    response = await agent.get_response(
-        messages="What soup can I order today?",
-        thread=thread,
-    )
+    response = await agent.get_response("What soup can I order today?")
     print("[SK]", response.message.content)
 
 
 async def run_agent_framework() -> None:
-    from agent_framework import tool
+    from agent_framework import Agent, tool
     from agent_framework.openai import OpenAIChatClient
 
     @tool(name="specials", description="List daily specials")
@@ -56,17 +52,13 @@ async def run_agent_framework() -> None:
         return "Clam chowder, Cobb salad, Chai tea"
 
     # AF tools are provided as callables on each agent instance.
-    chat_agent = OpenAIChatClient().as_agent(
+    chat_agent = Agent(
+        client=OpenAIChatClient(),
         name="Host",
         instructions="Answer menu questions accurately.",
         tools=[specials],
     )
-    session = chat_agent.create_session()
-    reply = await chat_agent.run(
-        "What soup can I order today?",
-        session=session,
-        tool_choice="auto",
-    )
+    reply = await chat_agent.run("What soup can I order today?")
     print("[AF]", reply.text)
 
 

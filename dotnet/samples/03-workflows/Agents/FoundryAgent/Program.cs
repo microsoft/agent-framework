@@ -1,20 +1,22 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using Azure.AI.Projects;
+using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
+using Microsoft.Agents.AI.Foundry;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.AI;
 
 namespace WorkflowFoundryAgentSample;
 
 /// <summary>
-/// This sample shows how to use Azure Foundry Agents within a workflow.
+/// This sample shows how to use Microsoft Foundry Agents within a workflow.
 /// </summary>
 /// <remarks>
 /// Pre-requisites:
 /// - Foundational samples should be completed first.
-/// - An Azure Foundry project endpoint and model id.
+/// - A Microsoft Foundry project endpoint and model ID.
 /// </remarks>
 public static class Program
 {
@@ -56,9 +58,9 @@ public static class Program
         finally
         {
             // Cleanup the agents created for the sample.
-            await aiProjectClient.Agents.DeleteAgentAsync(frenchAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(spanishAgent.Name);
-            await aiProjectClient.Agents.DeleteAgentAsync(englishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(frenchAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(spanishAgent.Name);
+            await aiProjectClient.AgentAdministrationClient.DeleteAgentAsync(englishAgent.Name);
         }
     }
 
@@ -68,15 +70,19 @@ public static class Program
     /// <param name="targetLanguage">The target language for translation</param>
     /// <param name="aiProjectClient">The <see cref="AIProjectClient"/> to create the agent with.</param>
     /// <param name="model">The model to use for the agent</param>
-    /// <returns>A ChatClientAgent configured for the specified language</returns>
-    private static async Task<ChatClientAgent> CreateTranslationAgentAsync(
+    /// <returns>A FoundryAgent configured for the specified language</returns>
+    private static async Task<FoundryAgent> CreateTranslationAgentAsync(
         string targetLanguage,
         AIProjectClient aiProjectClient,
         string model)
     {
-        return await aiProjectClient.CreateAIAgentAsync(
-            name: $"{targetLanguage} Translator",
-            model: model,
-            instructions: $"You are a translation assistant that translates the provided text to {targetLanguage}.");
+        ProjectsAgentVersion agentVersion = await aiProjectClient.AgentAdministrationClient.CreateAgentVersionAsync(
+            $"{targetLanguage} Translator",
+            new ProjectsAgentVersionCreationOptions(
+                new DeclarativeAgentDefinition(model: model)
+                {
+                    Instructions = $"You are a translation assistant that translates the provided text to {targetLanguage}.",
+                }));
+        return aiProjectClient.AsAIAgent(agentVersion);
     }
 }

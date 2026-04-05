@@ -10,7 +10,7 @@ from a2a.server.request_handlers.default_request_handler import DefaultRequestHa
 from a2a.server.tasks.inmemory_task_store import InMemoryTaskStore
 from agent_definitions import AGENT_CARD_FACTORIES, AGENT_FACTORIES
 from agent_executor import AgentFrameworkExecutor
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -35,8 +35,8 @@ Usage:
   uv run python a2a_server.py --agent-type logistics --port 5002
 
 Environment variables:
-  AZURE_AI_PROJECT_ENDPOINT              — Your Azure AI Foundry project endpoint
-  AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME — Model deployment name (e.g. gpt-4o)
+  FOUNDRY_PROJECT_ENDPOINT              — Your Azure AI Foundry project endpoint
+  FOUNDRY_MODEL — Model deployment name (e.g. gpt-4o)
 """
 
 
@@ -66,21 +66,21 @@ def main() -> None:
     args = parse_args()
 
     # Validate environment
-    project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
-    deployment_name = os.getenv("AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME")
+    project_endpoint = os.getenv("FOUNDRY_PROJECT_ENDPOINT")
+    model = os.getenv("FOUNDRY_MODEL")
 
     if not project_endpoint:
-        print("Error: AZURE_AI_PROJECT_ENDPOINT environment variable is not set.")
+        print("Error: FOUNDRY_PROJECT_ENDPOINT environment variable is not set.")
         sys.exit(1)
-    if not deployment_name:
-        print("Error: AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME environment variable is not set.")
+    if not model:
+        print("Error: FOUNDRY_MODEL environment variable is not set.")
         sys.exit(1)
 
     # Create the LLM client
     credential = AzureCliCredential()
-    client = AzureOpenAIResponsesClient(
+    client = FoundryChatClient(
         project_endpoint=project_endpoint,
-        deployment_name=deployment_name,
+        model=model,
         credential=credential,
     )
 

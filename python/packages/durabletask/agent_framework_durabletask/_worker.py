@@ -31,7 +31,7 @@ class DurableAIAgentWorker:
         ```python
         from durabletask.worker import TaskHubGrpcWorker
         from agent_framework import Agent
-        from agent_framework.azure import AzureOpenAIChatClient
+        from agent_framework.openai import OpenAIChatCompletionClient
         from agent_framework_durabletask import DurableAIAgentWorker
 
         # Create the underlying worker
@@ -41,7 +41,7 @@ class DurableAIAgentWorker:
         agent_worker = DurableAIAgentWorker(worker)
 
         # Register agents
-        client = AzureOpenAIChatClient()
+        client = OpenAIChatCompletionClient()
         my_agent = Agent(client=client, name="assistant")
         agent_worker.add_agent(my_agent)
 

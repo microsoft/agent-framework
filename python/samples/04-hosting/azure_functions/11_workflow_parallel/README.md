@@ -98,7 +98,8 @@ The sample can run locally without Azure Functions infrastructure using DevUI:
    cp .env.template .env
    ```
 
-2. Configure `.env` with your Azure OpenAI credentials
+2. Configure `.env` with your Azure OpenAI credentials (`AZURE_OPENAI_ENDPOINT` and
+   `AZURE_OPENAI_MODEL`)
 
 3. Install dependencies:
    ```bash

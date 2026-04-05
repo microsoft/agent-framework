@@ -18,8 +18,9 @@ from agent_framework import (
     handler,
     tool,
 )
-from agent_framework.azure import AzureOpenAIChatClient
 from agent_framework.devui import serve
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from typing_extensions import Never
 
@@ -79,15 +80,14 @@ def main():
     logger = logging.getLogger(__name__)
 
     # Create Azure OpenAI chat client
-    client = AzureOpenAIChatClient(
-        api_key=os.environ.get("AZURE_OPENAI_API_KEY"),
-        deployment_name=os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT_NAME"],
-        endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    client = FoundryChatClient(
+        model=os.environ["FOUNDRY_MODEL"],
+        project_endpoint=os.environ.get("FOUNDRY_PROJECT_ENDPOINT"),
+        credential=AzureCliCredential(),
     )
 
     # Create agents
-    weather_agent = Agent(
+    weather_assistant = Agent(
         name="weather-assistant",
         description="Provides weather information and time",
         instructions=(
@@ -120,7 +120,7 @@ def main():
     )
 
     # Collect entities for serving
-    entities = [weather_agent, simple_agent, basic_workflow]
+    entities = [weather_assistant, simple_agent, basic_workflow]
 
     logger.info("Starting DevUI on http://localhost:8090")
     logger.info("Entities available:")

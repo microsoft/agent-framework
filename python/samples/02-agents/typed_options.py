@@ -1,9 +1,8 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import Literal
 
-from agent_framework import Agent
+from agent_framework import Agent, Message
 from agent_framework.anthropic import AnthropicClient
 from agent_framework.openai import OpenAIChatClient, OpenAIChatOptions
 from dotenv import load_dotenv
@@ -39,29 +38,29 @@ async def demo_anthropic_chat_client() -> None:
     print("\n=== Anthropic ChatClient with TypedDict Options ===\n")
 
     # Create Anthropic client
-    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
     # Standard options work great:
     response = await client.get_response(
-        "What is the capital of France?",
+        [Message("user", contents=["What is the capital of France?"])],
         options={
-            "temperature": 0.5,
-            "max_tokens": 1000,
+            "temperature": 1,  # Must be 1 when thinking is enabled
+            "max_tokens": 2048,
             # Anthropic-specific options:
-            "thinking": {"type": "enabled", "budget_tokens": 1000},
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
             # "top_k": 40,  # <-- Uncomment for Anthropic-specific option
         },
     )
 
     print(f"Anthropic Response: {response.text}")
-    print(f"Model used: {response.model_id}")
+    print(f"Model used: {response.model}")
 
 
 async def demo_anthropic_agent() -> None:
     """Demonstrate Agent with Anthropic client and typed options."""
     print("\n=== Agent with Anthropic and Typed Options ===\n")
 
-    client = AnthropicClient(model_id="claude-sonnet-4-5-20250929")
+    client = AnthropicClient(model="claude-sonnet-4-5-20250929")
 
     # Create a typed agent for Anthropic - IDE knows Anthropic-specific options!
     agent = Agent(
@@ -90,17 +89,11 @@ class OpenAIReasoningChatOptions(OpenAIChatOptions, total=False):
     Examples:
         .. code-block:: python
 
-            from agent_framework.openai import OpenAIReasoningChatOptions
-
             options: OpenAIReasoningChatOptions = {
-                "model_id": "o3",
-                "reasoning_effort": "high",
+                "reasoning": {"effort": "high"},
                 "max_tokens": 4096,
             }
     """
-
-    # Reasoning-specific parameters
-    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
     # Unsupported parameters for reasoning models (override with None)
     temperature: None
@@ -118,17 +111,17 @@ async def demo_openai_chat_client_reasoning_models() -> None:
     print("\n=== OpenAI ChatClient with TypedDict Options ===\n")
 
     # Create OpenAI client
-    client = OpenAIChatClient[OpenAIReasoningChatOptions](model_id="o3")
+    client = OpenAIChatClient[OpenAIReasoningChatOptions](model="o3")
 
     # With specific options, you get full IDE autocomplete!
     # Try typing `client.get_response("Hello", options={` and see the suggestions
     response = await client.get_response(
-        "What is 2 + 2?",
+        [Message("user", contents=["What is 2 + 2?"])],
         options={
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:
-            "reasoning_effort": "medium",
+            "reasoning": {"effort": "medium"},
             # Unsupported options are caught by type checker (uncomment to see):
             # "temperature": 0.7,
             # "random": 234,
@@ -136,7 +129,7 @@ async def demo_openai_chat_client_reasoning_models() -> None:
     )
 
     print(f"OpenAI Response: {response.text}")
-    print(f"Model used: {response.model_id}")
+    print(f"Model used: {response.model}")
 
 
 async def demo_openai_agent() -> None:
@@ -148,7 +141,7 @@ async def demo_openai_agent() -> None:
     # or on the client when constructing the client instance:
     #   client = OpenAIChatClient[OpenAIReasoningChatOptions]()
     agent = Agent[OpenAIReasoningChatOptions](
-        client=OpenAIChatClient(model_id="o3"),
+        client=OpenAIChatClient(model="o3"),
         name="weather-assistant",
         instructions="You are a helpful assistant. Answer concisely.",
         # Options can be set at construction time
@@ -156,7 +149,7 @@ async def demo_openai_agent() -> None:
             "max_tokens": 100,
             "allow_multiple_tool_calls": True,
             # OpenAI-specific options work:
-            "reasoning_effort": "medium",
+            "reasoning": {"effort": "medium"},
             # Unsupported options are caught by type checker (uncomment to see):
             # "temperature": 0.7,
             # "random": 234,
@@ -167,7 +160,7 @@ async def demo_openai_agent() -> None:
     response = await agent.run(
         "What is 25 * 47?",
         options={
-            "reasoning_effort": "high",  # Override for a run
+            "reasoning": {"effort": "high"},  # Override for a run
         },
     )
 

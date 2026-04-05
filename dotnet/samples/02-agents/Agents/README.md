@@ -18,7 +18,7 @@ Before you begin, ensure you have the following prerequisites:
 - Azure CLI installed and authenticated (for Azure credential authentication)
 - User has the `Cognitive Services OpenAI Contributor` role for the Azure OpenAI resource.
 
-**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Azure AI Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
+**Note**: These samples use Azure OpenAI models. For more information, see [how to deploy Azure OpenAI models with Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/how-to/deploy-models-openai).
 
 **Note**: These samples use Azure CLI credentials for authentication. Make sure you're logged in with `az login` and have access to the Azure OpenAI resource and have the `Cognitive Services OpenAI Contributor` role. For more information, see the [Azure CLI documentation](https://learn.microsoft.com/cli/azure/authenticate-azure-cli-interactively).
 
@@ -45,6 +45,7 @@ Before you begin, ensure you have the following prerequisites:
 |[Declarative agent](./Agent_Step16_Declarative/)|This sample demonstrates how to declaratively define an agent.|
 |[Providing additional AI Context to an agent using multiple AIContextProviders](./Agent_Step17_AdditionalAIContext/)|This sample demonstrates how to inject additional AI context into a ChatClientAgent using multiple custom AIContextProvider components that are attached to the agent.|
 |[Using compaction pipeline with an agent](./Agent_Step18_CompactionPipeline/)|This sample demonstrates how to use a compaction pipeline to efficiently limit the size of the conversation history for an agent.|
+|[In-function-loop checkpointing](./Agent_Step19_InFunctionLoopCheckpointing/)|This sample demonstrates how to persist chat history after each service call during a tool-calling loop, enabling crash recovery and mid-run observability.|
 
 ## Running the samples from the console
 

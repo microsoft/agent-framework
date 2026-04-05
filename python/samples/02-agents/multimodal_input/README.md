@@ -32,8 +32,8 @@ Set the following environment variables before running the examples:
 **For Azure OpenAI:**
 
 - `AZURE_OPENAI_ENDPOINT`: Your Azure OpenAI endpoint
-- `AZURE_OPENAI_CHAT_DEPLOYMENT_NAME`: The name of your Azure OpenAI chat model deployment
-- `AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME`: The name of your Azure OpenAI responses model deployment
+- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI chat model deployment
+- `AZURE_OPENAI_MODEL`: The name of your Azure OpenAI responses model deployment
 
 Optionally for Azure OpenAI:
 - `AZURE_OPENAI_API_VERSION`: The API version to use (default is `2024-10-21`)
@@ -41,11 +41,11 @@ Optionally for Azure OpenAI:
 
 **Note:** You can also provide configuration directly in code instead of using environment variables:
 ```python
-# Example: Pass deployment_name directly
-client = AzureOpenAIChatClient(
+# Example: Pass the Foundry project endpoint directly
+client = FoundryChatClient(
     credential=AzureCliCredential(),
-    deployment_name="your-deployment-name",
-    endpoint="https://your-resource.openai.azure.com"
+    project_endpoint="https://your-project.services.ai.azure.com",
+    model="your-deployment-name",
 )
 ```
 

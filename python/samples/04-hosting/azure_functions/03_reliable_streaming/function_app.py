@@ -5,12 +5,13 @@
 This sample demonstrates how to implement reliable streaming for durable agents using Redis Streams.
 
 Components used in this sample:
-- AzureOpenAIChatClient to create the travel planner agent with tools.
+- FoundryChatClient to create the travel planner agent with tools.
 - AgentFunctionApp with a Redis-based callback for persistent streaming.
 - Custom HTTP endpoint to resume streaming from any point using cursor-based pagination.
 
 Prerequisites:
-- Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_CHAT_DEPLOYMENT_NAME
+- Set FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_MODEL
+- Sign in with Azure CLI (`az login`) for `AzureCliCredential`
 - Redis running (docker run -d --name redis -p 6379:6379 redis:latest)
 - DTS and Azurite running (see parent README)
 """
@@ -21,14 +22,14 @@ from datetime import timedelta
 
 import azure.functions as func
 import redis.asyncio as aioredis
-from agent_framework import AgentResponseUpdate
+from agent_framework import Agent, AgentResponseUpdate
 from agent_framework.azure import (
     AgentCallbackContext,
     AgentFunctionApp,
     AgentResponseCallbackProtocol,
-    AzureOpenAIChatClient,
 )
-from azure.identity import AzureCliCredential
+from agent_framework.foundry import FoundryChatClient
+from azure.identity.aio import AzureCliCredential
 from dotenv import load_dotenv
 from redis_stream_response_handler import RedisStreamResponseHandler, StreamChunk
 from tools import get_local_events, get_weather_forecast
@@ -155,7 +156,12 @@ redis_callback = RedisStreamCallback()
 # Create the travel planner agent
 def create_travel_agent():
     """Create the TravelPlanner agent with tools."""
-    return AzureOpenAIChatClient(credential=AzureCliCredential()).as_agent(
+    return Agent(
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
+            credential=AzureCliCredential(),
+        ),
         name="TravelPlanner",
         instructions="""You are an expert travel planner who creates detailed, personalized travel itineraries.
 When asked to plan a trip, you should:

@@ -105,10 +105,10 @@ def _group_unknown_value(message: Message, key: str) -> Any:
 
 def test_group_annotations_keep_tool_call_and_tool_result_atomic() -> None:
     messages = [
-        Message(role="user", text="hello"),
+        Message(role="user", contents=["hello"]),
         _assistant_function_call("c1"),
         _tool_result("c1", "ok"),
-        Message(role="assistant", text="final"),
+        Message(role="assistant", contents=["final"]),
     ]
 
     annotate_message_groups(messages)
@@ -136,11 +136,11 @@ def test_group_annotations_include_reasoning_in_tool_call_group() -> None:
 
 def test_group_annotations_handle_same_message_reasoning_and_function_calls() -> None:
     messages = [
-        Message(role="user", text="hello"),
+        Message(role="user", contents=["hello"]),
         _assistant_reasoning_and_function_calls("c1", "c2"),
         _tool_result("c1", "ok1"),
         _tool_result("c2", "ok2"),
-        Message(role="assistant", text="final"),
+        Message(role="assistant", contents=["final"]),
     ]
 
     annotate_message_groups(messages)
@@ -155,8 +155,8 @@ def test_group_annotations_handle_same_message_reasoning_and_function_calls() ->
 
 def test_annotate_message_groups_with_tokenizer_adds_token_counts() -> None:
     messages = [
-        Message(role="user", text="hello"),
-        Message(role="assistant", text="world"),
+        Message(role="user", contents=["hello"]),
+        Message(role="assistant", contents=["world"]),
     ]
 
     annotate_message_groups(
@@ -187,9 +187,9 @@ def test_extend_compaction_messages_preserves_existing_annotations_and_tokens() 
 
 
 def test_append_compaction_message_annotates_new_message() -> None:
-    messages = [Message(role="user", text="hello")]
+    messages = [Message(role="user", contents=["hello"])]
     annotate_message_groups(messages)
-    append_compaction_message(messages, Message(role="assistant", text="world"))
+    append_compaction_message(messages, Message(role="assistant", contents=["world"]))
 
     assert len(messages) == 2
     assert isinstance(_group_id(messages[1]), str)
@@ -197,11 +197,11 @@ def test_append_compaction_message_annotates_new_message() -> None:
 
 async def test_truncation_strategy_keeps_system_anchor() -> None:
     messages = [
-        Message(role="system", text="you are helpful"),
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
+        Message(role="system", contents=["you are helpful"]),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
     ]
     strategy = TruncationStrategy(max_n=3, compact_to=3, preserve_system=True)
     annotate_message_groups(messages)
@@ -217,9 +217,9 @@ async def test_truncation_strategy_keeps_system_anchor() -> None:
 async def test_truncation_strategy_compacts_when_token_limit_exceeded() -> None:
     tokenizer = CharacterEstimatorTokenizer()
     messages = [
-        Message(role="system", text="you are helpful"),
-        Message(role="user", text="u1 " * 200),
-        Message(role="assistant", text="a1 " * 200),
+        Message(role="system", contents=["you are helpful"]),
+        Message(role="user", contents=["u1 " * 200]),
+        Message(role="assistant", contents=["a1 " * 200]),
     ]
     strategy = TruncationStrategy(
         max_n=80,
@@ -248,12 +248,12 @@ def test_truncation_strategy_validates_token_targets() -> None:
 
 async def test_selective_tool_call_strategy_excludes_older_tool_groups() -> None:
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
         _assistant_function_call("call-2"),
         _tool_result("call-2", "r2"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=1)
     annotate_message_groups(messages)
@@ -269,10 +269,10 @@ async def test_selective_tool_call_strategy_excludes_older_tool_groups() -> None
 
 async def test_selective_tool_call_strategy_with_zero_removes_assistant_tool_pair() -> None:
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = SelectiveToolCallCompactionStrategy(keep_last_tool_call_groups=0)
     annotate_message_groups(messages)
@@ -304,7 +304,7 @@ class _FakeSummarizer:
         options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        return ChatResponse(messages=[Message(role="assistant", text="summarized context")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["summarized context"])])
 
 
 class _FailingSummarizer:
@@ -328,17 +328,17 @@ class _EmptySummarizer:
         options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
-        return ChatResponse(messages=[Message(role="assistant", text="   ")])
+        return ChatResponse(messages=[Message(role="assistant", contents=["   "])])
 
 
 async def test_summarization_strategy_adds_bidirectional_trace_links() -> None:
     messages = [
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
-        Message(role="user", text="u3"),
-        Message(role="assistant", text="a3"),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
     ]
     strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
     annotate_message_groups(messages)
@@ -366,12 +366,12 @@ async def test_summarization_strategy_returns_false_when_summary_generation_fail
     caplog: Any,
 ) -> None:
     messages = [
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
-        Message(role="user", text="u3"),
-        Message(role="assistant", text="a3"),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
     ]
     strategy = SummarizationStrategy(client=_FailingSummarizer(), target_count=2, threshold=0)
     annotate_message_groups(messages)
@@ -388,12 +388,12 @@ async def test_summarization_strategy_returns_false_when_summary_is_empty(
     caplog: Any,
 ) -> None:
     messages = [
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
-        Message(role="user", text="u3"),
-        Message(role="assistant", text="a3"),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
     ]
     strategy = SummarizationStrategy(client=_EmptySummarizer(), target_count=2, threshold=0)
     annotate_message_groups(messages)
@@ -408,9 +408,9 @@ async def test_summarization_strategy_returns_false_when_summary_is_empty(
 
 async def test_token_budget_composed_strategy_meets_budget_or_falls_back() -> None:
     messages = [
-        Message(role="system", text="system"),
-        Message(role="user", text="user " * 200),
-        Message(role="assistant", text="assistant " * 200),
+        Message(role="system", contents=["system"]),
+        Message(role="user", contents=["user " * 200]),
+        Message(role="assistant", contents=["assistant " * 200]),
     ]
     strategy = TokenBudgetComposedStrategy(
         token_budget=20,
@@ -445,9 +445,9 @@ class _ExcludeOldestNonSystem:
 
 async def test_apply_compaction_projects_included_messages_only() -> None:
     messages = [
-        Message(role="system", text="sys"),
-        Message(role="user", text="hello"),
-        Message(role="assistant", text="world"),
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["hello"]),
+        Message(role="assistant", contents=["world"]),
     ]
 
     projected = await apply_compaction(messages, strategy=_ExcludeOldestNonSystem())
@@ -462,12 +462,12 @@ async def test_apply_compaction_projects_included_messages_only() -> None:
 async def test_tool_result_compaction_collapses_old_groups_into_summary() -> None:
     """Old tool-call groups are collapsed into summary messages, newest kept."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
         _assistant_function_call("call-2"),
         _tool_result("call-2", "r2"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
     annotate_message_groups(messages)
@@ -486,12 +486,12 @@ async def test_tool_result_compaction_collapses_old_groups_into_summary() -> Non
 async def test_tool_result_compaction_zero_collapses_all() -> None:
     """With keep=0, all tool-call groups are collapsed into summaries."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
         _assistant_function_call("call-2"),
         _tool_result("call-2", "r2"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
     annotate_message_groups(messages)
@@ -508,7 +508,7 @@ async def test_tool_result_compaction_zero_collapses_all() -> None:
 async def test_tool_result_compaction_no_change_when_within_limit() -> None:
     """No compaction when tool groups count does not exceed keep limit."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
     ]
@@ -532,7 +532,7 @@ def test_tool_result_compaction_rejects_negative() -> None:
 async def test_tool_result_compaction_preserves_tool_results_in_summary() -> None:
     """Summary text should include the tool results from the collapsed group."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         Message(
             role="assistant",
             contents=[
@@ -542,7 +542,7 @@ async def test_tool_result_compaction_preserves_tool_results_in_summary() -> Non
         ),
         _tool_result("c1", "sunny"),
         _tool_result("c2", "found 3 docs"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
     annotate_message_groups(messages)
@@ -559,10 +559,10 @@ async def test_tool_result_compaction_preserves_tool_results_in_summary() -> Non
 async def test_tool_result_compaction_bidirectional_tracing() -> None:
     """Summary and originals should link to each other like SummarizationStrategy does."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("call-1"),
         _tool_result("call-1", "r1"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
     annotate_message_groups(messages)
@@ -594,10 +594,10 @@ async def test_tool_result_compaction_bidirectional_tracing() -> None:
 async def test_tool_result_compaction_summary_has_full_annotations() -> None:
     """Summary messages inserted by ToolResultCompactionStrategy must have all compaction annotations."""
     messages = [
-        Message(role="user", text="u"),
+        Message(role="user", contents=["u"]),
         _assistant_function_call("c1"),
         _tool_result("c1", "r1"),
-        Message(role="assistant", text="done"),
+        Message(role="assistant", contents=["done"]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=0)
     annotate_message_groups(messages)
@@ -617,12 +617,12 @@ async def test_tool_result_compaction_summary_has_full_annotations() -> None:
 async def test_summarization_strategy_summary_has_full_annotations() -> None:
     """Summary messages inserted by SummarizationStrategy must have all compaction annotations."""
     messages = [
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
-        Message(role="user", text="u3"),
-        Message(role="assistant", text="a3"),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
     ]
     strategy = SummarizationStrategy(client=_FakeSummarizer(), target_count=2, threshold=0)
     annotate_message_groups(messages)
@@ -647,14 +647,14 @@ async def test_tool_result_compaction_multiple_groups_combined() -> None:
     separate summary, group 3 stays verbatim.
     """
     messages = [
-        Message(role="user", text="Compare weather in London, Paris, and Tokyo"),
+        Message(role="user", contents=["Compare weather in London, Paris, and Tokyo"]),
         # Group 1: get_weather for London
         Message(
             role="assistant",
             contents=[Content.from_function_call(call_id="c1", name="get_weather", arguments='{"city":"London"}')],
         ),
         _tool_result("c1", '{"temp":12,"condition":"cloudy","wind":"NW 15km/h"}'),
-        Message(role="assistant", text="London is cloudy at 12°C."),
+        Message(role="assistant", contents=["London is cloudy at 12°C."]),
         # Group 2: get_weather for Paris + search_hotels
         Message(
             role="assistant",
@@ -665,14 +665,14 @@ async def test_tool_result_compaction_multiple_groups_combined() -> None:
         ),
         _tool_result("c2", '{"temp":18,"condition":"sunny"}'),
         _tool_result("c3", "Grand Hotel (€120), Le Petit (€85)"),
-        Message(role="assistant", text="Paris is sunny at 18°C. Found 2 hotels."),
+        Message(role="assistant", contents=["Paris is sunny at 18°C. Found 2 hotels."]),
         # Group 3: get_weather for Tokyo (most recent — should be kept)
         Message(
             role="assistant",
             contents=[Content.from_function_call(call_id="c4", name="get_weather", arguments='{"city":"Tokyo"}')],
         ),
         _tool_result("c4", '{"temp":22,"condition":"rainy"}'),
-        Message(role="assistant", text="Tokyo is rainy at 22°C."),
+        Message(role="assistant", contents=["Tokyo is rainy at 22°C."]),
     ]
     strategy = ToolResultCompactionStrategy(keep_last_tool_call_groups=1)
     annotate_message_groups(messages)
@@ -758,13 +758,13 @@ async def test_compaction_provider_compacts_existing_context_messages() -> None:
 
     context = _MockSessionContext()
     context.context_messages["history"] = [
-        Message(role="system", text="sys"),
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
-        Message(role="user", text="u3"),
-        Message(role="assistant", text="a3"),
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
+        Message(role="user", contents=["u3"]),
+        Message(role="assistant", contents=["a3"]),
     ]
 
     await provider.before_run(agent=None, session=None, context=context, state={})
@@ -796,13 +796,13 @@ async def test_compaction_provider_preserves_messages_from_multiple_sources() ->
 
     context = _MockSessionContext()
     context.context_messages["history"] = [
-        Message(role="system", text="sys"),
-        Message(role="user", text="old_user"),
-        Message(role="assistant", text="old_assistant"),
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["old_user"]),
+        Message(role="assistant", contents=["old_assistant"]),
     ]
     context.context_messages["rag"] = [
-        Message(role="user", text="recent_rag_context"),
-        Message(role="assistant", text="recent_rag_answer"),
+        Message(role="user", contents=["recent_rag_context"]),
+        Message(role="assistant", contents=["recent_rag_answer"]),
     ]
 
     await provider.before_run(agent=None, session=None, context=context, state={})
@@ -829,11 +829,11 @@ async def test_compaction_provider_after_run_compacts_stored_history() -> None:
     session = _MockSession()
     session.state["in_memory_history"] = {
         "messages": [
-            Message(role="user", text="old question"),
-            Message(role="assistant", text="old answer"),
+            Message(role="user", contents=["old question"]),
+            Message(role="assistant", contents=["old answer"]),
             _assistant_function_call("c1"),
             _tool_result("c1", "result"),
-            Message(role="assistant", text="final answer"),
+            Message(role="assistant", contents=["final answer"]),
         ]
     }
 
@@ -873,11 +873,11 @@ async def test_compaction_provider_both_strategies() -> None:
     # before_run: compact loaded context
     context = _MockSessionContext()
     context.context_messages["history"] = [
-        Message(role="system", text="sys"),
-        Message(role="user", text="u1"),
-        Message(role="assistant", text="a1"),
-        Message(role="user", text="u2"),
-        Message(role="assistant", text="a2"),
+        Message(role="system", contents=["sys"]),
+        Message(role="user", contents=["u1"]),
+        Message(role="assistant", contents=["a1"]),
+        Message(role="user", contents=["u2"]),
+        Message(role="assistant", contents=["a2"]),
     ]
     await provider.before_run(agent=None, session=None, context=context, state={})
     assert len(context.get_messages()) == 3
@@ -886,10 +886,10 @@ async def test_compaction_provider_both_strategies() -> None:
     session = _MockSession()
     session.state["history"] = {
         "messages": [
-            Message(role="user", text="q"),
+            Message(role="user", contents=["q"]),
             _assistant_function_call("c1"),
             _tool_result("c1", "ok"),
-            Message(role="assistant", text="done"),
+            Message(role="assistant", contents=["done"]),
         ]
     }
     await provider.after_run(agent=None, session=session, context=_MockSessionContext(), state={})
@@ -904,8 +904,8 @@ async def test_compaction_provider_none_strategies_are_noop() -> None:
 
     context = _MockSessionContext()
     context.context_messages["history"] = [
-        Message(role="user", text="hello"),
-        Message(role="assistant", text="hi"),
+        Message(role="user", contents=["hello"]),
+        Message(role="assistant", contents=["hi"]),
     ]
 
     await provider.before_run(agent=None, session=None, context=context, state={})
@@ -924,10 +924,10 @@ async def test_in_memory_history_provider_skip_excluded() -> None:
     provider = _InMemoryHistoryProvider(skip_excluded=True)
     state: dict[str, Any] = {
         "messages": [
-            Message(role="user", text="u1"),
-            Message(role="assistant", text="a1", additional_properties={EXCLUDED_KEY: True}),
-            Message(role="user", text="u2"),
-            Message(role="assistant", text="a2"),
+            Message(role="user", contents=["u1"]),
+            Message(role="assistant", contents=["a1"], additional_properties={EXCLUDED_KEY: True}),
+            Message(role="user", contents=["u2"]),
+            Message(role="assistant", contents=["a2"]),
         ]
     }
 
@@ -944,9 +944,9 @@ async def test_in_memory_history_provider_default_loads_all() -> None:
     provider = _InMemoryHistoryProvider()
     state: dict[str, Any] = {
         "messages": [
-            Message(role="user", text="u1"),
-            Message(role="assistant", text="a1", additional_properties={EXCLUDED_KEY: True}),
-            Message(role="user", text="u2"),
+            Message(role="user", contents=["u1"]),
+            Message(role="assistant", contents=["a1"], additional_properties={EXCLUDED_KEY: True}),
+            Message(role="user", contents=["u2"]),
         ]
     }
 
