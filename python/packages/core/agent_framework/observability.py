@@ -26,6 +26,7 @@ from time import perf_counter, time_ns
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, TypedDict, cast, overload
 
 from dotenv import load_dotenv
+from opentelemetry import context as otel_context
 from opentelemetry import metrics, trace
 
 from . import __version__ as version_info
@@ -93,6 +94,12 @@ ChatClientT = TypeVar("ChatClientT", bound="SupportsChatGetResponse[Any]")
 
 logger = logging.getLogger("agent_framework")
 
+
+# Holds the OTel context with the streaming agent-invoke span set as current.
+# Child spans (chat, execute_tool) read this to establish correct parenting.
+_STREAMING_AGENT_INVOKE_CONTEXT: Final[
+    contextvars.ContextVar[otel_context.Context | None]
+] = contextvars.ContextVar("streaming_agent_invoke_context", default=None)
 
 INNER_RESPONSE_TELEMETRY_CAPTURED_FIELDS: Final[contextvars.ContextVar[set[str] | None]] = contextvars.ContextVar(
     "inner_response_telemetry_captured_fields", default=None
@@ -1296,7 +1303,11 @@ class ChatTelemetryLayer(Generic[OptionsCoT]):
             # cause "Failed to detach context" errors from OpenTelemetry.
             operation = attributes.get(OtelAttr.OPERATION, "operation")
             span_name = attributes.get(OtelAttr.REQUEST_MODEL, "unknown")
-            span = get_tracer().start_span(f"{operation} {span_name}")
+
+            # If we're inside a streaming agent invocation, use its span as parent
+            # so the chat completion span appears as a child of invoke_agent.
+            parent_ctx = _STREAMING_AGENT_INVOKE_CONTEXT.get()
+            span = get_tracer().start_span(f"{operation} {span_name}", context=parent_ctx)
             span.set_attributes(attributes)
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
@@ -1554,6 +1565,13 @@ class AgentTelemetryLayer:
             span_name = attributes.get(OtelAttr.AGENT_NAME, "unknown")
             span = get_tracer().start_span(f"{operation} {span_name}")
             span.set_attributes(attributes)
+
+            # Activate the agent-invoke span as the current OTel context so that
+            # child spans (chat completion, execute_tool) created during streaming
+            # inherit it as their parent.
+            agent_ctx = trace.set_span_in_context(span)
+            streaming_agent_ctx_token = _STREAMING_AGENT_INVOKE_CONTEXT.set(agent_ctx)
+
             if OBSERVABILITY_SETTINGS.SENSITIVE_DATA_ENABLED and messages:
                 _capture_messages(
                     span=span,
@@ -1570,6 +1588,7 @@ class AgentTelemetryLayer:
                 if span_state["closed"]:
                     return
                 span_state["closed"] = True
+                _STREAMING_AGENT_INVOKE_CONTEXT.reset(streaming_agent_ctx_token)
                 span.end()
 
             def _record_duration() -> None:
@@ -1788,6 +1807,18 @@ def get_function_span(
     Returns:
         trace.trace.Span: The started span as a context manager.
     """
+    # When running inside a streaming agent invocation, use its context as parent
+    # so execute_tool spans appear as children of invoke_agent.
+    parent_ctx = _STREAMING_AGENT_INVOKE_CONTEXT.get()
+    if parent_ctx is not None:
+        return get_tracer().start_as_current_span(
+            name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
+            attributes=attributes,
+            set_status_on_exception=False,
+            end_on_exit=True,
+            record_exception=False,
+            context=parent_ctx,
+        )
     return get_tracer().start_as_current_span(
         name=f"{attributes[OtelAttr.OPERATION]} {attributes[OtelAttr.TOOL_NAME]}",
         attributes=attributes,
