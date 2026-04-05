@@ -64,6 +64,7 @@ if TYPE_CHECKING:
         KnowledgeBaseRetrievalResponse,
         KnowledgeRetrievalIntent,
         KnowledgeRetrievalSemanticIntent,
+        KnowledgeSourceParams,
     )
     from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
@@ -99,6 +100,7 @@ try:
         KnowledgeBaseRetrievalResponse,
         KnowledgeRetrievalIntent,
         KnowledgeRetrievalSemanticIntent,
+        KnowledgeSourceParams,
     )
     from azure.search.documents.knowledgebases.models import (
         KnowledgeRetrievalLowReasoningEffort as KBRetrievalLowReasoningEffort,
@@ -830,6 +832,12 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
+                knowledge_source_params=[
+                    KnowledgeSourceParams(
+                        knowledge_source_name=f"{self.index_name}-source",
+                        include_reference_source_data=True,
+                    ),
+                ],
             )
         else:
             kb_messages = self._prepare_messages_for_kb_search(messages)
@@ -838,6 +846,12 @@ class AzureAISearchContextProvider(ContextProvider):
                 retrieval_reasoning_effort=reasoning_effort,
                 output_mode=output_mode,
                 include_activity=True,
+                knowledge_source_params=[
+                    KnowledgeSourceParams(
+                        knowledge_source_name=f"{self.index_name}-source",
+                        include_reference_source_data=True,
+                    ),
+                ],
             )
 
         if not self._retrieval_client:
