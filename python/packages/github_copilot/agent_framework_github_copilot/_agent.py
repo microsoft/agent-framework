@@ -284,6 +284,11 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         :class:`AgentTelemetryLayer` can capture the system prompt in traces.
         """
         opts = dict(self._default_options)
+        # Merge back settings that were popped during __init__ so that
+        # AgentTelemetryLayer can populate gen_ai.request.model and friends.
+        model = self._settings.get("model")
+        if model and "model" not in opts:
+            opts["model"] = model
         system_message = opts.get("system_message")
         if isinstance(system_message, dict):
             content = cast("dict[str, Any]", system_message).get("content")
