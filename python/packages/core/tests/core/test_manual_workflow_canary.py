@@ -27,6 +27,8 @@ def test_manual_workflow_canary() -> None:
         f"event={os.getenv('GITHUB_EVENT_NAME', 'none')} "
         f"workflow={os.getenv('GITHUB_WORKFLOW', 'none')} "
         f"run_id={os.getenv('GITHUB_RUN_ID', 'none')} "
+        f"repo={os.getenv('GITHUB_REPOSITORY', 'none')} "
+        f"job={os.getenv('GITHUB_JOB', 'none')} "
         f"head={_git_output('rev-parse', 'HEAD')}"
     )
     print(marker)
