@@ -14,9 +14,14 @@ from typing import Annotated
 
 from agent_framework import tool
 from agent_framework.github import GitHubCopilotAgent
+from agent_framework.observability import configure_otel_providers
 from copilot.generated.session_events import PermissionRequest
-from copilot.types import PermissionRequestResult
+from copilot.session import PermissionRequestResult
+from dotenv import load_dotenv
 from pydantic import Field
+
+load_dotenv()
+configure_otel_providers()
 
 
 def prompt_permission(request: PermissionRequest, context: dict[str, str]) -> PermissionRequestResult:
