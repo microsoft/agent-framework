@@ -2400,6 +2400,30 @@ class RawOpenAIChatClient(  # type: ignore[misc]
                                 raw_representation=event,
                             )
                         )
+                elif ann_type == "url_citation":
+                    ann_url = _get_ann_value("url")
+                    if ann_url:
+                        contents.append(
+                            Content(
+                                "text",
+                                annotations=[
+                                    Annotation(
+                                        type="citation",
+                                        title=_get_ann_value("title"),
+                                        url=str(ann_url),
+                                        annotated_regions=[
+                                            TextSpanRegion(
+                                                type="text_span",
+                                                start_index=_get_ann_value("start_index") or 0,
+                                                end_index=_get_ann_value("end_index") or 0,
+                                            )
+                                        ],
+                                        raw_representation=event,
+                                    )
+                                ],
+                                raw_representation=event,
+                            )
+                        )
                 elif ann_type == "container_file_citation":
                     if ann_file_id:
                         contents.append(
