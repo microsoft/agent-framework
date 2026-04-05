@@ -1310,6 +1310,72 @@ class TestAgenticSearch:
         assert len(results) == 1
         assert results[0].text == "No results found from Knowledge Base."
 
+    async def test_minimal_reasoning_includes_knowledge_source_params(self) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "minimal"
+
+        mock_content = Mock()
+        mock_content.text = "Answer"
+        mock_message = Mock()
+        mock_message.role = "assistant"
+        mock_message.content = [mock_content]
+        mock_result = Mock()
+        mock_result.response = [mock_message]
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        with patch(
+            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+            type(mock_content),
+        ):
+            await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        call_kwargs = mock_retrieval.retrieve.call_args
+        request = call_kwargs.kwargs.get("retrieval_request") or call_kwargs.args[0]
+        assert request.knowledge_source_params is not None
+        assert len(request.knowledge_source_params) == 1
+        params = request.knowledge_source_params[0]
+        assert params.knowledge_source_name == "test-index-source"
+        assert params.include_reference_source_data is True
+
+    async def test_non_minimal_reasoning_includes_knowledge_source_params(self) -> None:
+        provider = _make_provider()
+        provider._knowledge_base_initialized = True
+        provider.knowledge_base_name = "kb"
+        provider.retrieval_reasoning_effort = "medium"
+
+        mock_content = Mock()
+        mock_content.text = "Answer"
+        mock_message = Mock()
+        mock_message.role = "assistant"
+        mock_message.content = [mock_content]
+        mock_result = Mock()
+        mock_result.response = [mock_message]
+        mock_result.references = None
+
+        mock_retrieval = AsyncMock()
+        mock_retrieval.retrieve = AsyncMock(return_value=mock_result)
+        provider._retrieval_client = mock_retrieval
+
+        with patch(
+            "agent_framework_azure_ai_search._context_provider.KnowledgeBaseMessageTextContent",
+            type(mock_content),
+        ):
+            await provider._agentic_search([Message(role="user", contents=["query"])])
+
+        call_kwargs = mock_retrieval.retrieve.call_args
+        request = call_kwargs.kwargs.get("retrieval_request") or call_kwargs.args[0]
+        assert request.knowledge_source_params is not None
+        assert len(request.knowledge_source_params) == 1
+        params = request.knowledge_source_params[0]
+        assert params.knowledge_source_name == "test-index-source"
+        assert params.include_reference_source_data is True
+
 
 # -- before_run: agentic mode --------------------------------------------------
 
