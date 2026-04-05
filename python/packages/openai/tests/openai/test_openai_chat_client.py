@@ -1895,6 +1895,24 @@ def test_parse_response_with_store_false() -> None:
     assert conversation_id is None
 
 
+def test_parse_response_with_store_none_returns_none() -> None:
+    """Test _get_conversation_id returns None when store=None (default).
+
+    Regression for https://github.com/microsoft/agent-framework/issues/5105 —
+    ensures full-history mode is used by default, which works with providers
+    that don't support previous_response_id (e.g. OpenRouter).
+    """
+    client = OpenAIChatClient(model="test-model", api_key="test-key")
+
+    mock_response = MagicMock()
+    mock_response.id = "resp_123"
+    mock_response.conversation = MagicMock()
+    mock_response.conversation.id = "conv_456"
+
+    assert client._get_conversation_id(mock_response, store=None) is None
+    assert client._get_conversation_id(mock_response, store=False) is None
+
+
 def test_parse_response_uses_response_id_when_no_conversation() -> None:
     """Test _get_conversation_id returns response ID when no conversation exists."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
@@ -2371,9 +2389,8 @@ def test_streaming_response_basic_structure() -> None:
 
 
 def test_streaming_response_created_type() -> None:
-    """Test streaming response with created type"""
+    """Test streaming response with created type sets conversation_id only when store=True."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     mock_event = MagicMock()
@@ -2383,16 +2400,20 @@ def test_streaming_response_created_type() -> None:
     mock_event.response.conversation = MagicMock()
     mock_event.response.conversation.id = "conv_5678"
 
-    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
-
+    # store=True: server-managed mode — conversation_id is returned
+    response = client._parse_chunk_from_openai(mock_event, ChatOptions(store=True), function_call_ids)
     assert response.response_id == "resp_1234"
     assert response.conversation_id == "conv_5678"
 
+    # store=None (default): full-history mode — conversation_id is NOT returned
+    response = client._parse_chunk_from_openai(mock_event, ChatOptions(), function_call_ids)
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id is None
+
 
 def test_streaming_response_in_progress_type() -> None:
-    """Test streaming response with in_progress type"""
+    """Test streaming response with in_progress type sets conversation_id only when store=True."""
     client = OpenAIChatClient(model="test-model", api_key="test-key")
-    chat_options = ChatOptions()
     function_call_ids: dict[int, tuple[str, str]] = {}
 
     mock_event = MagicMock()
@@ -2402,10 +2423,15 @@ def test_streaming_response_in_progress_type() -> None:
     mock_event.response.conversation = MagicMock()
     mock_event.response.conversation.id = "conv_5678"
 
-    response = client._parse_chunk_from_openai(mock_event, chat_options, function_call_ids)
-
+    # store=True: server-managed mode — conversation_id is returned
+    response = client._parse_chunk_from_openai(mock_event, ChatOptions(store=True), function_call_ids)
     assert response.response_id == "resp_1234"
     assert response.conversation_id == "conv_5678"
+
+    # store=None (default): full-history mode — conversation_id is NOT returned
+    response = client._parse_chunk_from_openai(mock_event, ChatOptions(), function_call_ids)
+    assert response.response_id == "resp_1234"
+    assert response.conversation_id is None
 
 
 def test_streaming_annotation_added_with_file_path() -> None:
