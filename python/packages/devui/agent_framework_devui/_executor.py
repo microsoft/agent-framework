@@ -781,6 +781,7 @@ class AgentFrameworkExecutor:
 
         # If no contents found, create a simple text message
         if not contents:
+            logger.warning("All input items were non-user; no user content extracted")
             contents.append(Content.from_text(text=""))
 
         chat_message = Message(role="user", contents=contents)

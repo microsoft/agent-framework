@@ -246,6 +246,56 @@ class TestMultimodalWorkflowInput:
         assert len(result.contents) == 1
         assert result.contents[0].text == "Hello!"
 
+    def test_convert_skips_all_non_user_messages_chat_completions(self):
+        """When ALL messages are non-user (Chat Completions format), the result is a Message with empty text."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Only non-user messages, no user content at all
+        input_data = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "assistant", "content": "How can I help?"},
+        ]
+
+        result = executor._convert_input_to_chat_message(input_data)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 1
+        assert result.contents[0].text == ""
+
+    def test_convert_skips_non_user_messages_responses_api_format(self):
+        """Non-user messages in Responses API format (with type: message) are also skipped."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        input_data = [
+            {"type": "message", "role": "system", "content": "You are a helpful assistant."},
+            {"type": "message", "role": "user", "content": "Hello!"},
+        ]
+
+        result = executor._convert_input_to_chat_message(input_data)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 1
+        assert result.contents[0].text == "Hello!"
+
+    def test_is_openai_multimodal_format_accepts_all_valid_roles(self):
+        """All valid roles (user, system, assistant, tool, developer) are accepted by format detection."""
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        for role in ("user", "system", "assistant", "tool", "developer"):
+            assert executor._is_openai_multimodal_format([{"role": role, "content": "hi"}]) is True, (
+                f"Expected role {role!r} to be accepted"
+            )
+
     def test_is_openai_multimodal_format_rejects_malformed_input(self):
         """Test that _is_openai_multimodal_format rejects inputs missing content or with invalid roles."""
         discovery = MagicMock(spec=EntityDiscovery)
