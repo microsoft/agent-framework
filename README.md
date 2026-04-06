@@ -123,7 +123,6 @@ if __name__ == "__main__":
 Create a simple Agent, using Microsoft Foundry with token-based auth, that writes a haiku about the Microsoft Agent Framework
 
 ```c#
-// dotnet add package Microsoft.Agents.AI.AzureAI --prerelease
 // dotnet add package Microsoft.Agents.AI.Foundry
 // Use `az login` to authenticate with Azure CLI
 using Azure.AI.Projects;
