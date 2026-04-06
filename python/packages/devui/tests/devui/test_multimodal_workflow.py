@@ -158,9 +158,7 @@ class TestMultimodalWorkflowInput:
         executor = AgentFrameworkExecutor(discovery, mapper)
 
         # Chat Completions format: role + content, no type field
-        chat_completions_format = [
-            {"role": "user", "content": "Describe this image"}
-        ]
+        chat_completions_format = [{"role": "user", "content": "Describe this image"}]
         assert executor._is_openai_multimodal_format(chat_completions_format) is True
 
     def test_convert_chat_completions_format_with_string_content(self):
@@ -172,9 +170,7 @@ class TestMultimodalWorkflowInput:
         executor = AgentFrameworkExecutor(discovery, mapper)
 
         # Chat Completions format (no type field, string content)
-        input_data = [
-            {"role": "user", "content": "Which Google phones are allowed?"}
-        ]
+        input_data = [{"role": "user", "content": "Which Google phones are allowed?"}]
 
         result = executor._convert_input_to_chat_message(input_data)
 

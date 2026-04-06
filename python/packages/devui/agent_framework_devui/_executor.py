@@ -833,9 +833,7 @@ class AgentFrameworkExecutor:
         if isinstance(first_type, str) and first_type == "message":
             return True
         # Also accept Chat Completions format: {"role": "...", "content": "..."}
-        if first_type is None and "role" in first_dict:
-            return True
-        return False
+        return bool(first_type is None and "role" in first_dict)
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.
