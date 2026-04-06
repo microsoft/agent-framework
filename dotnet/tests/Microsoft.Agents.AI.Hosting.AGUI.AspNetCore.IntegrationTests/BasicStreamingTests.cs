@@ -164,6 +164,42 @@ public sealed class BasicStreamingTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ChatClientConversationId_RestoresServerSessionAcrossRequestsAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync(useStatefulMemoryAgent: true);
+        var chatClient = new AGUIChatClient(this._client!, "", null);
+        var chatOptions = new ChatOptions();
+
+        // Act
+        ChatResponse firstResponse = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "My name is Alice")], chatOptions);
+        chatOptions.ConversationId = firstResponse.ConversationId;
+        ChatResponse secondResponse = await chatClient.GetResponseAsync([new ChatMessage(ChatRole.User, "What is my name?")], chatOptions);
+
+        // Assert
+        firstResponse.ConversationId.Should().NotBeNullOrEmpty();
+        secondResponse.Text.Should().Contain("Alice");
+    }
+
+    [Fact]
+    public async Task AsAIAgentSession_RestoresServerSessionAcrossRunsAsync()
+    {
+        // Arrange
+        await this.SetupTestServerAsync(useStatefulMemoryAgent: true);
+        var chatClient = new AGUIChatClient(this._client!, "", null);
+        AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Stateful assistant", tools: []);
+        AgentSession session = await agent.CreateSessionAsync();
+
+        // Act
+        AgentResponse firstResponse = await agent.RunAsync("My name is Alice", session, new AgentRunOptions(), CancellationToken.None);
+        AgentResponse secondResponse = await agent.RunAsync("What is my name?", session, new AgentRunOptions(), CancellationToken.None);
+
+        // Assert
+        firstResponse.Text.Should().Contain("Alice");
+        secondResponse.Text.Should().Contain("Alice");
+    }
+
+    [Fact]
     public async Task AgentSendsMultipleMessagesInOneTurnAsync()
     {
         // Arrange
@@ -231,14 +267,18 @@ public sealed class BasicStreamingTests : IAsyncDisposable
         response.Messages[0].Text.Should().Be("Hello from fake agent!");
     }
 
-    private async Task SetupTestServerAsync(bool useMultiMessageAgent = false)
+    private async Task SetupTestServerAsync(bool useMultiMessageAgent = false, bool useStatefulMemoryAgent = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
 
         builder.Services.AddAGUI();
 
-        if (useMultiMessageAgent)
+        if (useStatefulMemoryAgent)
+        {
+            builder.Services.AddSingleton<FakeStatefulMemoryAgent>();
+        }
+        else if (useMultiMessageAgent)
         {
             builder.Services.AddSingleton<FakeMultiMessageAgent>();
         }
@@ -249,9 +289,11 @@ public sealed class BasicStreamingTests : IAsyncDisposable
 
         this._app = builder.Build();
 
-        AIAgent agent = useMultiMessageAgent
-            ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
-            : this._app.Services.GetRequiredService<FakeChatClientAgent>();
+        AIAgent agent = useStatefulMemoryAgent
+            ? this._app.Services.GetRequiredService<FakeStatefulMemoryAgent>()
+            : useMultiMessageAgent
+                ? this._app.Services.GetRequiredService<FakeMultiMessageAgent>()
+                : this._app.Services.GetRequiredService<FakeChatClientAgent>();
 
         this._app.MapAGUI("/agent", agent);
 
@@ -440,4 +482,99 @@ internal sealed class FakeMultiMessageAgent : AIAgent
     }
 
     public override object? GetService(Type serviceType, object? serviceKey = null) => null;
+}
+
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Instantiated via dependency injection")]
+internal sealed class FakeStatefulMemoryAgent : AIAgent
+{
+    private const string NameStateKey = "remembered-name";
+
+    protected override string? IdCore => "fake-stateful-memory-agent";
+
+    public override string? Description => "A fake agent that stores simple memory in the session";
+
+    protected override ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default) =>
+        new(new FakeAgentSession());
+
+    protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default) =>
+        new(serializedState.Deserialize<FakeAgentSession>(jsonSerializerOptions)!);
+
+    protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+    {
+        if (session is not FakeAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session.GetType().Name}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be serialized by this agent.");
+        }
+
+        return new(JsonSerializer.SerializeToElement(typedSession, jsonSerializerOptions));
+    }
+
+    protected override async Task<AgentResponse> RunCoreAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        List<AgentResponseUpdate> updates = [];
+        await foreach (AgentResponseUpdate update in this.RunStreamingAsync(messages, session, options, cancellationToken).ConfigureAwait(false))
+        {
+            updates.Add(update);
+        }
+
+        return updates.ToAgentResponse();
+    }
+
+    protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
+        IEnumerable<ChatMessage> messages,
+        AgentSession? session = null,
+        AgentRunOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (session is not FakeAgentSession typedSession)
+        {
+            throw new InvalidOperationException($"The provided session type '{session?.GetType().Name ?? "null"}' is not compatible with this agent. Only sessions of type '{nameof(FakeAgentSession)}' can be used by this agent.");
+        }
+
+        string lastUserInput = messages.Last(m => m.Role == ChatRole.User).Text ?? string.Empty;
+        string responseText;
+
+        if (lastUserInput.StartsWith("My name is ", StringComparison.OrdinalIgnoreCase))
+        {
+            string rememberedName = lastUserInput[11..].Trim();
+            typedSession.StateBag.SetValue(NameStateKey, rememberedName);
+            responseText = $"Nice to meet you {rememberedName}.";
+        }
+        else if (lastUserInput.Equals("What is my name?", StringComparison.OrdinalIgnoreCase))
+        {
+            string? rememberedName = typedSession.StateBag.GetValue<string>(NameStateKey);
+            responseText = rememberedName is null
+                ? "I do not know your name yet."
+                : $"Your name is {rememberedName}.";
+        }
+        else
+        {
+            responseText = "I can remember your name if you tell me 'My name is ...'.";
+        }
+
+        yield return new AgentResponseUpdate
+        {
+            MessageId = Guid.NewGuid().ToString("N"),
+            Role = ChatRole.Assistant,
+            Contents = [new TextContent(responseText)]
+        };
+
+        await Task.Yield();
+    }
+
+    private sealed class FakeAgentSession : AgentSession
+    {
+        public FakeAgentSession()
+        {
+        }
+
+        [JsonConstructor]
+        public FakeAgentSession(AgentSessionStateBag stateBag) : base(stateBag)
+        {
+        }
+    }
 }

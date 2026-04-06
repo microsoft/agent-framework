@@ -22,6 +22,7 @@ public static class MicrosoftAgentAIHostingAGUIServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.Configure<JsonOptions>(options => options.SerializerOptions.TypeInfoResolverChain.Add(AGUIJsonSerializerOptions.Default.TypeInfoResolver!));
+        services.AddSingleton<AGUIInMemorySessionStore>();
 
         return services;
     }

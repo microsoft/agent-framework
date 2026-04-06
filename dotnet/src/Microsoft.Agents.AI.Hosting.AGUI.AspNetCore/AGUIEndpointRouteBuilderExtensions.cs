@@ -3,7 +3,9 @@
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Agents.AI.Hosting.AGUI.AspNetCore.Shared;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -42,6 +44,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
+            var sessionStore = context.RequestServices.GetRequiredService<AGUIInMemorySessionStore>();
 
             var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             var clientTools = input.Tools?.AsAITools().ToList();
@@ -63,11 +66,17 @@ public static class AGUIEndpointRouteBuilderExtensions
                 }
             };
 
+            AgentSession? session = await GetOrCreateSessionAsync(aiAgent, input.ThreadId, sessionStore, cancellationToken).ConfigureAwait(false);
+
             // Run the agent and convert to AG-UI events
-            var events = aiAgent.RunStreamingAsync(
+            var events = RunStreamingWithSessionPersistenceAsync(
+                aiAgent,
                 messages,
-                options: runOptions,
-                cancellationToken: cancellationToken)
+                runOptions,
+                session,
+                input.ThreadId,
+                sessionStore,
+                cancellationToken)
                 .AsChatResponseUpdatesAsync()
                 .FilterServerToolsFromMixedToolInvocationsAsync(clientTools, cancellationToken)
                 .AsAGUIEventStreamAsync(
@@ -79,5 +88,60 @@ public static class AGUIEndpointRouteBuilderExtensions
             var sseLogger = context.RequestServices.GetRequiredService<ILogger<AGUIServerSentEventsResult>>();
             return new AGUIServerSentEventsResult(events, sseLogger);
         });
+    }
+
+    private static async ValueTask<AgentSession?> GetOrCreateSessionAsync(
+        AIAgent aiAgent,
+        string? threadId,
+        AGUIInMemorySessionStore sessionStore,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(threadId))
+        {
+            return null;
+        }
+
+        return await sessionStore.GetOrCreateSessionAsync(aiAgent, threadId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async ValueTask PersistSessionAsync(
+        AIAgent aiAgent,
+        string? threadId,
+        AgentSession? session,
+        AGUIInMemorySessionStore sessionStore,
+        CancellationToken cancellationToken)
+    {
+        if (session is null || string.IsNullOrWhiteSpace(threadId))
+        {
+            return;
+        }
+
+        await sessionStore.SaveSessionAsync(aiAgent, threadId, session, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async IAsyncEnumerable<AgentResponseUpdate> RunStreamingWithSessionPersistenceAsync(
+        AIAgent aiAgent,
+        IEnumerable<ChatMessage> messages,
+        AgentRunOptions runOptions,
+        AgentSession? session,
+        string? threadId,
+        AGUIInMemorySessionStore sessionStore,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (AgentResponseUpdate update in aiAgent.RunStreamingAsync(
+                messages,
+                session,
+                runOptions,
+                cancellationToken).ConfigureAwait(false))
+            {
+                yield return update;
+            }
+        }
+        finally
+        {
+            await PersistSessionAsync(aiAgent, threadId, session, sessionStore, cancellationToken).ConfigureAwait(false);
+        }
     }
 }
