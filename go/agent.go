@@ -2,6 +2,7 @@ package agentframework
 
 import (
 	"context"
+	"maps"
 
 	"github.com/google/uuid"
 )
@@ -16,12 +17,15 @@ type Agent interface {
 
 // BaseAgent is the standard Agent implementation backed by a ChatClient.
 type BaseAgent struct {
-	id              string
-	name            string
-	description     string
-	client          ChatClient
-	instructions    []string
-	defaultChatOpts []ChatOption
+	id                 string
+	name               string
+	description        string
+	client             ChatClient
+	instructions       []string
+	defaultChatOpts    []ChatOption
+	agentMiddleware    []AgentMiddleware
+	chatMiddleware     []ChatMiddleware
+	functionMiddleware []FunctionMiddleware
 }
 
 // AgentOption configures a BaseAgent.
@@ -51,19 +55,41 @@ func (a *BaseAgent) Run(ctx context.Context, messages []Message, opts ...RunOpti
 
 	runOpts := NewRunOptions(opts...)
 
-	// Build the full message list: instructions first, then user messages.
+	ac := &AgentContext{
+		Agent:    a,
+		Messages: messages,
+		Options:  &runOpts,
+		Metadata: make(map[string]any),
+	}
+
+	terminal := func(ctx context.Context, ac *AgentContext) error {
+		resp, err := a.runCore(ctx, ac)
+		if err != nil {
+			return err
+		}
+		ac.Response = resp
+		return nil
+	}
+
+	handler := buildAgentChain(a.agentMiddleware, terminal)
+	if err := handler(ctx, ac); err != nil {
+		return nil, err
+	}
+
+	return ac.Response, nil
+}
+
+func (a *BaseAgent) runCore(ctx context.Context, ac *AgentContext) (*AgentResponse, error) {
 	var fullMessages []Message
 	for _, instr := range a.instructions {
 		fullMessages = append(fullMessages, NewSystemMessage(instr))
 	}
-	fullMessages = append(fullMessages, messages...)
+	fullMessages = append(fullMessages, ac.Messages...)
 
-	// Merge default chat options with run-level overrides.
-	// Defaults are applied first, then run-level options override.
 	chatOpts := make([]ChatOption, 0, len(a.defaultChatOpts)+1)
 	chatOpts = append(chatOpts, a.defaultChatOpts...)
 	chatOpts = append(chatOpts, func(o *ChatOptions) {
-		merged := runOpts.ChatOptions
+		merged := ac.Options.ChatOptions
 		if merged.Temperature != nil {
 			o.Temperature = merged.Temperature
 		}
@@ -77,19 +103,47 @@ func (a *BaseAgent) Run(ctx context.Context, messages []Message, opts ...RunOpti
 			if o.Metadata == nil {
 				o.Metadata = make(map[string]any)
 			}
-			for k, v := range merged.Metadata {
-				o.Metadata[k] = v
-			}
+			maps.Copy(o.Metadata, merged.Metadata)
 		}
 	})
 
-	resp, err := a.client.GetResponse(ctx, fullMessages, chatOpts...)
-	if err != nil {
+	resolvedOpts := NewChatOptions(chatOpts...)
+
+	cc := &ChatContext{
+		Client:   a.client,
+		Messages: fullMessages,
+		Options:  &resolvedOpts,
+		Metadata: make(map[string]any),
+	}
+
+	chatTerminal := func(ctx context.Context, cc *ChatContext) error {
+		var opts []ChatOption
+		if cc.Options.Temperature != nil {
+			t := *cc.Options.Temperature
+			opts = append(opts, WithTemperature(t))
+		}
+		if cc.Options.MaxTokens != nil {
+			n := *cc.Options.MaxTokens
+			opts = append(opts, WithMaxTokens(n))
+		}
+		if cc.Options.Model != "" {
+			opts = append(opts, WithModel(cc.Options.Model))
+		}
+		resp, err := cc.Client.GetResponse(ctx, cc.Messages, opts...)
+		if err != nil {
+			return err
+		}
+		cc.Response = resp
+		return nil
+	}
+
+	chatHandler := buildChatChain(a.chatMiddleware, chatTerminal)
+	if err := chatHandler(ctx, cc); err != nil {
 		return nil, err
 	}
 
 	return &AgentResponse{
-		ChatResponse: *resp,
+		ChatResponse: *cc.Response,
 		AgentID:      a.id,
 	}, nil
 }
@@ -126,5 +180,26 @@ func WithInstructions(instructions ...string) AgentOption {
 func WithDefaultChatOptions(opts ...ChatOption) AgentOption {
 	return func(a *BaseAgent) {
 		a.defaultChatOpts = opts
+	}
+}
+
+// WithAgentMiddleware appends agent-level middleware to the pipeline.
+func WithAgentMiddleware(mw ...AgentMiddleware) AgentOption {
+	return func(a *BaseAgent) {
+		a.agentMiddleware = append(a.agentMiddleware, mw...)
+	}
+}
+
+// WithChatMiddleware appends chat-level middleware to the pipeline.
+func WithChatMiddleware(mw ...ChatMiddleware) AgentOption {
+	return func(a *BaseAgent) {
+		a.chatMiddleware = append(a.chatMiddleware, mw...)
+	}
+}
+
+// WithFunctionMiddleware appends function-level middleware to the pipeline.
+func WithFunctionMiddleware(mw ...FunctionMiddleware) AgentOption {
+	return func(a *BaseAgent) {
+		a.functionMiddleware = append(a.functionMiddleware, mw...)
 	}
 }
