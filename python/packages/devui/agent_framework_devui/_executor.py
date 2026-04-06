@@ -632,6 +632,10 @@ class AgentFrameworkExecutor:
                 item_dict = cast(dict[str, Any], item)
                 item_type = item_dict.get("type")
                 if item_type == "message" or (item_type is None and "role" in item_dict):
+                    message_role = item_dict.get("role")
+                    if message_role is not None and message_role != "user":
+                        logger.debug("Skipping non-user OpenAI message item with role %r", message_role)
+                        continue
                     # Extract content from OpenAI message
                     message_content = item_dict.get("content", [])
 
@@ -833,7 +837,19 @@ class AgentFrameworkExecutor:
         if isinstance(first_type, str) and first_type == "message":
             return True
         # Also accept Chat Completions format: {"role": "...", "content": "..."}
-        return bool(first_type is None and "role" in first_dict)
+        # but require the minimum expected shape to avoid misclassifying
+        # unrelated or malformed list inputs as chat messages.
+        if first_type is not None:
+            return False
+        role = first_dict.get("role")
+        content = first_dict.get("content")
+        valid_roles = {"system", "user", "assistant", "tool", "developer"}
+        return bool(
+            isinstance(role, str)
+            and role in valid_roles
+            and "content" in first_dict
+            and isinstance(content, str | list)
+        )
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
         """Parse input based on workflow's expected input type.

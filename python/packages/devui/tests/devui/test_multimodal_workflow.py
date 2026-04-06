@@ -178,8 +178,8 @@ class TestMultimodalWorkflowInput:
         assert len(result.contents) == 1
         assert result.contents[0].text == "Which Google phones are allowed?"
 
-    def test_convert_chat_completions_format_with_list_content(self):
-        """Test that Chat Completions format with list content is converted correctly."""
+    def test_convert_chat_completions_envelope_with_responses_api_content(self):
+        """Test Chat Completions-style envelope (no type field) with Responses API content parts."""
         from agent_framework import Message
 
         discovery = MagicMock(spec=EntityDiscovery)
@@ -203,3 +203,60 @@ class TestMultimodalWorkflowInput:
         assert len(result.contents) == 2
         assert result.contents[0].text == "Describe this image"
         assert result.contents[1].type == "data"
+
+    async def test_parse_workflow_input_chat_completions_json_string(self):
+        """Regression test: JSON-stringified Chat Completions array goes through _parse_workflow_input."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # JSON-stringified Chat Completions format (the path DevUI/frontend commonly uses)
+        chat_input = json.dumps([{"role": "user", "content": "Which Google phones are allowed?"}])
+
+        mock_workflow = MagicMock()
+        mock_executor = MagicMock()
+        mock_executor.input_types = [Message]
+        mock_workflow.get_start_executor.return_value = mock_executor
+
+        result = await executor._parse_workflow_input(mock_workflow, chat_input)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 1
+        assert result.contents[0].text == "Which Google phones are allowed?"
+
+    def test_convert_skips_non_user_messages(self):
+        """Test that non-user messages (system, assistant) are skipped during conversion."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Mix of system and user messages - only user content should be kept
+        input_data = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Hello!"},
+        ]
+
+        result = executor._convert_input_to_chat_message(input_data)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 1
+        assert result.contents[0].text == "Hello!"
+
+    def test_is_openai_multimodal_format_rejects_malformed_input(self):
+        """Test that _is_openai_multimodal_format rejects inputs missing content or with invalid roles."""
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Missing content key
+        assert executor._is_openai_multimodal_format([{"role": "user"}]) is False
+        # Invalid role value
+        assert executor._is_openai_multimodal_format([{"role": "unknown", "content": "hi"}]) is False
+        # Role is not a string
+        assert executor._is_openai_multimodal_format([{"role": 123, "content": "hi"}]) is False
+        # Content is neither str nor list
+        assert executor._is_openai_multimodal_format([{"role": "user", "content": 42}]) is False
