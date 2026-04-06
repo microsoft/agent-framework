@@ -39,7 +39,7 @@ dev = [
     "pytest-retry==1.7.0",
     "mypy==1.20.0",
     "pyright==1.1.408",
-    "mcp[ws]==1.26.0",
+    "mcp[ws]==1.27.0",
     "opentelemetry-sdk==1.40.0",
     #tasks
     "poethepoet==0.42.1",
