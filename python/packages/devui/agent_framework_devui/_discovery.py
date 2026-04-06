@@ -391,7 +391,7 @@ class EntityDiscovery:
             source=source,  # IMPORTANT: Pass the source parameter
             tools=[str(tool) for tool in (tools_list or [])],
             instructions=instructions,
-            model_id=model,
+            model=model,
             chat_client_type=chat_client_type,
             context_provider=context_provider_list,
             middleware=middlewares_list,
@@ -846,7 +846,7 @@ class EntityDiscovery:
                 description=description,
                 tools=tools_union,
                 instructions=instructions,
-                model_id=model,
+                model=model,
                 chat_client_type=chat_client_type,
                 context_provider=context_provider_list,
                 middleware=middlewares_list,

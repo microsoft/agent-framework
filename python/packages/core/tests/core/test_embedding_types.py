@@ -12,7 +12,7 @@ from agent_framework import Embedding, EmbeddingGenerationOptions, GeneratedEmbe
 def test_embedding_basic_construction() -> None:
     embedding = Embedding(vector=[0.1, 0.2, 0.3])
     assert embedding.vector == [0.1, 0.2, 0.3]
-    assert embedding.model_id is None
+    assert embedding.model is None
     assert embedding.created_at is None
     assert embedding.additional_properties == {}
 
@@ -21,11 +21,11 @@ def test_embedding_construction_with_metadata() -> None:
     now = datetime.now()
     embedding = Embedding(
         vector=[0.1, 0.2],
-        model_id="text-embedding-3-small",
+        model="text-embedding-3-small",
         created_at=now,
         additional_properties={"key": "value"},
     )
-    assert embedding.model_id == "text-embedding-3-small"
+    assert embedding.model == "text-embedding-3-small"
     assert embedding.created_at == now
     assert embedding.additional_properties == {"key": "value"}
 
@@ -96,7 +96,7 @@ def test_generated_construction_with_usage() -> None:
         [
             Embedding(
                 vector=[0.1],
-                model_id="test-model",
+                model="test-model",
             )
         ],
         usage=usage,
@@ -113,13 +113,13 @@ def test_generated_construction_with_additional_properties() -> None:
 
 
 def test_generated_construction_with_options() -> None:
-    opts: EmbeddingGenerationOptions = {"model_id": "text-embedding-3-small", "dimensions": 256}
+    opts: EmbeddingGenerationOptions = {"model": "text-embedding-3-small", "dimensions": 256}
     embeddings = GeneratedEmbeddings(
         [Embedding(vector=[0.1])],
         options=opts,
     )
     assert embeddings.options is not None
-    assert embeddings.options["model_id"] == "text-embedding-3-small"
+    assert embeddings.options["model"] == "text-embedding-3-small"
     assert embeddings.options["dimensions"] == 256
 
 
@@ -160,12 +160,12 @@ def test_generated_none_embeddings_creates_empty_list() -> None:
 
 def test_options_empty() -> None:
     options: EmbeddingGenerationOptions = {}
-    assert "model_id" not in options
+    assert "model" not in options
 
 
-def test_options_with_model_id() -> None:
-    options: EmbeddingGenerationOptions = {"model_id": "text-embedding-3-small"}
-    assert options["model_id"] == "text-embedding-3-small"
+def test_options_with_model() -> None:
+    options: EmbeddingGenerationOptions = {"model": "text-embedding-3-small"}
+    assert options["model"] == "text-embedding-3-small"
 
 
 def test_options_with_dimensions() -> None:
@@ -175,8 +175,8 @@ def test_options_with_dimensions() -> None:
 
 def test_options_with_all_fields() -> None:
     options: EmbeddingGenerationOptions = {
-        "model_id": "text-embedding-3-small",
+        "model": "text-embedding-3-small",
         "dimensions": 1536,
     }
-    assert options["model_id"] == "text-embedding-3-small"
+    assert options["model"] == "text-embedding-3-small"
     assert options["dimensions"] == 1536

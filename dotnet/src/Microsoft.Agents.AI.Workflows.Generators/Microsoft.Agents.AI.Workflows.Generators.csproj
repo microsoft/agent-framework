@@ -29,7 +29,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <IsReleaseCandidate>true</IsReleaseCandidate>
+    <IsReleased>true</IsReleased>
   </PropertyGroup>
 
   <Import Project="$(RepoRoot)/dotnet/nuget/nuget-package.props" />

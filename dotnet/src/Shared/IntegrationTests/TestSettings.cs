@@ -16,6 +16,7 @@ internal static class TestSettings
 
     // Azure AI (Foundry)
     public const string AzureAIBingConnectionId = "AZURE_AI_BING_CONNECTION_ID";
+    public const string AzureAIEmbeddingDeploymentName = "AZURE_AI_EMBEDDING_DEPLOYMENT_NAME";
     public const string AzureAIMemoryStoreId = "AZURE_AI_MEMORY_STORE_ID";
     public const string AzureAIModelDeploymentName = "AZURE_AI_MODEL_DEPLOYMENT_NAME";
     public const string AzureAIProjectEndpoint = "AZURE_AI_PROJECT_ENDPOINT";

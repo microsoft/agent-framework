@@ -27,8 +27,8 @@ The backend uses Azure OpenAI responses and supports intent-driven, non-linear h
 - Node.js 18+
 - npm 9+
 - Azure AI project + model deployment configured in environment variables:
-  - `AZURE_AI_PROJECT_ENDPOINT`
-  - `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+  - `FOUNDRY_PROJECT_ENDPOINT`
+  - `FOUNDRY_MODEL`
 
 ## 1) Run Backend
 

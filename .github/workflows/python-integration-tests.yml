@@ -60,8 +60,8 @@ jobs:
     environment: integration
     timeout-minutes: 60
     env:
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
@@ -95,10 +95,10 @@ jobs:
     environment: integration
     timeout-minutes: 60
     env:
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
-      AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_EMBEDDING_MODEL: ${{ vars.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
     defaults:
       run:
@@ -126,8 +126,6 @@ jobs:
           packages/openai/tests/openai/test_openai_chat_completion_client_azure.py
           packages/openai/tests/openai/test_openai_chat_client_azure.py
           packages/openai/tests/openai/test_openai_embedding_client_azure.py
-          packages/azure-ai/tests/azure_openai
-          --ignore=packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
           -m integration
           -n logical --dist worksteal
           --timeout=120 --session-timeout=900 --timeout_method thread
@@ -141,7 +139,7 @@ jobs:
     timeout-minutes: 60
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      ANTHROPIC_CHAT_MODEL_ID: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
+      ANTHROPIC_CHAT_MODEL: ${{ vars.ANTHROPIC_CHAT_MODEL_ID }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -203,14 +201,15 @@ jobs:
     timeout-minutes: 60
     env:
       UV_PYTHON: "3.11"
-      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__CHATMODELID }}
-      OPENAI_RESPONSES_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
+      OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.OPENAI__CHATMODELID }}
+      OPENAI_CHAT_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_MODEL: ${{ vars.OPENAI__RESPONSESMODELID }}
       OPENAI_EMBEDDING_MODEL: ${{ vars.OPENAI_EMBEDDING_MODEL_ID }}
       OPENAI_API_KEY: ${{ secrets.OPENAI__APIKEY }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZUREOPENAI__ENDPOINT }}
-      AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
-      AZURE_OPENAI_CHAT_DEPLOYMENT_NAME: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
+      AZURE_OPENAI_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_MODEL: ${{ vars.AZUREOPENAI__RESPONSESDEPLOYMENTNAME }}
+      AZURE_OPENAI_CHAT_COMPLETION_MODEL: ${{ vars.AZUREOPENAI__CHATDEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FUNCTIONS_WORKER_RUNTIME: "python"
@@ -257,12 +256,14 @@ jobs:
     environment: integration
     timeout-minutes: 60
     env:
-      AZURE_AI_PROJECT_ENDPOINT: ${{ secrets.AZUREAI__ENDPOINT }}
-      AZURE_AI_MODEL_DEPLOYMENT_NAME: ${{ vars.AZUREAI__DEPLOYMENTNAME }}
       FOUNDRY_PROJECT_ENDPOINT: ${{ vars.FOUNDRY_PROJECT_ENDPOINT }}
       FOUNDRY_MODEL: ${{ vars.FOUNDRY_MODEL }}
       FOUNDRY_AGENT_NAME: ${{ vars.FOUNDRY_AGENT_NAME }}
       FOUNDRY_AGENT_VERSION: ${{ vars.FOUNDRY_AGENT_VERSION }}
+      FOUNDRY_MODELS_ENDPOINT: ${{ vars.FOUNDRY_MODELS_ENDPOINT || '' }}
+      FOUNDRY_MODELS_API_KEY: ${{ secrets.FOUNDRY_MODELS_API_KEY || '' }}
+      FOUNDRY_EMBEDDING_MODEL: ${{ vars.FOUNDRY_EMBEDDING_MODEL || '' }}
+      FOUNDRY_IMAGE_EMBEDDING_MODEL: ${{ vars.FOUNDRY_IMAGE_EMBEDDING_MODEL || '' }}
       LOCAL_MCP_URL: ${{ vars.LOCAL_MCP__URL }}
     defaults:
       run:
@@ -288,7 +289,6 @@ jobs:
         timeout-minutes: 15
         run: >
           uv run pytest --import-mode=importlib
-          packages/azure-ai/tests/azure_openai/test_azure_responses_client_foundry.py
           packages/foundry/tests
           -m integration
           -n logical --dist worksteal

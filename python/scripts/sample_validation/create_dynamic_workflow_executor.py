@@ -134,7 +134,7 @@ class CustomAgentExecutor(Executor):
                     [
                         Message(
                             role="user",
-                            text=f"Validate the following sample:\n\n{sample.relative_path}",
+                            contents=[f"Validate the following sample:\n\n{sample.relative_path}"],
                         )
                     ],
                     session=self._session,
@@ -292,7 +292,7 @@ class CreateConcurrentValidationWorkflowExecutor(Executor):
                 instructions=AgentInstruction,
                 default_options={
                     "on_permission_request": prompt_permission,
-                    "timeout": 60,
+                    "timeout": 120,
                 },  # type: ignore
             )
             agents.append(agent)

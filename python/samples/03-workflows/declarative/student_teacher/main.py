@@ -16,7 +16,7 @@ Prerequisites:
     - Azure OpenAI deployment with chat completion capability
     - Environment variables:
         FOUNDRY_PROJECT_ENDPOINT: Your Azure AI Foundry Agent Service (V2) project endpoint
-        AZURE_AI_MODEL_DEPLOYMENT_NAME: Your model deployment name
+        FOUNDRY_MODEL: Your model deployment name
 """
 
 import asyncio
@@ -27,8 +27,10 @@ from agent_framework import Agent
 from agent_framework.declarative import WorkflowFactory
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
+from dotenv.main import load_dotenv
 
-# Copyright (c) Microsoft. All rights reserved.
+# Load environment variables from .env file
+load_dotenv()
 
 
 STUDENT_INSTRUCTIONS = """You are a curious math student working on understanding mathematical concepts.
@@ -58,7 +60,7 @@ async def main() -> None:
     # Create chat client
     client = FoundryChatClient(
         project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
+        model=os.environ["FOUNDRY_MODEL"],
         credential=AzureCliCredential(),
     )
 

@@ -133,6 +133,53 @@ public class InProcessExecutionTests
     }
 
     /// <summary>
+    /// This test checks that the logic around waiting for input and halting appropriately works right when the
+    /// workflow runs to halting before the EventStream is watched by the user.
+    /// </summary>
+    [Fact]
+    public async Task RunStreamingAsyncWaitToTakeStreamAsync()
+    {
+        // Arrange: Create a simple agent that responds to messages
+        var agent = new SimpleTestAgent("test-agent");
+        var workflow = AgentWorkflowBuilder.BuildSequential(agent);
+        var inputMessage = new ChatMessage(ChatRole.User, "Hello");
+
+        // Act: Execute using streaming version with TurnToken
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, new List<ChatMessage> { inputMessage });
+
+        // Send TurnToken to actually trigger execution (this is the key step)
+        bool messageSent = await run.TrySendMessageAsync(new TurnToken(emitEvents: true));
+        messageSent.Should().BeTrue("TurnToken should be accepted");
+
+        while (await run.GetStatusAsync() != RunStatus.Idle)
+        {
+            await Task.Delay(200);
+        }
+
+        // Collect events
+        List<WorkflowEvent> events = [];
+
+        await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+        {
+            events.Add(evt);
+        }
+
+        // Assert: The workflow should have executed and produced events
+        RunStatus status = await run.GetStatusAsync();
+        status.Should().Be(RunStatus.Idle, "workflow should complete execution");
+
+        events.Should().NotBeEmpty("workflow should produce events during execution");
+
+        // Check that we have agent execution events
+        var agentEvents = events.OfType<AgentResponseUpdateEvent>().ToList();
+        agentEvents.Should().NotBeEmpty("agent should have executed and produced update events");
+
+        // Check that we have output events
+        var outputEvents = events.OfType<WorkflowOutputEvent>().ToList();
+        outputEvents.Should().NotBeEmpty("workflow should produce output events");
+    }
+
+    /// <summary>
     /// Simple test agent that echoes back the input message.
     /// </summary>
     private sealed class SimpleTestAgent : AIAgent

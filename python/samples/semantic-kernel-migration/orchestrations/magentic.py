@@ -13,9 +13,10 @@
 
 import asyncio
 from collections.abc import Sequence
+from typing import cast
 
-from agent_framework import Agent
-from agent_framework.openai import OpenAIChatClient, OpenAIResponsesClient
+from agent_framework import Agent, AgentResponseUpdate, Message
+from agent_framework.openai import OpenAIChatClient
 from agent_framework.orchestrations import MagenticBuilder
 from dotenv import load_dotenv
 from semantic_kernel.agents import (
@@ -46,22 +47,22 @@ PROMPT = (
 ######################################################################
 
 
-async def build_semantic_kernel_agents() -> list:
+async def build_semantic_kernel_agents() -> list[ChatCompletionAgent | OpenAIAssistantAgent]:
     research_agent = ChatCompletionAgent(
         name="ResearchAgent",
         description="A helpful assistant with access to web search. Ask it to perform web searches.",
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        service=OpenAIChatCompletion(ai_model_id="gpt-4o-search-preview"),
+        service=OpenAIChatCompletion(ai_model="gpt-4o-mini-search-preview"),
     )
 
     client = OpenAIAssistantAgent.create_client()
     code_interpreter_tool, code_interpreter_tool_resources = OpenAIAssistantAgent.configure_code_interpreter_tool()
     openai_settings = OpenAISettings()
-    model_id = openai_settings.chat_model_id if openai_settings.chat_model_id else "gpt-5"
-    definition = await client.beta.assistants.create(
-        model=model_id,
+    model = openai_settings.chat_model if openai_settings.chat_model else "gpt-5"
+    definition = await client.beta.assistants.create(  # pyright: ignore[reportDeprecated]
+        model=model,
         name="CoderAgent",
         description="A helpful assistant that writes and executes code to process and analyze data.",
         instructions="You solve questions using code. Please provide detailed analysis and computation process.",
@@ -94,7 +95,7 @@ def sk_agent_response_callback(
 async def run_semantic_kernel_example(prompt: str) -> Sequence[ChatMessageContent]:
     agents = await build_semantic_kernel_agents()
     magentic_orchestration = MagenticOrchestration(
-        members=agents,
+        members=agents,  # type: ignore
         manager=StandardMagenticManager(chat_completion_service=OpenAIChatCompletion()),
         agent_response_callback=sk_agent_response_callback,
     )
@@ -137,12 +138,12 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         instructions=(
             "You are a Researcher. You find information without additional computation or quantitative analysis."
         ),
-        client=OpenAIChatClient(model="gpt-4o-search-preview"),
+        client=OpenAIChatClient(model="gpt-4o-mini-search-preview"),
     )
 
     # Create code interpreter tool using static method
-    coder_client = OpenAIResponsesClient()
-    code_interpreter_tool = OpenAIResponsesClient.get_code_interpreter_tool()
+    coder_client = OpenAIChatClient()
+    code_interpreter_tool = OpenAIChatClient.get_code_interpreter_tool()
 
     coder = Agent(
         name="CoderAgent",
@@ -160,22 +161,31 @@ async def run_agent_framework_example(prompt: str) -> str | None:
         client=OpenAIChatClient(),
     )
 
-    workflow = MagenticBuilder(participants=[researcher, coder], manager_agent=manager_agent).build()
+    workflow = MagenticBuilder(
+        participants=[researcher, coder],
+        manager_agent=manager_agent,  # type: ignore
+        intermediate_outputs=True,
+    ).build()
 
-    final_text: str | None = None
+    output_messages: list[Message] = []
+    last_message_id: str | None = None
     async for event in workflow.run(prompt, stream=True):
         if event.type == "output":
-            data = event.data
-            if isinstance(data, str):
-                final_text = data
-            elif isinstance(data, list):
-                # Extract text from the last assistant message
-                for msg in reversed(data):
-                    if hasattr(msg, "text") and msg.text:
-                        final_text = msg.text
-                        break
+            if isinstance(event.data, AgentResponseUpdate):
+                if event.data.message_id != last_message_id:
+                    last_message_id = event.data.message_id
+                    print(f"{event.data.author_name}: {event.data.text}", end="")
+                else:
+                    print(event.data.text, end="")
+            else:
+                output_messages.extend(cast(list[Message], event.data))
+                for message in output_messages:
+                    print(f"[{message.author_name}] {message.text}")
 
-    return final_text
+    if output_messages:
+        return output_messages[-1].text
+
+    return None
 
 
 def _print_agent_framework_output(result: str | None) -> None:

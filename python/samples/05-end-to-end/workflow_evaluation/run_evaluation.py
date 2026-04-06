@@ -46,11 +46,11 @@ def print_section(title: str):
     print(f"{'=' * 80}")
 
 
-async def run_workflow(deployment_name: str | None = None) -> dict[str, Any]:
+async def run_workflow(model: str | None = None) -> dict[str, Any]:
     """Execute the multi-agent travel planning workflow.
 
     Args:
-        deployment_name: Optional model deployment name for the workflow agents
+        model: Optional model for the workflow agents
 
     Returns:
         Dictionary containing workflow data with agent response IDs
@@ -58,7 +58,7 @@ async def run_workflow(deployment_name: str | None = None) -> dict[str, Any]:
     print("Executing multi-agent travel planning workflow...")
     print("This may take a few minutes...")
 
-    workflow_data = await create_and_run_workflow(model=deployment_name)
+    workflow_data = await create_and_run_workflow(model=model)
 
     print("Workflow execution completed")
     return workflow_data
@@ -97,9 +97,9 @@ def fetch_agent_responses(openai_client: OpenAI, workflow_data: dict[str, Any], 
             print(f"  Error: {e}")
 
 
-def create_evaluation(openai_client: OpenAI, deployment_name: str | None = "gpt-5.2") -> EvalCreateResponse:
+def create_evaluation(openai_client: OpenAI, model: str | None = "gpt-5.2") -> EvalCreateResponse:
     """Create evaluation with multiple evaluators."""
-    deployment_name = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", deployment_name)
+    model = os.environ.get("FOUNDRY_MODEL", model)
     data_source_config = {"type": "azure_ai_source", "scenario": "responses"}
 
     testing_criteria = [
@@ -107,25 +107,25 @@ def create_evaluation(openai_client: OpenAI, deployment_name: str | None = "gpt-
             "type": "azure_ai_evaluator",
             "name": "relevance",
             "evaluator_name": "builtin.relevance",
-            "initialization_parameters": {"deployment_name": deployment_name},
+            "initialization_parameters": {"deployment_name": model},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "groundedness",
             "evaluator_name": "builtin.groundedness",
-            "initialization_parameters": {"deployment_name": deployment_name},
+            "initialization_parameters": {"deployment_name": model},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "tool_call_accuracy",
             "evaluator_name": "builtin.tool_call_accuracy",
-            "initialization_parameters": {"deployment_name": deployment_name},
+            "initialization_parameters": {"deployment_name": model},
         },
         {
             "type": "azure_ai_evaluator",
             "name": "tool_output_utilization",
             "evaluator_name": "builtin.tool_output_utilization",
-            "initialization_parameters": {"deployment_name": deployment_name},
+            "initialization_parameters": {"deployment_name": model},
         },
     ]
 
@@ -199,8 +199,8 @@ async def main():
     openai_client = create_openai_client()
 
     # Model configuration
-    workflow_agent_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_WORKFLOW", "gpt-4.1-nano")
-    eval_model = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME_EVAL", "gpt-5.2")
+    workflow_agent_model = os.environ.get("FOUNDRY_MODEL_WORKFLOW", "gpt-4.1-nano")
+    eval_model = os.environ.get("FOUNDRY_MODEL_EVAL", "gpt-5.2")
 
     # Focus on these agents, uncomment other ones you want to have evals run on
     agents_to_evaluate = [

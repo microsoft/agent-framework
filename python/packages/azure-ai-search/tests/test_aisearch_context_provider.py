@@ -155,14 +155,14 @@ class TestInitSemantic:
         provider = _make_provider(context_prompt="Custom prompt:")
         assert provider.context_prompt == "Custom prompt:"
 
-    def test_model_name_falls_back_to_deployment_name(self) -> None:
-        """model_name defaults to model_deployment_name when not explicitly set."""
-        provider = _make_provider(model_deployment_name="my-deploy")
-        assert provider.model_name == "my-deploy"
+    def test_model_is_stored(self) -> None:
+        """Model is stored on the provider for Azure OpenAI vectorization."""
+        provider = _make_provider(model="my-deploy")
+        assert provider.azure_openai_model == "my-deploy"
 
-    def test_model_name_explicit(self) -> None:
-        provider = _make_provider(model_deployment_name="deploy", model_name="gpt-4")
-        assert provider.model_name == "gpt-4"
+    def test_model_explicit(self) -> None:
+        provider = _make_provider(model="gpt-4")
+        assert provider.azure_openai_model == "gpt-4"
 
 
 # -- Initialization: credential resolution ------------------------------------
@@ -214,7 +214,7 @@ class TestInitAgenticValidation:
                 knowledge_base_name="kb",
                 api_key="key",
                 mode="agentic",
-                model_deployment_name="deploy",
+                model="deploy",
                 azure_openai_resource_url="https://aoai.openai.azure.com",
             )
 
@@ -227,8 +227,8 @@ class TestInitAgenticValidation:
                 mode="agentic",
             )
 
-    def test_missing_model_deployment_name_raises(self) -> None:
-        with pytest.raises(ValueError, match="model_deployment_name"):
+    def test_missing_model_raises(self) -> None:
+        with pytest.raises(ValueError, match="model"):
             AzureAISearchContextProvider(
                 source_id="s",
                 endpoint="https://test.search.windows.net",
@@ -256,7 +256,7 @@ class TestInitAgenticValidation:
                 index_name="idx",
                 api_key="key",
                 mode="agentic",
-                model_deployment_name="deploy",
+                model="deploy",
             )
 
     def test_agentic_with_kb_name_sets_use_existing(self) -> None:
@@ -277,11 +277,42 @@ class TestInitAgenticValidation:
             index_name="idx",
             api_key="key",
             mode="agentic",
-            model_deployment_name="deploy",
+            model="deploy",
             azure_openai_resource_url="https://aoai.openai.azure.com",
         )
         assert provider._use_existing_knowledge_base is False
         assert provider.knowledge_base_name == "idx-kb"
+
+    def test_agentic_explicit_kb_ignores_env_index_name(self) -> None:
+        with patch.dict(os.environ, {"AZURE_SEARCH_INDEX_NAME": "env-index"}, clear=False):
+            provider = AzureAISearchContextProvider(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                knowledge_base_name="my-kb",
+                api_key="key",
+                mode="agentic",
+            )
+
+        assert provider.index_name is None
+        assert provider.knowledge_base_name == "my-kb"
+        assert provider._use_existing_knowledge_base is True
+        assert provider._search_client is None
+
+    def test_agentic_explicit_index_ignores_env_kb_name(self) -> None:
+        with patch.dict(os.environ, {"AZURE_SEARCH_KNOWLEDGE_BASE_NAME": "env-kb"}, clear=False):
+            provider = AzureAISearchContextProvider(
+                source_id="s",
+                endpoint="https://test.search.windows.net",
+                index_name="idx",
+                api_key="key",
+                mode="agentic",
+                model="deploy",
+                azure_openai_resource_url="https://aoai.openai.azure.com",
+            )
+
+        assert provider.index_name == "idx"
+        assert provider.knowledge_base_name == "idx-kb"
+        assert provider._use_existing_knowledge_base is False
 
 
 # -- __aenter__ / __aexit__ ---------------------------------------------------
@@ -980,9 +1011,9 @@ class TestEnsureKnowledgeBase:
         provider.knowledge_base_name = "test-kb"
         provider._index_client = AsyncMock()
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = None
+        provider.azure_openai_model = None
 
-        with pytest.raises(ValueError, match="model_deployment_name is required"):
+        with pytest.raises(ValueError, match="model is required"):
             await provider._ensure_knowledge_base()
 
     async def test_missing_index_name_raises(self) -> None:
@@ -992,7 +1023,7 @@ class TestEnsureKnowledgeBase:
         provider.knowledge_base_name = "test-kb"
         provider._index_client = AsyncMock()
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = "deploy"
+        provider.azure_openai_model = "deploy"
         provider.index_name = None
 
         with pytest.raises(ValueError, match="index_name is required"):
@@ -1006,8 +1037,7 @@ class TestEnsureKnowledgeBase:
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = "deploy"
-        provider.model_name = "gpt-4"
+        provider.azure_openai_model = "gpt-4"
         provider.index_name = "test-index"
 
         mock_index_client = AsyncMock()
@@ -1030,8 +1060,7 @@ class TestEnsureKnowledgeBase:
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = "deploy"
-        provider.model_name = "gpt-4"
+        provider.azure_openai_model = "gpt-4"
         provider.index_name = "test-index"
 
         mock_index_client = AsyncMock()
@@ -1052,8 +1081,7 @@ class TestEnsureKnowledgeBase:
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = "deploy"
-        provider.model_name = "gpt-4"
+        provider.azure_openai_model = "gpt-4"
         provider.index_name = "test-index"
         provider.knowledge_base_output_mode = "answer_synthesis"
 
@@ -1074,8 +1102,7 @@ class TestEnsureKnowledgeBase:
         provider._use_existing_knowledge_base = False
         provider.knowledge_base_name = "test-kb"
         provider.azure_openai_resource_url = "https://aoai.openai.azure.com"
-        provider.azure_openai_deployment_name = "deploy"
-        provider.model_name = "gpt-4"
+        provider.azure_openai_model = "gpt-4"
         provider.index_name = "test-index"
         provider.retrieval_reasoning_effort = "medium"
 
@@ -1343,7 +1370,7 @@ class TestPrepareMessagesForKbSearch:
         assert len(result) == 0
 
     def test_fallback_to_msg_text_when_no_contents(self) -> None:
-        msg = Message(role="user", text="fallback text")
+        msg = Message(role="user", contents=["fallback text"])
         result = AzureAISearchContextProvider._prepare_messages_for_kb_search([msg])
         assert len(result) == 1
         assert result[0].content[0].text == "fallback text"

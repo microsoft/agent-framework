@@ -322,7 +322,7 @@ class _RoundTripCoordinator(Executor):
             assert response.full_conversation is not None
             await ctx.send_message(
                 AgentExecutorRequest(
-                    messages=list(response.full_conversation) + [Message(role="user", text="apply feedback")],
+                    messages=list(response.full_conversation) + [Message(role="user", contents=["apply feedback"])],
                     should_respond=True,
                 ),
                 target_id=self._target_agent_id,
@@ -418,7 +418,7 @@ class _FullHistoryReplayCoordinator(Executor):
         ctx: WorkflowContext[AgentExecutorRequest, Any],
     ) -> None:
         full_conv = list(response.full_conversation or response.agent_response.messages)
-        full_conv.append(Message(role="user", text="follow-up"))
+        full_conv.append(Message(role="user", contents=["follow-up"]))
         # Simulate a prior run: the target executor has a stored previous_response_id.
         self._target_exec._session.service_session_id = "resp_PREVIOUS_RUN"  # pyright: ignore[reportPrivateUsage]
         await ctx.send_message(
