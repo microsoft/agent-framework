@@ -2579,6 +2579,17 @@ def test_prepare_content_for_openai_image_content() -> None:
     assert result["detail"] == "auto"
     assert "file_id" not in result
 
+    # Test image content with additional_properties present but no file_id key
+    image_content_detail_only = Content.from_uri(
+        uri="https://example.com/basic.png",
+        media_type="image/png",
+        additional_properties={"detail": "high"},
+    )
+    result = client._prepare_content_for_openai("user", image_content_detail_only)
+    assert result["type"] == "input_image"
+    assert result["detail"] == "high"
+    assert "file_id" not in result
+
 
 def test_prepare_content_for_openai_audio_content() -> None:
     """Test _prepare_content_for_openai with audio content variations."""
