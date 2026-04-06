@@ -121,6 +121,8 @@ def detect_media_type_from_base64(
         if data is not None:
             raise ValueError("Provide exactly one of data_bytes, data_str, or data_uri.")
         # Remove data URI prefix if present
+        if ";base64," not in data_uri:
+            raise ValueError("Data URI must use base64 encoding.")
         data_str = data_uri.split(";base64,", 1)[1]
     if data_str is not None:
         if data is not None:

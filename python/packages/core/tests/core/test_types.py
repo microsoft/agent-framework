@@ -204,6 +204,11 @@ def test_data_content_detect_image_format_from_base64():
         detect_media_type_from_base64(data_bytes=b"data", data_uri="data:application/octet-stream;base64,AAA")
         detect_media_type_from_base64(data_str="data", data_uri="data:application/octet-stream;base64,AAA")
 
+    with pytest.raises(ValueError, match="Data URI must use base64 encoding"):
+        detect_media_type_from_base64(data_uri="data:text/plain,Hello%20World")
+    with pytest.raises(ValueError, match="Data URI must use base64 encoding"):
+        detect_media_type_from_base64(data_uri="http://example.com/image.png")
+
 
 def test_data_content_create_data_uri_from_base64():
     """Test the create_data_uri_from_base64 class method."""
