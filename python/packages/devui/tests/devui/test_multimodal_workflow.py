@@ -286,15 +286,38 @@ class TestMultimodalWorkflowInput:
         assert result.contents[0].text == "Hello!"
 
     def test_is_openai_multimodal_format_accepts_all_valid_roles(self):
-        """All valid roles (user, system, assistant, tool, developer) are accepted by format detection."""
+        """All valid roles are accepted when accompanied by a user-role message."""
         discovery = MagicMock(spec=EntityDiscovery)
         mapper = MagicMock(spec=MessageMapper)
         executor = AgentFrameworkExecutor(discovery, mapper)
 
-        for role in ("user", "system", "assistant", "tool", "developer"):
-            assert executor._is_openai_multimodal_format([{"role": role, "content": "hi"}]) is True, (
-                f"Expected role {role!r} to be accepted"
-            )
+        # Single user message is accepted
+        assert executor._is_openai_multimodal_format([{"role": "user", "content": "hi"}]) is True
+
+        # Non-user roles are accepted when a user-role item is also present
+        for role in ("system", "assistant", "tool", "developer"):
+            assert executor._is_openai_multimodal_format([
+                {"role": role, "content": "hi"},
+                {"role": "user", "content": "hello"},
+            ]) is True, f"Expected role {role!r} to be accepted alongside user"
+
+    def test_is_openai_multimodal_format_rejects_non_user_only(self):
+        """Arrays with no user-role message are rejected to prevent silent empty message fallback."""
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Non-user-only Chat Completions format
+        assert executor._is_openai_multimodal_format([{"role": "system", "content": "hi"}]) is False
+        assert executor._is_openai_multimodal_format([
+            {"role": "system", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]) is False
+
+        # Non-user-only Responses API format
+        assert executor._is_openai_multimodal_format([
+            {"type": "message", "role": "system", "content": "hi"},
+        ]) is False
 
     def test_is_openai_multimodal_format_rejects_malformed_input(self):
         """Test that _is_openai_multimodal_format rejects inputs missing content or with invalid roles."""

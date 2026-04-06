@@ -835,21 +835,32 @@ class AgentFrameworkExecutor:
             return False
         first_dict = cast(dict[str, Any], first_item)
         first_type = first_dict.get("type")
+        is_chat_format = False
         if isinstance(first_type, str) and first_type == "message":
-            return True
-        # Also accept Chat Completions format: {"role": "...", "content": "..."}
-        # but require the minimum expected shape to avoid misclassifying
-        # unrelated or malformed list inputs as chat messages.
-        if first_type is not None:
+            is_chat_format = True
+        elif first_type is None:
+            # Also accept Chat Completions format: {"role": "...", "content": "..."}
+            # but require the minimum expected shape to avoid misclassifying
+            # unrelated or malformed list inputs as chat messages.
+            role = first_dict.get("role")
+            content = first_dict.get("content")
+            valid_roles = {"system", "user", "assistant", "tool", "developer"}
+            is_chat_format = bool(
+                isinstance(role, str)
+                and role in valid_roles
+                and "content" in first_dict
+                and isinstance(content, str | list)
+            )
+
+        if not is_chat_format:
             return False
-        role = first_dict.get("role")
-        content = first_dict.get("content")
-        valid_roles = {"system", "user", "assistant", "tool", "developer"}
-        return bool(
-            isinstance(role, str)
-            and role in valid_roles
-            and "content" in first_dict
-            and isinstance(content, str | list)
+
+        # Require at least one user-role item to avoid routing non-user-only
+        # arrays into the conversion path where all items would be skipped,
+        # silently producing an empty message.
+        return any(
+            isinstance(item, dict) and item.get("role") == "user"
+            for item in input_data_items
         )
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
