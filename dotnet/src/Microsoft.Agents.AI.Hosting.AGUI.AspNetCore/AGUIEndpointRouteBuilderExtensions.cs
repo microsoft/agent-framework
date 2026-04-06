@@ -135,7 +135,7 @@ public static class AGUIEndpointRouteBuilderExtensions
                 messages,
                 session,
                 runOptions,
-                cancellationToken).ConfigureAwait(false))
+                CancellationToken.None).ConfigureAwait(false))
             {
                 yield return update;
             }
