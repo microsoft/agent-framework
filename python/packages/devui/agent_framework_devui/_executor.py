@@ -859,8 +859,7 @@ class AgentFrameworkExecutor:
         # arrays into the conversion path where all items would be skipped,
         # silently producing an empty message.
         return any(
-            isinstance(item, dict) and item.get("role") == "user"
-            for item in input_data_items
+            isinstance(item, dict) and cast(dict[str, Any], item).get("role") == "user" for item in input_data_items
         )
 
     async def _parse_workflow_input(self, workflow: Any, raw_input: Any) -> Any:
