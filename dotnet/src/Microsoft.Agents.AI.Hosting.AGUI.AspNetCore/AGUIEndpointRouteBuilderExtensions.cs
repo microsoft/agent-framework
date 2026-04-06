@@ -15,6 +15,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Agents.AI.Hosting;
 
 namespace Microsoft.Agents.AI.Hosting.AGUI.AspNetCore;
 
@@ -44,7 +45,7 @@ public static class AGUIEndpointRouteBuilderExtensions
 
             var jsonOptions = context.RequestServices.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>();
             var jsonSerializerOptions = jsonOptions.Value.SerializerOptions;
-            var sessionStore = context.RequestServices.GetRequiredService<AGUIInMemorySessionStore>();
+            var sessionStore = context.RequestServices.GetRequiredService<AgentSessionStore>();
 
             var messages = input.Messages.AsChatMessages(jsonSerializerOptions);
             var clientTools = input.Tools?.AsAITools().ToList();
@@ -93,7 +94,7 @@ public static class AGUIEndpointRouteBuilderExtensions
     private static async ValueTask<AgentSession?> GetOrCreateSessionAsync(
         AIAgent aiAgent,
         string? threadId,
-        AGUIInMemorySessionStore sessionStore,
+        AgentSessionStore sessionStore,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(threadId))
@@ -101,14 +102,14 @@ public static class AGUIEndpointRouteBuilderExtensions
             return null;
         }
 
-        return await sessionStore.GetOrCreateSessionAsync(aiAgent, threadId, cancellationToken).ConfigureAwait(false);
+        return await sessionStore.GetSessionAsync(aiAgent, threadId, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask PersistSessionAsync(
         AIAgent aiAgent,
         string? threadId,
         AgentSession? session,
-        AGUIInMemorySessionStore sessionStore,
+        AgentSessionStore sessionStore,
         CancellationToken cancellationToken)
     {
         if (session is null || string.IsNullOrWhiteSpace(threadId))
@@ -125,7 +126,7 @@ public static class AGUIEndpointRouteBuilderExtensions
         AgentRunOptions runOptions,
         AgentSession? session,
         string? threadId,
-        AGUIInMemorySessionStore sessionStore,
+        AgentSessionStore sessionStore,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         try

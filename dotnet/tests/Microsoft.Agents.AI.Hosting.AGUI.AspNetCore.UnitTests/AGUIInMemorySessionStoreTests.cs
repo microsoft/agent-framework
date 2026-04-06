@@ -51,6 +51,24 @@ public sealed class AGUIInMemorySessionStoreTests
     }
 
     [Fact]
+    public async Task GetOrCreateSessionAsync_DoesNotCollideWhenKeyPartsContainColonAsync()
+    {
+        // Arrange
+        var store = new AGUIInMemorySessionStore();
+        var firstAgent = new CountingAgent("a:b");
+        var secondAgent = new CountingAgent("a");
+
+        // Act
+        AgentSession firstSession = await store.GetOrCreateSessionAsync(firstAgent, "c");
+        AgentSession secondSession = await store.GetOrCreateSessionAsync(secondAgent, "b:c");
+
+        // Assert
+        Assert.NotSame(firstSession, secondSession);
+        Assert.Equal(1, firstAgent.CreateSessionCallCount);
+        Assert.Equal(1, secondAgent.CreateSessionCallCount);
+    }
+
+    [Fact]
     public async Task GetOrCreateSessionAsync_RecreatesExpiredSessionAsync()
     {
         // Arrange
@@ -68,6 +86,29 @@ public sealed class AGUIInMemorySessionStoreTests
         // Assert
         Assert.NotSame(firstSession, secondSession);
         Assert.Equal(2, agent.CreateSessionCallCount);
+    }
+
+    [Fact]
+    public async Task GetOrCreateSessionAsync_CreatesSingleSessionUnderConcurrencyAsync()
+    {
+        // Arrange
+        var store = new AGUIInMemorySessionStore();
+        var agent = new BlockingAgent();
+
+        // Act
+        Task<AgentSession> firstTask = store.GetOrCreateSessionAsync(agent, "thread-1").AsTask();
+        await agent.SessionCreationStarted.Task;
+
+        Task<AgentSession> secondTask = store.GetOrCreateSessionAsync(agent, "thread-1").AsTask();
+        Task<AgentSession> thirdTask = store.GetOrCreateSessionAsync(agent, "thread-1").AsTask();
+
+        agent.AllowSessionCreation.TrySetResult();
+        AgentSession[] sessions = await Task.WhenAll(firstTask, secondTask, thirdTask);
+
+        // Assert
+        Assert.Equal(1, agent.CreateSessionCallCount);
+        Assert.Same(sessions[0], sessions[1]);
+        Assert.Same(sessions[1], sessions[2]);
     }
 
     private sealed class CountingAgent : AIAgent
@@ -102,6 +143,41 @@ public sealed class AGUIInMemorySessionStoreTests
             => throw new NotImplementedException();
 
         private sealed class CountingSession : AgentSession
+        {
+        }
+    }
+
+    private sealed class BlockingAgent : AIAgent
+    {
+        public TaskCompletionSource SessionCreationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowSessionCreation { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int CreateSessionCallCount { get; private set; }
+
+        protected override string? IdCore => "blocking-agent";
+
+        protected override async ValueTask<AgentSession> CreateSessionCoreAsync(CancellationToken cancellationToken = default)
+        {
+            this.CreateSessionCallCount++;
+            this.SessionCreationStarted.TrySetResult();
+            await this.AllowSessionCreation.Task.ConfigureAwait(false);
+            return new BlockingSession();
+        }
+
+        protected override ValueTask<JsonElement> SerializeSessionCoreAsync(AgentSession session, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override ValueTask<AgentSession> DeserializeSessionCoreAsync(JsonElement serializedState, JsonSerializerOptions? jsonSerializerOptions = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override Task<AgentResponse> RunCoreAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<Microsoft.Extensions.AI.ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
+            => throw new NotImplementedException();
+
+        private sealed class BlockingSession : AgentSession
         {
         }
     }
