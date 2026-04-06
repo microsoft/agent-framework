@@ -25,7 +25,7 @@ dotnet run --project eng/verify-samples -- Agent_Step02_StructuredOutput Agent_S
 dotnet run --project eng/verify-samples -- --parallel 8 --log results.log
 
 # Combine options
-dotnet run --project eng/verify-samples -- --category 03-workflows --parallel 4 --log results.log --csv results.csv
+dotnet run --project eng/verify-samples -- --category 03-workflows --parallel 4 --log results.log --csv results.csv --md results.md
 ```
 
 ### Required Environment Variables
@@ -40,6 +40,7 @@ Individual samples require their own env vars (e.g., `AZURE_AI_PROJECT_ENDPOINT`
 
 - `--log results.log` — detailed per-sample log with stdout/stderr, AI reasoning, and a summary
 - `--csv results.csv` — tabular summary with Sample, ProjectPath, Status, FailedChecks, and Failures columns
+- `--md results.md` — Markdown summary with results table and collapsible failure details (suitable for GitHub PR comments)
 
 ## Sample Categories
 

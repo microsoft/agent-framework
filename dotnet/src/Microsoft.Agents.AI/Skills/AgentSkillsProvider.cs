@@ -117,26 +117,24 @@ public sealed partial class AgentSkillsProvider : AIContextProvider
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
-    /// with one or more inline (code-defined) skills.
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class.
     /// Duplicate skill names are automatically deduplicated (first occurrence wins).
     /// </summary>
-    /// <param name="skills">The inline skills to include.</param>
-    public AgentSkillsProvider(params AgentInlineSkill[] skills)
-        : this(skills as IEnumerable<AgentInlineSkill>)
+    /// <param name="skills">The skills to include.</param>
+    public AgentSkillsProvider(params AgentSkill[] skills)
+        : this(skills as IEnumerable<AgentSkill>)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class
-    /// with inline (code-defined) skills.
+    /// Initializes a new instance of the <see cref="AgentSkillsProvider"/> class.
     /// Duplicate skill names are automatically deduplicated (first occurrence wins).
     /// </summary>
-    /// <param name="skills">The inline skills to include.</param>
+    /// <param name="skills">The skills to include.</param>
     /// <param name="options">Optional provider configuration.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     public AgentSkillsProvider(
-        IEnumerable<AgentInlineSkill> skills,
+        IEnumerable<AgentSkill> skills,
         AgentSkillsProviderOptions? options = null,
         ILoggerFactory? loggerFactory = null)
         : this(

@@ -182,6 +182,9 @@ public sealed class InProcessExecutionEnvironment : IWorkflowExecutionEnvironmen
         AsyncRunHandle runHandle = await this.ResumeRunAsync(workflow, fromCheckpoint, [], cancellationToken)
                                              .ConfigureAwait(false);
 
-        return new(runHandle);
+        Run run = new(runHandle);
+        await run.RunToNextHaltAsync(cancellationToken).ConfigureAwait(false);
+
+        return run;
     }
 }

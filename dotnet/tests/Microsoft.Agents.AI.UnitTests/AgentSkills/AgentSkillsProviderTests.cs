@@ -851,6 +851,61 @@ public sealed class AgentSkillsProviderTests : IDisposable
         Assert.Contains("First instructions.", content!.ToString()!);
     }
 
+    [Fact]
+    public async Task Constructor_ClassSkillsParams_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skill = new TestClassSkill("class-a", "Class A", "Class instructions.");
+        var provider = new AgentSkillsProvider(skill);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("class-a", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_ClassSkillsEnumerable_ProvidesSkillsAsync()
+    {
+        // Arrange
+        var skills = new List<AgentClassSkill>
+        {
+            new TestClassSkill("enum-class-a", "Class A", "Instructions A."),
+            new TestClassSkill("enum-class-b", "Class B", "Instructions B."),
+        };
+        var provider = new AgentSkillsProvider(skills);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+
+        // Assert
+        Assert.NotNull(result.Instructions);
+        Assert.Contains("enum-class-a", result.Instructions);
+        Assert.Contains("enum-class-b", result.Instructions);
+    }
+
+    [Fact]
+    public async Task Constructor_ClassSkills_DeduplicatesAsync()
+    {
+        // Arrange — two class skills with the same name
+        var skill1 = new TestClassSkill("dup-class", "First", "First instructions.");
+        var skill2 = new TestClassSkill("dup-class", "Second", "Second instructions.");
+        var provider = new AgentSkillsProvider(skill1, skill2);
+        var invokingContext = new AIContextProvider.InvokingContext(this._agent, session: null, new AIContext());
+
+        // Act
+        var result = await provider.InvokingAsync(invokingContext, CancellationToken.None);
+        var loadSkillTool = result.Tools!.First(t => t.Name == "load_skill") as AIFunction;
+        var content = await loadSkillTool!.InvokeAsync(new AIFunctionArguments(new Dictionary<string, object?> { ["skillName"] = "dup-class" }));
+
+        // Assert — only first occurrence survives
+        Assert.Contains("First instructions.", content!.ToString()!);
+    }
+
     /// <summary>
     /// A test skill source that counts how many times <see cref="GetSkillsAsync"/> is called.
     /// </summary>
@@ -871,5 +926,24 @@ public sealed class AgentSkillsProviderTests : IDisposable
             Interlocked.Increment(ref this._callCount);
             return Task.FromResult(this._skills);
         }
+    }
+
+    private sealed class TestClassSkill : AgentClassSkill
+    {
+        private readonly string _instructions;
+
+        public TestClassSkill(string name, string description, string instructions)
+        {
+            this.Frontmatter = new AgentSkillFrontmatter(name, description);
+            this._instructions = instructions;
+        }
+
+        public override AgentSkillFrontmatter Frontmatter { get; }
+
+        protected override string Instructions => this._instructions;
+
+        public override IReadOnlyList<AgentSkillResource>? Resources => null;
+
+        public override IReadOnlyList<AgentSkillScript>? Scripts => null;
     }
 }
