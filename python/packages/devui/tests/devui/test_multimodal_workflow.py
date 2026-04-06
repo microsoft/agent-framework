@@ -150,3 +150,60 @@ class TestMultimodalWorkflowInput:
 
         # Result should be Message (from _parse_structured_workflow_input)
         assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+
+    def test_is_openai_multimodal_format_detects_chat_completions_format(self):
+        """Test that _is_openai_multimodal_format detects Chat Completions format (no type field)."""
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Chat Completions format: role + content, no type field
+        chat_completions_format = [
+            {"role": "user", "content": "Describe this image"}
+        ]
+        assert executor._is_openai_multimodal_format(chat_completions_format) is True
+
+    def test_convert_chat_completions_format_with_string_content(self):
+        """Test that Chat Completions format with string content is converted correctly."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Chat Completions format (no type field, string content)
+        input_data = [
+            {"role": "user", "content": "Which Google phones are allowed?"}
+        ]
+
+        result = executor._convert_input_to_chat_message(input_data)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 1
+        assert result.contents[0].text == "Which Google phones are allowed?"
+
+    def test_convert_chat_completions_format_with_list_content(self):
+        """Test that Chat Completions format with list content is converted correctly."""
+        from agent_framework import Message
+
+        discovery = MagicMock(spec=EntityDiscovery)
+        mapper = MagicMock(spec=MessageMapper)
+        executor = AgentFrameworkExecutor(discovery, mapper)
+
+        # Chat Completions format with list content (input_text items)
+        input_data = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Describe this image"},
+                    {"type": "input_image", "image_url": TEST_IMAGE_DATA_URI},
+                ],
+            }
+        ]
+
+        result = executor._convert_input_to_chat_message(input_data)
+
+        assert isinstance(result, Message), f"Expected Message, got {type(result)}"
+        assert len(result.contents) == 2
+        assert result.contents[0].text == "Describe this image"
+        assert result.contents[1].type == "data"
