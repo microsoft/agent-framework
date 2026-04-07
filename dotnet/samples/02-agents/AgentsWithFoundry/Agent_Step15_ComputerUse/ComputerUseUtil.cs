@@ -1,7 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
-using System.ClientModel;
-using OpenAI.Files;
+using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 
 namespace Demo.ComputerUse;
@@ -18,7 +17,7 @@ internal enum SearchState
 
 internal static class ComputerUseUtil
 {
-    internal static async Task<Dictionary<string, string>> UploadScreenshotAssetsAsync(OpenAIFileClient fileClient)
+    internal static async Task<Dictionary<string, string>> UploadScreenshotAssetsAsync(IHostedFileClient fileClient)
     {
         string assetsDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets");
 
@@ -33,21 +32,21 @@ internal static class ComputerUseUtil
 
         foreach (var (key, fileName) in files)
         {
-            ClientResult<OpenAIFile> result = await fileClient.UploadFileAsync(
-                Path.Combine(assetsDir, fileName), FileUploadPurpose.Assistants);
-            screenshots[key] = result.Value.Id;
+            HostedFileContent result = await fileClient.UploadAsync(
+                Path.Combine(assetsDir, fileName), new HostedFileClientOptions() { Purpose = "assistants" });
+            screenshots[key] = result.FileId;
         }
 
         return screenshots;
     }
 
-    internal static async Task DeleteScreenshotAssetsAsync(OpenAIFileClient fileClient, Dictionary<string, string> screenshots)
+    internal static async Task EnsureDeleteScreenshotAssetsAsync(IHostedFileClient fileClient, Dictionary<string, string> screenshots)
     {
         foreach (var (_, fileId) in screenshots)
         {
             try
             {
-                await fileClient.DeleteFileAsync(fileId);
+                await fileClient.DeleteAsync(fileId);
             }
             catch
             {
