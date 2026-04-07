@@ -58,6 +58,14 @@ def test_base_client_as_agent_uses_explicit_additional_properties(chat_client_ba
     assert agent.additional_properties == {"team": "core"}
 
 
+def test_base_client_as_agent_applies_function_invocation_configuration(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    chat_client_base.as_agent(function_invocation_configuration={"max_iterations": 8})  # type: ignore[attr-defined]
+
+    assert chat_client_base.function_invocation_configuration["max_iterations"] == 8  # type: ignore[attr-defined]
+
+
 async def test_base_client_get_response_uses_explicit_client_kwargs(chat_client_base: SupportsChatGetResponse) -> None:
     async def fake_inner_get_response(**kwargs):
         assert kwargs["trace_id"] == "trace-123"
