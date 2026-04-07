@@ -1129,6 +1129,7 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Equal("run.py", skill.Scripts![0].Name);
     }
 
+#if NET
     [Fact]
     public async Task GetSkillsAsync_SymlinkedFileInRealFolder_SkipsSymlinkedFileAsync()
     {
@@ -1168,4 +1169,5 @@ public sealed class FileAgentSkillLoaderTests : IDisposable
         Assert.Single(skill.Resources!);
         Assert.Equal("references/legit.md", skill.Resources![0].Name);
     }
+#endif
 }
