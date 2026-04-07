@@ -30,7 +30,11 @@ context_provider = AzureCosmosContextProvider(
 
 Container name is configured on each provider. `CosmosHistoryProvider` uses `session_id` as the partition key for reads/writes. `AzureCosmosContextProvider` can optionally scope retrieval with `partition_key`.
 
-`AzureCosmosContextProvider` writes request/response messages back into the same Cosmos knowledge container by default. Set `writeback_enabled=False` to disable it. Hybrid RRF weights are provided per run through `before_run(..., weights=[...])`.
+`AzureCosmosContextProvider` joins the filtered `user` and `assistant` messages from the current run into one retrieval query string, and writes request/response messages back into the same Cosmos knowledge container after each run. Hybrid RRF weights are provided per run through `before_run(..., weights=[...])`.
+
+When `AzureCosmosContextProvider` is attached to an agent through `context_providers=[...]`, normal agent runs use the provider defaults configured on the constructor. The explicit `before_run(..., search_mode=..., weights=[...], top_k=..., scan_limit=..., partition_key=...)` override is available for advanced callers and custom orchestration without mutating the provider instance.
+
+The application owner is responsible for making sure the Cosmos account, database, container, partitioning strategy, and any required full-text/vector/hybrid indexing configuration already exist. The provider does not create or manage Cosmos resources or search policies.
 
 ## Import Path
 

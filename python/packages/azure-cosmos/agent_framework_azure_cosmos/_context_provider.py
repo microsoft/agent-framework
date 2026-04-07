@@ -14,7 +14,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 
 from agent_framework import AGENT_FRAMEWORK_USER_AGENT, Message, SupportsGetEmbeddings
 from agent_framework._sessions import AgentSession, BaseContextProvider, SessionContext
@@ -31,8 +31,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
-
-CosmosQueryBuilderMode = Literal["latest_user", "recent_messages", "latest_user_with_context"]
 
 
 class CosmosContextSearchMode(str, Enum):
@@ -61,20 +59,14 @@ class AzureCosmosContextProvider(BaseContextProvider):
     DEFAULT_CONTEXT_PROMPT: ClassVar[str] = "Use the following context to answer the question:"
     _DEFAULT_RESULT_LIMIT: ClassVar[int] = 5
     _DEFAULT_SCAN_LIMIT: ClassVar[int] = 25
-    _DEFAULT_RECENT_MESSAGE_COUNT: ClassVar[int] = 4
-    _DEFAULT_SHORT_QUERY_TERM_THRESHOLD: ClassVar[int] = 3
     _DEFAULT_SEARCH_MODE: ClassVar[CosmosContextSearchMode] = CosmosContextSearchMode.FULL_TEXT
-    _DEFAULT_QUERY_BUILDER_MODE: ClassVar[CosmosQueryBuilderMode] = cast(
-        CosmosQueryBuilderMode, "latest_user_with_context"
-    )
-    _BATCH_OPERATION_LIMIT: ClassVar[int] = 100
     _DEFAULT_RRF_WEIGHTS: ClassVar[tuple[float, float]] = (1.0, 1.0)
     _WRITEBACK_DOCUMENT_TYPE: ClassVar[str] = "agent_framework_context_provider_message"
-    _RRF_K: ClassVar[int] = 60
     _TEXT_SCORE_FIELD: ClassVar[str] = "__agent_framework_text_score"
     _VECTOR_SCORE_FIELD: ClassVar[str] = "__agent_framework_vector_score"
     _COMBINED_SCORE_FIELD: ClassVar[str] = "__agent_framework_combined_score"
     _VALID_FIELD_NAME_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    _RETRIEVAL_ROLES: ClassVar[frozenset[str]] = frozenset({"user", "assistant"})
 
     def __init__(
         self,
@@ -89,9 +81,6 @@ class AzureCosmosContextProvider(BaseContextProvider):
         top_k: int | None = None,
         scan_limit: int | None = None,
         default_search_mode: CosmosContextSearchMode = _DEFAULT_SEARCH_MODE,
-        query_builder_mode: CosmosQueryBuilderMode = _DEFAULT_QUERY_BUILDER_MODE,
-        recent_message_count: int = _DEFAULT_RECENT_MESSAGE_COUNT,
-        short_query_term_threshold: int = _DEFAULT_SHORT_QUERY_TERM_THRESHOLD,
         id_field_name: str = "id",
         content_field_names: Sequence[str] = ("content", "text"),
         title_field_name: str | None = "title",
@@ -103,7 +92,6 @@ class AzureCosmosContextProvider(BaseContextProvider):
         | SupportsGetEmbeddings[str, list[float], Any]
         | None = None,
         partition_key: str | None = None,
-        writeback_enabled: bool = True,
         context_prompt: str | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
@@ -124,14 +112,15 @@ class AzureCosmosContextProvider(BaseContextProvider):
             cosmos_client: Pre-created Cosmos async client.
             container_client: Pre-created Cosmos container client for fixed-container usage.
             top_k: Maximum number of context messages to add to the session.
-                Can be set via ``AZURE_COSMOS_TOP_K``.
+                Can be set via ``AZURE_COSMOS_TOP_K``. This acts as the default
+                final result count for normal runs and can be overridden per run
+                in ``before_run(...)``.
             scan_limit: Maximum number of candidate Cosmos items to scan per invocation.
-                Can be set via ``AZURE_COSMOS_SCAN_LIMIT``.
+                Can be set via ``AZURE_COSMOS_SCAN_LIMIT``. This acts as the default
+                candidate scan size for normal runs and can be overridden per run
+                in ``before_run(...)``.
             default_search_mode: Default retrieval mode to use when ``before_run``
-                does not supply a per-run override.
-            query_builder_mode: Strategy for deriving retrieval query text from conversation.
-            recent_message_count: Number of recent messages to use when building contextual queries.
-            short_query_term_threshold: Minimum term count for a latest-user query to be used directly.
+                does not supply a per-run override through ``search_mode``.
             id_field_name: Field name containing the document identifier.
             content_field_names: Ordered field names to inspect for text content.
             title_field_name: Field name containing the document title.
@@ -141,8 +130,8 @@ class AzureCosmosContextProvider(BaseContextProvider):
             vector_field_name: Field name containing vectors for future vector and hybrid retrieval.
             embedding_function: Embedding generator for future vector and hybrid retrieval.
             partition_key: Optional Cosmos partition key value to scope retrieval.
-            writeback_enabled: Whether ``after_run`` should persist input and response
-                messages back into the configured knowledge container.
+                This acts as the default retrieval scope for normal runs and can be
+                overridden per run in ``before_run(...)``.
             context_prompt: Prompt prefix to use when shaping retrieved context.
             env_file_path: Path to environment file for loading settings.
             env_file_encoding: Encoding of the environment file.
@@ -152,21 +141,10 @@ class AzureCosmosContextProvider(BaseContextProvider):
         self.context_prompt = context_prompt or self.DEFAULT_CONTEXT_PROMPT
         self.top_k = self._validate_positive_int(top_k, default=self._DEFAULT_RESULT_LIMIT, name="top_k")
         self.scan_limit = self._validate_positive_int(scan_limit, default=self._DEFAULT_SCAN_LIMIT, name="scan_limit")
-        self.recent_message_count = self._validate_positive_int(
-            recent_message_count,
-            default=self._DEFAULT_RECENT_MESSAGE_COUNT,
-            name="recent_message_count",
-        )
-        self.short_query_term_threshold = self._validate_positive_int(
-            short_query_term_threshold,
-            default=self._DEFAULT_SHORT_QUERY_TERM_THRESHOLD,
-            name="short_query_term_threshold",
-        )
         self.default_search_mode = self._validate_search_mode(
             default_search_mode,
             parameter_name="default_search_mode",
         )
-        self.query_builder_mode = query_builder_mode
         self.id_field_name = self._validate_field_name(id_field_name, parameter_name="id_field_name")
         self.content_field_names = self._validate_required_field_names(
             content_field_names,
@@ -188,7 +166,6 @@ class AzureCosmosContextProvider(BaseContextProvider):
         )
         self.embedding_function = embedding_function
         self.partition_key = partition_key
-        self.writeback_enabled = writeback_enabled
 
         self._cosmos_client: CosmosClient | None = cosmos_client
         self._container_proxy: ContainerProxy | None = container_client
@@ -246,19 +223,42 @@ class AzureCosmosContextProvider(BaseContextProvider):
         state: dict[str, Any],
         search_mode: CosmosContextSearchMode | None = None,
         weights: Sequence[float] | None = None,
+        top_k: int | None = None,
+        scan_limit: int | None = None,
+        partition_key: str | None = None,
     ) -> None:
-        """Retrieve relevant context from Cosmos DB before model invocation."""
+        """Retrieve relevant context from Cosmos DB before model invocation.
+
+        Args:
+            agent: The agent currently being run.
+            session: The active agent session.
+            context: The session context for the current run.
+            state: Mutable per-provider run state storage.
+            search_mode: Optional per-run override for the retrieval mode.
+                When omitted, ``default_search_mode`` configured on the provider
+                instance is used.
+            weights: Optional per-run hybrid RRF weights. Only used for hybrid runs.
+                When omitted for hybrid search, the provider defaults are used.
+            top_k: Optional per-run override for the number of context messages to
+                inject into the session. When omitted, the provider's configured
+                ``top_k`` value is used.
+            scan_limit: Optional per-run override for the number of Cosmos items to
+                scan before final selection. When omitted, the provider's configured
+                ``scan_limit`` value is used.
+            partition_key: Optional per-run override for the Cosmos partition key
+                scope used during retrieval. When omitted, the provider's configured
+                ``partition_key`` value is used.
+        """
         filtered_messages = [
             msg
             for msg in context.input_messages
-            if msg and msg.text and msg.text.strip() and msg.role in ["user", "assistant"]
+            if msg and msg.text and msg.text.strip() and msg.role in self._RETRIEVAL_ROLES
         ]
         if not filtered_messages:
             return
 
-        query_text = self._build_query_text(filtered_messages)
-        query_terms = self._tokenize_query_text(query_text)
-        if not query_terms:
+        query_text = self._build_query_text(filtered_messages).strip()
+        if not query_text:
             return
 
         resolved_search_mode = (
@@ -271,17 +271,41 @@ class AzureCosmosContextProvider(BaseContextProvider):
         )
         resolved_weights = self._resolve_weights_for_run(resolved_search_mode, weights)
         self._validate_search_configuration(resolved_search_mode, resolved_weights)
+        resolved_top_k = self._validate_positive_int(top_k, default=self.top_k, name="top_k")
+        resolved_scan_limit = self._validate_positive_int(scan_limit, default=self.scan_limit, name="scan_limit")
+        resolved_partition_key = self.partition_key if partition_key is None else partition_key
+
+        query_terms = self._tokenize_query_text(query_text)
+        if (
+            resolved_search_mode
+            in {
+                CosmosContextSearchMode.FULL_TEXT,
+                CosmosContextSearchMode.HYBRID,
+            }
+            and not query_terms
+        ):
+            logger.debug(
+                "Skipping Cosmos DB context lookup for provider '%s' because search mode '%s' requires text terms.",
+                self.source_id,
+                resolved_search_mode.value,
+            )
+            return
 
         state["query_text"] = query_text
-        state["query_builder_mode"] = self.query_builder_mode
 
         candidate_items = await self._get_candidate_items_for_mode(
             query_text=query_text,
             query_terms=query_terms,
             search_mode=resolved_search_mode,
             weights=resolved_weights,
+            scan_limit=resolved_scan_limit,
+            partition_key=resolved_partition_key,
         )
-        result_messages = self._select_context_messages(candidate_items, query_terms=query_terms)
+        result_messages = self._select_context_messages(
+            candidate_items,
+            query_terms=query_terms,
+            top_k=resolved_top_k,
+        )
 
         if not result_messages:
             logger.debug(
@@ -304,10 +328,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         context: SessionContext,
         state: dict[str, Any],
     ) -> None:
-        """Persist input and response messages to Cosmos when writeback is enabled."""
-        if not self.writeback_enabled:
-            return
-
+        """Persist input and response messages to Cosmos after each run."""
         messages_to_store: list[Message] = list(context.input_messages)
         if context.response and context.response.messages:
             messages_to_store.extend(context.response.messages)
@@ -396,18 +417,20 @@ class AzureCosmosContextProvider(BaseContextProvider):
         self,
         *,
         query: str,
+        scan_limit: int,
+        partition_key: str | None,
         parameters: list[dict[str, object]] | None = None,
     ) -> list[dict[str, Any]]:
         """Execute a Cosmos query with shared query settings."""
         container = await self._ensure_container_proxy()
         query_kwargs: dict[str, Any] = {
             "query": query,
-            "max_item_count": self.scan_limit,
+            "max_item_count": scan_limit,
         }
         if parameters is not None:
             query_kwargs["parameters"] = parameters
-        if self.partition_key is not None:
-            query_kwargs["partition_key"] = self.partition_key
+        if partition_key is not None:
+            query_kwargs["partition_key"] = partition_key
 
         return [item async for item in container.query_items(**query_kwargs)]
 
@@ -418,39 +441,68 @@ class AzureCosmosContextProvider(BaseContextProvider):
         query_terms: Sequence[str],
         search_mode: CosmosContextSearchMode,
         weights: Sequence[float],
+        scan_limit: int,
+        partition_key: str | None,
     ) -> list[dict[str, Any]]:
         """Route retrieval to the configured Cosmos search mode."""
         if search_mode is CosmosContextSearchMode.FULL_TEXT:
-            return await self._get_full_text_candidate_items(query_text=query_text, query_terms=query_terms)
+            return await self._get_full_text_candidate_items(
+                query_terms=query_terms,
+                scan_limit=scan_limit,
+                partition_key=partition_key,
+            )
         if search_mode is CosmosContextSearchMode.VECTOR:
-            return await self._get_vector_candidate_items(query_text=query_text)
+            return await self._get_vector_candidate_items(
+                query_text=query_text,
+                scan_limit=scan_limit,
+                partition_key=partition_key,
+            )
         if search_mode is CosmosContextSearchMode.HYBRID:
             return await self._get_hybrid_candidate_items(
                 query_text=query_text,
                 query_terms=query_terms,
                 weights=weights,
+                scan_limit=scan_limit,
+                partition_key=partition_key,
             )
         raise ValueError(f"Unsupported search_mode: {search_mode}")
 
     async def _get_full_text_candidate_items(
         self,
         *,
-        query_text: str,
         query_terms: Sequence[str],
+        scan_limit: int,
+        partition_key: str | None,
     ) -> list[dict[str, Any]]:
         """Retrieve candidate items using Cosmos full-text ranking."""
         if not query_terms:
             return []
 
-        query, parameters = self._build_full_text_query(query_terms)
-        raw_items = await self._execute_query(query=query, parameters=parameters)
+        query, parameters = self._build_full_text_query(query_terms, scan_limit=scan_limit)
+        raw_items = await self._execute_query(
+            query=query,
+            parameters=parameters,
+            scan_limit=scan_limit,
+            partition_key=partition_key,
+        )
         return self._annotate_rank_scores(raw_items, score_field=self._TEXT_SCORE_FIELD)
 
-    async def _get_vector_candidate_items(self, *, query_text: str) -> list[dict[str, Any]]:
+    async def _get_vector_candidate_items(
+        self,
+        *,
+        query_text: str,
+        scan_limit: int,
+        partition_key: str | None,
+    ) -> list[dict[str, Any]]:
         """Retrieve candidate items using Cosmos vector distance ranking."""
         query_vector = await self._get_query_vector(query_text)
-        query, parameters = self._build_vector_query(query_vector)
-        raw_items = await self._execute_query(query=query, parameters=parameters)
+        query, parameters = self._build_vector_query(query_vector, scan_limit=scan_limit)
+        raw_items = await self._execute_query(
+            query=query,
+            parameters=parameters,
+            scan_limit=scan_limit,
+            partition_key=partition_key,
+        )
         return self._annotate_rank_scores(raw_items, score_field=self._VECTOR_SCORE_FIELD)
 
     async def _get_hybrid_candidate_items(
@@ -459,6 +511,8 @@ class AzureCosmosContextProvider(BaseContextProvider):
         query_text: str,
         query_terms: Sequence[str],
         weights: Sequence[float],
+        scan_limit: int,
+        partition_key: str | None,
     ) -> list[dict[str, Any]]:
         """Retrieve candidate items using Cosmos hybrid reciprocal rank fusion."""
         if not query_terms:
@@ -469,15 +523,26 @@ class AzureCosmosContextProvider(BaseContextProvider):
             query_terms=query_terms,
             query_vector=query_vector,
             weights=weights,
+            scan_limit=scan_limit,
         )
-        raw_items = await self._execute_query(query=query, parameters=parameters)
+        raw_items = await self._execute_query(
+            query=query,
+            parameters=parameters,
+            scan_limit=scan_limit,
+            partition_key=partition_key,
+        )
         return self._annotate_rank_scores(raw_items, score_field=self._COMBINED_SCORE_FIELD)
 
-    def _build_full_text_query(self, query_terms: Sequence[str]) -> tuple[str, list[dict[str, object]]]:
+    def _build_full_text_query(
+        self,
+        query_terms: Sequence[str],
+        *,
+        scan_limit: int,
+    ) -> tuple[str, list[dict[str, object]]]:
         """Build a Cosmos full-text ranking query using FullTextScore/BM25 semantics."""
         score_expression = f"FullTextScore(c.{self._get_primary_search_field_name()}, @query_text)"
         query = (
-            f"{self._build_projection_query_base()} "
+            f"{self._build_projection_query_base(scan_limit=scan_limit)} "
             f"WHERE {self._build_retrieval_filter_predicate()} "
             f"ORDER BY RANK {score_expression}"
         )
@@ -489,14 +554,19 @@ class AzureCosmosContextProvider(BaseContextProvider):
             ],
         )
 
-    def _build_vector_query(self, query_vector: Sequence[float]) -> tuple[str, list[dict[str, object]]]:
+    def _build_vector_query(
+        self,
+        query_vector: Sequence[float],
+        *,
+        scan_limit: int,
+    ) -> tuple[str, list[dict[str, object]]]:
         """Build a Cosmos vector distance query using VectorDistance."""
         if self.vector_field_name is None:
             raise ValueError("vector_field_name is required when search_mode='vector'")
 
         distance_expression = f"VectorDistance(c.{self.vector_field_name}, @query_vector)"
         query = (
-            f"{self._build_projection_query_base()} "
+            f"{self._build_projection_query_base(scan_limit=scan_limit)} "
             f"WHERE {self._build_retrieval_filter_predicate()} "
             f"ORDER BY {distance_expression} ASC"
         )
@@ -514,6 +584,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         query_terms: Sequence[str],
         query_vector: Sequence[float],
         weights: Sequence[float],
+        scan_limit: int,
     ) -> tuple[str, list[dict[str, object]]]:
         """Build a Cosmos hybrid RRF query using full-text and vector components."""
         if self.vector_field_name is None:
@@ -523,7 +594,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         vector_expression = f"VectorDistance(c.{self.vector_field_name}, @query_vector)"
         rrf_expression = f"RRF({full_text_expression}, {vector_expression}, {self._build_weights_literal(weights)})"
         query = (
-            f"{self._build_projection_query_base()} "
+            f"{self._build_projection_query_base(scan_limit=scan_limit)} "
             f"WHERE {self._build_retrieval_filter_predicate()} "
             f"ORDER BY RANK {rrf_expression}"
         )
@@ -542,7 +613,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         if isinstance(message_payload, dict):
             try:
                 return Message.from_dict(message_payload)  # pyright: ignore[reportUnknownArgumentType]
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 logger.warning("Skipping Cosmos DB item with invalid message payload: %s", exc)
 
         content = next(
@@ -578,6 +649,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         candidate_items: Sequence[dict[str, Any]],
         *,
         query_terms: Sequence[str],
+        top_k: int,
     ) -> list[Message]:
         """Shape and select the final context messages."""
         ranked_messages: list[tuple[float, float, int, Message]] = []
@@ -602,7 +674,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
             ranked_messages.append((effective_score, fallback_score, -position, message))
 
         ranked_messages.sort(reverse=True)
-        return [message for _, _, _, message in ranked_messages[: self.top_k]]
+        return [message for _, _, _, message in ranked_messages[:top_k]]
 
     def _annotate_rank_scores(
         self,
@@ -628,18 +700,15 @@ class AzureCosmosContextProvider(BaseContextProvider):
             embeddings = await self.embedding_function.get_embeddings([query_text])  # type: ignore[reportUnknownVariableType]
             if not embeddings:
                 raise ValueError("embedding_function returned no embeddings")
-            return [float(value) for value in embeddings[0].vector]  # type: ignore[reportUnknownVariableType]
+            resolved_embedding = [float(value) for value in embeddings[0].vector]  # type: ignore[reportUnknownVariableType]
+            if not resolved_embedding:
+                raise ValueError("embedding_function returned an empty embedding")
+            return resolved_embedding
 
-        return [float(value) for value in await self.embedding_function(query_text)]
-
-    def _sort_items_by_score(
-        self,
-        items: Sequence[dict[str, Any]],
-        *,
-        score_field: str,
-    ) -> list[dict[str, Any]]:
-        """Sort scored items descending by a score field."""
-        return sorted(items, key=lambda item: self._get_internal_score(item, score_field), reverse=True)
+        resolved_embedding = [float(value) for value in await self.embedding_function(query_text)]
+        if not resolved_embedding:
+            raise ValueError("embedding_function returned an empty embedding")
+        return resolved_embedding
 
     def _get_item_score(self, item: dict[str, Any]) -> float:
         """Get the most relevant provider score present on an item."""
@@ -659,17 +728,10 @@ class AzureCosmosContextProvider(BaseContextProvider):
             return float(value)
         return 0.0
 
-    def _get_item_key(self, item: dict[str, Any]) -> str:
-        """Get a stable merge key for a Cosmos item."""
-        item_id = item.get(self.id_field_name)
-        if item_id is not None:
-            return str(item_id)
-        return repr(item)
-
     @staticmethod
     def _tokenize_query_text(query_text: str) -> tuple[str, ...]:
         """Normalize query text into de-duplicated casefolded terms."""
-        return tuple(dict.fromkeys(match.casefold() for match in re.findall(r"[A-Za-z0-9_]+", query_text)))
+        return tuple(dict.fromkeys(match.casefold() for match in re.findall(r"\w+", query_text, flags=re.UNICODE)))
 
     @staticmethod
     def _score_text(text: str, query_terms: Sequence[str]) -> int:
@@ -678,56 +740,8 @@ class AzureCosmosContextProvider(BaseContextProvider):
         return sum(normalized_text.count(term) for term in query_terms)
 
     def _build_query_text(self, messages: Sequence[Message]) -> str:
-        """Build retrieval query text from the current conversation."""
-        if self.query_builder_mode == "latest_user":
-            return self._build_latest_user_query(messages)
-        if self.query_builder_mode == "recent_messages":
-            return self._build_recent_messages_query(messages)
-        if self.query_builder_mode == "latest_user_with_context":
-            latest_user_query = self._build_latest_user_query(messages)
-            if self._is_query_sufficient(latest_user_query):
-                return latest_user_query
-            return self._build_latest_user_with_context_query(messages)
-        raise ValueError(f"Unsupported query_builder_mode: {self.query_builder_mode}")
-
-    def _build_latest_user_query(self, messages: Sequence[Message]) -> str:
-        """Build a retrieval query from the latest user message."""
-        return next(
-            (msg.text.strip() for msg in reversed(messages) if msg.role == "user" and msg.text.strip()),
-            "",
-        )
-
-    def _build_recent_messages_query(self, messages: Sequence[Message]) -> str:
-        """Build a retrieval query from recent conversation turns."""
-        recent_messages = [
-            msg.text.strip() for msg in messages[-self.recent_message_count :] if msg.text and msg.text.strip()
-        ]
-        return "\n".join(recent_messages)
-
-    def _build_latest_user_with_context_query(self, messages: Sequence[Message]) -> str:
-        """Expand a short user query with nearby conversation context."""
-        latest_user_query = self._build_latest_user_query(messages)
-        if not latest_user_query:
-            return self._build_recent_messages_query(messages)
-
-        recent_context = [
-            f"{msg.role}: {msg.text.strip()}"
-            for msg in messages[-self.recent_message_count :]
-            if msg.text and msg.text.strip()
-        ]
-        if not recent_context:
-            return latest_user_query
-
-        return "\n".join([
-            "Conversation context for retrieval:",
-            *recent_context,
-            f"Primary retrieval need: {latest_user_query}",
-        ])
-
-    def _is_query_sufficient(self, query_text: str) -> bool:
-        """Return True when a latest-user query is detailed enough to search directly."""
-        terms = [term for term in query_text.split() if term.strip()]
-        return len(terms) >= self.short_query_term_threshold
+        """Build retrieval query text by joining filtered conversation messages."""
+        return "\n".join(msg.text.strip() for msg in messages if msg.text and msg.text.strip())
 
     @staticmethod
     def _normalize_search_text(query_terms: Sequence[str]) -> str:
@@ -742,7 +756,7 @@ class AzureCosmosContextProvider(BaseContextProvider):
         """Exclude context-provider writeback documents from retrieval queries."""
         return "(NOT IS_DEFINED(c.document_type) OR c.document_type != @writeback_document_type)"
 
-    def _build_projection_query_base(self) -> str:
+    def _build_projection_query_base(self, *, scan_limit: int) -> str:
         """Build the base projection clause for Cosmos retrieval queries."""
         projection_fields = [self.id_field_name, *self.content_field_names]
         projection_fields.extend(
@@ -752,13 +766,12 @@ class AzureCosmosContextProvider(BaseContextProvider):
                 self.url_field_name,
                 self.message_field_name,
                 self.metadata_field_name,
-                self.vector_field_name,
             )
             if field_name is not None and field_name not in projection_fields
         )
         select_clause = ", ".join(f"c.{field_name}" for field_name in projection_fields)
         # Field names and scan_limit are validated during initialization.
-        return f"SELECT TOP {self.scan_limit} {select_clause} FROM c"  # noqa: S608  # nosec B608
+        return f"SELECT TOP {scan_limit} {select_clause} FROM c"  # noqa: S608  # nosec B608
 
     def _validate_search_configuration(
         self,

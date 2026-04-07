@@ -1,6 +1,6 @@
 [project]
 name = "agent-framework-azure-cosmos"
-description = "Azure Cosmos DB history provider integration for Microsoft Agent Framework."
+description = "Azure Cosmos DB history and context provider integration for Microsoft Agent Framework."
 authors = [{ name = "Microsoft", email = "af-support@microsoft.com"}]
 readme = "README.md"
 requires-python = ">=3.10"

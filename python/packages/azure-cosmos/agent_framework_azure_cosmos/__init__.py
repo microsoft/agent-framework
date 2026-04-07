@@ -1,5 +1,13 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+"""Azure Cosmos DB provider exports.
+
+Supported classes:
+    - ``AzureCosmosContextProvider``
+    - ``CosmosContextSearchMode``
+    - ``CosmosHistoryProvider``
+"""
+
 import importlib.metadata
 
 from ._context_provider import AzureCosmosContextProvider, CosmosContextSearchMode
