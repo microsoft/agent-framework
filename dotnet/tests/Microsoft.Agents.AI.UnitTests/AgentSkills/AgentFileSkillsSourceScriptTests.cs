@@ -249,23 +249,32 @@ public sealed class AgentFileSkillsSourceScriptTests : IDisposable
     [Theory]
     [InlineData("./scripts")]
     [InlineData("./scripts/f1")]
-    public async Task GetSkillsAsync_ScriptFolderWithDotSlashPrefix_DiscoversScriptsAsync(string folder)
+    [InlineData("./scripts/f1", "./f2")]
+    public async Task GetSkillsAsync_ScriptFolderWithDotSlashPrefix_DiscoversScriptsAsync(params string[] folders)
     {
-        // Arrange — "./scripts" and "./scripts/f1" are equivalent to "scripts" and "scripts/f1";
+        // Arrange — "./"-prefixed folders are equivalent to their counterparts without the prefix;
         // the leading "./" is transparently normalized by Path.GetFullPath during file enumeration.
-        string folderWithoutDotSlash = folder.Substring(2); // strip "./"
         string skillDir = CreateSkillDir(this._testRoot, "dotslash-script-skill", "Dot-slash prefix", "Body.");
-        CreateFile(skillDir, $"{folderWithoutDotSlash}/run.py", "print('dotslash')");
+        foreach (string folder in folders)
+        {
+            string folderWithoutDotSlash = folder.Substring(2); // strip "./"
+            CreateFile(skillDir, $"{folderWithoutDotSlash}/run.py", "print('dotslash')");
+        }
+
         var source = new AgentFileSkillsSource(this._testRoot, s_noOpExecutor,
-            new AgentFileSkillsSourceOptions { ScriptFolders = [folder] });
+            new AgentFileSkillsSourceOptions { ScriptFolders = folders });
 
         // Act
         var skills = await source.GetSkillsAsync(CancellationToken.None);
 
-        // Assert — script is discovered with a name identical to using the folder without "./"
+        // Assert — scripts are discovered with names identical to using folders without "./"
         Assert.Single(skills);
-        Assert.Single(skills[0].Scripts!);
-        Assert.Equal($"{folderWithoutDotSlash}/run.py", skills[0].Scripts![0].Name);
+        Assert.Equal(folders.Length, skills[0].Scripts!.Count);
+        foreach (string folder in folders)
+        {
+            string expectedName = $"{folder.Substring(2)}/run.py";
+            Assert.Contains(skills[0].Scripts!, s => s.Name == expectedName);
+        }
     }
 
     private static string CreateSkillDir(string root, string name, string description, string body)
