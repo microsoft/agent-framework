@@ -320,9 +320,10 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             bool isRootFolder = string.Equals(folder, RootFolderIndicator, StringComparison.Ordinal);
 
+            // GetFullPath normalizes mixed separators (e.g. "C:\skill\scripts/f1" → "C:\skill\scripts\f1")
             string targetDirectory = isRootFolder
                 ? skillDirectoryFullPath
-                : Path.Combine(skillDirectoryFullPath, folder) + Path.DirectorySeparatorChar;
+                : Path.GetFullPath(Path.Combine(skillDirectoryFullPath, folder)) + Path.DirectorySeparatorChar;
 
             if (!Directory.Exists(targetDirectory))
             {
@@ -432,9 +433,10 @@ internal sealed partial class AgentFileSkillsSource : AgentSkillsSource
         {
             bool isRootFolder = string.Equals(folder, RootFolderIndicator, StringComparison.Ordinal);
 
+            // GetFullPath normalizes mixed separators (e.g. "C:\skill\scripts/f1" → "C:\skill\scripts\f1")
             string targetDirectory = isRootFolder
                 ? skillDirectoryFullPath
-                : Path.Combine(skillDirectoryFullPath, folder) + Path.DirectorySeparatorChar;
+                : Path.GetFullPath(Path.Combine(skillDirectoryFullPath, folder)) + Path.DirectorySeparatorChar;
 
             if (!Directory.Exists(targetDirectory))
             {
