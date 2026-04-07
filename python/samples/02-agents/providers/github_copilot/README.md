@@ -31,7 +31,7 @@ When using [`github_copilot_with_observability.py`](github_copilot_with_observab
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `http://localhost:4317`) | Console only |
-| `OTEL_SERVICE_NAME` | Service name shown in traces | `agent-framework` |
+| `OTEL_SERVICE_NAME` | Service name shown in traces | `agent_framework` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol: `grpc` or `http/protobuf` | `grpc` |
 
 ## Examples
