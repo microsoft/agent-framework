@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 from typing_extensions import Never
@@ -895,3 +895,73 @@ class TestExecutorExplicitTypes:
         assert str in exec_instance._handlers  # pyright: ignore[reportPrivateUsage]
         assert int in exec_instance.output_types
         assert bool in exec_instance.workflow_output_types
+
+
+# region Tests for unresolved TypeVar rejection in function executor registration
+
+_FT = TypeVar("_FT")
+
+
+class TestFunctionExecutorTypeVarRejection:
+    """Tests that FunctionExecutor rejects unresolved TypeVar in message annotations."""
+
+    def test_function_executor_rejects_unresolved_typevar(self):
+        """Test that FunctionExecutor raises ValueError for unresolved TypeVar message annotation."""
+
+        def echo(message: _FT) -> _FT:
+            return message
+
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+            FunctionExecutor(echo, id="echo")
+
+    def test_function_executor_rejects_typevar_with_context(self):
+        """Test that FunctionExecutor raises ValueError for TypeVar even with WorkflowContext."""
+
+        async def echo(message: _FT, ctx: WorkflowContext) -> None:
+            pass
+
+        with pytest.raises(ValueError, match="unresolved TypeVar"):
+            FunctionExecutor(echo, id="echo")
+
+    def test_function_executor_explicit_input_bypasses_typevar_check(self):
+        """Test that explicit input= parameter bypasses TypeVar detection."""
+
+        async def echo(message: _FT, ctx: WorkflowContext) -> None:
+            pass
+
+        exec_instance = FunctionExecutor(echo, id="echo", input=str, output=str)
+        assert str in exec_instance.input_types
+
+    def test_function_executor_allows_concrete_types(self):
+        """Test that FunctionExecutor works normally with concrete type annotations."""
+
+        async def handle(message: str, ctx: WorkflowContext[str]) -> None:
+            pass
+
+        exec_instance = FunctionExecutor(handle, id="concrete")
+        assert str in exec_instance.input_types
+
+    def test_function_executor_error_recommends_explicit_types(self):
+        """Test that error message recommends @executor(input=..., output=...)."""
+
+        def echo(message: _FT) -> _FT:
+            return message
+
+        with pytest.raises(ValueError, match=r"@executor\(input=<concrete_type>, output=<concrete_type>\)"):
+            FunctionExecutor(echo, id="echo")
+
+
+# endregion: Tests for unresolved TypeVar rejection in function executor registration
+
+
+_FBT = TypeVar("_FBT", bound=str)
+
+
+def test_function_executor_rejects_bounded_typevar_in_message_annotation():
+    """Test that FunctionExecutor raises ValueError for a bounded TypeVar in message annotation."""
+
+    async def process(message: _FBT, ctx: WorkflowContext) -> None:
+        await ctx.send_message(message)
+
+    with pytest.raises(ValueError, match="unresolved TypeVar"):
+        FunctionExecutor(process, id="bounded")

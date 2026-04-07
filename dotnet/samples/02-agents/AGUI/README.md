@@ -15,7 +15,7 @@ All samples require the following environment variables:
 
 ```bash
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o-mini"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-5.4-mini"
 ```
 
 For the client samples, you can optionally set:
