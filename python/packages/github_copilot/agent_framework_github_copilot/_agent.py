@@ -27,6 +27,7 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
+from agent_framework.observability import AgentTelemetryLayer
 
 try:
     from copilot import CopilotClient, CopilotSession, SubprocessConfig
@@ -135,8 +136,11 @@ OptionsT = TypeVar(
 )
 
 
-class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
-    """A GitHub Copilot Agent.
+class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
+    """A GitHub Copilot Agent without telemetry layers.
+
+    This is the core GitHub Copilot agent implementation without OpenTelemetry instrumentation.
+    For most use cases, prefer :class:`GitHubCopilotAgent` which includes telemetry support.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
     within the Agent Framework. It supports both streaming and non-streaming responses,
@@ -149,7 +153,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            async with GitHubCopilotAgent() as agent:
+            async with RawGitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
                 print(response)
 
@@ -157,22 +161,11 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+            from agent_framework_github_copilot import RawGitHubCopilotAgent, GitHubCopilotOptions
 
-            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+            agent: RawGitHubCopilotAgent[GitHubCopilotOptions] = RawGitHubCopilotAgent(
                 default_options={"model": "claude-sonnet-4", "timeout": 120}
             )
-
-        With tools:
-
-        .. code-block:: python
-
-            def get_weather(city: str) -> str:
-                return f"Weather in {city} is sunny"
-
-
-            async with GitHubCopilotAgent(tools=[get_weather]) as agent:
-                response = await agent.run("What's the weather in Seattle?")
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "github.copilot"
@@ -200,9 +193,9 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         Keyword Args:
             client: Optional pre-configured CopilotClient instance. If not provided,
                 a new client will be created using the other parameters.
-            id: ID of the GitHubCopilotAgent.
-            name: Name of the GitHubCopilotAgent.
-            description: Description of the GitHubCopilotAgent.
+            id: ID of the RawGitHubCopilotAgent.
+            name: Name of the RawGitHubCopilotAgent.
+            description: Description of the RawGitHubCopilotAgent.
             context_providers: Context Providers, to be used by the agent.
             middleware: Agent middleware used by the agent.
             tools: Tools to use for the agent. Can be functions
@@ -258,7 +251,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._default_options = opts
         self._started = False
 
-    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> RawGitHubCopilotAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -308,6 +301,20 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         self._started = False
 
+    @property
+    def default_options(self) -> dict[str, Any]:
+        """Expose default options including model from settings.
+
+        Returns a merged dict of ``_default_options`` with the resolved ``model``
+        from settings injected under the ``model`` key. This is read by
+        :class:`AgentTelemetryLayer` to include the model name in span attributes.
+        """
+        opts = dict(self._default_options)
+        model = self._settings.get("model")
+        if model:
+            opts["model"] = model
+        return opts
+
     @overload
     def run(
         self,
@@ -316,6 +323,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[False] = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -326,6 +334,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[True],
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -335,6 +344,7 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
+        **kwargs: Any,  # type: ignore[override]
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -349,6 +359,8 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
+            kwargs: Additional keyword arguments for compatibility with the shared agent
+                interface (e.g. compaction_strategy, tokenizer). Not used by this agent.
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -766,4 +778,94 @@ class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools=tools or None,
             mcp_servers=self._mcp_servers or None,
             provider=self._provider or None,
+        )
+
+
+class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], Generic[OptionsT]):
+    """A GitHub Copilot Agent with OpenTelemetry instrumentation.
+
+    This is the recommended agent class for most use cases. It includes
+    OpenTelemetry-based telemetry for observability. For a minimal
+    implementation without telemetry, use :class:`RawGitHubCopilotAgent`.
+
+    This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
+    within the Agent Framework. It supports both streaming and non-streaming responses,
+    custom tools, and session management.
+
+    The agent can be used as an async context manager to ensure proper cleanup:
+
+    Examples:
+        Basic usage:
+
+        .. code-block:: python
+
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+                print(response)
+
+        With explicitly typed options:
+
+        .. code-block:: python
+
+            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
+
+            agent: GitHubCopilotAgent[GitHubCopilotOptions] = GitHubCopilotAgent(
+                default_options={"model": "claude-sonnet-4", "timeout": 120}
+            )
+
+        With observability:
+
+        .. code-block:: python
+
+            from agent_framework.observability import configure_otel_providers
+
+            configure_otel_providers()
+            async with GitHubCopilotAgent() as agent:
+                response = await agent.run("Hello, world!")
+    """
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[False] = ...,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse]: ...
+
+    @overload  # type: ignore[override]
+    def run(
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: Literal[True],
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
+
+    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
+        self,
+        messages: AgentRunInputs | None = None,
+        *,
+        stream: bool = False,
+        session: AgentSession | None = None,
+        options: OptionsT | None = None,
+        **kwargs: Any,
+    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
+        """Run the GitHub Copilot agent with telemetry enabled."""
+        from typing import cast
+
+        super_run = cast(
+            "Callable[..., Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]]",
+            super().run,
+        )
+        return super_run(
+            messages=messages,
+            stream=stream,
+            session=session,
+            options=options,
+            **kwargs,
         )
