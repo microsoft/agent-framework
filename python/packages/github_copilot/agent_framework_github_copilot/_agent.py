@@ -320,7 +320,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         if self._client is None:
             cli_path = self._settings.get("cli_path") or None
-            log_level = self._settings.get("log_level") or "info"
+            log_level = self._settings.get("log_level") or None
 
             # Build CLI telemetry config from explicit config or env-based settings.
             # This enables the Copilot CLI subprocess to export its own traces.
@@ -340,11 +340,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
                     telemetry_parts["capture_content"] = otel_capture_content
                 telemetry = telemetry_parts if telemetry_parts else None
 
-            subprocess_config = SubprocessConfig(
-                cli_path=cli_path,
-                log_level=log_level,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
-                telemetry=telemetry,
-            )
+            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path, "telemetry": telemetry}
+            if log_level:
+                subprocess_kwargs["log_level"] = log_level
+            subprocess_config = SubprocessConfig(**subprocess_kwargs)
             self._client = CopilotClient(subprocess_config)
 
         try:
@@ -805,20 +804,14 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         mcp_servers = opts.get("mcp_servers") or self._mcp_servers or None
         tools = self._prepare_tools(self._tools) if self._tools else None
 
-        create_kwargs: dict[str, Any] = {
-            "on_permission_request": permission_handler,
-            "streaming": streaming,
-        }
-        if model:
-            create_kwargs["model"] = model
-        if system_message:
-            create_kwargs["system_message"] = system_message
-        if tools:
-            create_kwargs["tools"] = tools
-        if mcp_servers:
-            create_kwargs["mcp_servers"] = mcp_servers
-
-        return await self._client.create_session(**create_kwargs)
+        return await self._client.create_session(
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            model=model or None,
+            system_message=system_message or None,
+            tools=tools or None,
+            mcp_servers=mcp_servers or None,
+        )
 
     async def _resume_session(self, session_id: str, streaming: bool) -> CopilotSession:
         """Resume an existing Copilot session by ID."""
@@ -829,16 +822,13 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         permission_handler: PermissionHandlerType = self._permission_handler or _deny_all_permissions
         tools = self._prepare_tools(self._tools) if self._tools else None
 
-        resume_kwargs: dict[str, Any] = {
-            "on_permission_request": permission_handler,
-            "streaming": streaming,
-        }
-        if tools:
-            resume_kwargs["tools"] = tools
-        if self._mcp_servers:
-            resume_kwargs["mcp_servers"] = self._mcp_servers
-
-        return await self._client.resume_session(session_id, **resume_kwargs)
+        return await self._client.resume_session(
+            session_id,
+            on_permission_request=permission_handler,
+            streaming=streaming,
+            tools=tools or None,
+            mcp_servers=self._mcp_servers or None,
+        )
 
 
 class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], Generic[OptionsT]):
