@@ -117,4 +117,6 @@ internal sealed class SkillConfig
 [JsonSerializable(typeof(LookupRequest))]
 [JsonSerializable(typeof(LookupResponse))]
 [JsonSerializable(typeof(SkillConfig))]
-internal sealed partial class SkillTestJsonContext : JsonSerializerContext;
+internal sealed partial class SkillTestJsonContext : JsonSerializerContext
+{
+}
