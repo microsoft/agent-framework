@@ -196,16 +196,21 @@ def test_openai_base_url_wins_over_azure_aliases(monkeypatch, azure_openai_unit_
     assert client.azure_endpoint is None
 
 
-
-
 def test_init_with_openai_v1_base_url_and_credential_uses_openai_client(monkeypatch) -> None:
     for env in [
-        "OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_MODEL",
-        "OPENAI_EMBEDDING_MODEL", "OPENAI_BASE_URL",
-        "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL",
-        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_EMBEDDING_MODEL",
-        "AZURE_OPENAI_MODEL", "AZURE_OPENAI_API_VERSION",
-        "AZURE_OPENAI_CHAT_MODEL", "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID",
+        "OPENAI_MODEL",
+        "OPENAI_EMBEDDING_MODEL",
+        "OPENAI_BASE_URL",
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_EMBEDDING_MODEL",
+        "AZURE_OPENAI_MODEL",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_CHAT_MODEL",
+        "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
     ]:
         monkeypatch.delenv(env, raising=False)
 
@@ -224,12 +229,19 @@ def test_init_with_openai_v1_base_url_and_credential_uses_openai_client(monkeypa
 
 def test_init_with_openai_v1_base_url_and_api_key_uses_openai_client(monkeypatch) -> None:
     for env in [
-        "OPENAI_API_KEY", "OPENAI_ORG_ID", "OPENAI_MODEL",
-        "OPENAI_EMBEDDING_MODEL", "OPENAI_BASE_URL",
-        "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_BASE_URL",
-        "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_EMBEDDING_MODEL",
-        "AZURE_OPENAI_MODEL", "AZURE_OPENAI_API_VERSION",
-        "AZURE_OPENAI_CHAT_MODEL", "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_ORG_ID",
+        "OPENAI_MODEL",
+        "OPENAI_EMBEDDING_MODEL",
+        "OPENAI_BASE_URL",
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_BASE_URL",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_EMBEDDING_MODEL",
+        "AZURE_OPENAI_MODEL",
+        "AZURE_OPENAI_API_VERSION",
+        "AZURE_OPENAI_CHAT_MODEL",
+        "AZURE_OPENAI_CHAT_COMPLETION_MODEL",
     ]:
         monkeypatch.delenv(env, raising=False)
 
