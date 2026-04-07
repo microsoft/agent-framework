@@ -1,6 +1,9 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 
 namespace Microsoft.Agents.AI.UnitTests.AgentSkills;
@@ -416,5 +419,83 @@ public sealed class AgentInlineSkillTests
         // Assert
         Assert.Contains("description=\"A described resource.\"", content);
         Assert.DoesNotContain("no-desc\" description", content);
+    }
+
+    [Fact]
+    public async Task AddScript_SkillLevelSerializerOptions_AppliedToScriptAsync()
+    {
+        // Arrange — skill-level JSO with source-generated context for custom types
+        var jso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("jso-skill", "JSO test.", "Instructions.", serializerOptions: jso);
+        skill.AddScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = [$"result for {request.Query}"],
+            TotalCount = request.MaxResults,
+        });
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "test", MaxResults = 3 }, jso);
+        var args = new AIFunctionArguments { ["request"] = inputJson };
+
+        // Act
+        var result = await skill.Scripts![0].RunAsync(skill, args, CancellationToken.None);
+
+        // Assert — the custom input was deserialized via skill-level JSO and response was produced
+        Assert.NotNull(result);
+        Assert.Contains("result for test", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddScript_PerScriptSerializerOptions_OverridesSkillLevelAsync()
+    {
+        // Arrange — skill-level JSO uses snake_case naming; per-script JSO overrides with source-generated context
+        var skillJso = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var scriptJso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("override-skill", "Override test.", "Instructions.", serializerOptions: skillJso);
+        skill.AddScript("lookup", (LookupRequest request) => new LookupResponse
+        {
+            Items = [$"found {request.Query}"],
+            TotalCount = request.MaxResults,
+        }, serializerOptions: scriptJso);
+        var inputJson = JsonSerializer.SerializeToElement(new LookupRequest { Query = "override", MaxResults = 7 }, scriptJso);
+        var args = new AIFunctionArguments { ["request"] = inputJson };
+
+        // Act
+        var result = await skill.Scripts![0].RunAsync(skill, args, CancellationToken.None);
+
+        // Assert — per-script JSO takes effect and custom types are properly marshaled
+        Assert.NotNull(result);
+        Assert.Contains("found override", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddResource_SkillLevelSerializerOptions_AppliedToDelegateResourceAsync()
+    {
+        // Arrange — skill-level JSO with source-generated context; delegate resource returns a custom type
+        var jso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("custom-type-resource-skill", "Custom type resource test.", "Instructions.", serializerOptions: jso);
+        skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true });
+
+        // Act
+        var result = await skill.Resources![0].ReadAsync();
+
+        // Assert — the custom type was returned successfully via skill-level JSO
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
+    }
+
+    [Fact]
+    public async Task AddResource_PerResourceSerializerOptions_OverridesSkillLevelAsync()
+    {
+        // Arrange — skill-level JSO uses snake_case naming; per-resource JSO overrides with source-generated context
+        var skillJso = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+        var resourceJso = SkillTestJsonContext.Default.Options;
+        var skill = new AgentInlineSkill("override-resource-skill", "Override resource test.", "Instructions.", serializerOptions: skillJso);
+        skill.AddResource("config", () => new SkillConfig { Theme = "dark", Verbose = true }, serializerOptions: resourceJso);
+
+        // Act
+        var result = await skill.Resources![0].ReadAsync();
+
+        // Assert — per-resource JSO takes effect and custom type is properly marshaled
+        Assert.NotNull(result);
+        Assert.Contains("dark", result!.ToString()!);
     }
 }
