@@ -245,16 +245,18 @@ def test_init_with_openai_v1_base_url_and_api_key_uses_openai_client(monkeypatch
     ]:
         monkeypatch.delenv(env, raising=False)
 
-    client = OpenAIEmbeddingClient(
-        base_url="https://myproject.openai.azure.com/openai/v1/",
-        model="text-embedding-3-large",
-        api_key="test-api-key",
-        api_version="2024-10-21",
-    )
+    # AZURE_OPENAI_BASE_URL + AZURE_OPENAI_API_KEY enter the Azure settings
+    # path without an explicit endpoint parameter; the /openai/v1 suffix
+    # should still produce AsyncOpenAI (not AsyncAzureOpenAI).
+    monkeypatch.setenv("AZURE_OPENAI_BASE_URL", "https://myproject.openai.azure.com/openai/v1/")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-api-key")
+
+    client = OpenAIEmbeddingClient(model="text-embedding-3-large")
 
     assert client.model == "text-embedding-3-large"
     assert not isinstance(client.client, AsyncAzureOpenAI)
     assert isinstance(client.client, AsyncOpenAI)
+    assert str(client.client.base_url).rstrip("/").endswith("/openai/v1")
 
 
 def test_init_with_azure_endpoint_still_uses_azure_client(azure_openai_unit_test_env: dict[str, str]) -> None:
