@@ -7,7 +7,7 @@ import contextlib
 import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, MutableMapping, Sequence
-from typing import Any, ClassVar, Generic, Literal, TypedDict, cast, overload
+from typing import Any, ClassVar, Generic, Literal, TypedDict, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -27,11 +27,9 @@ from agent_framework._settings import load_settings
 from agent_framework._tools import FunctionTool, ToolTypes
 from agent_framework._types import AgentRunInputs, normalize_tools
 from agent_framework.exceptions import AgentException
-from agent_framework.observability import AgentTelemetryLayer
 
 try:
     from copilot import CopilotClient, CopilotSession, SubprocessConfig
-    from copilot.client import TelemetryConfig
     from copilot.generated.session_events import PermissionRequest, SessionEvent, SessionEventType
     from copilot.session import MCPServerConfig, PermissionRequestResult, SystemMessageConfig
     from copilot.tools import Tool as CopilotTool
@@ -81,24 +79,12 @@ class GitHubCopilotSettings(TypedDict, total=False):
             Can be set via environment variable GITHUB_COPILOT_TIMEOUT.
         log_level: CLI log level.
             Can be set via environment variable GITHUB_COPILOT_LOG_LEVEL.
-        otlp_endpoint: OTLP HTTP endpoint URL for CLI trace/metric export.
-            Can be set via environment variable GITHUB_COPILOT_OTLP_ENDPOINT.
-        otel_file_path: File path for CLI JSON-lines trace output.
-            Can be set via environment variable GITHUB_COPILOT_OTEL_FILE_PATH.
-        otel_source_name: Instrumentation scope name for CLI telemetry.
-            Can be set via environment variable GITHUB_COPILOT_OTEL_SOURCE_NAME.
-        otel_capture_content: Whether CLI should capture message content in traces.
-            Can be set via environment variable GITHUB_COPILOT_OTEL_CAPTURE_CONTENT.
     """
 
     cli_path: str | None
     model: str | None
     timeout: float | None
     log_level: str | None
-    otlp_endpoint: str | None
-    otel_file_path: str | None
-    otel_source_name: str | None
-    otel_capture_content: bool | None
 
 
 class GitHubCopilotOptions(TypedDict, total=False):
@@ -134,13 +120,6 @@ class GitHubCopilotOptions(TypedDict, total=False):
     Supports both local (stdio) and remote (HTTP/SSE) servers.
     """
 
-    telemetry: TelemetryConfig
-    """OpenTelemetry configuration for the Copilot CLI process.
-    When provided, enables CLI-level telemetry (trace export from the CLI subprocess).
-    The agent framework layer automatically correlates traces via W3C traceparent headers,
-    so CLI spans appear as children of the agent framework spans.
-    """
-
 
 OptionsT = TypeVar(
     "OptionsT",
@@ -150,11 +129,8 @@ OptionsT = TypeVar(
 )
 
 
-class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
-    """A GitHub Copilot Agent without telemetry instrumentation.
-
-    This is the core implementation. For most use cases, prefer :class:`GitHubCopilotAgent`
-    which includes OpenTelemetry instrumentation.
+class GitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
+    """A GitHub Copilot Agent.
 
     This agent wraps the GitHub Copilot SDK to provide Copilot agentic capabilities
     within the Agent Framework. It supports both streaming and non-streaming responses,
@@ -167,7 +143,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
 
         .. code-block:: python
 
-            async with RawGitHubCopilotAgent() as agent:
+            async with GitHubCopilotAgent() as agent:
                 response = await agent.run("Hello, world!")
                 print(response)
 
@@ -226,7 +202,7 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             tools: Tools to use for the agent. Can be functions
                 or tool definition dicts. These are converted to Copilot SDK tools internally.
             default_options: Default options for the agent. Can include cli_path, model,
-                timeout, log_level, telemetry, etc.
+                timeout, log_level, etc.
             env_file_path: Optional path to .env file for loading configuration.
             env_file_encoding: Encoding of the .env file, defaults to 'utf-8'.
 
@@ -256,7 +232,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         log_level = opts.pop("log_level", None)
         on_permission_request: PermissionHandlerType | None = opts.pop("on_permission_request", None)
         mcp_servers: dict[str, MCPServerConfig] | None = opts.pop("mcp_servers", None)
-        telemetry: TelemetryConfig | None = opts.pop("telemetry", None)
 
         self._settings = load_settings(
             GitHubCopilotSettings,
@@ -272,31 +247,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         self._tools = normalize_tools(tools)
         self._permission_handler = on_permission_request
         self._mcp_servers = mcp_servers
-        self._telemetry_config = telemetry
         self._default_options = opts
         self._started = False
 
-    @property
-    def default_options(self) -> dict[str, Any]:
-        """Expose options with ``instructions`` key for telemetry layer compatibility.
-
-        Maps ``system_message.content`` to ``instructions`` so that
-        :class:`AgentTelemetryLayer` can capture the system prompt in traces.
-        """
-        opts = dict(self._default_options)
-        # Merge back settings that were popped during __init__ so that
-        # AgentTelemetryLayer can populate gen_ai.request.model and friends.
-        model = self._settings.get("model")
-        if model and "model" not in opts:
-            opts["model"] = model
-        system_message = opts.get("system_message")
-        if isinstance(system_message, dict):
-            content = cast("dict[str, Any]", system_message).get("content")
-            if content:
-                opts["instructions"] = content
-        return opts
-
-    async def __aenter__(self) -> RawGitHubCopilotAgent[OptionsT]:
+    async def __aenter__(self) -> GitHubCopilotAgent[OptionsT]:
         """Start the agent when entering async context."""
         await self.start()
         return self
@@ -322,29 +276,10 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             cli_path = self._settings.get("cli_path") or None
             log_level = self._settings.get("log_level") or None
 
-            # Build CLI telemetry config from explicit config or env-based settings.
-            # This enables the Copilot CLI subprocess to export its own traces.
-            # Trace correlation with agent framework spans happens automatically via
-            # W3C traceparent headers injected by the SDK on each create_session call.
-            telemetry = self._telemetry_config
-            if telemetry is None:
-                telemetry_parts: TelemetryConfig = {}
-                if otlp_endpoint := self._settings.get("otlp_endpoint"):
-                    telemetry_parts["otlp_endpoint"] = otlp_endpoint
-                if otel_file_path := self._settings.get("otel_file_path"):
-                    telemetry_parts["file_path"] = otel_file_path
-                if otel_source_name := self._settings.get("otel_source_name"):
-                    telemetry_parts["source_name"] = otel_source_name
-                otel_capture_content = self._settings.get("otel_capture_content")
-                if otel_capture_content is not None:
-                    telemetry_parts["capture_content"] = otel_capture_content
-                telemetry = telemetry_parts if telemetry_parts else None
-
-            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path, "telemetry": telemetry}
+            subprocess_kwargs: dict[str, Any] = {"cli_path": cli_path}
             if log_level:
                 subprocess_kwargs["log_level"] = log_level
-            subprocess_config = SubprocessConfig(**subprocess_kwargs)
-            self._client = CopilotClient(subprocess_config)
+            self._client = CopilotClient(SubprocessConfig(**subprocess_kwargs))
 
         try:
             await self._client.start()
@@ -373,7 +308,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[False] = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> Awaitable[AgentResponse]: ...
 
     @overload
@@ -384,7 +318,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: Literal[True],
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **kwargs: Any,
     ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
 
     def run(
@@ -394,7 +327,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         stream: bool = False,
         session: AgentSession | None = None,
         options: OptionsT | None = None,
-        **_kwargs: Any,
     ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
         """Get a response from the agent.
 
@@ -409,8 +341,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             stream: Whether to stream the response. Defaults to False.
             session: The conversation session associated with the message(s).
             options: Runtime options (model, timeout, etc.).
-            **_kwargs: Additional keyword arguments accepted for compatibility with
-                AgentTelemetryLayer (tools, middleware, compaction_strategy, etc.).
 
         Returns:
             When stream=False: An Awaitable[AgentResponse].
@@ -794,10 +724,8 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
         opts = runtime_options or {}
-
         model = opts.get("model") or self._settings.get("model") or None
         system_message = opts.get("system_message") or self._default_options.get("system_message") or None
-        # on_permission_request is required by the SDK; fall back to deny-all if not configured.
         permission_handler: PermissionHandlerType = (
             opts.get("on_permission_request") or self._permission_handler or _deny_all_permissions
         )
@@ -818,7 +746,6 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
         if not self._client:
             raise RuntimeError("GitHub Copilot client not initialized. Call start() first.")
 
-        # on_permission_request is required by the SDK; fall back to deny-all if not configured.
         permission_handler: PermissionHandlerType = self._permission_handler or _deny_all_permissions
         tools = self._prepare_tools(self._tools) if self._tools else None
 
@@ -828,110 +755,4 @@ class RawGitHubCopilotAgent(BaseAgent, Generic[OptionsT]):
             streaming=streaming,
             tools=tools or None,
             mcp_servers=self._mcp_servers or None,
-        )
-
-
-class GitHubCopilotAgent(AgentTelemetryLayer, RawGitHubCopilotAgent[OptionsT], Generic[OptionsT]):
-    """A GitHub Copilot Agent with OpenTelemetry instrumentation.
-
-    This is the recommended class for most use cases. It wraps
-    :class:`RawGitHubCopilotAgent` with OpenTelemetry tracing so that each agent
-    invocation creates a ``invoke_agent`` span. Trace context is automatically
-    propagated to the Copilot CLI subprocess via W3C traceparent headers, enabling
-    end-to-end trace correlation between agent framework spans and CLI-level spans.
-
-    For a minimal implementation without telemetry, use :class:`RawGitHubCopilotAgent`.
-
-    Examples:
-        Basic usage:
-
-        .. code-block:: python
-
-            async with GitHubCopilotAgent() as agent:
-                response = await agent.run("Hello, world!")
-                print(response)
-
-        With CLI telemetry export (traces from the Copilot CLI subprocess):
-
-        .. code-block:: python
-
-            from agent_framework_github_copilot import GitHubCopilotAgent, GitHubCopilotOptions
-
-            agent = GitHubCopilotAgent(
-                default_options={
-                    "model": "claude-sonnet-4",
-                    "telemetry": {
-                        "otlp_endpoint": "http://localhost:4318",
-                        "capture_content": True,
-                    },
-                }
-            )
-    """
-
-    @overload  # type: ignore[override]
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[False] = ...,
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        tools: Any = None,
-        compaction_strategy: Any = None,
-        tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse]: ...
-
-    @overload  # type: ignore[override]
-    def run(
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: Literal[True],
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        tools: Any = None,
-        compaction_strategy: Any = None,
-        tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ResponseStream[AgentResponseUpdate, AgentResponse]: ...
-
-    def run(  # pyright: ignore[reportIncompatibleMethodOverride]  # type: ignore[override]
-        self,
-        messages: AgentRunInputs | None = None,
-        *,
-        stream: bool = False,
-        session: AgentSession | None = None,
-        middleware: Sequence[AgentMiddlewareTypes] | None = None,
-        options: OptionsT | None = None,
-        tools: Any = None,
-        compaction_strategy: Any = None,
-        tokenizer: Any = None,
-        function_invocation_kwargs: dict[str, Any] | None = None,
-        client_kwargs: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]:
-        """Run the GitHub Copilot agent with OpenTelemetry telemetry enabled."""
-        super_run = cast(
-            "Callable[..., Awaitable[AgentResponse] | ResponseStream[AgentResponseUpdate, AgentResponse]]",
-            super().run,
-        )
-        return super_run(
-            messages=messages,
-            stream=stream,
-            session=session,
-            middleware=middleware,
-            options=options,
-            tools=tools,
-            compaction_strategy=compaction_strategy,
-            tokenizer=tokenizer,
-            function_invocation_kwargs=function_invocation_kwargs,
-            client_kwargs=client_kwargs,
-            **kwargs,
         )

@@ -139,10 +139,6 @@ variable.
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_MODEL` | `gpt-5` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_TIMEOUT` | `60` |
 | `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_LOG_LEVEL` | `info` |
-| `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_OTLP_ENDPOINT` | `http://localhost:4318` |
-| `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_OTEL_FILE_PATH` | `/tmp/copilot-traces.jsonl` |
-| `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_OTEL_SOURCE_NAME` | `my-agent` |
-| `agent-framework-github-copilot` | `GitHubCopilotAgent` | `GITHUB_COPILOT_OTEL_CAPTURE_CONTENT` | `true` |
 | `agent-framework-mem0` | `agent_framework_mem0 package import` | `MEM0_TELEMETRY` | `false` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_HOST` | `http://localhost:11434` |
 | `agent-framework-ollama` | `OllamaChatClient` | `OLLAMA_MODEL` | `llama3.1:8b` |

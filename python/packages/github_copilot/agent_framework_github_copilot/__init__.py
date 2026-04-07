@@ -2,7 +2,7 @@
 
 import importlib.metadata
 
-from ._agent import GitHubCopilotAgent, GitHubCopilotOptions, GitHubCopilotSettings, RawGitHubCopilotAgent
+from ._agent import GitHubCopilotAgent, GitHubCopilotOptions, GitHubCopilotSettings
 
 try:
     __version__ = importlib.metadata.version(__name__)
@@ -13,6 +13,5 @@ __all__ = [
     "GitHubCopilotAgent",
     "GitHubCopilotOptions",
     "GitHubCopilotSettings",
-    "RawGitHubCopilotAgent",
     "__version__",
 ]
