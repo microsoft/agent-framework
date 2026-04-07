@@ -5,18 +5,7 @@
 #     "hyperlight-sandbox-backend-wasm",
 #     "hyperlight-sandbox-python-guest",
 # ]
-# [tool.uv.sources]
-# hyperlight-sandbox = { index = "testpypi" }
-# hyperlight-sandbox-backend-wasm = { index = "testpypi" }
-# hyperlight-sandbox-python-guest = { index = "testpypi" }
-# [[tool.uv.index]]
-# name = "testpypi"
-# url = "https://test.pypi.org/simple/"
-# explicit = true
 # ///
-# Bootstrap manually with:
-#   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
-#     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
 # Run with: uv run --python 3.12 samples/02-agents/tools/codeact_tool.py
 #
 # Copyright (c) Microsoft. All rights reserved.
@@ -33,7 +22,7 @@ from typing import Annotated, Any
 
 from agent_framework import Agent, Content, FunctionTool, tool
 from agent_framework._tools import normalize_tools
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -42,8 +31,8 @@ try:
 except ModuleNotFoundError as exc:
     raise RuntimeError(
         "This prototype expects an upstream `hyperlight_sandbox.Sandbox` "
-        "implementation. Install the provisional Hyperlight packages from TestPyPI, "
-        "or update this sample to match the final import path."
+        "implementation. Install the provisional Hyperlight package once it "
+        "is available, or update this sample to match the final import path."
     ) from exc
 
 load_dotenv()
@@ -52,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 """This sample demonstrates a direct-tool Hyperlight CodeAct prototype.
 
-The sample creates an `Agent(client=AzureOpenAIResponsesClient(...), ...)` with a
+The sample creates an `Agent(client=FoundryChatClient(...), ...)` with a
 primary `execute_code` tool plus schema-visible tools. It also supports
 per-run runtime tools by registering them with the sandbox before the run and
 passing them through `agent.run(..., tools=runtime_tools)`.
@@ -295,9 +284,9 @@ async def main() -> None:
         return sandbox_manager.run_code(code=code)
 
     agent = Agent(
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="HyperlightCodeActToolAgent",

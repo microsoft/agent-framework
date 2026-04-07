@@ -5,18 +5,7 @@
 #     "hyperlight-sandbox-backend-wasm",
 #     "hyperlight-sandbox-python-guest",
 # ]
-# [tool.uv.sources]
-# hyperlight-sandbox = { index = "testpypi" }
-# hyperlight-sandbox-backend-wasm = { index = "testpypi" }
-# hyperlight-sandbox-python-guest = { index = "testpypi" }
-# [[tool.uv.index]]
-# name = "testpypi"
-# url = "https://test.pypi.org/simple/"
-# explicit = true
 # ///
-# Bootstrap manually with:
-#   uv pip install --python 3.12 --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple \
-#     hyperlight-sandbox hyperlight-sandbox-backend-wasm hyperlight-sandbox-python-guest
 # Run with: uv run --python 3.12 samples/02-agents/tools/codeact_context_provider.py
 #
 # Copyright (c) Microsoft. All rights reserved.
@@ -34,8 +23,8 @@ from typing import Annotated, Any, Literal
 from agent_framework import (
     Agent,
     AgentSession,
-    BaseContextProvider,
     Content,
+    ContextProvider,
     FunctionInvocationContext,
     FunctionTool,
     SessionContext,
@@ -43,7 +32,7 @@ from agent_framework import (
     tool,
 )
 from agent_framework._tools import normalize_tools
-from agent_framework.azure import AzureOpenAIResponsesClient
+from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
 
@@ -247,7 +236,7 @@ Do NOT hardcode data that should come from call_tool(...).
 """
 
 
-class CodeActContextProvider(BaseContextProvider):
+class CodeActContextProvider(ContextProvider):
     """Inject a CodeAct surface using provider-owned tools.
 
     Tools passed to the provider are registered with the sandbox and made
@@ -541,9 +530,9 @@ async def main() -> None:
     # available inside the sandbox via call_tool(...) and never appear as
     # separate model-facing tools.
     agent = Agent(
-        client=AzureOpenAIResponsesClient(
-            project_endpoint=os.environ["AZURE_AI_PROJECT_ENDPOINT"],
-            deployment_name=os.environ["AZURE_OPENAI_RESPONSES_DEPLOYMENT_NAME"],
+        client=FoundryChatClient(
+            project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+            model=os.environ["FOUNDRY_MODEL"],
             credential=AzureCliCredential(),
         ),
         name="CodeActProviderAgent",
